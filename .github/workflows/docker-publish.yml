@@ -7,50 +7,60 @@ on:
     branches: ["main"]
 
 jobs:
-  lint-build-test:
+  build-services:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service:
+          - anomaly-detector
+          - autoscaler
+          - forecasting
+          - load-balancer
+          - policy-manager
+          - rl-engine
+          - servers
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build service
+        run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
+
+      - name: Run container
+        run: docker run -d -p 8080:8080 --name test-${{ matrix.service }} smartload-${{ matrix.service }}
+
+      - name: Wait for service
+        run: sleep 5
+
+      - name: Health check
+        run: curl --fail http://localhost:8080/health
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f test-${{ matrix.service }}
+
+
+  build-telemetry:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+      - name: Build telemetry service
+        run: docker build -t smartload-telemetry ./telemetry
 
-      - name: Validate Python syntax
-        run: |
-          python -m py_compile services/load-balancer/app.py
-          python -m py_compile services/backend/app.py
-          python -m py_compile services/telemetry/app.py
-          python -m py_compile services/anomaly/app.py
+      - name: Run telemetry container
+        run: docker run -d -p 8080:8080 --name telemetry-test smartload-telemetry
 
-      - name: Build load-balancer image
-        run: docker build -t smartload-load-balancer ./services/load-balancer
-
-      - name: Build backend image
-        run: docker build -t smartload-backend ./services/backend
-
-      - name: Build telemetry image
-        run: docker build -t smartload-telemetry ./services/telemetry
-
-      - name: Build anomaly image
-        run: docker build -t smartload-anomaly ./services/anomaly
-
-      - name: Run load-balancer container
-        run: docker run -d --name smartload-lb -p 8080:8080 smartload-load-balancer
-
-      - name: Wait for service to start
-        run: sleep 3
+      - name: Wait for service
+        run: sleep 5
 
       - name: Health check
         run: curl --fail http://localhost:8080/health
 
-      - name: Show logs on failure
-        if: failure()
-        run: docker logs smartload-lb
-
       - name: Stop container
         if: always()
-        run: docker rm -f smartload-lb
+        run: docker rm -f telemetry-test
