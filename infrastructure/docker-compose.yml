@@ -1,7 +1,8 @@
 services:
 
   nginx:
-    build: ../nginx
+    build:
+      context: ./nginx
     ports:
       - "8080:80"
     depends_on:
