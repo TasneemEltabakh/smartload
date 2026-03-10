@@ -1,7 +1,16 @@
 services:
 
+  nginx:
+    build: ../nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - test-server
+    restart: unless-stopped
+
   test-server:
     build:
       context: ../servers
     environment:
       - PORT=8080
+    restart: unless-stopped
