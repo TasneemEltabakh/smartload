@@ -1,0 +1,7 @@
+services:
+
+  test-server:
+    build:
+      context: ../servers
+    environment:
+      - PORT=8080
