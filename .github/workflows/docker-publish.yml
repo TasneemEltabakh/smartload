@@ -169,4 +169,4 @@ jobs:
 
       - name: Stop compose
         if: always()
-        run: docker compose -f infrastructure/docker/docker-compose.yml down
+        run: docker compose -f infrastructure/docker-compose.yml down
