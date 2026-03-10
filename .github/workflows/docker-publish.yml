@@ -24,7 +24,7 @@ jobs:
         run: pip install ruff
 
       - name: Run lint
-        run: ruff check services telemetry
+        run: ruff check services telemetry servers
 
 
   build-services:
@@ -37,10 +37,8 @@ jobs:
           - anomaly-detector
           - autoscaler
           - forecasting
-          - load-balancer
           - policy-manager
           - rl-engine
-          - servers
 
     steps:
       - name: Checkout repository
@@ -72,6 +70,42 @@ jobs:
       - name: Stop container
         if: always()
         run: docker rm -f test-${{ matrix.service }}
+
+
+  build-test-server:
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build server image
+        run: docker build -t smartload-test-server ./servers
+
+      - name: Run server container
+        run: docker run -d -p 8080:8080 --name test-server smartload-test-server
+
+      - name: Wait for server
+        run: sleep 5
+
+      - name: Health check
+        run: |
+          for i in {1..10}; do
+            curl -f http://localhost:8080/health && exit 0
+            echo "Waiting for server..."
+            sleep 2
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Show container logs
+        if: failure()
+        run: docker logs test-server
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f test-server
 
 
   build-telemetry:
@@ -108,3 +142,31 @@ jobs:
       - name: Stop container
         if: always()
         run: docker rm -f telemetry-test
+
+
+  compose-test:
+    runs-on: ubuntu-latest
+    needs:
+      - build-services
+      - build-test-server
+      - build-telemetry
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start docker-compose environment
+        run: docker compose -f infrastructure/docker/docker-compose.yml up -d --build --scale test-server=2
+
+      - name: Wait for system startup
+        run: sleep 10
+
+      - name: Test NGINX endpoint
+        run: curl -f http://localhost:8080
+
+      - name: Show running containers
+        run: docker ps
+
+      - name: Stop compose
+        if: always()
+        run: docker compose -f infrastructure/docker/docker-compose.yml down
