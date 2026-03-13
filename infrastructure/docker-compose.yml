@@ -1,9 +1,7 @@
 services:
-
   nginx:
     build:
       context: ./nginx
-      
     ports:
       - "8080:80"
     depends_on:
@@ -15,4 +13,6 @@ services:
       context: ../servers
     environment:
       - PORT=8080
+    expose:
+      - "8080"
     restart: unless-stopped
