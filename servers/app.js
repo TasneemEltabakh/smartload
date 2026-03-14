@@ -15,7 +15,40 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/*
+---------------------------------------------------
+Request Logging Middleware
+Logs every request in structured JSON format
+---------------------------------------------------
+*/
+app.use((req, res, next) => {
+  const start = Date.now();
+
+  res.on("finish", () => {
+    const log = {
+      timestamp: new Date().toISOString(),
+      service: "backend",
+      server: SERVER_ID,
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      latency_ms: Date.now() - start,
+      client_ip: req.ip
+    };
+
+    console.log(JSON.stringify(log));
+  });
+
+  next();
+});
+
+/*
+---------------------------------------------------
+Main Route
+---------------------------------------------------
+*/
 app.get("/", async (req, res) => {
+
   if (RESPONSE_DELAY_MS > 0) {
     await sleep(RESPONSE_DELAY_MS);
   }
@@ -30,7 +63,13 @@ app.get("/", async (req, res) => {
   res.send(`Hello from ${SERVER_ID}`);
 });
 
+/*
+---------------------------------------------------
+Health Check Endpoint
+---------------------------------------------------
+*/
 app.get("/health", async (req, res) => {
+
   if (RESPONSE_DELAY_MS > 0) {
     await sleep(RESPONSE_DELAY_MS);
   }
@@ -48,6 +87,18 @@ app.get("/health", async (req, res) => {
   });
 });
 
+/*
+---------------------------------------------------
+Start Server
+---------------------------------------------------
+*/
 app.listen(PORT, () => {
-  console.log(`${SERVER_ID} running on port ${PORT}`);
+
+  console.log(JSON.stringify({
+    event: "server_started",
+    server: SERVER_ID,
+    port: PORT,
+    timestamp: new Date().toISOString()
+  }));
+
 });
