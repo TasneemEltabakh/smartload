@@ -79,27 +79,88 @@ Applies decisions to the system by updating routing behavior or scaling backend 
 ```
 smartload/
 │
-├── services/
-│   ├── load-balancer/
-│   ├── telemetry/
-│   ├── anomaly-detector/
-│   ├── forecasting/
-│   ├── rl-engine/
-│   ├── autoscaler/
-│   └── policy-manager/
-│
-├── infrastructure/
-│   └── nginx/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+│       CI/CD pipeline definitions for automated builds, tests, and linting.
 │
 ├── datasets/
+│   Public and synthetic datasets used for training and evaluation
+│   of SmartLoad models (forecasting, anomaly detection, RL).
 │
 ├── docs/
-│   ├── architecture.md
-│   ├── api-design.md
-│   └── system-design.md
+│   Architecture documentation, design decisions, diagrams,
+│   and technical specifications.
 │
-├── docker-compose.yml
+├── infrastructure/
+│
+│   ├── docker-compose.yml
+│   │   Local development environment for running SmartLoad services.
+│   │
+│   ├── nginx/
+│   │   NGINX configuration acting as the ingress load balancer.
+│   │
+│   └── k8s/
+│       Kubernetes deployment manifests for production environments.
+│
+├── servers/
+│   Dummy backend services used to simulate application servers
+│   for testing routing and load balancing behavior.
+│
+│   ├── app.js
+│   │   Simple HTTP server used for testing load balancing.
+│   │
+│   ├── Dockerfile
+│   │   Container definition for the test backend service.
+│   │
+│   ├── package.json
+│   └── package-lock.json
+│
+├── services/
+│   Core SmartLoad intelligent services.
+│
+│   ├── anomaly-detector/
+│   │   Detects abnormal system behavior such as latency spikes
+│   │   or failing backend nodes.
+│   │
+│   ├── autoscaler/
+│   │   Handles automatic scaling decisions based on load
+│   │   and forecasting predictions.
+│   │
+│   ├── forecasting/
+│   │   Predicts future traffic patterns using time-series models.
+│   │
+│   ├── policy-manager/
+│   │   Manages system policies such as routing modes,
+│   │   safety constraints, and scaling limits.
+│   │
+│   ├── rl-engine/
+│   │   Reinforcement Learning service that learns optimal
+│   │   routing strategies from telemetry data.
+│   │
+│   └── traffic-simulator/
+│       Generates synthetic workloads to test SmartLoad behavior.
+│
+├── telemetry/
+│   Telemetry and monitoring pipeline responsible for collecting
+│   system metrics such as latency, CPU usage, queue length,
+│   and request throughput.
+│
+├── tests/
+│   Unit tests, integration tests, and system-level tests
+│   validating SmartLoad behavior.
+│
+├── .dockerignore
+│   Docker build exclusions.
+│
+├── .gitignore
+│   Git ignored files.
+│
+├── LICENSE
+│   Project license.
+│
 └── README.md
+    Main project documentation.
 ```
 
 ---
