@@ -1,0 +1,327 @@
+# SmartLoad Telemetry Schema v1 — Machine-Readable Definition
+# Used by: collector, validation pipeline, schema enforcement
+# Version: 1.0
+# Frozen: 2026-03-28
+
+---
+version: "1.0"
+frozen_date: "2026-03-28"
+naming_convention: "hybrid"
+namespace_prefix: "smartload"
+
+# Timestamp specification
+timestamp:
+  format: "ISO 8601"
+  timezone: "UTC"
+  precision_ms: 3  # milliseconds
+  pattern: "YYYY-MM-DDTHH:MM:SS.sssZ"
+  example: "2026-03-28T14:23:45.123Z"
+  clock_skew_tolerance_ms: 500
+
+# Server identifier specification
+server_identifiers:
+  service_name:
+    type: "string"
+    length_min: 1
+    length_max: 64
+    pattern: "^[a-zA-Z0-9-]+$"
+    required: true
+    description: "Name of the service emitting telemetry"
+    example: "api-backend"
+  
+  instance_id:
+    type: "string"
+    length_min: 1
+    length_max: 64
+    pattern: "^[a-zA-Z0-9-]+$"
+    required: true
+    description: "Cloud/orchestrator instance identifier"
+    example: "i-0a1b2c3d"
+  
+  node_id:
+    type: "uuid"
+    format: "RFC 4122"
+    required: true
+    description: "SmartLoad-assigned unique node identifier"
+    example: "a0000000-0000-0000-0000-000000000001"
+
+# Metric specifications
+metrics:
+  required:
+    smartload.request.latency_ms:
+      type: "float"
+      unit: "milliseconds"
+      domain: "request"
+      range_min: 0
+      range_max: 10000
+      description: "Average request latency"
+      aggregation: "AVG"
+      validation:
+        - rule: "must_be_non_negative"
+          action: "reject_row"
+        - rule: "warn_if_exceeds_10000"
+          action: "log_warning"
+    
+    smartload.request.count:
+      type: "integer"
+      unit: "count"
+      domain: "request"
+      range_min: 0
+      range_max: null
+      description: "Number of requests handled"
+      aggregation: "SUM"
+      validation:
+        - rule: "must_be_non_negative"
+          action: "reject_row"
+        - rule: "must_be_integer"
+          action: "reject_row"
+    
+    smartload.error.rate:
+      type: "float"
+      unit: "ratio"
+      domain: "error"
+      range_min: 0.0
+      range_max: 1.0
+      description: "Fraction of requests returning 5xx"
+      aggregation: "AVG"
+      validation:
+        - rule: "must_be_in_range_0_1"
+          action: "reject_row"
+  
+  optional:
+    smartload.backend.cpu_usage:
+      type: "float"
+      unit: "ratio"
+      domain: "backend"
+      range_min: 0.0
+      range_max: 1.0
+      description: "CPU utilization as fraction"
+      aggregation: "AVG"
+      null_handling: "impute_median"
+      impute_window_days: 7
+      validation:
+        - rule: "must_be_in_range_0_1"
+          action: "reject_row"
+    
+    smartload.backend.memory_usage:
+      type: "float"
+      unit: "ratio"
+      domain: "backend"
+      range_min: 0.0
+      range_max: 1.0
+      description: "Memory utilization as fraction"
+      aggregation: "AVG"
+      null_handling: "impute_median"
+      impute_window_days: 7
+      validation:
+        - rule: "must_be_in_range_0_1"
+          action: "reject_row"
+    
+    smartload.routing.decision_engine:
+      type: "string"
+      domain: "routing"
+      enum_values:
+        - "round_robin"
+        - "least_connections"
+        - "weighted"
+        - "rl_driven"
+        - "forecast_driven"
+      description: "Routing engine used"
+      null_handling: "accept_null"
+      validation:
+        - rule: "must_be_enum_value"
+          action: "log_warning_accept"
+
+# Attributes (optional tags)
+attributes:
+  source:
+    type: "string"
+    enum_values:
+      - "real"
+      - "synthetic"
+      - "borg"
+      - "alibaba"
+      - "azure"
+      - "planetlab"
+      - "bitbrains"
+      - "nab"
+      - "yahoo_smd"
+    required: false
+    description: "Data origin"
+    ml_use: "filter_for_training"
+  
+  environment:
+    type: "string"
+    enum_values:
+      - "development"
+      - "staging"
+      - "production"
+    required: false
+    description: "Deployment environment"
+  
+  region:
+    type: "string"
+    required: false
+    description: "Geographic region"
+    example: "us-east-1"
+  
+  availability_zone:
+    type: "string"
+    required: false
+    description: "Availability zone"
+    example: "us-east-1a"
+
+# Aggregation tiers
+aggregation:
+  raw:
+    interval: "sub-minute"
+    table: "telemetry_metrics"
+    retention_days: 7
+    use_case: "debugging, incident response, fine-grained anomaly detection"
+  
+  one_minute:
+    interval: 60
+    unit: "seconds"
+    table: "telemetry_1min"
+    retention_days: 30
+    use_case: "dashboard, alerting, forecasting training"
+    aggregation_method: "continuous_aggregate"
+  
+  one_hour:
+    interval: 3600
+    unit: "seconds"
+    table: "telemetry_hourly"
+    retention_days: 60
+    use_case: "long-term trends, ML baseline training, compliance"
+    aggregation_method: "continuous_aggregate"
+
+# Gap handling
+gap_handling:
+  max_consecutive_missing_minutes: 5
+  action_after_gap: "forward_fill"
+  mark_unhealthy_after_minutes: 5
+  unhealthy_threshold_consecutive_failures: 3
+
+# Data quality SLAs
+quality_slas:
+  no_timestamp_gaps:
+    rule: "max_gap <= 2x_interval"
+    action_on_failure: "forward_fill_up_to_5_intervals_then_flag"
+    applies_to: ["forecasting", "rl", "anomaly_detection"]
+  
+  value_range:
+    rule: "all_normalized_features in [0.0, 1.0]"
+    action_on_failure: "clip_and_log_warning"
+    applies_to: ["all"]
+  
+  error_rate_validity:
+    rule: "error_rate in [0.0, 1.0]"
+    action_on_failure: "hard_reject_row_log_to_validation_table"
+    applies_to: ["all"]
+  
+  no_future_leakage:
+    rule: "train_max_timestamp < validation_min_timestamp"
+    action_on_failure: "pipeline_fails_do_not_proceed"
+    applies_to: ["forecasting", "anomaly_detection", "rl"]
+  
+  node_id_integrity:
+    rule: "all_node_id_values exist in backend_nodes"
+    action_on_failure: "reject_orphaned_rows_log_count"
+    applies_to: ["all"]
+  
+  source_tagging:
+    rule: "all_rows must have source field"
+    action_on_failure: "reject_row_source_required_for_audit"
+    applies_to: ["all"]
+
+# Collector ingest format
+collector:
+  input_format: "JSON"
+  transport_protocols:
+    - "OTLP/gRPC"
+    - "OTLP/HTTP"
+  endpoints:
+    grpc: "http://<collector-host>:4317"
+    http: "http://<collector-host>:4318"
+  
+  json_schema:
+    type: "object"
+    properties:
+      timestamp:
+        type: "string"
+        format: "date-time"
+      service_name:
+        type: "string"
+      instance_id:
+        type: "string"
+      node_id:
+        type: "string"
+        format: "uuid"
+      metrics:
+        type: "object"
+        additionalProperties:
+          type: "number"
+      attributes:
+        type: "object"
+        additionalProperties:
+          type: "string"
+    required:
+      - "timestamp"
+      - "service_name"
+      - "instance_id"
+      - "node_id"
+      - "metrics"
+
+# Validation rules
+validation:
+  reject_on_missing_required_fields: true
+  reject_on_invalid_metric_values: true
+  reject_on_out_of_range_values: true
+  reject_on_timestamp_format_mismatch: true
+  reject_on_clock_skew_exceeds_tolerance: false  # log warning, accept
+  validate_node_id_exists: true
+  enforce_metric_name_format: true
+  log_rejected_records: true
+  rejected_record_table: "telemetry_validation_failed"
+
+# Backward compatibility
+backward_compatibility:
+  accept_unknown_metrics: true  # Ignore unknown metrics, don't reject
+  accept_unknown_attributes: true  # Ignore unknown attributes
+  require_all_required_metrics: true
+  allow_metric_name_aliases: false
+  deprecation_period_months: 6
+
+# Database targets
+database:
+  engine: "TimescaleDB"
+  hypertables:
+    - name: "telemetry_metrics"
+      time_column: "time"
+      space_partitions: ["node_id"]
+    - name: "telemetry_1min"
+      materialized_view_of: "telemetry_metrics"
+      time_bucket: "1 minute"
+    - name: "telemetry_hourly"
+      materialized_view_of: "telemetry_metrics"
+      time_bucket: "1 hour"
+  
+  retention_policies:
+    - table: "telemetry_metrics"
+      retention: "7 days"
+    - table: "telemetry_1min"
+      retention: "30 days"
+    - table: "telemetry_hourly"
+      retention: "60 days"
+
+# Document references
+document_references:
+  full_specification: "/docs/contracts/telemetry-v1.md"
+  data_contracts: "/docs/data-contracts.md"
+  service_contracts: "/docs/service-contracts.md"
+  collector_config: "/docs/collector-config.yaml"
+
+---
+# Status: FROZEN
+# No changes permitted in v1.0
+# Changes require major version bump (v2.0) with 30-day notice
