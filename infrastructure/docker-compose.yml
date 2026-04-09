@@ -8,6 +8,30 @@ services:
     depends_on:
       - test-server
     restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx-metrics-exporter:
+    build:
+      context: ./nginx-metrics-exporter
+    ports:
+      - "9113:9113"
+    environment:
+      - METRICS_PORT=9113
+      - SERVICE_NAME=nginx-lb
+      - INSTANCE_ID=nginx-001
+      - NODE_ID=a0000000-0000-0000-0000-000000000001
+      - SOURCE=real
+      - ENVIRONMENT=development
+      - NGINX_CONTAINER_NAME=infrastructure-nginx-1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - nginx
+    restart: unless-stopped
 
   test-server:
     build:
