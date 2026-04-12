@@ -1,0 +1,124 @@
+{
+  "records": [
+    {
+      "timestamp": "2026-04-12T18:00:00Z",
+      "node_id": "backend-1",
+      "service_name": "test-server",
+      "request_count": 110,
+      "latency_ms": 88,
+      "error_rate": 0.01,
+      "cpu_usage": 0.48,
+      "memory_usage": 0.54
+    },
+    {
+      "timestamp": "2026-04-12T18:01:00Z",
+      "node_id": "backend-1",
+      "service_name": "test-server",
+      "request_count": 112,
+      "latency_ms": 91,
+      "error_rate": 0.01,
+      "cpu_usage": 0.49,
+      "memory_usage": 0.55
+    },
+    {
+      "timestamp": "2026-04-12T18:02:00Z",
+      "node_id": "backend-1",
+      "service_name": "test-server",
+      "request_count": 109,
+      "latency_ms": 93,
+      "error_rate": 0.02,
+      "cpu_usage": 0.51,
+      "memory_usage": 0.55
+    },
+    {
+      "timestamp": "2026-04-12T18:03:00Z",
+      "node_id": "backend-1",
+      "service_name": "test-server",
+      "request_count": 115,
+      "latency_ms": 90,
+      "error_rate": 0.01,
+      "cpu_usage": 0.52,
+      "memory_usage": 0.56
+    },
+    {
+      "timestamp": "2026-04-12T18:04:00Z",
+      "node_id": "backend-1",
+      "service_name": "test-server",
+      "request_count": 111,
+      "latency_ms": 92,
+      "error_rate": 0.01,
+      "cpu_usage": 0.5,
+      "memory_usage": 0.56
+    },
+    {
+      "timestamp": "2026-04-12T18:05:00Z",
+      "node_id": "backend-1",
+      "service_name": "test-server",
+      "request_count": 113,
+      "latency_ms": 89,
+      "error_rate": 0.01,
+      "cpu_usage": 0.49,
+      "memory_usage": 0.55
+    },
+    {
+      "timestamp": "2026-04-12T18:00:00Z",
+      "node_id": "backend-2",
+      "service_name": "test-server",
+      "request_count": 104,
+      "latency_ms": 94,
+      "error_rate": 0.01,
+      "cpu_usage": 0.47,
+      "memory_usage": 0.52
+    },
+    {
+      "timestamp": "2026-04-12T18:01:00Z",
+      "node_id": "backend-2",
+      "service_name": "test-server",
+      "request_count": 102,
+      "latency_ms": 96,
+      "error_rate": 0.01,
+      "cpu_usage": 0.48,
+      "memory_usage": 0.52
+    },
+    {
+      "timestamp": "2026-04-12T18:02:00Z",
+      "node_id": "backend-2",
+      "service_name": "test-server",
+      "request_count": 103,
+      "latency_ms": 99,
+      "error_rate": 0.02,
+      "cpu_usage": 0.49,
+      "memory_usage": 0.53
+    },
+    {
+      "timestamp": "2026-04-12T18:03:00Z",
+      "node_id": "backend-2",
+      "service_name": "test-server",
+      "request_count": 101,
+      "latency_ms": 97,
+      "error_rate": 0.01,
+      "cpu_usage": 0.49,
+      "memory_usage": 0.53
+    },
+    {
+      "timestamp": "2026-04-12T18:04:00Z",
+      "node_id": "backend-2",
+      "service_name": "test-server",
+      "request_count": 104,
+      "latency_ms": 101,
+      "error_rate": 0.01,
+      "cpu_usage": 0.5,
+      "memory_usage": 0.54
+    },
+    {
+      "timestamp": "2026-04-12T18:05:00Z",
+      "node_id": "backend-2",
+      "service_name": "test-server",
+      "request_count": 105,
+      "latency_ms": 530,
+      "error_rate": 0.01,
+      "cpu_usage": 0.72,
+      "memory_usage": 0.67
+    }
+  ]
+}
