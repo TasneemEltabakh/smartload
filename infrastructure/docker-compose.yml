@@ -1,5 +1,11 @@
 services:
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   nginx:
     build:
       context: ./nginx
@@ -16,6 +22,22 @@ services:
       - PORT=8080
     expose:
       - "8080"
+    restart: unless-stopped
+
+  rl-engine:
+    build:
+      context: ../services/rl-engine
+    environment:
+      - PORT=8080
+      - SERVICE_NAME=rl-engine
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CHANNEL=smartload.routing.scores
+      - TELEMETRY_FILE=/app/data/routing_metrics.json
+    ports:
+      - "8083:8080"
+    depends_on:
+      - redis
     restart: unless-stopped
 
   traffic-simulator:

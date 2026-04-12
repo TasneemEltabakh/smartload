@@ -1,0 +1,31 @@
+{
+  "records": [
+    {
+      "timestamp": "2026-04-12T20:00:00Z",
+      "node_id": "backend-1",
+      "latency_ms": 95,
+      "error_rate": 0.01,
+      "request_count": 95,
+      "cpu_usage": 0.42,
+      "memory_usage": 0.48
+    },
+    {
+      "timestamp": "2026-04-12T20:00:00Z",
+      "node_id": "backend-2",
+      "latency_ms": 140,
+      "error_rate": 0.03,
+      "request_count": 110,
+      "cpu_usage": 0.57,
+      "memory_usage": 0.61
+    },
+    {
+      "timestamp": "2026-04-12T20:00:00Z",
+      "node_id": "backend-3",
+      "latency_ms": 520,
+      "error_rate": 0.24,
+      "request_count": 135,
+      "cpu_usage": 0.85,
+      "memory_usage": 0.79
+    }
+  ]
+}
