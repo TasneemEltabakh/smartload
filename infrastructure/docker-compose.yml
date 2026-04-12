@@ -1,5 +1,11 @@
 services:
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   nginx:
     build:
       context: ./nginx
@@ -18,6 +24,24 @@ services:
       - "8080"
     restart: unless-stopped
 
+  forecasting:
+    build:
+      context: ../services/forecasting
+    environment:
+      - PORT=8080
+      - SERVICE_NAME=forecasting
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_CHANNEL=smartload.forecast.load
+      - HISTORY_FILE=/app/data/request_history.json
+      - ENABLE_SCHEDULER=true
+      - FORECAST_INTERVAL_SECONDS=300
+      - HORIZON_MINUTES=5
+    ports:
+      - "8082:8080"
+    depends_on:
+      - redis
+    restart: unless-stopped
   traffic-simulator:
     build:
       context: ../traffic-simulator
