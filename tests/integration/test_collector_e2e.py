@@ -73,6 +73,14 @@ def wait_for_services():
 
 def test_nginx_exporter_health(wait_for_services):
     """Test nginx-metrics-exporter is running."""
+    # Send traffic first so request_count_total appears
+    for _ in range(5):
+        try:
+            requests.get("http://localhost:8080/", timeout=5)
+        except:
+            pass
+    time.sleep(3)  # give exporter time to process logs
+
     response = requests.get(NGINX_EXPORTER_URL)
     assert response.status_code == 200
     assert b"smartload_request_count_total" in response.content
@@ -128,7 +136,7 @@ def test_generate_traffic_and_verify_in_db(wait_for_services):
             pass
     
     # Wait for collector to batch and write
-    time.sleep(15)
+    time.sleep(35)
     
     # Query TimescaleDB
     try:

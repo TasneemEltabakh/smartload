@@ -68,22 +68,21 @@ services:
   # ==================== NEW SERVICES ====================
 
   # TimescaleDB: Time-series database for metrics storage
+  # ─── Issue #10: TimescaleDB — Time-Series Metrics Storage ───────────────────
   timescaledb:
     image: timescale/timescaledb:2.14.2-pg16
     container_name: infrastructure-timescaledb-1
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123   # ⚠️ CHANGE IN PRODUCTION
-      POSTGRES_DB: postgres
-      PGDATA: /var/lib/postgresql/data/pgdata
-      TIMESCALEDB_TELEMETRY: "off"
+      POSTGRES_USER:     postgres
+      POSTGRES_PASSWORD: postgres123     # ⚠️ override via .env in production
+      POSTGRES_DB:       postgres
+      PGDATA:            /var/lib/postgresql/data/pgdata
+      TIMESCALEDB_TELEMETRY: "off"       # opt-out of upstream telemetry
     ports:
       - "5432:5432"
     volumes:
-      # Mount initialization script
-      - ./timescaledb/init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
       - ./timescaledb/init-db.sh:/docker-entrypoint-initdb.d/00-init-db.sh:ro
-      # Persistent data
+      - ./timescaledb/init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql:ro
       - timescaledb-data:/var/lib/postgresql/data
     restart: unless-stopped
     networks:
