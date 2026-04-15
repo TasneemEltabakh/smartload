@@ -1,296 +1,312 @@
 """
 SmartLoad Nginx Metrics Exporter
-Reads Nginx logs via Docker API and exposes Prometheus metrics.
-Follows telemetry-v1 schema: smartload.<domain>.<metric>
+
+Streams Nginx JSON logs via the Docker SDK (docker logs -f) and exposes
+OpenTelemetry metrics via a Prometheus-format /metrics endpoint.
+
+Using docker logs instead of a shared volume file avoids Docker Desktop
+Windows filesystem caching issues where file size changes are not visible
+to other containers reading the same named volume.
 """
 
 import json
 import os
-import subprocess
 import threading
 import time
+from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from prometheus_client import (
-    Counter,
-    Histogram,
-    Gauge,
-    generate_latest,
-    REGISTRY,
-    CONTENT_TYPE_LATEST
-)
+
+import docker
+
+# --- OTel SDK ---
+from opentelemetry import metrics
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from prometheus_client import generate_latest, REGISTRY, CONTENT_TYPE_LATEST
 
 # =============================================================================
 # Configuration
 # =============================================================================
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "nginx-lb")
-INSTANCE_ID = os.getenv("INSTANCE_ID", "nginx-001")
-NODE_ID = os.getenv("NODE_ID", "a0000000-0000-0000-0000-000000000001")
+SERVICE_NAME        = os.getenv("SERVICE_NAME",        "nginx-lb")
+INSTANCE_ID         = os.getenv("INSTANCE_ID",         "nginx-001")
+NODE_ID             = os.getenv("NODE_ID",             "a0000000-0000-0000-0000-000000000001")
+METRICS_PORT        = int(os.getenv("METRICS_PORT",    "9113"))
+SOURCE              = os.getenv("SOURCE",              "real")
+ENVIRONMENT         = os.getenv("ENVIRONMENT",         "development")
 NGINX_CONTAINER_NAME = os.getenv("NGINX_CONTAINER_NAME", "infrastructure-nginx-1")
-METRICS_PORT = int(os.getenv("METRICS_PORT", "9113"))
-SOURCE = os.getenv("SOURCE", "real")
-ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
-# =============================================================================
-# Prometheus Metrics (following smartload telemetry-v1 schema)
-# =============================================================================
-
-LABELS = ["service_name", "instance_id", "node_id", "source", "environment"]
-BACKEND_LABELS = LABELS + ["backend"]
-PATH_LABELS = LABELS + ["path", "method"]
-
-REQUEST_COUNT = Counter(
-    "smartload_request_count_total",
-    "Total number of requests handled by the load balancer",
-    LABELS
-)
-
-REQUEST_LATENCY = Histogram(
-    "smartload_request_latency_ms",
-    "Request latency in milliseconds",
-    PATH_LABELS,
-    buckets=[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
-)
-
-ERROR_COUNT = Counter(
-    "smartload_error_count_total",
-    "Total number of error responses (4xx and 5xx)",
-    LABELS + ["status_class"]
-)
-
-BACKEND_REQUEST_COUNT = Counter(
-    "smartload_routing_backend_requests_total",
-    "Requests routed to each backend",
-    BACKEND_LABELS
-)
-
-BACKEND_LATENCY = Histogram(
-    "smartload_backend_latency_ms",
-    "Upstream backend latency in milliseconds",
-    BACKEND_LABELS,
-    buckets=[5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
-)
-
-ERROR_RATE = Gauge(
-    "smartload_error_rate",
-    "Current error rate (ratio 0.0-1.0) over sliding window",
-    LABELS
-)
-
-# Sliding window for error rate
-_request_window = []
-_error_window = []
-_window_lock = threading.Lock()
 WINDOW_SECONDS = 60
 
 # =============================================================================
-# Log Parsing
+# OTel SDK setup
 # =============================================================================
 
-def parse_nginx_log_line(line):
-    """
-    Parse a single Nginx JSON log line.
-    Expected format:
-    {
-        "timestamp": "...",
-        "service": "nginx",
-        "client_ip": "...",
-        "request": "GET / HTTP/1.1",
-        "request_path": "/",
-        "status": 200,
-        "backend": "172.18.0.2:8080",
-        "latency": 0.005,
-        "upstream_latency": "0.004"
-    }
-    """
+resource = Resource.create({
+    "service.name":           SERVICE_NAME,
+    "service.instance.id":    INSTANCE_ID,
+    "node.id":                NODE_ID,
+    "deployment.environment": ENVIRONMENT,
+})
+
+prometheus_reader = PrometheusMetricReader()
+provider = MeterProvider(resource=resource, metric_readers=[prometheus_reader])
+metrics.set_meter_provider(provider)
+
+meter = metrics.get_meter("smartload.nginx.exporter", version="1.0.0")
+
+# =============================================================================
+# Sliding window state — defined before instruments that reference the callback
+# =============================================================================
+
+_lock = threading.Lock()
+_request_window: deque = deque()
+_error_window:   deque = deque()
+
+
+def _error_rate_callback(options):
+    now    = time.time()
+    cutoff = now - WINDOW_SECONDS
+    with _lock:
+        while _request_window and _request_window[0] < cutoff:
+            _request_window.popleft()
+        while _error_window and _error_window[0] < cutoff:
+            _error_window.popleft()
+        rate = len(_error_window) / len(_request_window) if _request_window else 0.0
+
+    yield metrics.Observation(
+        rate,
+        attributes={
+            "service_name": SERVICE_NAME,
+            "instance_id":  INSTANCE_ID,
+            "node_id":      NODE_ID,
+            "source":       SOURCE,
+            "environment":  ENVIRONMENT,
+        },
+    )
+
+
+# =============================================================================
+# Instrument definitions
+# unit="" prevents PrometheusMetricReader from appending a suffix to the name
+# =============================================================================
+
+request_counter = meter.create_counter(
+    name="smartload_request_count_total",
+    description="Total number of requests handled by the load balancer",
+    unit="",
+)
+
+request_latency = meter.create_histogram(
+    name="smartload_request_latency_ms",
+    description="Request latency in milliseconds",
+    unit="",
+)
+
+error_counter = meter.create_counter(
+    name="smartload_error_count_total",
+    description="Total number of error responses (4xx and 5xx)",
+    unit="",
+)
+
+backend_request_counter = meter.create_counter(
+    name="smartload_routing_backend_requests_total",
+    description="Requests routed to each backend",
+    unit="",
+)
+
+backend_latency_hist = meter.create_histogram(
+    name="smartload_backend_latency_ms",
+    description="Backend upstream latency in milliseconds",
+    unit="",
+)
+
+error_rate_gauge = meter.create_observable_gauge(
+    name="smartload_error_rate",
+    callbacks=[_error_rate_callback],
+    description="Error rate over the last 60-second sliding window (0.0-1.0)",
+    unit="",
+)
+
+# =============================================================================
+# Common label attributes
+# =============================================================================
+
+BASE_ATTRS = {
+    "service_name": SERVICE_NAME,
+    "instance_id":  INSTANCE_ID,
+    "node_id":      NODE_ID,
+    "source":       SOURCE,
+    "environment":  ENVIRONMENT,
+}
+
+# =============================================================================
+# Log parsing
+# =============================================================================
+
+def parse_nginx_log_line(line: str) -> dict | None:
     try:
-        # Handle Docker log format: timestamp + space + JSON
-        if line and line[0].isdigit():
-            # Docker adds timestamp prefix, find the JSON part
-            json_start = line.find('{')
-            if json_start != -1:
-                line = line[json_start:]
-        
-        data = json.loads(line.strip())
-        
-        # Skip non-request logs (nginx startup messages etc)
-        if "request" not in data or "status" not in data:
+        brace = line.find("{")
+        if brace == -1:
             return None
-        
-        request_str = data.get("request", "GET / HTTP/1.1")
-        method = request_str.split()[0] if request_str else "GET"
-        
-        path = data.get("request_path", "/")
-        path = path.split("?")[0]
-        if len(path) > 50:
-            path = path[:50] + "..."
-        
-        latency_sec = float(data.get("latency", 0))
-        latency_ms = latency_sec * 1000
-        
-        upstream_latency_str = data.get("upstream_latency", "0")
-        if upstream_latency_str == "-" or upstream_latency_str == "":
-            upstream_latency_ms = 0
-        else:
-            upstream_latency_ms = float(upstream_latency_str) * 1000
-        
+        data = json.loads(line[brace:])
+
+        if "request" not in data:
+            return None
+
+        parts  = data.get("request", "GET / HTTP/1.1").split()
+        method = parts[0] if parts else "UNKNOWN"
+
+        path       = data.get("request_path", "/")
+        status     = int(data.get("status", 0))
+        backend    = data.get("backend", "unknown") or "unknown"
+        latency_ms = float(data.get("latency", 0)) * 1000
+
+        raw_upstream = str(data.get("upstream_latency", "-")).strip()
+        upstream_ms  = 0.0
+        if raw_upstream and raw_upstream != "-":
+            tokens = [t.strip() for t in raw_upstream.replace(":", " ").split()
+                      if t.strip() != ":"]
+            for tok in reversed(tokens):
+                try:
+                    upstream_ms = float(tok) * 1000
+                    break
+                except ValueError:
+                    continue
+
         return {
-            "timestamp": data.get("timestamp"),
-            "method": method,
-            "path": path,
-            "status": int(data.get("status", 0)),
-            "backend": data.get("backend", "unknown"),
-            "latency_ms": latency_ms,
-            "upstream_latency_ms": upstream_latency_ms,
-            "client_ip": data.get("client_ip", "")
+            "method":      method,
+            "path":        path,
+            "status":      status,
+            "backend":     backend,
+            "latency_ms":  latency_ms,
+            "upstream_ms": upstream_ms,
         }
-    except (json.JSONDecodeError, ValueError, KeyError) as e:
+
+    except Exception:
         return None
 
+# =============================================================================
+# Metric recording
+# =============================================================================
 
-def record_metrics(parsed):
-    """Record metrics from a parsed log entry."""
-    if not parsed:
+def record_metrics(p: dict) -> None:
+    if not p:
         return
-    
-    labels = {
-        "service_name": SERVICE_NAME,
-        "instance_id": INSTANCE_ID,
-        "node_id": NODE_ID,
-        "source": SOURCE,
-        "environment": ENVIRONMENT
-    }
-    
-    REQUEST_COUNT.labels(**labels).inc()
-    
-    path_labels = {**labels, "path": parsed["path"], "method": parsed["method"]}
-    REQUEST_LATENCY.labels(**path_labels).observe(parsed["latency_ms"])
-    
-    backend_labels = {**labels, "backend": parsed["backend"]}
-    BACKEND_REQUEST_COUNT.labels(**backend_labels).inc()
-    
-    if parsed["upstream_latency_ms"] > 0:
-        BACKEND_LATENCY.labels(**backend_labels).observe(parsed["upstream_latency_ms"])
-    
-    status = parsed["status"]
-    is_error = status >= 400
-    
+
+    request_counter.add(1, BASE_ATTRS)
+    request_latency.record(
+        p["latency_ms"],
+        {**BASE_ATTRS, "path": p["path"], "method": p["method"]},
+    )
+    backend_request_counter.add(1, {**BASE_ATTRS, "backend": p["backend"]})
+
+    if p["upstream_ms"] > 0:
+        backend_latency_hist.record(
+            p["upstream_ms"],
+            {**BASE_ATTRS, "backend": p["backend"]},
+        )
+
+    status = p["status"]
     if status >= 500:
-        ERROR_COUNT.labels(**labels, status_class="5xx").inc()
+        error_counter.add(1, {**BASE_ATTRS, "status_class": "5xx"})
     elif status >= 400:
-        ERROR_COUNT.labels(**labels, status_class="4xx").inc()
-    
+        error_counter.add(1, {**BASE_ATTRS, "status_class": "4xx"})
+
     now = time.time()
-    with _window_lock:
+    with _lock:
         _request_window.append(now)
-        if is_error:
+        if status >= 400:
             _error_window.append(now)
-        
-        cutoff = now - WINDOW_SECONDS
-        while _request_window and _request_window[0] < cutoff:
-            _request_window.pop(0)
-        while _error_window and _error_window[0] < cutoff:
-            _error_window.pop(0)
-        
-        total = len(_request_window)
-        errors = len(_error_window)
-        rate = errors / total if total > 0 else 0.0
-        ERROR_RATE.labels(**labels).set(rate)
-    
-    print(f"[METRIC] {parsed['method']} {parsed['path']} -> {parsed['status']} ({parsed['latency_ms']:.1f}ms)")
 
+    print(f"[METRIC] {p['method']} {p['path']} -> {status} ({p['latency_ms']:.1f}ms)")
 
 # =============================================================================
-# Docker Log Reader
+# Docker log streamer (background thread)
 # =============================================================================
 
-def read_docker_logs():
-    """
-    Read nginx container logs using docker logs command.
-    This works reliably across all platforms.
-    """
-    print(f"[INFO] Starting Docker log reader for container: {NGINX_CONTAINER_NAME}")
-    print(f"[INFO] Waiting for container to be available...")
-    
-    # Wait for container to be running
+def stream_docker_logs() -> None:
+    client = docker.from_env()
+
     while True:
         try:
-            result = subprocess.run(
-                ["docker", "inspect", "-f", "{{.State.Running}}", NGINX_CONTAINER_NAME],
-                capture_output=True,
-                text=True
-            )
-            if result.returncode == 0 and "true" in result.stdout.lower():
-                print(f"[INFO] Container {NGINX_CONTAINER_NAME} is running")
-                break
-        except Exception as e:
-            print(f"[WARN] Waiting for container: {e}")
-        time.sleep(2)
-    
-    # Start tailing logs
-    print(f"[INFO] Starting log tail...")
-    
-    process = subprocess.Popen(
-        ["docker", "logs", "-f", "--since", "1s", NGINX_CONTAINER_NAME],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
-    
-    for line in process.stdout:
-        line = line.strip()
-        if line and '{' in line:
-            parsed = parse_nginx_log_line(line)
-            if parsed:
-                record_metrics(parsed)
+            container = client.containers.get(NGINX_CONTAINER_NAME)
+            print(f"[INFO] Connected to container: {NGINX_CONTAINER_NAME}")
 
+            # stream=True, follow=True gives us a live byte stream
+            # since=0 means from now only (skip historical logs)
+            log_stream = container.logs(
+                stream=True,
+                follow=True,
+                since=int(time.time()),
+            )
+
+            for chunk in log_stream:
+                # Each chunk may contain multiple newline-separated log lines
+                text = chunk.decode("utf-8", errors="replace")
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line:
+                        parsed = parse_nginx_log_line(line)
+                        record_metrics(parsed)
+
+        except docker.errors.NotFound:
+            print(f"[WARN] Container {NGINX_CONTAINER_NAME} not found, retrying...")
+            time.sleep(3)
+        except Exception as e:
+            print(f"[WARN] Log stream error: {e}, reconnecting in 3s...")
+            time.sleep(3)
 
 # =============================================================================
-# Prometheus HTTP Handler
+# HTTP server
 # =============================================================================
 
 class MetricsHandler(BaseHTTPRequestHandler):
+
+    def log_message(self, fmt, *args):
+        pass
+
     def do_GET(self):
         if self.path == "/metrics":
+            output = generate_latest(REGISTRY)
             self.send_response(200)
             self.send_header("Content-Type", CONTENT_TYPE_LATEST)
+            self.send_header("Content-Length", str(len(output)))
             self.end_headers()
-            self.wfile.write(generate_latest(REGISTRY))
+            self.wfile.write(output)
+
         elif self.path == "/health":
+            body = json.dumps({
+                "status":      "healthy",
+                "service":     SERVICE_NAME,
+                "instance_id": INSTANCE_ID,
+            }).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "healthy",
-                "service": SERVICE_NAME,
-                "instance_id": INSTANCE_ID
-            }).encode())
+            self.wfile.write(body)
+
         else:
             self.send_response(404)
             self.end_headers()
-    
-    def log_message(self, format, *args):
-        pass
-
 
 # =============================================================================
-# Main
+# Entry point
 # =============================================================================
 
 def main():
-    print(f"[INFO] SmartLoad Nginx Metrics Exporter")
-    print(f"[INFO] Service: {SERVICE_NAME}, Instance: {INSTANCE_ID}")
-    print(f"[INFO] Target container: {NGINX_CONTAINER_NAME}")
-    print(f"[INFO] Metrics endpoint: http://0.0.0.0:{METRICS_PORT}/metrics")
-    
-    # Start Docker log reader in background thread
-    reader = threading.Thread(target=read_docker_logs, daemon=True)
-    reader.start()
-    
-    # Start metrics HTTP server
+    print(f"[INFO] SmartLoad Nginx Metrics Exporter starting")
+    print(f"[INFO] Service: {SERVICE_NAME} | Instance: {INSTANCE_ID} | Node: {NODE_ID}")
+    print(f"[INFO] Nginx container: {NGINX_CONTAINER_NAME}")
+    print(f"[INFO] Metrics port: {METRICS_PORT}")
+
+    t = threading.Thread(target=stream_docker_logs, daemon=True)
+    t.start()
+
     server = HTTPServer(("0.0.0.0", METRICS_PORT), MetricsHandler)
-    print(f"[INFO] Prometheus metrics server started on port {METRICS_PORT}")
+    print(f"[INFO] Metrics server listening on :{METRICS_PORT}")
     server.serve_forever()
 
 

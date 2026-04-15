@@ -1,0 +1,88 @@
+# OpenTelemetry Collector Configuration for SmartLoad
+# Receives metrics from Nginx exporter and stores in TimescaleDB
+# Version: 1.1
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: "smartload-nginx"
+          scrape_interval: 15s
+          scrape_timeout: 10s
+          static_configs:
+            - targets:
+                - "nginx-metrics-exporter:9113"
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: "smartload_.*"
+              action: keep
+
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins: ["*"]
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 10s
+
+  attributes:
+    actions:
+      - key: source
+        value: "real"
+        action: upsert
+      - key: environment
+        value: "development"
+        action: upsert
+
+  resourcedetection:
+    detectors: [system, docker]
+    override: false
+
+exporters:
+  logging:
+    loglevel: info
+    sampling_initial: 10
+    sampling_thereafter: 100
+
+  prometheusremotewrite:
+    endpoint: "http://timescaledb-ingester:5555/api/v1/write"
+    tls:
+      insecure: true
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 5m
+    add_metric_suffixes: false
+
+service:
+  extensions: [health_check, pprof, zpages]
+  pipelines:
+    metrics/prometheus:
+      receivers: [prometheus]
+      processors: [batch, attributes, resourcedetection]
+      exporters: [prometheusremotewrite, logging]
+    metrics/otlp:
+      receivers: [otlp]
+      processors: [batch, attributes]
+      exporters: [prometheusremotewrite, logging]
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
