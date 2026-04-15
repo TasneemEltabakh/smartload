@@ -1,0 +1,355 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_TIMESCALEDB",
+      "label": "TimescaleDB",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "pluginName": "PostgreSQL"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "postgres", "name": "PostgreSQL", "version": "1.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "bargauge", "name": "Bar gauge", "version": "" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" }
+  ],
+  "annotations": { "list": [] },
+  "description": "SmartLoad telemetry — request rate, latency, CPU, traffic spikes",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "Requests Per Second (Rate over Time)",
+      "description": "Smoothed request rate derived from request_count deltas in the 1-min aggregate. Spikes indicate traffic bursts.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  bucket AS time,\n  service_name,\n  GREATEST(total_requests::float / 60, 0) AS requests_per_second\nFROM telemetry_1min\nWHERE\n  bucket >= $__timeFrom()::timestamptz\n  AND bucket <= $__timeTo()::timestamptz\nORDER BY bucket ASC",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+
+    {
+      "id": 2,
+      "title": "Latency Distribution (Avg / P95 / Max)",
+      "description": "Request latency in milliseconds from telemetry_1min continuous aggregate. P95 is the 95th percentile — a key SLO indicator.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  bucket AS time,\n  avg_latency_ms   AS \"Avg Latency (ms)\",\n  p95_latency_ms   AS \"P95 Latency (ms)\",\n  max_latency_ms   AS \"Max Latency (ms)\"\nFROM telemetry_1min\nWHERE\n  bucket >= $__timeFrom()::timestamptz\n  AND bucket <= $__timeTo()::timestamptz\n  AND avg_latency_ms IS NOT NULL\nORDER BY bucket ASC",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "P95 Latency (ms)" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Max Latency (ms)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [4, 4], "fill": "dash" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+
+    {
+      "id": 3,
+      "title": "Backend CPU Usage (%)",
+      "description": "Average CPU usage per service node. Values above 80% indicate saturation risk.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  bucket AS time,\n  service_name,\n  ROUND((avg_cpu * 100)::numeric, 2) AS cpu_pct\nFROM telemetry_1min\nWHERE\n  bucket >= $__timeFrom()::timestamptz\n  AND bucket <= $__timeTo()::timestamptz\n  AND avg_cpu IS NOT NULL\nORDER BY bucket ASC",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "custom": { "lineWidth": 2, "fillOpacity": 20, "showPoints": "never" }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      }
+    },
+
+    {
+      "id": 4,
+      "title": "Traffic Spike Detection (Z-Score)",
+      "description": "Highlights minute-buckets where request rate is more than 2 standard deviations above the rolling 15-min average. Non-zero values are spike events.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "WITH windowed AS (\n  SELECT\n    bucket AS time,\n    total_requests,\n    AVG(total_requests) OVER (\n      ORDER BY bucket\n      ROWS BETWEEN 14 PRECEDING AND CURRENT ROW\n    ) AS rolling_avg,\n    STDDEV(total_requests) OVER (\n      ORDER BY bucket\n      ROWS BETWEEN 14 PRECEDING AND CURRENT ROW\n    ) AS rolling_std\n  FROM telemetry_1min\n  WHERE\n    bucket >= $__timeFrom()::timestamptz\n    AND bucket <= $__timeTo()::timestamptz\n    AND total_requests IS NOT NULL\n)\nSELECT\n  time,\n  CASE\n    WHEN rolling_std > 0\n     AND (total_requests - rolling_avg) / rolling_std > 2\n    THEN (total_requests - rolling_avg) / rolling_std\n    ELSE 0\n  END AS spike_zscore\nFROM windowed\nORDER BY time ASC",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "red", "mode": "fixed" },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "showPoints": "never",
+            "drawStyle": "bars"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      }
+    },
+
+    {
+      "id": 5,
+      "title": "Current P95 Latency",
+      "description": "P95 latency in the last completed 1-min bucket. Green < 100ms, yellow < 250ms, red >= 250ms.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  MAX(p95_latency_ms) AS \"P95 Latency (ms)\"\nFROM telemetry_1min\nWHERE bucket >= NOW() - INTERVAL '5 minutes'\n  AND p95_latency_ms IS NOT NULL",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 250 }
+            ]
+          },
+          "mappings": []
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      }
+    },
+
+    {
+      "id": 6,
+      "title": "Current Requests/sec",
+      "description": "Most recent requests-per-second value across all nodes.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  GREATEST(SUM(total_requests)::float / 60, 0) AS \"Requests/sec\"\nFROM telemetry_1min\nWHERE bucket >= NOW() - INTERVAL '2 minutes'\n  AND total_requests IS NOT NULL",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+
+    {
+      "id": 7,
+      "title": "Error Rate (%)",
+      "description": "Average error rate in the last 5 minutes across all nodes.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT\n  ROUND((AVG(avg_error_rate) * 100)::numeric, 2) AS \"Error Rate (%)\"\nFROM telemetry_1min\nWHERE bucket >= NOW() - INTERVAL '5 minutes'\n  AND avg_error_rate IS NOT NULL",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    },
+
+    {
+      "id": 8,
+      "title": "Active Nodes",
+      "description": "Count of distinct service nodes that have sent telemetry in the last 5 minutes.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT COUNT(DISTINCT node_id) AS \"Active Nodes\"\nFROM telemetry_metrics\nWHERE time >= NOW() - INTERVAL '5 minutes'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      }
+    }
+
+  ],
+
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["smartload", "telemetry", "timescaledb"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "datasource": { "type": "postgres", "uid": "timescaledb-smartload" },
+        "definition": "SELECT DISTINCT service_name FROM telemetry_metrics ORDER BY 1",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "query": "SELECT DISTINCT service_name FROM telemetry_metrics ORDER BY 1",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "SmartLoad — Telemetry Overview",
+  "uid": "smartload-telemetry-v1",
+  "version": 1
+}

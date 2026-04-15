@@ -1,0 +1,21 @@
+# infrastructure/grafana/provisioning/datasources/timescaledb.yaml
+apiVersion: 1
+
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    uid: timescaledb-smartload
+    url: timescaledb:5432
+    user: postgres
+    secureJsonData:
+      password: postgres123
+    jsonData:
+      database: smartload
+      sslmode: disable
+      maxOpenConns: 10
+      maxIdleConns: 5
+      connMaxLifetime: 14400
+      postgresVersion: 1600          # pg16
+      timescaledb: true              # enables time_bucket() support
+    isDefault: true
+    editable: false
