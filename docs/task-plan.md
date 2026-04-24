@@ -17,7 +17,7 @@
 
 ## Current Status
 
-Last updated: **April 2026**
+Last updated: **24 April 2026** — Phase 0 Integration Foundation complete (T0.1–T0.8, N0.1–N0.3)
 
 | Component | Owner | Status |
 |---|---|---|
@@ -26,21 +26,21 @@ Last updated: **April 2026**
 | Locust traffic simulator | Tasneem | ✅ Done |
 | CI/CD pipeline (GitHub Actions) | Tasneem | ✅ Done |
 | Repo structure + runbook | Tasneem | ✅ Done |
-| docker-compose (full stack) | Tasneem | 🔲 Not started |
-| TimescaleDB schema | Tasneem | 🔲 Not started |
-| OTel Collector config | Tasneem | 🔲 Not started |
-| Redis config | Tasneem | 🔲 Not started |
-| Prometheus config | Tasneem | 🔲 Not started |
-| Grafana dashboards | Tasneem | 🔲 Not started |
-| config/.env.example | Tasneem | 🔲 Not started |
-| Telemetry service (real) | Tasneem | 🟡 Stub only |
-| Anomaly detector (real) | Nada | 🟡 Stub only |
-| Forecasting (real) | Nada | 🟡 Stub only |
-| RL engine (real) | Nada | 🟡 Stub only |
-| Autoscaler (real) | Tasneem | 🟡 Stub only |
-| Policy manager (real) | Tasneem | 🟡 Stub only |
-| Redis message contracts | Nada | 🔲 Not started |
-| TimescaleDB query interfaces | Nada | 🔲 Not started |
+| docker-compose (full stack) | Tasneem | ✅ Done (13 services) |
+| TimescaleDB schema | Tasneem | ✅ Done (init.sql, 3 hypertables) |
+| OTel Collector config | Tasneem | ✅ Done |
+| Redis config | Tasneem | ✅ Done |
+| Prometheus config | Tasneem | ✅ Done |
+| Grafana dashboards | Tasneem | 🟡 Provisioning done; dashboards pending |
+| config/.env.example | Tasneem | ✅ Done |
+| Telemetry service (wired) | Tasneem | ✅ Done (connected, real logic Phase 1) |
+| Anomaly detector (wired) | Nada | ✅ Done (connected, real logic Phase 1) |
+| Forecasting (wired) | Nada | ✅ Done (connected, real logic Phase 1) |
+| RL engine (wired) | Nada | ✅ Done (connected, real logic Phase 1) |
+| Autoscaler (wired) | Tasneem | ✅ Done (connected, real logic Phase 1) |
+| Policy manager (wired) | Tasneem | ✅ Done (REST API + Redis publish) |
+| Redis message contracts | Nada | ✅ Done (services/shared/contracts.py) |
+| TimescaleDB query interfaces | Nada | ✅ Done (services/shared/queries.py) |
 | Dataset download scripts | Rghda | 🔲 Not started |
 | Google Borg dataset | Rghda | 🔲 Not started |
 | Alibaba dataset | Rghda | 🔲 Not started |
@@ -70,11 +70,11 @@ Last updated: **April 2026**
 
 > Do these in order. T0.6 depends on T0.2–T0.5 being written first.
 
-- [ ] **T0.1** — Populate `config/.env.example`
+- [x] **T0.1** — Populate `config/.env.example`
   - Add every env var the full stack needs: `TIMESCALEDB_URL`, `TIMESCALEDB_PASSWORD`, `REDIS_URL`, service ports, OTel endpoint
   - Use placeholder values (e.g., `TIMESCALEDB_PASSWORD=changeme`)
 
-- [ ] **T0.2** — Write `infrastructure/timescaledb/init.sql`
+- [x] **T0.2** — Write `infrastructure/timescaledb/init.sql`
   - Create TimescaleDB extension
   - Create hypertables:
     ```sql
@@ -84,21 +84,21 @@ Last updated: **April 2026**
     ```
   - ⚠️ **Block this PR until N0.3 confirms the schema matches AI query needs**
 
-- [ ] **T0.3** — Write `infrastructure/redis/redis.conf`
+- [x] **T0.3** — Write `infrastructure/redis/redis.conf`
   - Disable persistence for dev (`save ""`)
   - Set `maxmemory-policy allkeys-lru`
   - Set `maxmemory 256mb`
 
-- [ ] **T0.4** — Write `infrastructure/otel-collector/otelcol-config.yaml`
+- [x] **T0.4** — Write `infrastructure/otel-collector/otelcol-config.yaml`
   - Receivers: `otlp` (gRPC port 4317, HTTP port 4318)
   - Exporters: `prometheus` (port 8889) + `otlphttp` to TimescaleDB adapter
   - Pipeline: metrics → batch → prometheus + otlphttp
 
-- [ ] **T0.5** — Write `infrastructure/prometheus/prometheus.yml`
+- [x] **T0.5** — Write `infrastructure/prometheus/prometheus.yml`
   - Global scrape interval: 15s
   - Scrape targets: OTel Collector (8889), all 7 services (ports 8081–8087)
 
-- [ ] **T0.6** — Expand `docker-compose.yml` to the full stack
+- [x] **T0.6** — Expand `docker-compose.yml` to the full stack
   - Add infrastructure services:
     ```
     timescaledb   (timescale/timescaledb:latest-pg16, port 5432)
@@ -112,7 +112,7 @@ Last updated: **April 2026**
   - Each service `depends_on: [timescaledb, redis]` with `condition: service_healthy`
   - Add healthchecks to timescaledb and redis
 
-- [ ] **T0.7** — Update all 6 service stubs to connect on startup
+- [x] **T0.7** — Update all 6 service stubs to connect on startup
   - For each service (`telemetry`, `anomaly-detector`, `forecasting`, `rl-engine`, `autoscaler`, `policy-manager`):
     - Add `requirements.txt`: `psycopg2-binary`, `redis`
     - Update `Dockerfile` to `COPY requirements.txt .` + `RUN pip install -r requirements.txt`
@@ -122,7 +122,7 @@ Last updated: **April 2026**
       - On startup: attempt Redis connection, log `[redis] connected` or `[redis] connection failed: <error>`
       - Update `/health` to return `{"status": "ok", "timescaledb": true/false, "redis": true/false}`
 
-- [ ] **T0.8** — Update `docs/running-the-project.md` Phase 2 section with the real compose config
+- [x] **T0.8** — Update `docs/running-the-project.md` Phase 2 section with the real compose config
 
 **Definition of done:** `docker compose up --build` starts all 11+ services without errors. Each service `/health` endpoint returns `{"timescaledb": true, "redis": true}`.
 
@@ -132,7 +132,7 @@ Last updated: **April 2026**
 
 > These run in parallel with Tasneem. N0.3 must happen before T0.2 is merged.
 
-- [ ] **N0.1** — Define Redis message schemas
+- [x] **N0.1** — Define Redis message schemas
   - Create `services/shared/contracts.py` with typed dataclasses:
     ```python
     @dataclass
@@ -159,14 +159,14 @@ Last updated: **April 2026**
   - Add `json_encode()` / `json_decode()` helpers
   - All services import from this shared file
 
-- [ ] **N0.2** — Define TimescaleDB query requirements
+- [x] **N0.2** — Define TimescaleDB query requirements
   - Write the exact SQL queries each AI service needs as constants in `services/shared/queries.py`:
     - Anomaly detector: last N minutes of latency + error rate per backend
     - Forecasting: last M hours of request_rate time series
     - RL engine: current load, latency, health per backend
   - These queries define what columns must exist in T0.2's schema
 
-- [ ] **N0.3** — Review T0.2 schema PR and verify it satisfies N0.2
+- [x] **N0.3** — Review T0.2 schema PR and verify it satisfies N0.2
   - If columns are missing or types are wrong: comment on the PR before it merges
 
 ---

@@ -1,0 +1,15 @@
+# SmartLoad — Grafana dashboard provisioning config
+# Tells Grafana where to find dashboard JSON files.
+# Place dashboard JSON files in infrastructure/grafana/dashboards/
+
+apiVersion: 1
+
+providers:
+  - name: SmartLoad
+    orgId: 1
+    folder: SmartLoad
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

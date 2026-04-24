@@ -1,4 +1,216 @@
+networks:
+  smartload-net:
+    driver: bridge
+
 services:
+
+  # ── Infrastructure ──────────────────────────────────────────────────────────
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_PASSWORD: ${TIMESCALEDB_PASSWORD:-changeme}
+      POSTGRES_DB: smartloaddb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./infrastructure/timescaledb/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - timescaledb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smartloaddb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    volumes:
+      - ./infrastructure/otel-collector/otelcol-config.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics endpoint
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_USER: admin
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
+      - ./infrastructure/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+      - timescaledb
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  # ── SmartLoad AI Services ───────────────────────────────────────────────────
+
+  telemetry:
+    build:
+      context: ./services/telemetry
+    ports:
+      - "8081:8081"
+    environment:
+      PORT: "8081"
+      SERVICE_NAME: telemetry
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      OTEL_ENDPOINT: ${OTEL_ENDPOINT:-http://otel-collector:4318}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  anomaly-detector:
+    build:
+      context: ./services/anomaly-detector
+    ports:
+      - "8082:8082"
+    environment:
+      PORT: "8082"
+      SERVICE_NAME: anomaly-detector
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  forecasting:
+    build:
+      context: ./services/forecasting
+    ports:
+      - "8083:8083"
+    environment:
+      PORT: "8083"
+      SERVICE_NAME: forecasting
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      FORECAST_HORIZON_MINUTES: ${FORECAST_HORIZON_MINUTES:-5}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  rl-engine:
+    build:
+      context: ./services/rl-engine
+    ports:
+      - "8084:8084"
+    environment:
+      PORT: "8084"
+      SERVICE_NAME: rl-engine
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      RL_MODE: ${RL_MODE:-shadow}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  autoscaler:
+    build:
+      context: ./services/autoscaler
+    ports:
+      - "8085:8085"
+    environment:
+      PORT: "8085"
+      SERVICE_NAME: autoscaler
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      MIN_BACKENDS: ${MIN_BACKENDS:-1}
+      MAX_BACKENDS: ${MAX_BACKENDS:-5}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  policy-manager:
+    build:
+      context: ./services/policy-manager
+    ports:
+      - "8086:8086"
+    environment:
+      PORT: "8086"
+      SERVICE_NAME: policy-manager
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      CONFIG_PATH: /config/policy.yaml
+    volumes:
+      - ./config/policy.yaml:/config/policy.yaml
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  # ── Traffic Layer ───────────────────────────────────────────────────────────
 
   load-balancer:
     build:
@@ -7,15 +219,19 @@ services:
       - "8080:80"
     depends_on:
       - test-backend
+    networks:
+      - smartload-net
     restart: unless-stopped
 
   test-backend:
     build:
       context: ./test-backends
     environment:
-      - PORT=8080
+      PORT: "8080"
     expose:
       - "8080"
+    networks:
+      - smartload-net
     restart: unless-stopped
 
   traffic-simulator:
@@ -25,4 +241,9 @@ services:
       - "8089:8089"
     depends_on:
       - load-balancer
+    networks:
+      - smartload-net
     restart: unless-stopped
+
+volumes:
+  timescaledb-data:

@@ -1,0 +1,43 @@
+# SmartLoad — Prometheus scrape configuration
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # OTel Collector exposes all forwarded metrics on port 8889
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # SmartLoad AI services — each exposes /metrics via Flask (future)
+  # For now Prometheus scrapes /health as a connectivity check
+  - job_name: telemetry
+    metrics_path: /health
+    static_configs:
+      - targets: ["telemetry:8081"]
+
+  - job_name: anomaly-detector
+    metrics_path: /health
+    static_configs:
+      - targets: ["anomaly-detector:8082"]
+
+  - job_name: forecasting
+    metrics_path: /health
+    static_configs:
+      - targets: ["forecasting:8083"]
+
+  - job_name: rl-engine
+    metrics_path: /health
+    static_configs:
+      - targets: ["rl-engine:8084"]
+
+  - job_name: autoscaler
+    metrics_path: /health
+    static_configs:
+      - targets: ["autoscaler:8085"]
+
+  - job_name: policy-manager
+    metrics_path: /health
+    static_configs:
+      - targets: ["policy-manager:8086"]

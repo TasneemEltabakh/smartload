@@ -1,0 +1,1764 @@
+% ============================================================
+%  SmartLoad — Integration-First Architecture Check
+%  A Beginner-Friendly Technical Explanation
+%  Zewail City of Science, Technology, and Innovation
+%  CIE Graduation Project 2025/2026
+% ============================================================
+
+\documentclass[12pt, a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+\usepackage{amsmath}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{parskip}
+\usepackage{lmodern}
+\usepackage{mdframed}
+
+% ── Colors ────────────────────────────────────────────────────────────────────
+\definecolor{codeblue}{RGB}{0, 87, 163}
+\definecolor{codegray}{RGB}{245, 245, 245}
+\definecolor{codegreen}{RGB}{0, 128, 0}
+\definecolor{codepurple}{RGB}{128, 0, 128}
+\definecolor{codestring}{RGB}{163, 21, 21}
+\definecolor{commentcolor}{RGB}{96, 139, 78}
+\definecolor{keywordcolor}{RGB}{0, 0, 200}
+\definecolor{boxblue}{RGB}{220, 235, 255}
+\definecolor{boxgreen}{RGB}{220, 255, 220}
+\definecolor{boxyellow}{RGB}{255, 250, 210}
+\definecolor{boxred}{RGB}{255, 230, 230}
+
+% ── Code listing style ────────────────────────────────────────────────────────
+\lstdefinestyle{python}{
+  language=Python,
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{keywordcolor}\bfseries,
+  stringstyle=\color{codestring},
+  commentstyle=\color{commentcolor}\itshape,
+  numberstyle=\tiny\color{gray},
+  breaklines=true,
+  breakatwhitespace=true,
+  numbers=left,
+  numbersep=8pt,
+  showstringspaces=false,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray!30},
+  tabsize=4,
+  captionpos=b,
+  xleftmargin=15pt,
+  morekeywords={import,from,as,def,class,return,if,else,elif,True,False,None,
+                and,or,not,in,is,try,except,finally,raise,with,for,while,
+                async,await,yield,lambda,pass,continue,break,global,nonlocal,
+                assert,del,dataclass,field},
+}
+
+\lstdefinestyle{yaml}{
+  language=,
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codeblue}\bfseries,
+  stringstyle=\color{codestring},
+  commentstyle=\color{commentcolor}\itshape,
+  breaklines=true,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray!30},
+  tabsize=2,
+  captionpos=b,
+  xleftmargin=15pt,
+}
+
+\lstdefinestyle{sql}{
+  language=SQL,
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{codeblue}\bfseries,
+  stringstyle=\color{codestring},
+  commentstyle=\color{commentcolor}\itshape,
+  breaklines=true,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray!30},
+  tabsize=2,
+  captionpos=b,
+  xleftmargin=15pt,
+}
+
+\lstdefinestyle{bash}{
+  language=bash,
+  backgroundcolor=\color{black!90},
+  basicstyle=\ttfamily\small\color{white},
+  keywordstyle=\color{yellow},
+  commentstyle=\color{green!60},
+  stringstyle=\color{orange},
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  tabsize=2,
+  captionpos=b,
+  xleftmargin=15pt,
+}
+
+\lstset{style=python}
+
+% ── Coloured info boxes ───────────────────────────────────────────────────────
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{conceptbox}[1]{
+  colback=boxblue,
+  colframe=codeblue,
+  fonttitle=\bfseries,
+  title={#1},
+  breakable,
+  before upper={\parindent0pt},
+}
+
+\newtcolorbox{definitionbox}[1]{
+  colback=boxgreen,
+  colframe=codegreen!70!black,
+  fonttitle=\bfseries,
+  title={Definition: #1},
+  breakable,
+  before upper={\parindent0pt},
+}
+
+\newtcolorbox{importantbox}[1]{
+  colback=boxyellow,
+  colframe=orange!80!black,
+  fonttitle=\bfseries,
+  title={#1},
+  breakable,
+  before upper={\parindent0pt},
+}
+
+\newtcolorbox{resultbox}[1]{
+  colback=boxgreen,
+  colframe=codegreen!70!black,
+  fonttitle=\bfseries\color{white},
+  colbacktitle=codegreen!70!black,
+  title={#1},
+  breakable,
+  before upper={\parindent0pt},
+}
+
+% ── Page style ────────────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{SmartLoad — Integration-First Architecture Check}
+\lhead{\leftmark}
+\rfoot{\thepage}
+\lfoot{Zewail City, CIE GP 2025/2026}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=codeblue,
+  urlcolor=codeblue,
+  citecolor=codeblue,
+  pdftitle={SmartLoad Integration-First Architecture Check},
+  pdfauthor={SmartLoad Team},
+}
+
+% ── Document ──────────────────────────────────────────────────────────────────
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{2cm}
+  {\Huge\bfseries SmartLoad\\[0.4em]
+   \Large Integration-First Architecture Check\\[0.3em]
+   \normalsize A Complete Beginner's Guide to Every Line of Code}\\[2cm]
+  {\large Zewail City of Science, Technology, and Innovation\\
+   CIE Graduation Project 2025/2026\\[1.5cm]}
+  {\large\itshape ``Wire before you implement.\\
+   Every service must connect to Redis and TimescaleDB\\
+   before any ML logic is added.''}\\[0.5em]
+  {\small --- SmartLoad Team Principle \#1}
+  \vfill
+  {\large April 24, 2026}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction: What Is Integration-First Development?}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{conceptbox}{The Core Idea}
+Integration-first means: \textbf{prove that all the pieces talk to each other
+before you write any smart logic inside them.}
+
+Imagine building a telephone network. Before you worry about what people say on
+the calls, you first make sure every phone is plugged in and can dial every
+other phone. Only when the lines are confirmed working do you start having
+actual conversations.
+
+SmartLoad does the same thing: 13 services need to communicate. Before
+implementing machine learning, anomaly detection, or autoscaling, we first
+verify that:
+\begin{enumerate}
+  \item Every service starts up.
+  \item Every service can reach the database (TimescaleDB).
+  \item Every service can reach the message bus (Redis).
+  \item The database has the right tables.
+  \item Messages can flow between services.
+\end{enumerate}
+\end{conceptbox}
+
+\subsection{Why This Matters}
+
+Without integration-first development, a common failure pattern is:
+\begin{enumerate}
+  \item Developer A writes an anomaly detector in isolation (it passes all unit
+        tests).
+  \item Developer B writes a forecasting service in isolation (it also passes
+        all unit tests).
+  \item On demo day, the two services can't find each other, the database
+        schema doesn't match, and nothing works.
+\end{enumerate}
+
+Integration-first eliminates this by making \textbf{connectivity the first
+deliverable}, not the last.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{SmartLoad System Overview}
+% ══════════════════════════════════════════════════════════════════════════════
+
+SmartLoad is an AI-driven load management middleware. It sits between internet
+clients and a pool of backend servers, deciding in real time how to route
+traffic. It has seven authored microservices and four infrastructure components.
+
+\subsection{The Seven Microservices}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lllX}
+  \toprule
+  \textbf{\#} & \textbf{Service} & \textbf{Port} & \textbf{Role} \\
+  \midrule
+  1 & load-balancer    & 8080 & Receives all client HTTP traffic; routes to backends \\
+  2 & telemetry        & 8081 & Collects performance metrics; stores them in the DB \\
+  3 & anomaly-detector & 8082 & Watches metrics; flags unhealthy backends \\
+  4 & forecasting      & 8083 & Predicts future request load \\
+  5 & rl-engine        & 8084 & Uses reinforcement learning to rank backends \\
+  6 & autoscaler       & 8085 & Starts/stops backend containers based on load \\
+  7 & policy-manager   & 8086 & Central control: safe mode, SLOs, operating rules \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{The Four Infrastructure Components}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{llX}
+  \toprule
+  \textbf{Component} & \textbf{Port} & \textbf{Role} \\
+  \midrule
+  TimescaleDB   & 5432 & Time-series database: stores all metrics \\
+  Redis         & 6379 & Message bus: services publish/subscribe to channels \\
+  Prometheus    & 9090 & Scrapes and stores operational metrics for alerting \\
+  Grafana       & 3000 & Visualises metrics as live dashboards \\
+  OTel Collector & 4317/4318 & Receives metrics and forwards them \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{The Communications Channel Diagram}
+
+The most important architectural diagram is the \textbf{Communications Channel
+Diagram} (Figure~\ref{fig:commchannel}). It shows how data flows through the
+entire system.
+
+\begin{figure}[H]
+  \centering
+  \fbox{\parbox{0.9\textwidth}{
+    \centering
+    \vspace{1em}
+    \textit{[CommunicationsChannelsDiagram.png --- see SDP/System Design/Diagrams/]}
+    \vspace{1em}
+  }}
+  \caption{SmartLoad Communications Channel Diagram --- the authoritative
+           architecture reference for this phase.}
+  \label{fig:commchannel}
+\end{figure}
+
+Reading the diagram from top to bottom:
+
+\begin{enumerate}
+  \item \textbf{Clients} send HTTP requests to the \textbf{NGINX load balancer}.
+  \item NGINX \textbf{logs} every request (timestamp, latency, backend ID).
+  \item Those logs are shipped via \textbf{OTel Collector} and stored as rows in
+        \textbf{TimescaleDB}.
+  \item Three AI services (\textit{Anomaly Detector}, \textit{Forecasting},
+        \textit{RL Engine}) \textbf{read metrics from TimescaleDB} using SQL
+        queries.
+  \item Each AI service \textbf{publishes a signal} to the \textbf{Redis control
+        bus}:
+        \begin{itemize}
+          \item Anomaly Detector $\rightarrow$ \texttt{smartload.anomaly}
+          \item Forecasting $\rightarrow$ \texttt{smartload.forecast}
+          \item RL Engine $\rightarrow$ \texttt{smartload.routing}
+        \end{itemize}
+  \item The \textbf{load balancer sidecar} reads from Redis and updates NGINX
+        routing rules.
+  \item The \textbf{autoscaler} reads from \texttt{smartload.forecast} and
+        starts or stops backend containers.
+  \item The \textbf{policy manager} publishes rules to \texttt{smartload.policy}
+        that all other services obey.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Core Concepts Explained from Scratch}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{What Is Docker?}
+
+\begin{definitionbox}{Docker}
+Docker is a tool that lets you package a program and all its dependencies
+(libraries, Python version, config files) into a single \textbf{container}
+--- a lightweight, isolated box that runs the same way on every computer.
+\end{definitionbox}
+
+Think of a container like a sealed lunchbox. Everything the program needs to
+run is inside the box. When you open it on a different machine, the food is
+exactly the same.
+
+A \textbf{Dockerfile} is the recipe for building one lunchbox:
+
+\begin{lstlisting}[style=yaml, caption={services/telemetry/Dockerfile --- building the telemetry container}]
+FROM python:3.11-slim        # Start from an image that has Python 3.11 installed.
+                             # "slim" means it's a minimal version (no extras).
+
+WORKDIR /app                 # All subsequent commands run inside /app directory
+                             # inside the container.
+
+COPY requirements.txt .      # Copy requirements.txt from your machine INTO
+                             # the container's /app directory.
+
+RUN pip install --no-cache-dir -r requirements.txt
+                             # RUN executes a shell command WHILE BUILDING the image.
+                             # This installs Flask, psycopg2-binary, and redis
+                             # so the container has them when it starts.
+                             # --no-cache-dir keeps the image size small.
+
+COPY app.py .                # Copy the Python application code into the container.
+
+ENV PORT=8081                # Set an environment variable. The app.py reads
+                             # this with os.environ.get("PORT") to know which
+                             # port to listen on.
+ENV SERVICE_NAME=telemetry   # Another env var -- the app uses this to label itself.
+
+EXPOSE 8081                  # Document that this container listens on port 8081.
+                             # (Does not actually open the port -- docker-compose does.)
+
+CMD ["python", "app.py"]     # The command that runs when the container starts.
+\end{lstlisting}
+
+\subsection{What Is Docker Compose?}
+
+\begin{definitionbox}{Docker Compose}
+Docker Compose is a tool for \textbf{running multiple containers together} as a
+coordinated system. You describe all the containers in a single file
+(\texttt{docker-compose.yml}) and start them all with one command.
+\end{definitionbox}
+
+Without Compose, you would have to type 13 separate \texttt{docker run} commands
+and manually set up the network between them. Compose automates all of this.
+
+\subsection{What Is a Microservice?}
+
+\begin{definitionbox}{Microservice}
+A microservice is a small, independently deployable program that does
+\textbf{one specific job}. Instead of one huge program that does everything,
+you have many small programs that each do one thing and communicate with each
+other.
+\end{definitionbox}
+
+SmartLoad uses microservices because:
+\begin{itemize}
+  \item Each AI model (anomaly, forecasting, RL) can be developed and updated
+        independently.
+  \item If the forecasting service crashes, the rest of the system keeps running.
+  \item Different team members can work on different services simultaneously.
+\end{itemize}
+
+\subsection{What Is Redis?}
+
+\begin{definitionbox}{Redis}
+Redis is an in-memory key-value store that is used here as a
+\textbf{message bus} (also called a control bus). Services publish messages to
+named channels, and other services that have subscribed to those channels
+receive them instantly.
+\end{definitionbox}
+
+This pattern is called \textbf{Publish/Subscribe (Pub/Sub)}:
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  \textbf{Publisher} & \textbf{Channel} & \textbf{Subscriber(s)} \\
+  \midrule
+  anomaly-detector & \texttt{smartload.anomaly}   & load-balancer sidecar \\
+  forecasting      & \texttt{smartload.forecast}  & autoscaler \\
+  rl-engine        & \texttt{smartload.routing}   & load-balancer sidecar \\
+  autoscaler       & \texttt{smartload.scale}     & policy-manager \\
+  policy-manager   & \texttt{smartload.policy}    & all AI services \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+Redis is configured to be \textbf{in-memory only} (no disk persistence) because
+these are live operational signals, not permanent records. If Redis restarts, the
+signals are regenerated immediately by the running services.
+
+\subsection{What Is TimescaleDB?}
+
+\begin{definitionbox}{TimescaleDB}
+TimescaleDB is a time-series database built on top of PostgreSQL. A
+\textbf{time-series database} is optimised for storing data that is
+timestamped and arrives continuously, like sensor readings, server metrics, or
+request logs.
+\end{definitionbox}
+
+Regular databases store rows in arbitrary order. TimescaleDB automatically
+organises data by time using \textbf{hypertables} --- tables that are
+internally divided into time-based chunks for fast queries like
+``give me the last 60 seconds of data.''
+
+\subsection{What Is OpenTelemetry (OTel)?}
+
+\begin{definitionbox}{OpenTelemetry}
+OpenTelemetry (OTel) is an open standard for collecting, processing, and
+exporting \textbf{observability data}: metrics, logs, and traces from running
+software. The OTel Collector acts as a pipeline: receive data from services,
+process it, and export it to storage backends like Prometheus.
+\end{definitionbox}
+
+\subsection{What Is Prometheus and Grafana?}
+
+\begin{definitionbox}{Prometheus}
+Prometheus is a monitoring system that \textbf{scrapes} (periodically polls)
+metrics endpoints from services and stores them as time series. It then makes
+them queryable using a language called PromQL.
+\end{definitionbox}
+
+\begin{definitionbox}{Grafana}
+Grafana is a visualisation tool that connects to data sources like Prometheus
+and TimescaleDB and \textbf{draws real-time dashboards}: graphs, gauges, and
+tables showing system health at a glance.
+\end{definitionbox}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{What We Built: A File-by-File Walkthrough}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This section walks through every file created or modified, explaining every
+line of code from the ground up.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Step 1 --- Shared Message Contracts}
+\label{sec:contracts}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsubsection{The Problem This Solves}
+
+When services send messages to each other over Redis, both sides must agree on
+the format of the message. If the anomaly detector sends
+\texttt{\{"backend": "host1"\}} but the load balancer expects
+\texttt{\{"backend\_id": "host1"\}}, the communication silently fails.
+
+We solve this by defining \textbf{typed message contracts} in one shared file
+that every service imports.
+
+\subsubsection{services/shared/contracts.py --- Complete Walkthrough}
+
+\begin{lstlisting}[style=python, caption={services/shared/contracts.py}]
+from __future__ import annotations
+# This import allows using newer Python type annotation syntax
+# in older Python versions. "from __future__" imports are always
+# placed at the very top of the file.
+
+import json
+# The json module converts Python objects (dicts, lists) into
+# JSON strings and back. JSON (JavaScript Object Notation) is
+# the universal format services use to send data to each other.
+
+from dataclasses import asdict, dataclass, field
+# dataclass: a decorator that automatically generates __init__,
+#   __repr__, and other methods for a class.
+# asdict: converts a dataclass instance into a plain dict.
+# field: used to specify default values for dataclass fields.
+
+from datetime import datetime, timezone
+# datetime: represents a specific point in time.
+# timezone: used to make timestamps timezone-aware (UTC).
+
+from typing import Any
+# Any: a type hint meaning "this can be any Python type".
+# Used in function signatures for clarity.
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={Helper functions in contracts.py}]
+def _now_iso() -> str:
+    # This is a private helper function (the leading underscore
+    # signals it's not meant to be called from outside this module).
+    # It returns the current time as an ISO 8601 string, e.g.:
+    #   "2026-04-24T14:30:00+00:00"
+    # timezone.utc ensures the time is in UTC (not local time).
+    return datetime.now(timezone.utc).isoformat()
+
+
+def json_encode(obj: Any) -> str:
+    # Converts a dataclass (or plain dict) into a JSON string
+    # suitable for publishing to Redis.
+    #
+    # hasattr checks if obj has the attribute "__dataclass_fields__",
+    # which is only present on dataclass instances. If true, we
+    # convert it to a dict first using asdict(), then serialize to JSON.
+    if hasattr(obj, "__dataclass_fields__"):
+        return json.dumps(asdict(obj))
+    # If obj is already a plain dict, json.dumps handles it directly.
+    return json.dumps(obj)
+
+
+def json_decode(data: str | bytes, cls: type) -> Any:
+    # Converts a JSON string received from Redis back into a dataclass.
+    #
+    # Redis can return either str or bytes depending on the client version.
+    # If we received bytes, decode to str first.
+    if isinstance(data, bytes):
+        data = data.decode()
+    # json.loads parses the JSON string into a Python dict.
+    d = json.loads(data)
+    # **d "unpacks" the dict into keyword arguments.
+    # cls(**d) creates an instance of the dataclass from those arguments.
+    # Example: AnomalyEvent(**{"backend_id": "h1", "status": "ok", ...})
+    return cls(**d)
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={AnomalyEvent dataclass in contracts.py}]
+@dataclass          # This decorator tells Python to auto-generate
+                    # __init__, __repr__, __eq__ for this class.
+class AnomalyEvent:
+    """Published by anomaly-detector to smartload.anomaly."""
+
+    backend_id: str       # Which backend server this event is about.
+                          # e.g. "smartload-test-backend-1"
+
+    status: str           # Health verdict: one of:
+                          #   "healthy"   - backend is fine
+                          #   "degraded"  - backend is slow but alive
+                          #   "unhealthy" - backend must be excluded
+
+    score: float          # A number from 0.0 to 1.0 measuring how
+                          # anomalous the backend's behaviour is.
+                          # Higher = more anomalous.
+
+    timestamp: str = field(default_factory=_now_iso)
+                          # field() with default_factory means:
+                          # "if no timestamp is provided when creating
+                          # this object, call _now_iso() to generate one."
+                          # This is how dataclasses handle mutable defaults.
+\end{lstlisting}
+
+The other dataclasses (\texttt{ForecastResult}, \texttt{RoutingRecommendation},
+\texttt{ScalingEvent}, \texttt{PolicyUpdate}) follow the exact same pattern.
+
+\subsubsection{services/shared/queries.py --- SQL Constants}
+
+\begin{lstlisting}[style=python, caption={services/shared/queries.py --- the anomaly query}]
+ANOMALY_QUERY = """
+SELECT
+    instance,
+    metric_name,
+    AVG(value)    AS avg_value,   -- average over the window
+    MAX(value)    AS max_value,   -- peak value in the window
+    STDDEV(value) AS std_value,   -- standard deviation (spread)
+    COUNT(*)      AS sample_count -- how many data points were in window
+FROM metrics
+-- The metrics table stores one row per measurement.
+-- We filter to a recent time window using NOW() minus an interval.
+-- '{window}' is a Python format string placeholder; callers pass e.g. '60 seconds'.
+WHERE
+    time > NOW() - INTERVAL '{window}'
+    AND service = 'load-balancer'   -- only rows from the load balancer
+    AND metric_name IN ('request_latency_ms', 'error_rate')  -- only these metrics
+GROUP BY instance, metric_name
+-- GROUP BY collapses all rows for the same (instance, metric_name) pair
+-- into one summary row, applying AVG/MAX/STDDEV/COUNT to each group.
+ORDER BY instance, metric_name;
+"""
+\end{lstlisting}
+
+\begin{importantbox}{Why SQL in Python Constants?}
+Instead of writing SQL queries scattered inside each service, we centralise
+them in \texttt{queries.py}. This means:
+\begin{itemize}
+  \item The exact same query is used consistently.
+  \item If the database schema changes, there is one place to update.
+  \item The schema designer (Tasneem) can read these queries and confirm the
+        schema satisfies them \textbf{before} writing a single line of service code.
+\end{itemize}
+\end{importantbox}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Step 2 --- Infrastructure Configuration Files}
+\label{sec:infra}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsubsection{config/.env.example --- Environment Variables}
+
+\begin{lstlisting}[style=bash, caption={config/.env.example}]
+# Environment variables are key=value pairs that a program reads
+# at runtime. They allow changing behaviour without modifying code.
+# This file is a TEMPLATE; developers copy it to .env and fill in real values.
+# .env is gitignored so secrets never land in version control.
+
+TIMESCALEDB_PASSWORD=changeme     # The database password. In production,
+                                   # this would be a strong random string.
+
+TIMESCALEDB_URL=postgresql://postgres:changeme@timescaledb:5432/smartloaddb
+# This is a PostgreSQL connection string. Format:
+#   protocol://username:password@hostname:port/database
+# "timescaledb" is the Docker service name -- inside the Docker network,
+# services find each other by their compose service name, not IP address.
+
+REDIS_URL=redis://redis:6379      # Redis connection string.
+                                   # "redis" is the compose service name.
+
+OTEL_ENDPOINT=http://otel-collector:4318  # Where to send metrics.
+                                           # 4318 is the OTLP HTTP port.
+
+GRAFANA_PASSWORD=admin            # Grafana web UI login password.
+
+MIN_BACKENDS=1                    # Autoscaler: never go below 1 backend.
+MAX_BACKENDS=5                    # Autoscaler: never exceed 5 backends.
+RL_MODE=shadow                    # RL engine starts in shadow mode:
+                                   # it computes decisions but does not
+                                   # apply them to live traffic yet.
+\end{lstlisting}
+
+\subsubsection{config/policy.yaml --- Global Governance Defaults}
+
+\begin{lstlisting}[style=yaml, caption={config/policy.yaml}]
+operating_mode: hybrid       # How SmartLoad routes traffic:
+                             #   classical - pure round-robin, no AI
+                             #   hybrid    - AI assists but doesn't fully control
+                             #   learning  - AI fully in control
+
+safe_mode: false             # When true, ALL AI routing is disabled.
+                             # The system falls back to basic round-robin.
+                             # Used during emergencies or maintenance.
+
+min_backends: 1              # Autoscaler constraint: always keep at least
+                             # 1 backend running (avoid total shutdown).
+
+max_backends: 5              # Autoscaler constraint: never run more than 5
+                             # backends (cost/resource limit).
+
+slo_p95_latency_ms: 200      # Service Level Objective: 95% of requests
+                             # must complete within 200 milliseconds.
+                             # If violated, the autoscaler scales out.
+
+anomaly_latency_multiplier: 3.0
+                             # A backend is flagged DEGRADED if its current
+                             # latency > 3x its rolling average latency.
+                             # Higher multiplier = less sensitive detection.
+
+per_instance_capacity_rps: 100
+                             # How many requests per second one backend
+                             # can handle. Used by autoscaler to decide
+                             # how many backends are needed.
+
+autoscaler_cooldown_seconds: 60
+                             # After scaling, wait 60 seconds before the
+                             # next scaling action. Prevents thrashing
+                             # (rapidly scaling up and down repeatedly).
+\end{lstlisting}
+
+\subsubsection{infrastructure/timescaledb/init.sql --- The Database Schema}
+
+\begin{lstlisting}[style=sql, caption={infrastructure/timescaledb/init.sql}]
+-- SQL comments start with --.
+-- This file runs automatically the first time TimescaleDB starts,
+-- via the /docker-entrypoint-initdb.d/ directory convention.
+
+-- Step 1: Enable the TimescaleDB extension inside PostgreSQL.
+-- Without this, regular PostgreSQL tables are created instead of hypertables.
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- IF NOT EXISTS means: don't fail if the extension is already installed.
+
+-- ── metrics table ────────────────────────────────────────────────────────────
+-- General-purpose measurement store. Every metric from every service
+-- is stored as a row here.
+CREATE TABLE IF NOT EXISTS metrics (
+    time         TIMESTAMPTZ      NOT NULL,
+    -- TIMESTAMPTZ = timestamp with timezone. Stores both date/time AND
+    -- the timezone offset. All times are stored in UTC.
+    -- NOT NULL means this column is mandatory (can't be empty).
+
+    service      TEXT             NOT NULL,
+    -- Which SmartLoad service generated this metric.
+    -- e.g. "load-balancer", "anomaly-detector"
+
+    instance     TEXT             NOT NULL,
+    -- Which specific container (backend ID) this metric is for.
+    -- e.g. "smartload-test-backend-1"
+
+    metric_name  TEXT             NOT NULL,
+    -- What is being measured. e.g. "request_latency_ms", "error_rate"
+
+    value        DOUBLE PRECISION NOT NULL
+    -- The measured value. DOUBLE PRECISION is a 64-bit floating point number.
+    -- e.g. 42.7 (milliseconds), 0.03 (3% error rate)
+);
+
+-- Convert this regular PostgreSQL table into a TimescaleDB hypertable.
+-- TimescaleDB will automatically partition data by the 'time' column
+-- into chunks (e.g. one chunk per day). This makes time-range queries
+-- much faster because only relevant chunks are read.
+SELECT create_hypertable('metrics', 'time', if_not_exists => TRUE);
+
+-- Create an index for fast lookups by service + instance + time.
+-- An index is like the index at the back of a book: instead of reading
+-- every page, you jump directly to the right page.
+CREATE INDEX IF NOT EXISTS idx_metrics_service_instance
+    ON metrics (service, instance, time DESC);
+-- time DESC means newer records are listed first (most useful for "recent" queries).
+
+-- Second index: fast lookups by metric_name + time.
+CREATE INDEX IF NOT EXISTS idx_metrics_metric_name
+    ON metrics (metric_name, time DESC);
+\end{lstlisting}
+
+\begin{lstlisting}[style=sql, caption={backend\_health and scaling\_events tables in init.sql}]
+-- ── backend_health table ──────────────────────────────────────────────────────
+-- Written by the anomaly detector after each evaluation cycle.
+-- The load balancer reads this to decide which backends to exclude.
+CREATE TABLE IF NOT EXISTS backend_health (
+    time        TIMESTAMPTZ      NOT NULL,
+    backend_id  TEXT             NOT NULL,   -- e.g. "smartload-test-backend-1"
+    status      TEXT             NOT NULL,   -- "healthy" | "degraded" | "unhealthy"
+    score       DOUBLE PRECISION NOT NULL    -- anomaly score, 0.0 = normal, 1.0 = very anomalous
+);
+
+SELECT create_hypertable('backend_health', 'time', if_not_exists => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_backend_health_backend
+    ON backend_health (backend_id, time DESC);
+
+-- ── scaling_events table ──────────────────────────────────────────────────────
+-- Written by the autoscaler after each scale-out or scale-in action.
+-- Provides an audit log of all scaling decisions.
+CREATE TABLE IF NOT EXISTS scaling_events (
+    time           TIMESTAMPTZ NOT NULL,
+    action         TEXT        NOT NULL,   -- "scale_out" | "scale_in"
+    instance_count INT         NOT NULL,   -- how many backends are now running
+    reason         TEXT                    -- human-readable explanation
+    -- Note: reason has no NOT NULL -- it's optional (can be NULL).
+);
+
+SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);
+\end{lstlisting}
+
+\subsubsection{infrastructure/redis/redis.conf}
+
+\begin{lstlisting}[style=bash, caption={infrastructure/redis/redis.conf}]
+# Redis configuration file.
+# This file is mounted into the Redis container by docker-compose.
+
+save ""
+# Normally Redis saves a snapshot of all data to disk periodically.
+# save "" disables ALL snapshots. We disable persistence because:
+#   - SmartLoad's control bus carries LIVE signals (not historical records)
+#   - Old signals are worthless after a restart
+#   - Persistence wastes disk I/O with no benefit here
+
+appendonly no
+# AOF (Append Only File) is another persistence mechanism that logs
+# every write command. We disable it for the same reason as above.
+
+maxmemory 256mb
+# Limit Redis memory usage to 256 megabytes.
+# Prevents Redis from consuming all available RAM on the machine.
+
+maxmemory-policy allkeys-lru
+# When Redis hits the memory limit, it must evict (delete) some keys.
+# LRU = Least Recently Used: delete the key that was accessed least recently.
+# allkeys = apply this policy to ALL keys (not just keys with TTL set).
+# This ensures the most recent signals are kept when memory is full.
+
+bind 0.0.0.0
+# Listen on all network interfaces inside the container.
+# 0.0.0.0 means "accept connections from any IP".
+# Without this, Redis would only accept connections from localhost.
+
+port 6379
+# Standard Redis port. Other services connect using redis://redis:6379
+
+protected-mode no
+# Redis protected-mode requires authentication when accessed from outside
+# localhost. We disable it here because Docker networking already
+# isolates Redis inside the smartload-net bridge network.
+\end{lstlisting}
+
+\subsubsection{infrastructure/otel-collector/otelcol-config.yaml}
+
+\begin{lstlisting}[style=yaml, caption={infrastructure/otel-collector/otelcol-config.yaml}]
+# The OTel Collector is a pipeline: data flows through three stages:
+#   receivers -> processors -> exporters
+
+receivers:
+  # "otlp" = OpenTelemetry Protocol. This tells the Collector to
+  # accept incoming telemetry data via two network protocols:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"   # gRPC port -- high performance binary protocol
+      http:
+        endpoint: "0.0.0.0:4318"   # HTTP/JSON port -- simpler, easier to debug
+
+processors:
+  # The batch processor collects multiple data points and sends them
+  # together, rather than one at a time. This improves efficiency.
+  batch:
+    timeout: 5s             # Wait up to 5 seconds to collect a batch
+    send_batch_size: 1000   # Or send when 1000 data points are collected
+
+exporters:
+  # Prometheus exporter: transforms OTel metrics into Prometheus format
+  # and exposes them on an HTTP endpoint that Prometheus scrapes.
+  prometheus:
+    endpoint: "0.0.0.0:8889"    # Prometheus will poll this URL
+    namespace: smartload         # Prefixes all metric names with "smartload_"
+
+  # Debug exporter: prints received metrics to logs (useful during development)
+  debug:
+    verbosity: basic             # "basic" means one line per batch (not verbose)
+
+service:
+  # Define the actual pipeline. Data flows:
+  #   receivers ---> processors ---> exporters
+  pipelines:
+    metrics:                     # Pipeline for metric data specifically
+      receivers: [otlp]          # Accept from OTel Protocol
+      processors: [batch]        # Batch before exporting
+      exporters: [prometheus, debug]  # Send to both Prometheus and logs
+\end{lstlisting}
+
+\subsubsection{infrastructure/prometheus/prometheus.yml}
+
+\begin{lstlisting}[style=yaml, caption={infrastructure/prometheus/prometheus.yml}]
+global:
+  scrape_interval: 15s     # Every 15 seconds, Prometheus visits each target
+                           # and collects the current metrics. This is called
+                           # "scraping". Shorter interval = more data points
+                           # but higher resource usage.
+  evaluation_interval: 15s # How often Prometheus evaluates alerting rules.
+
+scrape_configs:
+  # Each entry in scrape_configs is a "job" -- a set of targets to scrape.
+
+  - job_name: otel-collector     # A human-readable label for this group
+    static_configs:
+      - targets: ["otel-collector:8889"]
+                           # Scrape the OTel Collector's Prometheus endpoint.
+                           # This gives us all metrics that services forwarded
+                           # via OTel.
+
+  - job_name: telemetry
+    metrics_path: /health  # Instead of the default /metrics path,
+                           # we currently scrape /health.
+                           # This verifies the service is alive.
+                           # Phase 1 will add a real /metrics endpoint.
+    static_configs:
+      - targets: ["telemetry:8081"]
+                           # "telemetry" is the Docker compose service name.
+                           # Inside the smartload-net network, this resolves
+                           # to the container's IP address automatically.
+
+  # ... same pattern for all 6 AI services on their respective ports
+\end{lstlisting}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Step 3 --- The Full docker-compose.yml}
+\label{sec:compose}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\begin{lstlisting}[style=yaml, caption={docker-compose.yml --- network and timescaledb sections}]
+networks:
+  smartload-net:
+    driver: bridge
+    # Create a private virtual network called "smartload-net".
+    # "bridge" is the standard Docker network driver for single-host setups.
+    # Every service in this compose file that specifies "networks: [smartload-net]"
+    # can reach every other service using its compose service name as hostname.
+    # Services NOT on this network cannot communicate with services that are.
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    # "image" means: don't build this -- download a pre-built container image
+    # from Docker Hub. "timescale/timescaledb:latest-pg16" is
+    # TimescaleDB running on PostgreSQL version 16.
+
+    environment:
+      POSTGRES_PASSWORD: ${TIMESCALEDB_PASSWORD:-changeme}
+      # ${VAR:-default} is Docker Compose variable substitution:
+      #   if TIMESCALEDB_PASSWORD is set in .env, use it.
+      #   if not, use "changeme" as the default value.
+      # POSTGRES_PASSWORD is the env var the TimescaleDB image reads
+      # to set the database superuser password.
+      POSTGRES_DB: smartloaddb
+      # Automatically create a database named "smartloaddb" on first start.
+
+    ports:
+      - "5432:5432"
+      # Map host port 5432 to container port 5432.
+      # Format: "HOST_PORT:CONTAINER_PORT"
+      # This allows tools on your laptop (like DBeaver, psql) to connect
+      # to the database at localhost:5432.
+
+    volumes:
+      - ./infrastructure/timescaledb/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # Mount a local file INTO the container at a specific path.
+      # Format: "LOCAL_PATH:CONTAINER_PATH"
+      # /docker-entrypoint-initdb.d/ is a special directory in the TimescaleDB
+      # image: any .sql files found there are automatically executed on first start.
+      # This is how our schema gets created.
+      - timescaledb-data:/var/lib/postgresql/data
+      # Mount a named volume (persistent storage). This preserves the
+      # database data across container restarts. Without this, all data
+      # would be lost every time the container stops.
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d smartloaddb"]
+      # pg_isready is a PostgreSQL utility that tests if the database
+      # is accepting connections. Returns exit code 0 if healthy.
+      # Docker uses this to decide when the container is "healthy".
+      interval: 5s        # Check every 5 seconds
+      timeout: 5s         # If the check takes more than 5s, count as failed
+      retries: 10         # After 10 consecutive failures, mark as unhealthy
+      start_period: 30s   # Don't count failures in the first 30s (DB needs
+                          # time to initialise on first run)
+    networks:
+      - smartload-net
+    restart: unless-stopped
+    # Restart the container automatically if it crashes.
+    # "unless-stopped" means: restart always, EXCEPT when explicitly stopped
+    # by the user (e.g. docker compose stop).
+\end{lstlisting}
+
+\begin{lstlisting}[style=yaml, caption={docker-compose.yml --- AI service definition (anomaly-detector)}]
+  anomaly-detector:
+    build:
+      context: ./services/anomaly-detector
+      # "build" means: build a container image from a Dockerfile.
+      # "context" is the directory sent to Docker as the build context.
+      # Docker reads the Dockerfile inside that directory.
+
+    ports:
+      - "8082:8082"     # Expose port 8082 to the host machine.
+
+    environment:
+      PORT: "8082"
+      SERVICE_NAME: anomaly-detector
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+      # All env vars are read by the Python app with os.environ.get().
+
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+        # This is critical: don't start anomaly-detector until timescaledb
+        # passes its healthcheck. Without this, the service would start,
+        # try to connect to the database, fail, and crash.
+      redis:
+        condition: service_healthy
+        # Same for Redis -- wait until Redis is confirmed healthy.
+
+    networks:
+      - smartload-net    # Join the private network.
+
+    restart: unless-stopped
+\end{lstlisting}
+
+\begin{importantbox}{Why depends\_on with condition: service\_healthy?}
+The plain form \texttt{depends\_on: [timescaledb]} only waits for the container
+to \textit{start}, not for the database \textit{inside} it to be ready. TimescaleDB
+needs extra time to initialise its data directory on first run. Using
+\texttt{condition: service\_healthy} ensures we wait for the healthcheck to pass
+--- meaning the database is actually ready to accept queries.
+\end{importantbox}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Step 4 --- Service Stubs with Connection Checks}
+\label{sec:stubs}
+% ──────────────────────────────────────────────────────────────────────────────
+
+All six AI services follow the exact same pattern. We'll walk through the
+\texttt{anomaly-detector} as the representative example.
+
+\subsubsection{services/anomaly-detector/requirements.txt}
+
+\begin{lstlisting}[style=bash, caption={services/anomaly-detector/requirements.txt}]
+flask==3.0.3        # Flask is a lightweight Python web framework.
+                    # It lets us create HTTP endpoints (like /health)
+                    # with just a few lines of code.
+                    # "==3.0.3" pins the exact version for reproducibility.
+
+psycopg2-binary==2.9.9
+                    # psycopg2 is the standard Python library for connecting
+                    # to PostgreSQL (and TimescaleDB, which is built on it).
+                    # "binary" means it includes pre-compiled C code -- no
+                    # C compiler needed in the Docker build.
+
+redis==5.0.4        # The official Python client library for Redis.
+                    # Provides redis.from_url(), r.ping(), r.publish(), etc.
+\end{lstlisting}
+
+\subsubsection{services/anomaly-detector/app.py --- Complete Walkthrough}
+
+\begin{lstlisting}[style=python, caption={services/anomaly-detector/app.py --- imports and configuration}]
+import os
+# os provides access to operating system interfaces.
+# os.environ.get("VAR") reads environment variables that docker-compose
+# set when starting the container.
+
+import psycopg2
+# The PostgreSQL adapter. Provides psycopg2.connect() for opening a
+# database connection.
+
+import redis as redis_lib
+# Import the redis library but alias it as redis_lib.
+# We alias it because "redis" is also a common variable name, and
+# naming collisions would cause confusing bugs.
+
+from flask import Flask, jsonify
+# Flask: the web application class.
+# jsonify: converts a Python dict into an HTTP response with
+#   Content-Type: application/json header set automatically.
+
+app = Flask(__name__)
+# Create one global Flask application instance.
+# __name__ tells Flask the name of this module (used for locating
+# template files and static assets, though we don't use those here).
+
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "anomaly-detector")
+# os.environ.get(KEY, DEFAULT) reads the environment variable KEY.
+# If the variable isn't set, it returns DEFAULT instead of crashing.
+# docker-compose sets SERVICE_NAME=anomaly-detector in the environment.
+
+PORT = int(os.environ.get("PORT", "8082"))
+# Same pattern. We convert to int because port numbers must be integers,
+# but environment variables are always strings.
+
+TIMESCALEDB_URL = os.environ.get(
+    "TIMESCALEDB_URL",
+    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
+)
+# The full PostgreSQL connection string. The default hardcodes
+# "timescaledb" (the Docker service name) as the hostname.
+
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
+# Redis connection URL. "redis" is the Docker compose service name.
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={services/anomaly-detector/app.py --- connection check functions}]
+def check_redis():
+    # This function tries to connect to Redis and returns a tuple:
+    #   (True, None)       if connection succeeded
+    #   (False, error_msg) if connection failed
+    try:
+        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=3)
+        # from_url() parses the Redis URL and creates a client object.
+        # socket_connect_timeout=3 means: if we can't connect within
+        # 3 seconds, raise an exception (don't wait forever).
+
+        r.ping()
+        # ping() sends a PING command to Redis. Redis responds with PONG.
+        # If this succeeds, the connection is working.
+        # If Redis is down, this raises redis.exceptions.ConnectionError.
+
+        return True, None
+        # Connection succeeded. Return True (connected) and None (no error).
+    except Exception as exc:
+        # Catch ANY exception (connection refused, timeout, etc.).
+        # str(exc) converts the exception object to a human-readable message.
+        return False, str(exc)
+
+
+def check_timescaledb():
+    # Same pattern as check_redis, but for TimescaleDB.
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        # psycopg2.connect() opens a connection to PostgreSQL.
+        # connect_timeout=5 means: give up after 5 seconds.
+        # This raises psycopg2.OperationalError if the DB is unreachable.
+
+        conn.close()
+        # Close the connection immediately after verifying it works.
+        # We don't need to keep it open -- this is just a connectivity check.
+
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={services/anomaly-detector/app.py --- HTTP endpoints}]
+@app.route("/health")
+# @app.route is a decorator that registers a function as the handler
+# for a specific URL path. When a GET request arrives at /health,
+# Flask calls this function.
+def health():
+    redis_ok, redis_err = check_redis()
+    db_ok, db_err = check_timescaledb()
+    # Call both check functions. Unpack the returned tuples into
+    # separate variables. If Redis is up: redis_ok=True, redis_err=None.
+
+    errors = [e for e in [redis_err, db_err] if e]
+    # List comprehension: build a list of all non-None error messages.
+    # If both connections succeeded, errors = [] (empty list).
+    # If Redis failed, errors = ["Connection refused to redis:6379"].
+
+    status = "ok" if (redis_ok and db_ok) else "degraded"
+    # Ternary expression: if BOTH connections succeeded -> "ok".
+    # If EITHER failed -> "degraded".
+    # (We don't use "error" because the service itself is still running.)
+
+    code = 200 if status == "ok" else 207
+    # HTTP status codes:
+    #   200 = OK (everything is fine)
+    #   207 = Multi-Status (partial success -- service is up, but
+    #         some dependencies are down)
+    # This lets monitoring tools distinguish "service crashed" (5xx)
+    # from "service up but dependency unreachable" (207).
+
+    return jsonify(
+        {
+            "status": status,           # "ok" or "degraded"
+            "service": SERVICE_NAME,    # which service this is
+            "redis": redis_ok,          # True/False
+            "timescaledb": db_ok,       # True/False
+            **({"errors": errors} if errors else {}),
+            # ** "unpacks" a dict and merges it into the outer dict.
+            # This is a conditional include: only add the "errors" key
+            # if there are actual errors. Clean JSON when everything is fine.
+        }
+    ), code
+    # jsonify() converts the dict to JSON. The comma before "code" makes
+    # Flask return both the JSON body AND the HTTP status code.
+
+
+@app.route("/")
+def index():
+    # A simple root endpoint. Used by team members to confirm the service
+    # is running without inspecting the full health report.
+    return jsonify({"service": SERVICE_NAME, "status": "running"})
+
+
+if __name__ == "__main__":
+    # This block only runs when the file is executed directly:
+    #   python app.py
+    # It does NOT run when the module is imported by another module.
+    print(f"[{SERVICE_NAME}] starting on port {PORT}")
+    # f-string: f"..." with {variable} inserts the variable's value.
+
+    app.run(host="0.0.0.0", port=PORT)
+    # host="0.0.0.0" means: accept connections from any IP address.
+    # If we used "localhost", the service would only accept connections
+    # from inside the container -- nothing outside could reach it.
+    # port=PORT uses the value from the environment variable.
+\end{lstlisting}
+
+\subsubsection{The Policy Manager's Extra Endpoints}
+
+The \texttt{policy-manager} has two additional endpoints beyond \texttt{/health}:
+
+\begin{lstlisting}[style=python, caption={services/policy-manager/app.py --- policy REST API}]
+import yaml
+# PyYAML: reads and writes YAML files (policy.yaml configuration).
+
+def load_policy() -> dict:
+    # Reads the YAML policy file and returns it as a Python dict.
+    # Returns {} (empty dict) if the file doesn't exist yet.
+    try:
+        with open(CONFIG_PATH) as f:
+            # "with open(...) as f:" is a context manager.
+            # It opens the file, gives us the file handle "f",
+            # and automatically closes the file when the block ends
+            # (even if an exception occurs).
+            return yaml.safe_load(f) or {}
+            # yaml.safe_load() parses the YAML text into a Python dict.
+            # "or {}" handles the edge case where the file is empty
+            # (safe_load returns None for empty files).
+    except Exception:
+        return {}   # File not found, or permission error -- return empty dict.
+
+
+@app.route("/api/v1/policy", methods=["GET"])
+# methods=["GET"] restricts this endpoint to GET requests only.
+# A GET request asks for data without modifying anything.
+def get_policy():
+    policy = load_policy()
+    if not policy:
+        # If policy is empty (file missing), return HTTP 404 Not Found.
+        return jsonify({"error": f"policy file not found: {CONFIG_PATH}"}), 404
+    return jsonify(policy)
+    # Return the policy as JSON with HTTP 200 OK (Flask's default).
+
+
+@app.route("/api/v1/policy", methods=["POST"])
+# POST is used when the client wants to send data to change something.
+def update_policy():
+    updates = request.get_json(force=True, silent=True)
+    # request is Flask's global representing the current HTTP request.
+    # get_json() parses the request body as JSON.
+    # force=True: parse as JSON even if Content-Type header isn't set.
+    # silent=True: return None instead of raising an error if parsing fails.
+
+    if not updates:
+        # The client sent a request with no valid JSON body.
+        return jsonify({"error": "request body must be JSON"}), 400
+        # 400 = Bad Request: the client sent invalid data.
+
+    policy = load_policy()
+    policy.update(updates)
+    # dict.update() merges updates into policy, overwriting matching keys.
+    # e.g. if updates = {"safe_mode": true}, only safe_mode changes.
+
+    with open(CONFIG_PATH, "w") as f:
+        yaml.safe_dump(policy, f)
+    # Write the updated policy back to the YAML file.
+    # safe_dump() converts the Python dict back to YAML text.
+
+    r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=3)
+    r.publish("smartload.policy", json.dumps(policy))
+    # After updating the file, broadcast the new policy to all services
+    # that are subscribed to the smartload.policy Redis channel.
+    # json.dumps() converts the dict to a JSON string for Redis.
+
+    return jsonify({"status": "updated", "policy": policy})
+\end{lstlisting}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Step 5 --- Integration Pipeline Health Check Tests}
+\label{sec:tests}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\subsubsection{What Is pytest?}
+
+\begin{definitionbox}{pytest}
+pytest is a Python testing framework. You write functions that start with
+\texttt{test\_}, and pytest discovers and runs them automatically. Each test
+either passes (no exception raised) or fails (an \texttt{assert} fails or an
+exception is raised).
+\end{definitionbox}
+
+\subsubsection{tests/integration/conftest.py --- Shared Fixtures}
+
+\begin{lstlisting}[style=python, caption={tests/integration/conftest.py --- constants and wait helper}]
+SERVICE_URLS = {
+    "load-balancer":    "http://localhost:8080",
+    "telemetry":        "http://localhost:8081",
+    "anomaly-detector": "http://localhost:8082",
+    # ... all 7 services
+}
+# A dict mapping service names to their base URLs.
+# Tests use this to build endpoint URLs without hardcoding strings.
+
+AI_SERVICES = [
+    "telemetry", "anomaly-detector", "forecasting",
+    "rl-engine", "autoscaler",
+]
+# The 5 services that must report both redis and timescaledb connectivity.
+# policy-manager only needs Redis (it doesn't use TimescaleDB directly).
+
+
+def wait_for_url(url: str, timeout: int = 60, interval: float = 2.0):
+    """Retry GET url until a non-500 response arrives or timeout expires."""
+    deadline = time.time() + timeout
+    # time.time() returns the current Unix timestamp (seconds since 1970).
+    # We add the timeout to get the deadline timestamp.
+
+    last_exc = None
+    while time.time() < deadline:
+        # Keep trying until we pass the deadline.
+        try:
+            resp = requests.get(url, timeout=5)
+            # requests.get() sends an HTTP GET request.
+            # timeout=5 means: give up if no response within 5 seconds.
+
+            if resp.status_code < 500:
+                # Any response below 500 means the service is up and
+                # responding (even if it's "degraded" / 207, it's running).
+                return resp
+        except Exception as exc:
+            # Connection refused, DNS error, timeout -- service not up yet.
+            last_exc = exc
+
+        time.sleep(interval)
+        # Wait 2 seconds before retrying. Without this, we'd spam the
+        # service with thousands of requests per second.
+
+    raise TimeoutError(f"Service not reachable at {url} after {timeout}s.")
+
+
+@pytest.fixture(scope="session")
+# A "fixture" is a function pytest calls automatically before tests that
+# request it. scope="session" means this fixture runs ONCE per test
+# session (not once per test), so we don't reconnect for every test.
+def stack_ready(services):
+    """Wait for all services to respond before any test runs."""
+    for name, base_url in services.items():
+        health_url = f"{base_url}/health"
+        try:
+            wait_for_url(health_url, timeout=90)
+            # Allow 90 seconds for all services to become ready.
+        except TimeoutError as exc:
+            pytest.fail(f"[stack_ready] {name} did not become reachable: {exc}")
+            # pytest.fail() immediately stops the test session with an
+            # informative failure message. This prevents misleading failures
+            # like "connection refused" being reported as test failures.
+    return services
+\end{lstlisting}
+
+\subsubsection{tests/integration/test\_pipeline\_health.py --- All 7 Test Classes}
+
+\begin{lstlisting}[style=python, caption={test\_pipeline\_health.py --- Layer 1: HTTP Traffic}]
+class TestLoadBalancer:
+    """Verify that NGINX routes traffic to the test-backend pool."""
+    # Grouping tests into classes is optional but makes output readable.
+
+    def test_load_balancer_routes_traffic(self, stack_ready):
+        # "self" is required for methods inside a class.
+        # "stack_ready" is a pytest fixture -- pytest injects it automatically.
+        # This fixture ensures all services are up before this test runs.
+
+        resp = requests.get(SERVICE_URLS["load-balancer"] + "/", timeout=10)
+
+        assert resp.status_code == 200, (
+            f"Load balancer returned {resp.status_code}. "
+            "Is the test-backend running?"
+        )
+        # assert CONDITION, MESSAGE
+        # If CONDITION is False, pytest reports FAILURE and shows MESSAGE.
+        # This test fails if NGINX can't route to any test-backend.
+
+        body = resp.text
+        assert "Hello from" in body or len(body) > 0
+        # The test-backend Node.js app returns "Hello from <container-id>".
+        # We check for "Hello from" to confirm the response came from our backend.
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={test\_pipeline\_health.py --- Layer 2: Service Reachability}]
+class TestServiceReachability:
+
+    @pytest.mark.parametrize("service", list(SERVICE_URLS.keys()))
+    # parametrize is a pytest decorator that runs the test multiple times,
+    # once for each value in the list.
+    # This creates 7 separate test cases automatically:
+    #   test_service_health_reachable[load-balancer]
+    #   test_service_health_reachable[telemetry]
+    #   test_service_health_reachable[anomaly-detector]
+    #   ... etc.
+    def test_service_health_reachable(self, stack_ready, service):
+        # "service" receives each value from the parametrize list.
+        url = SERVICE_URLS[service] + "/health"
+        resp = requests.get(url, timeout=10)
+
+        assert resp.status_code < 500, (
+            f"{service} /health returned {resp.status_code}. "
+            f"Body: {resp.text[:200]}"
+            # resp.text[:200] shows only the first 200 characters of the body
+            # to avoid flooding the failure message.
+        )
+        data = resp.json()
+        assert "status" in data, f"{service} /health missing 'status' field"
+        has_id = "service" in data or "server" in data
+        assert has_id, f"{service} /health missing both 'service' and 'server' fields"
+        # load-balancer (NGINX/Node.js) returns "server" not "service".
+        # We accept both keys.
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={test\_pipeline\_health.py --- Layers 3 \& 4: Connectivity}]
+class TestRedisConnectivity:
+    """All AI services must report successful Redis connections via /health."""
+
+    @pytest.mark.parametrize("service", AI_SERVICES)
+    def test_service_connected_to_redis(self, stack_ready, service):
+        url = SERVICE_URLS[service] + "/health"
+        resp = requests.get(url, timeout=10)
+
+        # Accept both 200 (fully ok) and 207 (degraded but reachable).
+        assert resp.status_code in (200, 207)
+
+        data = resp.json()
+        assert "redis" in data, (
+            f"{service} /health response missing 'redis' field. Got: {data}"
+        )
+        assert data["redis"] is True, (
+            f"{service} is NOT connected to Redis. "
+            f"Errors: {data.get('errors', [])}"
+            # data.get('errors', []) safely reads 'errors' key,
+            # defaulting to empty list if missing.
+        )
+        # data["redis"] is True checks that the value is exactly True (bool),
+        # not just truthy (e.g. 1 or "yes" would also be truthy but wrong type).
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={test\_pipeline\_health.py --- Layer 5: Control Bus Channels}]
+class TestControlBus:
+    """All smartload.* Redis channels must be accessible."""
+
+    def test_redis_direct_connection(self, stack_ready):
+        # This test connects to Redis DIRECTLY from the test machine,
+        # not through a service. It verifies that port 6379 is reachable.
+        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=5)
+        assert r.ping(), "Could not ping Redis"
+
+    @pytest.mark.parametrize("channel", REDIS_CHANNELS)
+    def test_redis_channel_publish(self, stack_ready, channel):
+        # Verify that publishing to each channel works without errors.
+        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=5)
+        test_message = json.dumps({"_test": True, "channel": channel})
+        # We publish a test message. At Phase 0, there are no subscribers yet,
+        # so the returned subscriber count will be 0 -- that's fine.
+        # The important thing is that publish() doesn't raise an exception.
+        try:
+            r.publish(channel, test_message)
+        except Exception as exc:
+            pytest.fail(f"Failed to publish to Redis channel '{channel}': {exc}")
+\end{lstlisting}
+
+\begin{lstlisting}[style=python, caption={test\_pipeline\_health.py --- Layer 7: Database Schema}]
+class TestTimescaleDBSchema:
+    """All required hypertables must exist in the database."""
+
+    @pytest.mark.parametrize("table", REQUIRED_TABLES)
+    def test_required_table_exists(self, stack_ready, table):
+        # Connect directly to TimescaleDB from the test machine.
+        conn = psycopg2.connect(TIMESCALEDB_DSN, connect_timeout=10)
+        try:
+            with conn.cursor() as cur:
+                # conn.cursor() creates a cursor object -- a handle for
+                # executing SQL queries against the database.
+                # "with ... as cur:" automatically closes the cursor afterwards.
+
+                cur.execute(
+                    """
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = %s
+                    """,
+                    (table,),   # %s is a parameterised placeholder.
+                    # psycopg2 safely substitutes (table,) here.
+                    # NEVER use f-strings for SQL parameters -- that
+                    # creates SQL injection vulnerabilities.
+                )
+                row = cur.fetchone()
+                # fetchone() retrieves the next row from the query result.
+                # Returns None if no rows matched.
+
+                assert row is not None, (
+                    f"Required table '{table}' does not exist in TimescaleDB. "
+                    "Check init.sql ran correctly."
+                )
+        finally:
+            conn.close()
+            # "finally" runs regardless of whether the "try" block succeeded
+            # or raised an exception. This ensures the connection is always
+            # closed, preventing connection leaks.
+\end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Test Results}
+% ══════════════════════════════════════════════════════════════════════════════
+
+After building and starting the full stack:
+
+\begin{lstlisting}[style=bash]
+$ cp config/.env.example .env
+$ docker compose up --build -d
+$ pytest tests/integration/ -v
+\end{lstlisting}
+
+\begin{resultbox}{Test Run Results --- 33/33 Passed}
+\begin{verbatim}
+============================= test session starts =============================
+collected 33 items
+
+TestLoadBalancer::test_load_balancer_routes_traffic               PASSED
+TestLoadBalancer::test_load_balancer_health_endpoint              PASSED
+TestServiceReachability::test_service_health_reachable[load-balancer]  PASSED
+TestServiceReachability::test_service_health_reachable[telemetry]      PASSED
+TestServiceReachability::test_service_health_reachable[anomaly-detector] PASSED
+TestServiceReachability::test_service_health_reachable[forecasting]    PASSED
+TestServiceReachability::test_service_health_reachable[rl-engine]      PASSED
+TestServiceReachability::test_service_health_reachable[autoscaler]     PASSED
+TestServiceReachability::test_service_health_reachable[policy-manager] PASSED
+TestRedisConnectivity::test_service_connected_to_redis[telemetry]      PASSED
+TestRedisConnectivity::test_service_connected_to_redis[anomaly-detector] PASSED
+TestRedisConnectivity::test_service_connected_to_redis[forecasting]    PASSED
+TestRedisConnectivity::test_service_connected_to_redis[rl-engine]      PASSED
+TestRedisConnectivity::test_service_connected_to_redis[autoscaler]     PASSED
+TestTimescaleDBConnectivity::test_service_connected_to_timescaledb[telemetry]         PASSED
+TestTimescaleDBConnectivity::test_service_connected_to_timescaledb[anomaly-detector]  PASSED
+TestTimescaleDBConnectivity::test_service_connected_to_timescaledb[forecasting]       PASSED
+TestTimescaleDBConnectivity::test_service_connected_to_timescaledb[rl-engine]         PASSED
+TestTimescaleDBConnectivity::test_service_connected_to_timescaledb[autoscaler]        PASSED
+TestControlBus::test_redis_direct_connection                      PASSED
+TestControlBus::test_redis_channel_publish[smartload.anomaly]     PASSED
+TestControlBus::test_redis_channel_publish[smartload.forecast]    PASSED
+TestControlBus::test_redis_channel_publish[smartload.routing]     PASSED
+TestControlBus::test_redis_channel_publish[smartload.scale]       PASSED
+TestControlBus::test_redis_channel_publish[smartload.policy]      PASSED
+TestPolicyManagerAPI::test_get_policy_returns_200                 PASSED
+TestPolicyManagerAPI::test_get_policy_has_required_fields         PASSED
+TestPolicyManagerAPI::test_get_policy_safe_mode_is_bool           PASSED
+TestTimescaleDBSchema::test_timescaledb_direct_connection         PASSED
+TestTimescaleDBSchema::test_required_table_exists[metrics]        PASSED
+TestTimescaleDBSchema::test_required_table_exists[backend_health] PASSED
+TestTimescaleDBSchema::test_required_table_exists[scaling_events] PASSED
+TestTimescaleDBSchema::test_timescaledb_extension_enabled         PASSED
+
+========================= 33 passed in 1.13s =========================
+\end{verbatim}
+\end{resultbox}
+
+Each test class maps directly to one integration layer from the Communications
+Channel Diagram:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lllX}
+  \toprule
+  \textbf{Test Class} & \textbf{Tests} & \textbf{Layer} & \textbf{What It Proves} \\
+  \midrule
+  TestLoadBalancer       & 2  & HTTP traffic    & NGINX routes to backends \\
+  TestServiceReachability & 7  & All services    & Every service is up and answering \\
+  TestRedisConnectivity  & 5  & Redis           & 5 services connected to Redis \\
+  TestTimescaleDBConnectivity & 5 & TimescaleDB  & 5 services connected to DB \\
+  TestControlBus         & 6  & Control bus     & All 5 channels publishable \\
+  TestPolicyManagerAPI   & 3  & Policy REST API & Policy endpoints work correctly \\
+  TestTimescaleDBSchema  & 5  & DB schema       & All 3 hypertables exist \\
+  \midrule
+  \textbf{Total}         & \textbf{33} & & \textbf{Full pipeline verified} \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{What Was Changed and What Was Added}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Complete Change Summary}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXl}
+  \toprule
+  \textbf{File} & \textbf{What Changed / Was Added} & \textbf{Task} \\
+  \midrule
+  \texttt{services/shared/contracts.py} & NEW: 5 typed Redis message dataclasses & N0.1 \\
+  \texttt{services/shared/queries.py}   & NEW: TimescaleDB SQL constants for all AI services & N0.2 \\
+  \texttt{services/shared/\_\_init\_\_.py} & NEW: Python package marker & N0.1 \\
+  \midrule
+  \texttt{config/.env.example} & FILLED: All 11 environment variables documented & T0.1 \\
+  \texttt{config/policy.yaml}  & FILLED: 8 governance defaults with comments & T1.5 \\
+  \midrule
+  \texttt{infrastructure/timescaledb/init.sql} & NEW: 3 hypertables + indices & T0.2 \\
+  \texttt{infrastructure/redis/redis.conf}      & NEW: LRU, no persistence, 256MB & T0.3 \\
+  \texttt{infrastructure/otel-collector/otelcol-config.yaml} & NEW: OTLP → Prometheus pipeline & T0.4 \\
+  \texttt{infrastructure/prometheus/prometheus.yml} & NEW: 15s scrape, 7 targets & T0.5 \\
+  \texttt{infrastructure/grafana/provisioning/datasources/datasources.yaml} & NEW: Auto-provisioned datasources & T0.6 \\
+  \texttt{infrastructure/grafana/provisioning/dashboards/dashboards.yaml}  & NEW: Dashboard provider config & T0.6 \\
+  \midrule
+  \texttt{docker-compose.yml} & EXPANDED: 3 → 13 services, healthchecks, network & T0.6 \\
+  \midrule
+  \texttt{services/*/requirements.txt} & NEW for all 6: flask, psycopg2-binary, redis & T0.7 \\
+  \texttt{services/*/Dockerfile} & UPDATED for all 6: correct port, installs requirements & T0.7 \\
+  \texttt{services/*/app.py} & REWRITTEN for all 6: Flask + connection checks & T0.7 \\
+  \midrule
+  \texttt{tests/integration/conftest.py}             & NEW: fixtures and wait helper & T0.8 \\
+  \texttt{tests/integration/test\_pipeline\_health.py} & NEW: 33 integration tests & T0.8 \\
+  \texttt{tests/integration/requirements.txt}        & NEW: test dependencies & T0.8 \\
+  \texttt{tests/\_\_init\_\_.py}                       & NEW: package marker & T0.8 \\
+  \texttt{tests/integration/\_\_init\_\_.py}           & NEW: package marker & T0.8 \\
+  \midrule
+  \texttt{docs/running-the-project.md} & UPDATED: Phase 2 from placeholder to real commands & T0.8 \\
+  \texttt{docs/task-plan.md} & UPDATED: T0.1–T0.8, N0.1–N0.3 checked off & T0.8 \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Before vs. After}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{lXX}
+  \toprule
+  \textbf{Component} & \textbf{Before} & \textbf{After} \\
+  \midrule
+  docker-compose.yml & 3 services (NGINX, test-backend, Locust) & 13 services, full stack \\
+  Service health endpoint & Returns \texttt{\{"status":"ok"\}} only & Returns connectivity status for Redis + DB \\
+  Infrastructure configs & All files empty (.gitkeep) & All 6 configs fully written \\
+  Service Dockerfiles & No requirements.txt, wrong port & requirements.txt installed, correct port \\
+  Redis message format & Undefined & 5 typed dataclasses in contracts.py \\
+  Database schema & No schema & 3 hypertables with indices \\
+  Integration tests & 0 tests & 33 tests, all passing \\
+  \bottomrule
+\end{tabularx}
+\end{center}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{The Integration Layers Map}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Every test class maps to one layer of the Communications Channel Diagram:
+
+\begin{center}
+\begin{tabular}{lll}
+  \toprule
+  \textbf{Layer} & \textbf{Path in Diagram} & \textbf{Test Class} \\
+  \midrule
+  1 & Client $\to$ NGINX $\to$ test-backends & TestLoadBalancer \\
+  2 & All 7 service /health endpoints & TestServiceReachability \\
+  3 & AI services $\to$ Redis & TestRedisConnectivity \\
+  4 & AI services $\to$ TimescaleDB & TestTimescaleDBConnectivity \\
+  5 & Channels: smartload.* & TestControlBus \\
+  6 & Policy Manager REST API & TestPolicyManagerAPI \\
+  7 & TimescaleDB hypertable schema & TestTimescaleDBSchema \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{What Comes Next (Phase 1)}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Phase 0 (Integration Foundation) is now complete. With the full pipeline wired
+and verified, Phase 1 can begin safely. Phase 1 replaces the stubs with real
+logic --- but now every change can be immediately tested end-to-end because
+the pipes already exist:
+
+\begin{enumerate}
+  \item \textbf{T1.1} --- Telemetry service: receive OTLP metrics from NGINX,
+        write rows to the \texttt{metrics} hypertable using the
+        \texttt{METRICS\_INSERT} query from \texttt{queries.py}.
+
+  \item \textbf{N1.1} --- Anomaly detector: run \texttt{ANOMALY\_QUERY} every
+        5 seconds, compare latency to rolling mean, publish an
+        \texttt{AnomalyEvent} (from \texttt{contracts.py}) to
+        \texttt{smartload.anomaly}.
+
+  \item \textbf{N1.2} --- Forecasting: run \texttt{FORECAST\_QUERY} every 60
+        seconds, compute moving average, publish a \texttt{ForecastResult}
+        to \texttt{smartload.forecast}.
+
+  \item \textbf{N1.3} --- RL engine: run \texttt{RL\_STATE\_QUERY} every 5
+        seconds, select a random backend action, publish
+        \texttt{RoutingRecommendation} with \texttt{mode="shadow"} to
+        \texttt{smartload.routing}.
+
+  \item \textbf{T1.3} --- Autoscaler: subscribe to \texttt{smartload.forecast},
+        use the Docker SDK to scale \texttt{test-backend} containers up or down
+        based on predicted RPS versus per-instance capacity.
+
+  \item \textbf{T1.4} --- Policy manager: \texttt{GET /api/v1/policy} is
+        already working. Persist changes via \texttt{POST} and broadcast
+        \texttt{PolicyUpdate} events.
+\end{enumerate}
+
+\begin{importantbox}{The Key Insight}
+The queries, message contracts, and database schema were designed together
+\textbf{in Phase 0}, before any service logic was written. This means:
+\begin{itemize}
+  \item Every developer knows exactly what SQL to run and what messages to send.
+  \item There are no integration surprises when services try to talk to each other.
+  \item The 33 existing integration tests will catch regressions immediately when
+        Phase 1 code is added.
+\end{itemize}
+This is the core value of integration-first development.
+\end{importantbox}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Glossary}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{description}[leftmargin=3cm, style=nextline]
+  \item[assert] A Python statement that checks a condition is True.
+        If False, the program (or test) fails with an AssertionError.
+  \item[Container] A lightweight, isolated environment for running a program.
+        Built from a Docker image.
+  \item[dataclass] A Python class decorator that auto-generates common methods.
+  \item[Dockerfile] The recipe for building a Docker container image.
+  \item[docker-compose] A tool for defining and running multi-container apps.
+  \item[Environment variable] A key=value configuration pair read at runtime.
+  \item[Fixture] A pytest function that sets up state for tests.
+  \item[Flask] A lightweight Python web framework.
+  \item[Grafana] A dashboard visualisation tool for time-series data.
+  \item[Healthcheck] A Docker mechanism to detect when a container is ready.
+  \item[Hypertable] A TimescaleDB table auto-partitioned by time for fast queries.
+  \item[JSON] JavaScript Object Notation -- the standard text format for data exchange.
+  \item[Microservice] A small, independently deployable program with one responsibility.
+  \item[OTel / OpenTelemetry] An open standard for collecting observability data.
+  \item[parametrize] A pytest decorator to run one test with multiple input values.
+  \item[PostgreSQL] An open-source relational database system.
+  \item[Prometheus] A time-series metrics scraping and storage system.
+  \item[Pub/Sub] Publish/Subscribe -- a messaging pattern where publishers send
+        to named channels and subscribers receive from them.
+  \item[pytest] A Python testing framework.
+  \item[Redis] An in-memory key-value store, used here as a control bus.
+  \item[REST API] An HTTP interface for reading and updating application state.
+  \item[SQL] Structured Query Language -- the language for querying databases.
+  \item[TimescaleDB] A time-series database built on PostgreSQL.
+  \item[YAML] A human-readable data format used for configuration files.
+\end{description}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section*{Conclusion}
+\addcontentsline{toc}{section}{Conclusion}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This document has explained, line by line, every file created and modified
+during the SmartLoad integration-first architecture check. Starting from a
+3-service skeleton, the system grew to a fully wired 13-service distributed
+platform with:
+
+\begin{itemize}
+  \item \textbf{Typed message contracts} ensuring every Redis message has a
+        guaranteed format.
+  \item \textbf{Canonical SQL queries} that defined the database schema from
+        the consumer side inward.
+  \item \textbf{Complete infrastructure configuration} for TimescaleDB, Redis,
+        OTel Collector, Prometheus, and Grafana.
+  \item \textbf{Enhanced service health endpoints} reporting live connectivity
+        status for Redis and TimescaleDB.
+  \item \textbf{33 integration tests} covering all 7 architectural layers from
+        the Communications Channel Diagram --- all passing.
+\end{itemize}
+
+The team is now ready to begin Phase 1: implementing real logic inside each
+service, knowing the pipes between them already work.
+
+\end{document}

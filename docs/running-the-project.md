@@ -40,7 +40,7 @@ Currently `.env` is not required to run the baseline stack — all defaults are 
 
 ---
 
-## Phase 1 — Baseline Stack (Sprints 1–3) ✅ CURRENT
+## Phase 1 — Baseline Stack ✅ DONE
 
 **What runs:** NGINX load balancer + Node.js test backends + Locust traffic simulator.
 
@@ -115,76 +115,58 @@ docker compose run -d -e FAIL_HEALTH=true --name unhealthy-backend test-backend
 
 ---
 
-## Phase 2 — Telemetry Pipeline (Sprint 3) 🔲 NOT YET IMPLEMENTED
+## Phase 2 — Integration Foundation ✅ CURRENT
 
-**What gets added:** TimescaleDB (metrics store) + OpenTelemetry Collector + Prometheus + Grafana.
-These run **in parallel** with the Phase 1 stack — they don't replace anything.
+**What was added:** Full 13-service stack — TimescaleDB + Redis + OTel Collector + Prometheus + Grafana + all 6 AI service stubs, all wired and reporting connectivity.
 
-**When implemented, update `docker-compose.yml` to add:**
-```yaml
-  timescaledb:
-    image: timescale/timescaledb:latest-pg16
-    environment:
-      POSTGRES_PASSWORD: ${TIMESCALEDB_PASSWORD}
-      POSTGRES_DB: smartloaddb
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./infrastructure/timescaledb/init.sql:/docker-entrypoint-initdb.d/init.sql
-
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    volumes:
-      - ./infrastructure/otel-collector/otelcol-config.yaml:/etc/otelcol-contrib/config.yaml
-    ports:
-      - "4317:4317"   # OTLP gRPC
-      - "4318:4318"   # OTLP HTTP
-    depends_on:
-      - timescaledb
-
-  prometheus:
-    image: prom/prometheus:latest
-    volumes:
-      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./infrastructure/grafana/dashboards:/var/lib/grafana/dashboards
-    depends_on:
-      - prometheus
-      - timescaledb
-```
-
-**Start (full stack with telemetry):**
+**Start the full stack:**
 ```bash
+cp config/.env.example .env
 docker compose up --build -d
 ```
 
-**Verify telemetry:**
+**Verify all services are wired:**
 ```bash
-# TimescaleDB is reachable
-psql -h localhost -U postgres -d smartloaddb
+# Run the integration pipeline health check
+pip install -r tests/integration/requirements.txt
+pytest tests/integration/ -v
 
-# Prometheus targets are healthy
-open http://localhost:9090/targets
-
-# Grafana dashboards
-open http://localhost:3000   # default login: admin / admin
+# Or spot-check individual services
+curl http://localhost:8081/health   # telemetry: {redis: true, timescaledb: true}
+curl http://localhost:8082/health   # anomaly-detector: {redis: true, timescaledb: true}
+curl http://localhost:8083/health   # forecasting: {redis: true, timescaledb: true}
+curl http://localhost:8084/health   # rl-engine: {redis: true, timescaledb: true}
+curl http://localhost:8085/health   # autoscaler: {redis: true, timescaledb: true}
+curl http://localhost:8086/health   # policy-manager: {redis: true}
+curl http://localhost:8086/api/v1/policy  # returns full policy JSON
 ```
 
-**`.env` additions needed:**
+**Verify infrastructure directly:**
+```bash
+# TimescaleDB — check schema exists
+psql -h localhost -U postgres -d smartloaddb -c "\dt"
+
+# Redis — subscribe to all control bus channels
+docker compose exec redis redis-cli psubscribe 'smartload.*'
+
+# Prometheus — all targets should be green
+open http://localhost:9090/targets   # Mac
+start http://localhost:9090/targets  # Windows
+
+# Grafana — Prometheus and TimescaleDB datasources auto-provisioned
+open http://localhost:3000   # login: admin / admin
 ```
-TIMESCALEDB_PASSWORD=yourpassword
+
+**`.env` values in use:**
+```
+TIMESCALEDB_PASSWORD=changeme
+REDIS_URL=redis://redis:6379
+GRAFANA_PASSWORD=admin
 ```
 
 ---
 
-## Phase 3 — Anomaly Detection (Sprint 5) 🔲 NOT YET IMPLEMENTED
+## Phase 3 — Anomaly Detection (Sprint 5) 🔲 NEXT
 
 **What gets added:** `anomaly-detector` service + Redis control bus.
 Runs **in parallel** with Phase 1 + Phase 2. Anomaly signals are published to Redis and consumed by the load balancer.

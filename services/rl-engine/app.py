@@ -1,32 +1,72 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
+"""
+services/rl-engine/app.py
+──────────────────────────
+Phase 0 stub — wired to Redis and TimescaleDB, reports connectivity on /health.
+Phase 1 (N1.3): shadow-mode scaffold — random policy, publishes RoutingRecommendation
+                 to smartload.routing every 5 seconds (mode="shadow").
+Phase 2 (N2.5): load trained PPO policy.zip, switch to mode="active".
+"""
+
 import os
 
-SERVICE_NAME = os.getenv("SERVICE_NAME", "service")
-PORT = int(os.getenv("PORT", "8080"))
+import psycopg2
+import redis as redis_lib
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+SERVICE_NAME = os.environ.get("SERVICE_NAME", "rl-engine")
+PORT = int(os.environ.get("PORT", "8084"))
+TIMESCALEDB_URL = os.environ.get(
+    "TIMESCALEDB_URL",
+    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
+)
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
+RL_MODE = os.environ.get("RL_MODE", "shadow")
 
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "service": SERVICE_NAME
-            }).encode())
-        else:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(f"{SERVICE_NAME} hello world".encode())
+def check_redis():
+    try:
+        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=3)
+        r.ping()
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
 
-    def log_message(self, format, *args):
-        return
+
+def check_timescaledb():
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        conn.close()
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+@app.route("/health")
+def health():
+    redis_ok, redis_err = check_redis()
+    db_ok, db_err = check_timescaledb()
+    errors = [e for e in [redis_err, db_err] if e]
+    status = "ok" if (redis_ok and db_ok) else "degraded"
+    code = 200 if status == "ok" else 207
+    return jsonify(
+        {
+            "status": status,
+            "service": SERVICE_NAME,
+            "redis": redis_ok,
+            "timescaledb": db_ok,
+            "rl_mode": RL_MODE,
+            **({"errors": errors} if errors else {}),
+        }
+    ), code
+
+
+@app.route("/")
+def index():
+    return jsonify({"service": SERVICE_NAME, "status": "running", "rl_mode": RL_MODE})
 
 
 if __name__ == "__main__":
-    server = HTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"{SERVICE_NAME} running on port {PORT}")
-    server.serve_forever()
+    print(f"[{SERVICE_NAME}] starting on port {PORT} (mode={RL_MODE})")
+    app.run(host="0.0.0.0", port=PORT)

@@ -1,0 +1,8 @@
+operating_mode: hybrid          # classical | hybrid | learning
+safe_mode: false                # true disables RL and forces classical routing
+min_backends: 1                 # autoscaler lower bound
+max_backends: 5                 # autoscaler upper bound
+slo_p95_latency_ms: 200         # SLO target for P95 latency
+anomaly_latency_multiplier: 3.0 # flag backend if latency > multiplier * rolling_mean
+per_instance_capacity_rps: 100  # assumed max RPS per backend instance
+autoscaler_cooldown_seconds: 60 # minimum time between successive scaling actions
