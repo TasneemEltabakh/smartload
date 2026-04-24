@@ -1,17 +1,17 @@
 services:
 
-  nginx:
+  load-balancer:
     build:
-      context: ./nginx
+      context: ./services/load-balancer/nginx
     ports:
       - "8080:80"
     depends_on:
-      - test-server
+      - test-backend
     restart: unless-stopped
 
-  test-server:
+  test-backend:
     build:
-      context: ../servers
+      context: ./test-backends
     environment:
       - PORT=8080
     expose:
@@ -20,9 +20,9 @@ services:
 
   traffic-simulator:
     build:
-      context: ../traffic-simulator
+      context: ./tests/performance
     ports:
       - "8089:8089"
     depends_on:
-      - nginx
+      - load-balancer
     restart: unless-stopped
