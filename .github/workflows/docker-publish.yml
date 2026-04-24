@@ -24,7 +24,7 @@ jobs:
         run: pip install ruff
 
       - name: Run lint
-        run: ruff check services telemetry servers
+        run: ruff check services test-backends
 
 
   build-services:
@@ -39,6 +39,7 @@ jobs:
           - forecasting
           - policy-manager
           - rl-engine
+          - telemetry
 
     steps:
       - name: Checkout repository
@@ -72,7 +73,7 @@ jobs:
         run: docker rm -f test-${{ matrix.service }}
 
 
-  build-test-server:
+  build-test-backend:
     runs-on: ubuntu-latest
     needs: lint
 
@@ -80,11 +81,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build server image
-        run: docker build -t smartload-test-server ./servers
+      - name: Build test-backend image
+        run: docker build -t smartload-test-backend ./test-backends
 
-      - name: Run server container
-        run: docker run -d -p 8080:8080 --name test-server smartload-test-server
+      - name: Run test-backend container
+        run: docker run -d -p 8080:8080 --name test-backend smartload-test-backend
 
       - name: Wait for server
         run: sleep 5
@@ -101,67 +102,30 @@ jobs:
 
       - name: Show container logs
         if: failure()
-        run: docker logs test-server
+        run: docker logs test-backend
 
       - name: Stop container
         if: always()
-        run: docker rm -f test-server
-
-
-  build-telemetry:
-    runs-on: ubuntu-latest
-    needs: lint
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Build telemetry image
-        run: docker build -t smartload-telemetry ./telemetry
-
-      - name: Run telemetry container
-        run: docker run -d -p 8080:8080 --name telemetry-test smartload-telemetry
-
-      - name: Wait for service
-        run: sleep 5
-
-      - name: Health check
-        run: |
-          for i in {1..10}; do
-            curl -f http://localhost:8080/health && exit 0
-            echo "Waiting for telemetry..."
-            sleep 2
-          done
-          echo "Telemetry service failed to start"
-          exit 1
-
-      - name: Show telemetry logs
-        if: failure()
-        run: docker logs telemetry-test
-
-      - name: Stop container
-        if: always()
-        run: docker rm -f telemetry-test
+        run: docker rm -f test-backend
 
 
   compose-test:
     runs-on: ubuntu-latest
     needs:
       - build-services
-      - build-test-server
-      - build-telemetry
+      - build-test-backend
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Start docker-compose environment
-        run: docker compose -f infrastructure/docker-compose.yml up -d --build --scale test-server=2
+        run: docker compose up -d --build --scale test-backend=2
 
       - name: Wait for system startup
         run: sleep 10
 
-      - name: Test NGINX endpoint
+      - name: Test load-balancer endpoint
         run: curl -f http://localhost:8080
 
       - name: Show running containers
@@ -169,4 +133,4 @@ jobs:
 
       - name: Stop compose
         if: always()
-        run: docker compose -f infrastructure/docker-compose.yml down
+        run: docker compose down
