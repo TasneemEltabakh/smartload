@@ -49,7 +49,7 @@ jobs:
         run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
 
       - name: Run container
-        run: docker run -d -p 8080:8080 --name test-${{ matrix.service }} smartload-${{ matrix.service }}
+        run: docker run -d -p 8080:8080 -e PORT=8080 --name test-${{ matrix.service }} smartload-${{ matrix.service }}
 
       - name: Wait for service
         run: sleep 5
