@@ -63,19 +63,27 @@ SELECT add_retention_policy('scaling_events',  INTERVAL '90 days', if_not_exists
 --
 -- Engines that need sub-minute resolution (anomaly-detector, RL state) MUST
 -- continue to read raw `metrics` — this aggregate has 2-minute lag by design.
+--
+-- materialized_only = true: queries hit the materialised data only; recent
+-- rows in the [-2m, now] window aren't visible via this view (use raw metrics).
+--
+-- P95 is intentionally NOT computed here. PERCENTILE_CONT is an ordered-set
+-- aggregate and is rejected by TimescaleDB CAGGs (the materialized view would
+-- fail to create). Dashboards and engines compute P95 on raw `metrics` over a
+-- bounded window — cheap at SmartLoad scale.
 CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_1min
-WITH (timescaledb.continuous) AS
+WITH (timescaledb.continuous, timescaledb.materialized_only = true) AS
 SELECT
-    time_bucket('1 minute', time)                                AS bucket,
+    time_bucket('1 minute', time)   AS bucket,
     service,
     instance,
     metric_name,
-    AVG(value)                                                   AS avg_value,
-    MAX(value)                                                   AS max_value,
-    MIN(value)                                                   AS min_value,
-    SUM(value)                                                   AS sum_value,
-    COUNT(*)                                                     AS sample_count,
-    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY value)          AS p95_value
+    AVG(value)                      AS avg_value,
+    MAX(value)                      AS max_value,
+    MIN(value)                      AS min_value,
+    SUM(value)                      AS sum_value,
+    STDDEV(value)                   AS stddev_value,
+    COUNT(*)                        AS sample_count
 FROM metrics
 GROUP BY bucket, service, instance, metric_name
 WITH NO DATA;
