@@ -20,7 +20,6 @@ automatically when `docker compose up -d` has been run before pytest.
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import asdict, fields
 
 import pytest
@@ -28,11 +27,16 @@ import pytest
 from services.shared.contracts import (
     AnomalyEvent,
     CHANNEL_TTL_SECONDS,
+    DROP_REASON_MALFORMED_JSON,
+    DROP_REASON_NAIVE_TIMESTAMP,
+    DROP_REASON_NOT_AN_ENVELOPE,
+    DROP_REASON_STALE,
+    DROP_REASON_UNPARSEABLE_TIMESTAMP,
     ENVELOPE_VERSION,
-    Envelope,
     ForecastResult,
     PolicyUpdate,
     RoutingRecommendation,
+    ScalingEvent,
     make_envelope,
     parse_envelope,
 )
@@ -143,6 +147,68 @@ class TestChannelTTL:
         assert parse_envelope(json.dumps([1, 2, 3]), "smartload.anomaly") is None
         assert parse_envelope(json.dumps({"no_payload": True}), "smartload.anomaly") is None
 
+    def test_naive_timestamp_dropped(self):
+        # A publisher emitting an ISO timestamp without timezone must not crash
+        # the subscriber with TypeError. parse_envelope treats it as stale.
+        raw = json.dumps({"payload": {}, "timestamp": "2026-05-05T12:00:00"})
+        assert parse_envelope(raw, "smartload.anomaly") is None
+
+
+class TestDropReasonCallback:
+    """on_drop fires with a stable reason constant for each rejection class."""
+
+    @pytest.fixture
+    def collector(self):
+        drops = []
+        def on_drop(reason, raw):
+            drops.append(reason)
+        return drops, on_drop
+
+    def test_malformed_json(self, collector):
+        drops, on_drop = collector
+        parse_envelope("not-json", "smartload.anomaly", on_drop=on_drop)
+        assert drops == [DROP_REASON_MALFORMED_JSON]
+
+    def test_not_an_envelope(self, collector):
+        drops, on_drop = collector
+        parse_envelope(json.dumps({"foo": 1}), "smartload.anomaly", on_drop=on_drop)
+        assert drops == [DROP_REASON_NOT_AN_ENVELOPE]
+
+    def test_naive_timestamp(self, collector):
+        drops, on_drop = collector
+        raw = json.dumps({"payload": {}, "timestamp": "2026-05-05T12:00:00"})
+        parse_envelope(raw, "smartload.anomaly", on_drop=on_drop)
+        assert drops == [DROP_REASON_NAIVE_TIMESTAMP]
+
+    def test_unparseable_timestamp(self, collector):
+        drops, on_drop = collector
+        raw = json.dumps({"payload": {}, "timestamp": "not-a-time"})
+        parse_envelope(raw, "smartload.anomaly", on_drop=on_drop)
+        assert drops == [DROP_REASON_UNPARSEABLE_TIMESTAMP]
+
+    def test_stale(self, collector):
+        from datetime import datetime, timezone, timedelta
+        drops, on_drop = collector
+        old_ts = (datetime.now(timezone.utc) - timedelta(seconds=100)).isoformat()
+        raw = json.dumps({"payload": {}, "timestamp": old_ts})
+        parse_envelope(raw, "smartload.anomaly", on_drop=on_drop)
+        assert drops == [DROP_REASON_STALE]
+
+    def test_callback_exception_does_not_crash_parser(self):
+        # A buggy on_drop must not propagate up — observability never crashes
+        # the subscriber loop.
+        def bad_on_drop(reason, raw):
+            raise RuntimeError("boom")
+        # Should return None silently, not raise.
+        assert parse_envelope("not-json", "smartload.anomaly", on_drop=bad_on_drop) is None
+
+    def test_no_drop_on_healthy_message(self, collector):
+        drops, on_drop = collector
+        env = make_envelope("test", AnomalyEvent("b1", "degraded", 0.5))
+        result = parse_envelope(json.dumps(asdict(env)), "smartload.anomaly", on_drop=on_drop)
+        assert result is not None
+        assert drops == []   # callback only fires on drops
+
 
 # ── 3. Canonical SQL is parameterized ─────────────────────────────────────────
 
@@ -203,11 +269,13 @@ class TestPolicyUpdateContract:
             "anomaly_latency_multiplier",
             "per_instance_capacity_rps",
             "autoscaler_cooldown_seconds",
+            "policy_version",                  # SOT §11 required
             # ── added in S2 baseline ─────────────────────────────────────────
             "anomaly_response",
             "anomaly_recovery_window_seconds",
             "rl_exploration_rate",
             "rl_confidence_threshold",
+            "changed_fields",                  # SOT §11 optional
             "timestamp",
         }
         missing = expected - names
@@ -224,11 +292,56 @@ class TestPolicyUpdateContract:
             anomaly_latency_multiplier=3.0,
             per_instance_capacity_rps=100,
             autoscaler_cooldown_seconds=60,
+            policy_version=1,
         )
         assert p.rl_exploration_rate == 0.0
         assert p.rl_confidence_threshold == 0.6
         assert p.anomaly_response == "auto-isolate"
         assert p.anomaly_recovery_window_seconds == 30
+        assert p.policy_version == 1
+        assert p.changed_fields is None
+
+
+class TestChannelPayloadOptionals:
+    """SOT §11 'Channel-specific payload fields' optional columns are present."""
+
+    def test_anomaly_event_has_features_and_model_version(self):
+        names = {f.name for f in fields(AnomalyEvent)}
+        assert "features" in names, "AnomalyEvent.features missing (SOT §11 optional)"
+        assert "model_version" in names, "AnomalyEvent.model_version missing (SOT §11 optional)"
+
+    def test_forecast_result_has_model_id(self):
+        names = {f.name for f in fields(ForecastResult)}
+        assert "model_id" in names, "ForecastResult.model_id missing (SOT §11 optional)"
+
+    def test_routing_recommendation_has_policy_version(self):
+        names = {f.name for f in fields(RoutingRecommendation)}
+        assert "policy_version" in names, (
+            "RoutingRecommendation.policy_version missing — required for "
+            "the LB sidecar to detect stale-policy decisions (SOT §11)"
+        )
+
+    def test_scaling_event_has_forecast_event_id(self):
+        names = {f.name for f in fields(ScalingEvent)}
+        assert "forecast_event_id" in names, (
+            "ScalingEvent.forecast_event_id missing — required for the "
+            "audit chain forecast → scale (SOT §11)"
+        )
+
+    def test_optional_fields_default_to_none(self):
+        # Optional fields must default to None so existing publishers that
+        # don't set them produce envelopes that still validate.
+        ae = AnomalyEvent("b1", "healthy", 0.0)
+        assert ae.features is None and ae.model_version is None
+
+        fr = ForecastResult(5, 100.0, 95.0, 105.0)
+        assert fr.model_id is None
+
+        rr = RoutingRecommendation("shadow", [])
+        assert rr.policy_version is None
+
+        se = ScalingEvent("scale_out", 3, "test")
+        assert se.forecast_event_id is None
 
 
 # ── 5+6. Schema-level tests (require docker stack) ────────────────────────────
@@ -256,43 +369,36 @@ pytestmark_db = pytest.mark.skipif(
 
 @pytestmark_db
 class TestRetentionPolicies:
-    """SOT §10: bound storage growth on each owned data class."""
+    """SOT §10: bound storage growth on each owned data class.
 
-    def test_metrics_retention_7d(self):
+    Asserts retention via a server-side interval comparison rather than
+    string-matching the JSONB config blob — that representation varies
+    across TimescaleDB versions ("7 days" vs ISO 8601 "P7D" vs seconds).
+    """
+
+    @pytest.mark.parametrize("hypertable, expected_interval", [
+        ("metrics",        "7 days"),
+        ("backend_health", "30 days"),
+        ("scaling_events", "90 days"),
+    ])
+    def test_retention_policy_interval(self, hypertable, expected_interval):
         import psycopg2
         from tests.integration.conftest import TIMESCALEDB_DSN
         with psycopg2.connect(TIMESCALEDB_DSN) as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT config "
+                "SELECT (config->>'drop_after')::interval "
                 "FROM timescaledb_information.jobs "
                 "WHERE proc_name = 'policy_retention' "
-                "  AND hypertable_name = 'metrics'"
+                "  AND hypertable_name = %s",
+                (hypertable,),
             )
             row = cur.fetchone()
-            assert row is not None, "metrics retention policy not found"
-            assert "7 days" in str(row[0]) or "604800" in str(row[0])
-
-    def test_backend_health_retention_30d(self):
-        import psycopg2
-        from tests.integration.conftest import TIMESCALEDB_DSN
-        with psycopg2.connect(TIMESCALEDB_DSN) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT config FROM timescaledb_information.jobs "
-                "WHERE proc_name = 'policy_retention' AND hypertable_name = 'backend_health'"
+            assert row is not None, f"{hypertable} retention policy not found"
+            cur.execute("SELECT %s::interval = %s::interval", (row[0], expected_interval))
+            matches, = cur.fetchone()
+            assert matches, (
+                f"{hypertable} retention is {row[0]}, expected {expected_interval}"
             )
-            row = cur.fetchone()
-            assert row is not None, "backend_health retention policy not found"
-
-    def test_scaling_events_retention_90d(self):
-        import psycopg2
-        from tests.integration.conftest import TIMESCALEDB_DSN
-        with psycopg2.connect(TIMESCALEDB_DSN) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT config FROM timescaledb_information.jobs "
-                "WHERE proc_name = 'policy_retention' AND hypertable_name = 'scaling_events'"
-            )
-            row = cur.fetchone()
-            assert row is not None, "scaling_events retention policy not found"
 
 
 @pytestmark_db
