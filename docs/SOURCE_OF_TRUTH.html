@@ -2420,19 +2420,23 @@ SELECT create_hypertable('scaling_events', 'time', if_not_exists =&gt; TRUE);</c
 </details>
 
 <h4>Canonical SQL access via <code>services/shared/queries.py</code></h4>
-<pre><code>-- ANOMALY_QUERY (anomaly-detector reads every 5 s)
+<pre><code>-- ANOMALY_QUERY (anomaly-detector reads every 5 s) — parameterised since PR #105
 SELECT instance, metric_name,
        AVG(value)    AS avg_value,
        MAX(value)    AS max_value,
        STDDEV(value) AS std_value,
        COUNT(*)      AS sample_count
 FROM metrics
-WHERE time &gt; NOW() - INTERVAL '{window}'
-  AND service = 'load-balancer'
-  AND metric_name IN ('request_latency_ms', 'error_rate')
+WHERE time &gt; NOW() - %s::interval
+  AND service = %s
+  AND metric_name = ANY(%s)
 GROUP BY instance, metric_name
-ORDER BY instance, metric_name;</code></pre>
-<p class="small">Other constants in the same file: <code>FORECAST_QUERY</code>, <code>RL_STATE_QUERY</code>, <code>METRICS_INSERT</code>.</p>
+ORDER BY instance, metric_name;
+
+-- Caller passes (window, service, metric_names) as bind params:
+cur.execute(ANOMALY_QUERY,
+            ("60 seconds", ANOMALY_DEFAULT_SERVICE, ANOMALY_METRIC_NAMES))</code></pre>
+<p class="small">Other constants in the same file: <code>FORECAST_QUERY</code>, <code>RL_STATE_QUERY</code>, <code>BACKEND_HEALTH_QUERY</code>, <code>METRICS_INSERT</code>, <code>BACKEND_HEALTH_INSERT</code>, <code>SCALING_EVENT_INSERT</code>. Defaults: <code>ANOMALY_DEFAULT_SERVICE = "load-balancer"</code>, <code>ANOMALY_METRIC_NAMES = ["request_latency_ms", "error_rate"]</code>.</p>
 
 <h4>Implementation readiness</h4>
 <p><span class="pill pill-done">DONE</span> Phase 0: extension installed; 3 hypertables created via <code>init.sql</code>; verified by <code>TestTimescaleDBSchema</code> (5 tests in the 33-test integration suite).</p>
@@ -2446,15 +2450,15 @@ ORDER BY instance, metric_name;</code></pre>
     <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">Must NOT hold transactional state. Must NOT be the bus for ephemeral signals (use Redis for that). Must NOT be queried from the data plane.</div></div>
     <div class="dc-row"><div class="key">Required interfaces</div><div class="val">PostgreSQL wire protocol on port 5432; SQL constants in <code>services/shared/queries.py</code> are the only canonical entry points for SmartLoad services.</div></div>
     <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If the DB goes down: writes back-pressure (fail loudly, never silently); reads from engines fail their cycle and engines must skip rather than crash.</div></div>
-    <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Hypertables provide native time-based partitioning. Retention should be added per data class (e.g., 30 d for raw metrics, 7 d for health, 90 d for scaling events).</div></div>
+    <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Hypertables provide native time-based partitioning. Retention is enforced per data class: <strong>7 d</strong> for raw <code>metrics</code> (high-volume, derived signals live in CAGGs / <code>backend_health</code>), <strong>30 d</strong> for <code>backend_health</code> (longer-tail anomaly history), <strong>90 d</strong> for <code>scaling_events</code> (audit trail).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Standard Postgres exporter to Prometheus. Grafana dashboards on hypertable size, write rate, query latency.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Trusted-network assumption; no per-service auth in prototype. Production: per-service DB roles with least-privilege.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">3-table schema, 33-test integration suite passes. No retention policies enforced yet.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">3-table canonical + retention policies + continuous aggregates for fast Grafana panels. V1 6-table schema is the long-term target after Phase 2 review.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">3-table schema with retention (7d / 30d / 90d) and the <code>metrics_1min</code> continuous aggregate. 33 Phase-0 wiring tests + 39 S2 baseline tests (incl. 6 DB-bound) passing in CI as of PR #105 + #106.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">3-table canonical + the existing retention &amp; CAGG. V1 6-table schema is the long-term target after Phase 2 review.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>Add retention policies (<code>add_retention_policy</code>).</li>
-        <li>Add continuous aggregates (<code>telemetry_1min</code>, <code>telemetry_hourly</code>) for dashboards.</li>
+        <li><s>Add retention policies (<code>add_retention_policy</code>)</s>. <span class="badge badge-implemented">Done — PR #105</span></li>
+        <li><s>Add continuous aggregates for dashboards</s>. <span class="badge badge-implemented"><code>metrics_1min</code> shipped — PR #105</span> A second-tier hourly CAGG remains nice-to-have for long-range Grafana panels.</li>
         <li>Decide V1 schema migration path <span class="badge badge-confirm">Needs confirmation</span>.</li>
         <li>Production hardening: per-service Postgres roles.</li>
       </ul>
@@ -2794,7 +2798,7 @@ anomaly_recovery_window_seconds: 30   # consecutive healthy seconds before clear
 # --- RL controls ---
 rl_exploration_rate: 0.0              # 0 = pure exploitation; only non-zero in 'learning' mode
 rl_confidence_threshold: 0.6          # below this, sidecar ignores RL and uses classical</code></pre>
-<p class="small muted">The current file (<code>config/policy.yaml</code> in the repo) is a subset of the above (missing the anomaly_response, anomaly_recovery_window_seconds, and rl_* fields). Extending the YAML to the full canonical set is a small change that should land alongside the Policy Manager REST implementation (T1.4) so that the dataclass <code>PolicyUpdate</code>, the YAML, and the operator REST shape all agree on day one.</p>
+<p class="small muted"><span class="badge badge-implemented">Done — PR #105</span> <code>config/policy.yaml</code>, the <code>PolicyUpdate</code> dataclass, and the canonical SOT §11 payload shape are now in sync. The four previously-missing fields (<code>anomaly_response</code>, <code>anomaly_recovery_window_seconds</code>, <code>rl_exploration_rate</code>, <code>rl_confidence_threshold</code>) are present in all three places, and <code>PolicyUpdate.policy_version</code> (required) plus <code>changed_fields</code> (optional) match SOT §11. T1.4 only needs to wire the REST surface and the publisher loop.</p>
 <h4>Acceptance (T1.4)</h4>
 <ul>
   <li><code>curl -X POST localhost:8086/api/v1/policy -d '{"safe_mode": true}'</code> → 200, publishes update.</li>
@@ -3416,7 +3420,40 @@ CREATE TABLE scaling_events (
   instance_count INT         NOT NULL,
   reason         TEXT
 );
-SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);</code></pre>
+SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);
+
+-- Retention (added 2026-05-05, PR #105)
+SELECT add_retention_policy('metrics',         INTERVAL '7 days',  if_not_exists => TRUE);
+SELECT add_retention_policy('backend_health',  INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('scaling_events',  INTERVAL '90 days', if_not_exists => TRUE);
+
+-- Continuous aggregate (long-format, materialized_only=true)
+CREATE MATERIALIZED VIEW metrics_1min
+WITH (timescaledb.continuous, timescaledb.materialized_only = true) AS
+SELECT
+  time_bucket('1 minute', time) AS bucket,
+  service, instance, metric_name,
+  AVG(value)    AS avg_value,
+  MAX(value)    AS max_value,
+  MIN(value)    AS min_value,
+  SUM(value)    AS sum_value,
+  STDDEV(value) AS stddev_value,
+  COUNT(*)      AS sample_count
+FROM metrics
+GROUP BY bucket, service, instance, metric_name
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy('metrics_1min',
+  start_offset      => INTERVAL '1 hour',
+  end_offset        => INTERVAL '2 minutes',
+  schedule_interval => INTERVAL '1 minute',
+  if_not_exists     => TRUE);
+
+SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists => TRUE);</code></pre>
+
+<p class="small muted">
+  P95 is intentionally <strong>not</strong> computed in the CAGG. <code>PERCENTILE_CONT</code> is an ordered-set aggregate which TimescaleDB CAGGs reject; engines and dashboards compute P95 on raw <code>metrics</code> over a bounded window (cheap at SmartLoad scale). The <code>materialized_only=true</code> flag means queries against the view see materialised data only; the [-2 min, now] window is only visible via raw <code>metrics</code> — anomaly-detector and RL state queries continue to read raw, which is the design intent.
+</p>
 
 <h3>Why this schema (rationale)</h3>
 <ul>
@@ -3622,8 +3659,10 @@ SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);</code
   </tbody>
 </table>
 
-<div class="callout">
-  <strong>Migration note for the implementation.</strong> The current <code>services/shared/contracts.py</code> defines flat dataclasses without an envelope wrapper, no <code>event_id</code>, and no <code>policy_version</code>. The canonical design above is the target shape. The cleanest migration is a new <code>Envelope</code> dataclass that wraps any payload, with a single <code>publish(channel, payload)</code> helper that fills <code>event_id</code>, <code>source</code>, <code>version</code>, <code>timestamp</code> automatically. <strong>Apply this before the LB Sidecar (T2.1) lands</strong> — once the Sidecar is consuming raw payloads, changing the envelope becomes a coordinated cutover.
+<div class="callout success">
+  <strong>Migration note — applied 2026-05-05 in PR #105.</strong> <code>services/shared/contracts.py</code> now ships the canonical <code>Envelope</code> dataclass plus <code>make_envelope</code>, <code>publish_envelope</code>, <code>parse_envelope</code>, and <code>subscribe_envelope</code> helpers (the latter two with an <code>on_drop(reason, raw)</code> callback so dropped messages are observable per SOT §8.3). The five missing channel-payload fields landed alongside: <code>policy_version</code> (required on <code>PolicyUpdate</code>, optional on <code>RoutingRecommendation</code>), <code>forecast_event_id</code> on <code>ScalingEvent</code>, <code>features</code> / <code>model_version</code> on <code>AnomalyEvent</code>, and <code>model_id</code> on <code>ForecastResult</code>. <code>changed_fields</code> on <code>PolicyUpdate</code> is the only addition beyond the SOT requirements.
+  <br><br>
+  Channel TTLs (anomaly 30 s, routing 30 s, forecast 180 s, policy &amp; scale never expire) are exposed as <code>CHANNEL_TTL_SECONDS</code>; subscribers using <code>subscribe_envelope</code> drop stale and naive-datetime messages without crashing the polling loop. The legacy flat <code>json_encode</code> / <code>json_decode</code> helpers remain so the 33-test Phase 0 suite stays green during the transition.
 </div>
 
 <h3>Canonical REST endpoints</h3>
@@ -4879,6 +4918,58 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.1 — 2026-05-05 — S2 integration baseline + CI hardening</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Redis envelope (SOT §11)</strong></td>
+      <td>Canonical <code>Envelope</code> + <code>publish_envelope</code> / <code>subscribe_envelope</code> helpers landed in <code>services/shared/contracts.py</code>; <code>on_drop</code> callback exposes drop reasons (<code>malformed_json</code>, <code>not_an_envelope</code>, <code>naive_timestamp</code>, <code>unparseable_timestamp</code>, <code>stale</code>) for Prometheus counters.</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong>Channel-payload fields (SOT §11)</strong></td>
+      <td>Added the five missing fields: <code>policy_version</code> (required on <code>PolicyUpdate</code>, optional on <code>RoutingRecommendation</code>), <code>forecast_event_id</code> on <code>ScalingEvent</code>, <code>features</code> / <code>model_version</code> on <code>AnomalyEvent</code>, <code>model_id</code> on <code>ForecastResult</code>.</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong>SQL parameterization (SOT §11)</strong></td>
+      <td><code>services/shared/queries.py</code>: <code>INTERVAL '{window}'</code> .format → <code>%s::interval</code>; <code>ANOMALY_QUERY</code> takes <code>service</code> + <code>metric_names</code> as bind params; <code>ANOMALY_DEFAULT_SERVICE</code> / <code>ANOMALY_METRIC_NAMES</code> pin the canonical defaults.</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong>TimescaleDB hardening (SOT §8.4 / §10)</strong></td>
+      <td>Retention policies (<code>metrics</code> 7 d, <code>backend_health</code> 30 d, <code>scaling_events</code> 90 d) and the <code>metrics_1min</code> continuous aggregate (long-format, <code>materialized_only=true</code>) added to the canonical 3-table schema. <code>PERCENTILE_CONT</code> intentionally excluded — engines compute P95 on raw <code>metrics</code>.</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong><code>config/policy.yaml</code> (SOT §8.9)</strong></td>
+      <td>Added the four canonical fields (<code>anomaly_response</code>, <code>anomaly_recovery_window_seconds</code>, <code>rl_exploration_rate</code>, <code>rl_confidence_threshold</code>) so the YAML, the <code>PolicyUpdate</code> dataclass, and the SOT §11 payload all agree.</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong><code>/health</code> contract (SOT §11)</strong></td>
+      <td>All six service stubs now return <strong>503</strong> on degraded instead of <strong>207</strong>. 207 is reserved for WebDAV; K8s liveness probes treat 2xx as healthy and were silently classifying degraded services as healthy.</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong>Synthetic seed for N1.x</strong></td>
+      <td><code>scripts/seed-metrics.py</code> writes per-backend telemetry into the canonical <code>metrics</code> table (with <code>--truncate</code> for idempotent reruns and <code>--dry-run</code> for CI). Mitigates the risk-register entry "T1.1 delayed → no live metrics for N1.1 testing."</td>
+      <td>PR #105</td>
+    </tr>
+    <tr>
+      <td><strong>CI runs the test suites</strong></td>
+      <td>New <code>unit-tests</code> job (pytest after lint, fast feedback). <code>compose-test</code> now installs pytest, polls <code>pg_isready</code> + <code>redis-cli ping</code> until reachable, runs <code>test_pipeline_health.py</code> (33) + <code>test_s2_baseline.py</code> (39) against the live stack, dumps container logs on failure.</td>
+      <td>PR #106</td>
+    </tr>
+    <tr>
+      <td><strong>Superseded PRs (telemetry/anomaly/forecasting/RL/grafana stack)</strong></td>
+      <td>PRs #86, #87, #88, #89, #90, #91, #92, #93 closed as superseded; reusable algorithm classes / panel SQL flagged in closing comments for re-landing on top of the new baseline.</td>
+      <td>PR #105 baseline</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.0 — 2026-05-04 — Initial canonical SoT consolidation</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>What was deprecated</th><th>Resolved by</th></tr></thead>
@@ -4945,7 +5036,7 @@ docker compose logs -f anomaly-detector</code></pre>
   <li><span class="badge badge-confirm">Needs confirmation</span> — Will the V1 schema (with <code>telemetry_metrics</code>, FK relations, 8 ENUMs, continuous aggregates) be adopted as a Phase 2 migration target, or remain a parallel design?</li>
   <li><span class="badge badge-confirm">Needs confirmation</span> — Will the formal Feature Contracts (<code>SmartLoad_Feature_Contracts_v1.docx</code>) replace the lighter R0–R2 dataset plan, or coexist?</li>
   <li><span class="badge badge-confirm">Needs confirmation</span> — Sidecar language: Python (current default) vs Go.</li>
-  <li><span class="badge badge-confirm">Needs confirmation</span> — Whether to adopt the Service Contracts DOCX SLA targets (99.5% availability, 207 multi-status, etc.) as canonical operational commitments.</li>
+  <li><span class="badge badge-confirm">Needs confirmation</span> — Whether to adopt the Service Contracts DOCX SLA targets (99.5% availability, etc.) as canonical operational commitments. <em>Note: the DOCX-suggested HTTP 207 for <code>/health</code> degraded responses was rejected on 2026-05-05; canonical is 200 OK / 503 Service Unavailable per §11.</em></li>
   <li><span class="badge badge-confirm">Needs confirmation</span> — Final Service identifiers: keep simple unsuffixed channels or migrate to <code>.v1</code> envelopes once V1 schema is reviewed.</li>
 </ul>
 
@@ -4958,6 +5049,24 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>DB schema canonical source</td>
       <td>Use the wired Phase 0 schema. New V1 design + DOCX contracts will be reviewed and integrated in the next iteration.</td>
       <td>✅ aserosama1@gmail.com — 2026-05-04</td>
+    </tr>
+    <tr>
+      <td>2026-05-05</td>
+      <td>S2 integration baseline + CI</td>
+      <td>Land the SOT §11 envelope migration, the missing channel-payload fields, parameterized SQL, retention + <code>metrics_1min</code> CAGG on the canonical 3-table schema, and the four missing policy fields — in one integration PR (#105) before any S2 service implementations land. Run the integration test suites against the live stack on every PR (#106).</td>
+      <td>✅ aserosama1@gmail.com — 2026-05-05</td>
+    </tr>
+    <tr>
+      <td>2026-05-05</td>
+      <td><code>/health</code> response code on degraded</td>
+      <td>Return <strong>503</strong>, not <strong>207</strong>. 207 is reserved for WebDAV; K8s probes treat 2xx as healthy and were silently masking degraded services. Applied across all six service stubs.</td>
+      <td>✅ aserosama1@gmail.com — 2026-05-05</td>
+    </tr>
+    <tr>
+      <td>2026-05-05</td>
+      <td>Eight superseded PRs (#86–#93)</td>
+      <td>Closed without merging because they predated the canonical contracts. Reusable algorithm cores and panel SQL flagged in closing comments to be lifted into new PRs against the integration baseline.</td>
+      <td>✅ aserosama1@gmail.com — 2026-05-05</td>
     </tr>
   </tbody>
 </table>
