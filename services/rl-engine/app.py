@@ -49,7 +49,7 @@ def health():
     db_ok, db_err = check_timescaledb()
     errors = [e for e in [redis_err, db_err] if e]
     status = "ok" if (redis_ok and db_ok) else "degraded"
-    code = 200 if status == "ok" else 207
+    code = 200 if status == "ok" else 503  # SOT §11: 503 on degraded, never 207
     return jsonify(
         {
             "status": status,
