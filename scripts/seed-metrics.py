@@ -31,8 +31,9 @@ Usage
     python scripts/seed-metrics.py --dsn postgresql://postgres:changeme@localhost:5432/smartloaddb
 
 Idempotency
-    Not idempotent — re-running appends another window of rows. Truncate
-    `metrics` first (`TRUNCATE metrics`) if you need a clean slate.
+    Pass `--truncate` to TRUNCATE `metrics` before inserting. Without it,
+    re-running appends another window of rows and skews the rolling-mean
+    baseline that the anomaly detector uses.
 """
 
 from __future__ import annotations
@@ -114,6 +115,8 @@ def main() -> int:
     p.add_argument("--rps-per-backend", type=int, default=20, help="target RPS per backend (default: 20)")
     p.add_argument("--seed", type=int, default=42, help="random seed for reproducibility (default: 42)")
     p.add_argument("--dry-run", action="store_true", help="print row count and the first 5 rows; do not insert")
+    p.add_argument("--truncate", action="store_true",
+                   help="TRUNCATE metrics before inserting (idempotent re-runs for development)")
     args = p.parse_args()
 
     random.seed(args.seed)
@@ -143,6 +146,9 @@ def main() -> int:
     conn = psycopg2.connect(args.dsn, connect_timeout=10)
     try:
         with conn, conn.cursor() as cur:
+            if args.truncate:
+                cur.execute("TRUNCATE metrics")
+                print("[seed-metrics] truncated metrics")
             execute_batch(cur, INSERT_SQL, rows, page_size=500)
         print(f"[seed-metrics] inserted into {args.dsn.rsplit('@', 1)[-1]}")
     finally:
