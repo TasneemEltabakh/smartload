@@ -55,10 +55,20 @@ jobs:
         run: sleep 5
 
       - name: Health check
+        # Standalone service has no Redis / TimescaleDB, so /health correctly
+        # reports degraded (503 per SOT §11). This step verifies the HTTP
+        # server is up by accepting either 200 (full health) or 503 (degraded
+        # but reachable). The compose-test job below validates full health
+        # against the live stack.
         run: |
           for i in {1..10}; do
-            curl -f http://localhost:8080/health && exit 0
-            echo "Waiting for service..."
+            code=$(curl -sS -o /tmp/health.json -w "%{http_code}" http://localhost:8080/health || true)
+            if [ "$code" = "200" ] || [ "$code" = "503" ]; then
+              echo "Service reachable (HTTP $code)"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "Waiting for service... (last status: $code)"
             sleep 2
           done
           echo "Service failed to start"
