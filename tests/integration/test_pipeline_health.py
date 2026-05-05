@@ -94,8 +94,9 @@ class TestRedisConnectivity:
         """Each AI service /health must include 'redis': true."""
         url = SERVICE_URLS[service] + "/health"
         resp = requests.get(url, timeout=10)
-        # Accept 200 (ok) or 207 (degraded but reachable)
-        assert resp.status_code in (200, 207), (
+        # SOT §11: 200 if all dependencies up, 503 if degraded. Both surface
+        # the JSON body — we still need to parse it to read the redis flag.
+        assert resp.status_code in (200, 503), (
             f"{service} returned unexpected status {resp.status_code}"
         )
         data = resp.json()
@@ -120,7 +121,7 @@ class TestTimescaleDBConnectivity:
         """Each AI service /health must include 'timescaledb': true."""
         url = SERVICE_URLS[service] + "/health"
         resp = requests.get(url, timeout=10)
-        assert resp.status_code in (200, 207)
+        assert resp.status_code in (200, 503)
         data = resp.json()
         assert "timescaledb" in data, (
             f"{service} /health response missing 'timescaledb' field. Got: {data}"

@@ -46,7 +46,10 @@ def health():
     db_ok, db_err = check_timescaledb()
     errors = [e for e in [redis_err, db_err] if e]
     status = "ok" if (redis_ok and db_ok) else "degraded"
-    code = 200 if status == "ok" else 207
+    # SOT §11: /health uses 200 OK or 503 Service Unavailable. 207 is reserved
+    # for WebDAV; K8s liveness probes treat any 2xx as healthy, so 207 would
+    # silently classify a degraded service as healthy.
+    code = 200 if status == "ok" else 503
     return jsonify(
         {
             "status": status,

@@ -43,7 +43,7 @@ def health():
     policy = load_policy()
     errors = [e for e in [redis_err] if e]
     status = "ok" if redis_ok else "degraded"
-    code = 200 if status == "ok" else 207
+    code = 200 if status == "ok" else 503  # SOT §11: 503 on degraded, never 207
     return jsonify(
         {
             "status": status,
