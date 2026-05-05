@@ -48,3 +48,47 @@ CREATE TABLE IF NOT EXISTS scaling_events (
 );
 
 SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);
+
+-- ── retention policies ───────────────────────────────────────────────────────
+-- Bound storage growth per the canonical data classes (SOT §10).
+-- These DROP chunks older than the retention window; aggregates live longer.
+SELECT add_retention_policy('metrics',         INTERVAL '7 days',  if_not_exists => TRUE);
+SELECT add_retention_policy('backend_health',  INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('scaling_events',  INTERVAL '90 days', if_not_exists => TRUE);
+
+-- ── continuous aggregate: metrics_1min ───────────────────────────────────────
+-- Per-minute roll-up over the canonical long-format `metrics` table.
+-- Powers Grafana panels (T2.2) and gives the forecasting engine a cheap
+-- request-rate surface without scanning raw chunks.
+--
+-- Engines that need sub-minute resolution (anomaly-detector, RL state) MUST
+-- continue to read raw `metrics` — this aggregate has 2-minute lag by design.
+CREATE MATERIALIZED VIEW IF NOT EXISTS metrics_1min
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 minute', time)                                AS bucket,
+    service,
+    instance,
+    metric_name,
+    AVG(value)                                                   AS avg_value,
+    MAX(value)                                                   AS max_value,
+    MIN(value)                                                   AS min_value,
+    SUM(value)                                                   AS sum_value,
+    COUNT(*)                                                     AS sample_count,
+    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY value)          AS p95_value
+FROM metrics
+GROUP BY bucket, service, instance, metric_name
+WITH NO DATA;
+
+-- Refresh every minute, materialising the [-1h, -2m] window. The 2-minute
+-- end_offset gives raw chunks time to settle before being aggregated.
+SELECT add_continuous_aggregate_policy(
+    'metrics_1min',
+    start_offset      => INTERVAL '1 hour',
+    end_offset        => INTERVAL '2 minutes',
+    schedule_interval => INTERVAL '1 minute',
+    if_not_exists     => TRUE
+);
+
+-- Aggregate retention: 30 days. (Raw `metrics` retention is 7d above.)
+SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists => TRUE);
