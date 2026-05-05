@@ -141,37 +141,82 @@ def publish_envelope(redis_client, channel: str, source: str, payload: Any) -> s
     return env.event_id
 
 
-def _envelope_is_stale(env_timestamp: str, ttl_seconds: int | None) -> bool:
+# Reasons returned by parse_envelope when a message is rejected. Subscribers
+# can dispatch on these to emit per-reason Prometheus counters (SOT §8.3
+# observability expectation: "dropped writes observable").
+DROP_REASON_MALFORMED_JSON       = "malformed_json"
+DROP_REASON_NOT_AN_ENVELOPE      = "not_an_envelope"
+DROP_REASON_NAIVE_TIMESTAMP      = "naive_timestamp"
+DROP_REASON_UNPARSEABLE_TIMESTAMP = "unparseable_timestamp"
+DROP_REASON_STALE                = "stale"
+
+
+def _envelope_is_stale(env_timestamp: str, ttl_seconds: int | None) -> tuple[bool, str | None]:
+    """
+    Returns (is_stale, drop_reason). is_stale=True ⇒ message must be dropped.
+    drop_reason is one of the DROP_REASON_* constants when stale, else None.
+
+    Defensively rejects naive datetimes — the canonical envelope timestamp is
+    RFC 3339 UTC, but a misbehaving publisher could emit a naive ISO string,
+    and `aware - naive` would otherwise raise TypeError up to the caller.
+    """
     if ttl_seconds is None:
-        return False
+        return False, None
     try:
         ts = datetime.fromisoformat(env_timestamp.replace("Z", "+00:00"))
-    except ValueError:
-        return True   # unparseable timestamp ⇒ treat as stale, refuse silently
+    except (ValueError, AttributeError):
+        return True, DROP_REASON_UNPARSEABLE_TIMESTAMP
+    if ts.tzinfo is None:
+        return True, DROP_REASON_NAIVE_TIMESTAMP
     age = (datetime.now(timezone.utc) - ts).total_seconds()
-    return age > ttl_seconds
+    if age > ttl_seconds:
+        return True, DROP_REASON_STALE
+    return False, None
 
 
-def parse_envelope(raw: str | bytes, channel: str | None = None) -> tuple[dict, dict] | None:
+def parse_envelope(
+    raw: str | bytes,
+    channel: str | None = None,
+    *,
+    on_drop: Callable[[str, str | bytes], None] | None = None,
+) -> tuple[dict, dict] | None:
     """
     Parse a JSON envelope from a Redis message body.
 
     Returns (payload, envelope_meta) on success, or None if the message is
-    malformed or stale per the channel TTL.
+    malformed or stale per the channel TTL. `envelope_meta` excludes `payload`
+    so callers can correlate by event_id / source / version without re-reading
+    the full body.
 
-    `envelope_meta` excludes `payload` so callers can correlate by event_id /
-    source / version without re-reading the full body.
+    Pass `on_drop` to be notified of the reason for any drop — used by
+    subscribers to emit Prometheus counters or structured log lines. The
+    callback receives (DROP_REASON_*, raw_bytes_or_str) and must not raise.
     """
+    def _drop(reason: str) -> None:
+        if on_drop is not None:
+            try:
+                on_drop(reason, raw)
+            except Exception:   # noqa: BLE001 — never let observability crash the subscriber
+                pass
+
     if isinstance(raw, bytes):
-        raw = raw.decode()
+        try:
+            raw = raw.decode()
+        except UnicodeDecodeError:
+            _drop(DROP_REASON_MALFORMED_JSON)
+            return None
     try:
         data = json.loads(raw)
     except (TypeError, ValueError):
+        _drop(DROP_REASON_MALFORMED_JSON)
         return None
     if not isinstance(data, dict) or "payload" not in data or "timestamp" not in data:
+        _drop(DROP_REASON_NOT_AN_ENVELOPE)
         return None
     ttl = CHANNEL_TTL_SECONDS.get(channel) if channel else None
-    if _envelope_is_stale(data["timestamp"], ttl):
+    is_stale, reason = _envelope_is_stale(data["timestamp"], ttl)
+    if is_stale:
+        _drop(reason or DROP_REASON_STALE)
         return None
     payload = data.pop("payload")
     return payload, data
@@ -183,19 +228,23 @@ def subscribe_envelope(
     callback: Callable[[dict, dict], None],
     *,
     timeout: float | None = None,
+    on_drop: Callable[[str, str | bytes], None] | None = None,
 ) -> None:
     """
     Pull one message from `pubsub` (already SUBSCRIBE'd to `channel`), parse
     its envelope, and invoke `callback(payload, envelope_meta)` if the message
     is valid and not stale.
 
-    Returns silently on timeout, malformed body, or a stale message — never
-    raises. Caller drives the polling loop; this helper is a single-tick.
+    Returns silently on timeout. On a malformed or stale message, returns and
+    invokes `on_drop(reason, raw)` if provided so the subscriber can record the
+    drop (Prometheus counter, structured log). Never raises.
+
+    Caller drives the polling loop; this helper is a single-tick.
     """
     msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=timeout)
     if msg is None or msg.get("type") != "message":
         return
-    parsed = parse_envelope(msg.get("data", b""), channel=channel)
+    parsed = parse_envelope(msg.get("data", b""), channel=channel, on_drop=on_drop)
     if parsed is None:
         return
     payload, meta = parsed
