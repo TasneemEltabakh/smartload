@@ -27,6 +27,31 @@ jobs:
         run: ruff check services test-backends
 
 
+  unit-tests:
+    # Pure-Python tests (envelope round-trip, drop-reason callback, SQL
+    # parameterisation, PolicyUpdate field contract). DB-backed tests in
+    # the same file skip cleanly when no stack is up, so we run the whole
+    # test_s2_baseline.py here for fast feedback and let the integration
+    # job re-run it against a live TimescaleDB.
+    runs-on: ubuntu-latest
+    needs: lint
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r tests/integration/requirements.txt
+
+      - name: Run pure-Python tests
+        run: pytest tests/integration/test_s2_baseline.py -v
+
+
   build-services:
     runs-on: ubuntu-latest
     needs: lint
@@ -120,8 +145,12 @@ jobs:
 
 
   compose-test:
+    # Brings up the full SmartLoad stack and runs the integration test
+    # suites against it: the 33 Phase-0 wiring tests + the S2 baseline
+    # tests (envelope, parameterised SQL, retention policies, CAGG).
     runs-on: ubuntu-latest
     needs:
+      - unit-tests
       - build-services
       - build-test-backend
 
@@ -129,18 +158,57 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install -r tests/integration/requirements.txt
+
       - name: Start docker-compose environment
         run: docker compose up -d --build --scale test-backend=2
 
-      - name: Wait for system startup
-        run: sleep 10
-
-      - name: Test load-balancer endpoint
-        run: curl -f http://localhost:8080
+      - name: Wait for stack to become healthy
+        # Poll TimescaleDB and Redis directly; the AI-service /health
+        # endpoints already poll their deps and we want to wait until
+        # all are reachable from the runner.
+        run: |
+          for i in {1..30}; do
+            tsdb_ok=$(docker compose exec -T timescaledb pg_isready -U postgres -d smartloaddb >/dev/null 2>&1 && echo yes || echo no)
+            redis_ok=$(docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && echo yes || echo no)
+            if [ "$tsdb_ok" = "yes" ] && [ "$redis_ok" = "yes" ]; then
+              echo "Stack ready (tsdb=$tsdb_ok, redis=$redis_ok)"
+              break
+            fi
+            echo "Waiting (try $i/30): tsdb=$tsdb_ok redis=$redis_ok"
+            sleep 2
+          done
+          # Brief grace period for AI-service health probes to converge.
+          sleep 5
 
       - name: Show running containers
         run: docker ps
 
+      - name: Test load-balancer endpoint
+        run: curl -f http://localhost:8080
+
+      - name: Run Phase-0 wiring tests (33 tests)
+        run: pytest tests/integration/test_pipeline_health.py -v
+
+      - name: Run S2 baseline tests against live stack (39 tests)
+        # Same file as unit-tests, but the DB-backed schema tests now
+        # actually execute instead of being skipped.
+        run: pytest tests/integration/test_s2_baseline.py -v
+
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          for s in nginx test-backend telemetry anomaly-detector forecasting rl-engine autoscaler policy-manager redis timescaledb; do
+            echo "===== $s ====="
+            docker compose logs --tail=80 "$s" || true
+          done
+
       - name: Stop compose
         if: always()
-        run: docker compose down
+        run: docker compose down -v
