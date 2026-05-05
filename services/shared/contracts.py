@@ -209,11 +209,18 @@ class AnomalyEvent:
     """
     Published by anomaly-detector to smartload.anomaly.
     Consumed by: load-balancer sidecar (T2.1), policy-manager.
+
+    SOT §11 channel-specific payload fields:
+      required: backend_id, status, score
+      optional: features (debug map), model_version
     """
     backend_id: str
     status: str        # "healthy" | "degraded" | "unhealthy"
     score: float       # anomaly score — higher means more anomalous
     timestamp: str = field(default_factory=_now_iso)
+    # ── optional debug / provenance ──────────────────────────────────────────
+    features: dict | None = None        # per-feature contributions (debug only)
+    model_version: str | None = None    # which model produced the score
 
 
 @dataclass
@@ -221,12 +228,18 @@ class ForecastResult:
     """
     Published by forecasting to smartload.forecast.
     Consumed by: autoscaler, policy-manager.
+
+    SOT §11 channel-specific payload fields:
+      required: horizon_minutes, predicted_rps
+      optional: confidence_lower, confidence_upper, model_id
     """
     horizon_minutes: int        # look-ahead window (e.g. 5)
     predicted_rps: float        # predicted requests-per-second
     confidence_lower: float     # lower bound of prediction interval
     confidence_upper: float     # upper bound of prediction interval
     timestamp: str = field(default_factory=_now_iso)
+    # ── optional provenance ──────────────────────────────────────────────────
+    model_id: str | None = None         # e.g. "moving_average" | "arima_v2"
 
 
 @dataclass
@@ -236,10 +249,16 @@ class RoutingRecommendation:
     Consumed by: load-balancer sidecar (T2.1).
     mode="shadow"  → log only, do not affect live routing
     mode="active"  → load balancer applies these weights
+
+    SOT §11 channel-specific payload fields:
+      required: mode, server_rankings:[{backend_id, score}]
+      optional: policy_version (the policy snapshot RL was reasoning under)
     """
     mode: str                       # "shadow" | "active"
     server_rankings: list[dict]     # [{"backend_id": str, "score": float}, ...]
     timestamp: str = field(default_factory=_now_iso)
+    # ── optional provenance ──────────────────────────────────────────────────
+    policy_version: int | None = None   # join key back to PolicyUpdate.policy_version
 
 
 @dataclass
@@ -247,11 +266,17 @@ class ScalingEvent:
     """
     Published by autoscaler to smartload.scale.
     Consumed by: policy-manager (for audit), load-balancer (to update pool size).
+
+    SOT §11 channel-specific payload fields:
+      required: action, instance_count, reason
+      optional: forecast_event_id (provenance — which forecast triggered this)
     """
     action: str          # "scale_out" | "scale_in"
     instance_count: int  # resulting backend count after action
     reason: str          # human-readable justification
     timestamp: str = field(default_factory=_now_iso)
+    # ── optional provenance ──────────────────────────────────────────────────
+    forecast_event_id: str | None = None    # join key back to ForecastResult
 
 
 @dataclass
@@ -264,6 +289,10 @@ class PolicyUpdate:
     The full canonical field set lives in config/policy.yaml. New optional
     fields can be added without bumping the envelope version (additive change
     is non-breaking — SOT §11).
+
+    SOT §11 channel-specific payload fields:
+      required: full snapshot of all canonical fields, policy_version (monotonic)
+      optional: changed_fields (list of field names differing from previous)
     """
     operating_mode: str
     safe_mode: bool
@@ -273,9 +302,12 @@ class PolicyUpdate:
     anomaly_latency_multiplier: float
     per_instance_capacity_rps: int
     autoscaler_cooldown_seconds: int
+    policy_version: int             # monotonic int — Policy Manager increments per change
     # ── added in S2 baseline (SOT §8.9 canonical fields) ──────────────────────
     anomaly_response: str = "auto-isolate"           # "auto-isolate" | "advisory"
     anomaly_recovery_window_seconds: int = 30
     rl_exploration_rate: float = 0.0
     rl_confidence_threshold: float = 0.6
+    # ── optional metadata ────────────────────────────────────────────────────
+    changed_fields: list[str] | None = None
     timestamp: str = field(default_factory=_now_iso)
