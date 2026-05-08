@@ -1997,10 +1997,10 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span> <span class="badge badge-active">Phase 1A T1.1</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span> <span class="badge badge-implemented">T1.1</span></div>
     <h4>Telemetry Service</h4>
     <div class="role">Observability · Port 8081 · Tasneem</div>
-    <p class="small">Receives OTLP metrics from OTel Collector; writes rows to <code>metrics</code> hypertable; exposes <code>GET /api/v1/metrics</code>. T1.1 makes this real (was stub in Phase 0).</p>
+    <p class="small">Receives OTLP/HTTP-JSON forwarded by the OTel Collector, batch-inserts into <code>metrics</code> via canonical <code>METRICS_INSERT</code>, exposes <code>GET /api/v1/metrics?service=&amp;window=</code> and <code>GET /api/v1/stats</code>. PR #108.</p>
     <div class="deeplink"><a href="#mod-telemetry">→ Deep dive</a></div>
   </article>
 
@@ -2287,7 +2287,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
 
 <!-- ====== 8.3 TELEMETRY ====== -->
 <article id="mod-telemetry">
-<h2>8.3 Telemetry Service <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span> <span class="badge badge-active">T1.1 active</span></h2>
+<h2>8.3 Telemetry Service <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span> <span class="badge badge-implemented">T1.1 wired</span></h2>
 <h4>Purpose</h4>
 <p>The sensory system of SmartLoad. Receives OTLP metrics, writes them to TimescaleDB, exposes them as queryable JSON for AI services and operators.</p>
 <h4>Inputs / Outputs</h4>
@@ -2295,9 +2295,11 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
   <li><strong>In:</strong> OTLP metrics (port 4318 HTTP / 4317 gRPC) from OTel Collector.</li>
   <li><strong>Out:</strong> rows in <code>metrics(time, service, instance, metric_name, value)</code>; HTTP <code>GET /api/v1/metrics?service=&amp;window=</code>.</li>
 </ul>
-<h4>Internal logic (Phase 0 stub → Phase 1 real)</h4>
-<p>Phase 0 — Flask app with <code>/health</code> only. Connects to Redis + TimescaleDB on startup; logs results.</p>
-<p>Phase 1A (T1.1, critical path node 1): real OTLP receiver writes to <code>metrics</code> hypertable using <code>METRICS_INSERT</code> from <code>services/shared/queries.py</code>. JSON endpoint returns recent rows.</p>
+<h4>Internal logic</h4>
+<p>The OTel Collector forwards each metric batch to <code>POST /v1/metrics</code> via its <code>otlphttp/telemetry</code> exporter (<code>encoding: json</code>). The service walks the OTLP envelope, extracts gauge and sum data points into canonical <code>(time, service, instance, metric_name, value)</code> tuples, and persists them with <code>psycopg2.extras.execute_batch(METRICS_INSERT, rows, page_size=500)</code>. Histogram / summary / exponentialHistogram are out of the SmartLoad metric set and are counted as <code>rows_dropped_shape</code> rather than persisted.</p>
+<p>Backpressure containment: the ingress endpoint always returns 200 to the collector. DB-write failures bump <code>rows_dropped_db</code> and log; never silent and never propagated to the data plane.</p>
+<p>Read API: <code>GET /api/v1/metrics?service=&amp;window=</code> accepts Prometheus-style window strings (<code>30s / 5m / 1h / 2d</code>) and queries <code>metrics</code> with <code>%s::interval</code>, <code>%s</code>, <code>%s</code> bind params (SOT §11). Returns <code>{service, window, rows: [...]}</code>; row count capped at <code>READ_API_ROW_LIMIT</code> (default 10 000).</p>
+<p>Observability: <code>GET /api/v1/stats</code> returns <code>rows_written / batches_written / rows_dropped_db / rows_dropped_shape</code> counters guarded by a <code>threading.Lock</code>.</p>
 <h4>Schema (canonical)</h4>
 <pre><code>CREATE TABLE metrics (
   time         TIMESTAMPTZ      NOT NULL,
@@ -2308,11 +2310,11 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
 );
 SELECT create_hypertable('metrics', 'time', if_not_exists =&gt; TRUE);</code></pre>
 <p class="small muted">A richer schema (<code>SDP/db/V1__smartload_schema.sql</code>) exists as a future redesign; see <a href="#mod-metrics-db">§6.4 Metrics DB</a>.</p>
-<h4>Acceptance criteria (T1.1)</h4>
+<h4>Acceptance criteria (T1.1) <span class="badge badge-implemented">Met</span></h4>
 <ul>
-  <li>OTLP metrics received on port 4318.</li>
-  <li>Rows visible in <code>metrics</code>: <code>SELECT * FROM metrics ORDER BY time DESC LIMIT 20;</code></li>
-  <li><code>curl http://localhost:8081/api/v1/metrics?service=load-balancer&amp;window=5m</code> returns JSON.</li>
+  <li>OTLP/HTTP-JSON received via the Collector pipeline. The collector continues to terminate 4317/4318 and forwards to <code>telemetry:8081/v1/metrics</code> in JSON encoding.</li>
+  <li>Rows visible in <code>metrics</code> — verified by <code>tests/integration/test_telemetry_ingest.py</code> asserting post-insert content via direct <code>psycopg2</code> SELECT against the live stack.</li>
+  <li><code>curl http://localhost:8081/api/v1/metrics?service=load-balancer&amp;window=5m</code> returns JSON — covered by <code>test_read_api_returns_recent_rows</code> plus a 5-case parametric over invalid window strings.</li>
 </ul>
 <h4>Open questions / blockers</h4>
 <ul>
@@ -2343,14 +2345,15 @@ SELECT create_hypertable('metrics', 'time', if_not_exists =&gt; TRUE);</code></p
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Linear scaling with replica count behind a TCP balancer; writes are inherently parallelizable across instances.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle metric: rows written, rows dropped, mean batch size. <code>/health</code> tests both Redis ping and TimescaleDB SELECT 1.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Trusted-network assumption; no auth on prototype. Future: mTLS or shared secret on OTLP ingestion.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Phase 0 stub with <code>/health</code> connecting to Redis + TimescaleDB. Real OTLP receiver in T1.1 (active).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real OTLP ingestion writing to <code>metrics</code> via canonical SQL; <code>GET /api/v1/metrics</code> returns recent rows; integration tests assert end-to-end.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.1 wired (PR #108). <code>POST /v1/metrics</code> ingests OTLP/HTTP-JSON forwarded by the collector and batch-inserts via canonical <code>METRICS_INSERT</code>. <code>GET /api/v1/metrics</code> serves the read API. <code>GET /api/v1/stats</code> exposes write / drop counters. 25 unit + integration tests cover parser shape, read-API validation, ingress acceptance, and DB persistence — all green in CI on the live stack.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Same — current state matches the canonical contract. Future hardening: gRPC + protobuf OTLP on the receiver itself (today the collector terminates them and forwards JSON).</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>Implement OTLP receiver (T1.1).</li>
-        <li>Wire <code>METRICS_INSERT</code>.</li>
-        <li>Implement read API.</li>
+        <li><s>Implement OTLP receiver (T1.1).</s> <span class="badge badge-implemented">Done — PR #108</span></li>
+        <li><s>Wire <code>METRICS_INSERT</code>.</s> <span class="badge badge-implemented">Done — PR #108</span></li>
+        <li><s>Implement read API.</s> <span class="badge badge-implemented">Done — PR #108</span></li>
         <li>Decide V1 schema migration <span class="badge badge-confirm">Needs confirmation</span>.</li>
+        <li>Direct OTLP/protobuf + gRPC support on the receiver — deferred; the collector continues to terminate gRPC on 4317.</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -3629,7 +3632,9 @@ SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);</code
   <tbody>
     <tr><td>GET</td><td><code>/api/v1/policy</code></td><td>Policy Manager</td><td>Read current policy as JSON.</td></tr>
     <tr><td>POST</td><td><code>/api/v1/policy</code></td><td>Policy Manager</td><td>Update policy fields; persists YAML; publishes <code>smartload.policy</code>.</td></tr>
-    <tr><td>GET</td><td><code>/api/v1/metrics</code></td><td>Telemetry Service</td><td>Query recent telemetry as JSON. Params: <code>service</code>, <code>window</code>.</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/metrics</code></td><td>Telemetry Service</td><td>Recent rows as JSON. Params: <code>service</code> (string), <code>window</code> (Prometheus-style: <code>30s / 5m / 1h / 2d</code>). Returns <code>{service, window, rows[]}</code>; capped at <code>READ_API_ROW_LIMIT</code> (default 10 000).</td></tr>
+    <tr><td>POST</td><td><code>/v1/metrics</code></td><td>Telemetry Service</td><td>OTLP/HTTP-JSON ingress from the OTel Collector. Always returns 200; DB write failures observable via <code>/api/v1/stats.rows_dropped_db</code>. Out-of-set metric types (histogram / summary) counted as <code>rows_dropped_shape</code>.</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/stats</code></td><td>Telemetry Service</td><td>Write / drop counters: <code>rows_written</code>, <code>batches_written</code>, <code>rows_dropped_db</code>, <code>rows_dropped_shape</code>.</td></tr>
     <tr><td>GET</td><td><code>/health</code></td><td>Every service</td><td>Liveness check. Returns <strong>200 OK</strong> if all dependencies (Redis, TimescaleDB, model files where applicable) are reachable; <strong>503 Service Unavailable</strong> if any dependency is down. Body includes per-dependency booleans for diagnostics. <em>HTTP 207 Multi-Status is reserved for WebDAV batch responses and must not be used here</em> — Kubernetes liveness probes treat 2xx as healthy, so 207 would silently classify a degraded service as healthy.</td></tr>
     <tr><td>GET</td><td><code>/api/v1/anomalies</code> <span class="badge badge-target">target</span></td><td>Anomaly Detector</td><td>Recent anomaly events for operator dashboards.</td></tr>
     <tr><td>GET</td><td><code>/api/v1/forecast</code> <span class="badge badge-target">target</span></td><td>Forecasting Engine</td><td>Latest forecast snapshot.</td></tr>
@@ -4556,7 +4561,7 @@ flowchart LR
     <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources only</span></td><td><code>infrastructure/grafana/provisioning/</code></td><td>4 dashboards (T2.2, S4)</td></tr>
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
-    <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-active">Phase 1A active (T1.1)</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP receive + DB write</td></tr>
+    <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
     <tr><td>Anomaly detector</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.1)</span></td><td><code>services/anomaly-detector/app.py</code></td><td>Threshold logic + Redis publish</td></tr>
     <tr><td>Forecasting service</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.2)</span></td><td><code>services/forecasting/app.py</code></td><td>Moving-avg + Redis publish</td></tr>
     <tr><td>RL engine</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.3)</span></td><td><code>services/rl-engine/app.py</code></td><td>Shadow-mode random policy</td></tr>
