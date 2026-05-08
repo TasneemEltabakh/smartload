@@ -2403,6 +2403,54 @@ CREATE TABLE IF NOT EXISTS scaling_events (
 );
 SELECT create_hypertable('scaling_events', 'time', if_not_exists =&gt; TRUE);</code></pre>
 
+<h4>Schema diagram (current state)</h4>
+<figure>
+<pre class="mermaid">
+flowchart TB
+    OTel["<b>OTel Collector</b> → <b>Telemetry Service</b>"]
+    metrics[("<b>metrics</b><br/>raw hypertable<br/>retention 7 d")]
+    OTel ==>|"METRICS_INSERT"| metrics
+
+    metrics_1min[("<b>metrics_1min</b><br/>continuous aggregate<br/>retention 30 d")]
+    AND["<b>Anomaly Detector</b><br/>5 s cycle"]
+    ASL["<b>Autoscaler</b><br/>event-driven on<br/>smartload.forecast (Redis)"]
+
+    metrics -.->|"materialised every 1 min"| metrics_1min
+    metrics -->|"ANOMALY_QUERY"| AND
+
+    backend_health[("<b>backend_health</b><br/>hypertable<br/>retention 30 d")]
+    scaling_events[("<b>scaling_events</b><br/>hypertable<br/>retention 90 d")]
+
+    AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
+    ASL ==>|"SCALING_EVENT_INSERT"| scaling_events
+
+    FCT["Forecasting Engine"]
+    GRF["Grafana / Queries"]
+    RL["RL Engine"]
+    SC["LB Sidecar"]
+
+    metrics -->|"FORECAST_QUERY"| FCT
+    metrics_1min --> FCT
+    metrics_1min --> GRF
+    metrics -->|"RL_STATE_QUERY"| RL
+    metrics --> GRF
+    backend_health -->|"BACKEND_HEALTH_QUERY"| RL
+    backend_health --> SC
+    backend_health --> GRF
+    scaling_events --> GRF
+
+    classDef table fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
+    classDef cagg fill:#f5f3ff,color:#0f172a,stroke:#7c3aed,stroke-width:2px,stroke-dasharray:4 2;
+    classDef writer fill:#fffbeb,color:#0f172a,stroke:#b45309;
+    classDef reader fill:#ecfdf5,color:#0f172a,stroke:#047857;
+    class metrics,backend_health,scaling_events table
+    class metrics_1min cagg
+    class OTel,AND,ASL writer
+    class FCT,RL,SC,GRF reader
+</pre>
+  <figcaption><strong>Figure 8.4 — Metrics DB ownership &amp; flow.</strong> Three hypertables and one continuous aggregate, all defined in <code>infrastructure/timescaledb/init.sql</code>. Solid double arrows are <em>writes</em>; each table has exactly one writer service (single-writer ownership, principle 8). Dashed arrow is the <code>metrics_1min</code> continuous aggregate refresh (every 1 min, materialised window <code>[-1 h, -2 m]</code>). Thin arrows are reads via the canonical SQL constants in <code>services/shared/queries.py</code>. Autoscaler is shown as a writer only — its input is the <code>smartload.forecast</code> Redis channel, not the metrics table.</figcaption>
+</figure>
+
 <details>
 <summary>Future redesign — <code>V1__smartload_schema.sql</code> <span class="badge badge-draft">Draft, pending review</span></summary>
 <div class="body">
@@ -4117,6 +4165,7 @@ flowchart LR
     AS["Autoscaler"]
 
     metrics[("<b>metrics</b><br/>time · service · instance<br/>metric_name · value")]
+    metrics_1min[("<b>metrics_1min</b><br/>continuous aggregate<br/>(1-min roll-up)")]
     backend_health[("<b>backend_health</b><br/>time · backend_id<br/>status · score")]
     scaling_events[("<b>scaling_events</b><br/>time · action<br/>instance_count · reason")]
 
@@ -4129,21 +4178,26 @@ flowchart LR
     AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
     AS ==>|"SCALING_EVENT_INSERT"| scaling_events
 
+    metrics -.->|"refresh 1 min"| metrics_1min
     metrics --> Engines
     metrics --> GRF
+    metrics_1min --> Engines
+    metrics_1min --> GRF
     backend_health --> SC
     backend_health --> Engines
     scaling_events --> PM
     scaling_events --> GRF
 
     classDef table fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
+    classDef cagg fill:#f5f3ff,color:#0f172a,stroke:#7c3aed,stroke-width:2px,stroke-dasharray:4 2;
     classDef writer fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef reader fill:#ecfdf5,color:#0f172a,stroke:#047857;
     class metrics,backend_health,scaling_events table
+    class metrics_1min cagg
     class TLM,AND,AS writer
     class Engines,SC,PM,GRF reader
 </pre>
-  <figcaption><strong>Figure 12.7 — Canonical Schema.</strong> Three TimescaleDB hypertables. Each has exactly one authoritative writer service. The <code>metrics</code> table uses a <em>wide-narrow</em> shape — one row per metric reading rather than one column per metric — so adding new metric kinds does not require ALTER TABLE. All cross-service SQL access goes through the named query constants in <code>services/shared/queries.py</code>. Indexes: <code>(service, instance, time DESC)</code> and <code>(metric_name, time DESC)</code> on metrics; <code>(backend_id, time DESC)</code> on backend_health. The richer V1 6-table schema is preserved in §24 as a future-iteration draft.</figcaption>
+  <figcaption><strong>Figure 12.7 — Canonical Schema.</strong> Three TimescaleDB hypertables plus the <code>metrics_1min</code> continuous aggregate. Each base table has exactly one authoritative writer service. The <code>metrics</code> table uses a <em>wide-narrow</em> shape — one row per metric reading rather than one column per metric — so adding new metric kinds does not require ALTER TABLE. <code>metrics_1min</code> is materialised every minute over the <code>[-1 h, -2 m]</code> window for cheap minute-resolution queries; engines that need sub-minute resolution still read raw <code>metrics</code>. All cross-service SQL access goes through the named query constants in <code>services/shared/queries.py</code>. Indexes: <code>(service, instance, time DESC)</code> and <code>(metric_name, time DESC)</code> on metrics; <code>(backend_id, time DESC)</code> on backend_health. The richer V1 6-table schema is preserved in §24 as a future-iteration draft.</figcaption>
 </figure>
 </article>
 
