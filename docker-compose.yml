@@ -90,7 +90,10 @@ services:
 
   telemetry:
     build:
-      context: ./services/telemetry
+      # Build from the services/ directory so the canonical shared/
+      # module can be copied into the image alongside telemetry/app.py.
+      context: ./services
+      dockerfile: telemetry/Dockerfile
     ports:
       - "8081:8081"
     environment:

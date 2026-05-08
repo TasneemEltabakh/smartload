@@ -49,7 +49,7 @@ jobs:
         run: pip install -r tests/integration/requirements.txt
 
       - name: Run pure-Python tests
-        run: pytest tests/integration/test_s2_baseline.py -v
+        run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py -v
 
 
   build-services:
@@ -70,8 +70,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build service image
+      - name: Build service image (default context)
+        if: matrix.service != 'telemetry'
         run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
+
+      - name: Build telemetry image (wider context for shared/)
+        # Telemetry imports services/shared/queries.py, so its build context
+        # is ./services and the Dockerfile pulls in shared/ alongside app.py.
+        if: matrix.service == 'telemetry'
+        run: docker build -t smartload-telemetry -f services/telemetry/Dockerfile ./services
 
       - name: Run container
         run: docker run -d -p 8080:8080 -e PORT=8080 --name test-${{ matrix.service }} smartload-${{ matrix.service }}
@@ -200,6 +207,11 @@ jobs:
         # Same file as unit-tests, but the DB-backed schema tests now
         # actually execute instead of being skipped.
         run: pytest tests/integration/test_s2_baseline.py -v
+
+      - name: Run telemetry ingest tests against live stack
+        # T1.1 acceptance: OTLP/HTTP-JSON ingress, DB persistence, and
+        # the GET /api/v1/metrics read API.
+        run: pytest tests/integration/test_telemetry_ingest.py -v
 
       - name: Dump service logs on failure
         if: failure()

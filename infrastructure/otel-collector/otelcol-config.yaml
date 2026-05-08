@@ -1,5 +1,8 @@
 # SmartLoad — OpenTelemetry Collector configuration
-# Receives OTLP metrics from instrumented services, exposes them to Prometheus.
+# Receives OTLP metrics from instrumented services, exports them to:
+#   - Prometheus (scrape endpoint on :8889) for short-term dashboarding
+#   - Telemetry Service (otlphttp/json) for long-term storage in TimescaleDB
+#   - debug log (basic verbosity) for troubleshooting
 
 receivers:
   otlp:
@@ -19,6 +22,16 @@ exporters:
     endpoint: "0.0.0.0:8889"
     namespace: smartload
 
+  # Forward each metric batch to the Telemetry Service so it persists into
+  # the canonical `metrics` hypertable. JSON encoding keeps the receiver
+  # Flask-only — no protobuf bindings needed (SOT §8.3 implementation note).
+  otlphttp/telemetry:
+    endpoint: "http://telemetry:8081"
+    encoding: json
+    metrics_endpoint: "http://telemetry:8081/v1/metrics"
+    tls:
+      insecure: true
+
   # Debug exporter — logs received metrics at INFO level (disable in production)
   debug:
     verbosity: basic
@@ -28,4 +41,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus, debug]
+      exporters: [prometheus, otlphttp/telemetry, debug]
