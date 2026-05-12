@@ -49,7 +49,7 @@ jobs:
         run: pip install -r tests/integration/requirements.txt
 
       - name: Run pure-Python tests
-        run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py -v
+        run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py tests/integration/test_lb_otel_shipper.py -v
 
 
   build-services:
@@ -62,6 +62,7 @@ jobs:
           - anomaly-detector
           - autoscaler
           - forecasting
+          - lb-otel-shipper
           - policy-manager
           - rl-engine
           - telemetry
@@ -81,7 +82,14 @@ jobs:
         run: docker build -t smartload-telemetry -f services/telemetry/Dockerfile ./services
 
       - name: Run container
+        # The shipper has no HTTP port (it's a tail-and-emit sidecar) — start
+        # it without a port mapping and verify it doesn't immediately exit.
+        if: matrix.service != 'lb-otel-shipper'
         run: docker run -d -p 8080:8080 -e PORT=8080 --name test-${{ matrix.service }} smartload-${{ matrix.service }}
+
+      - name: Run shipper container (no HTTP, no nginx log to tail yet)
+        if: matrix.service == 'lb-otel-shipper'
+        run: docker run -d --name test-${{ matrix.service }} smartload-${{ matrix.service }}
 
       - name: Wait for service
         run: sleep 5
@@ -92,6 +100,7 @@ jobs:
         # server is up by accepting either 200 (full health) or 503 (degraded
         # but reachable). The compose-test job below validates full health
         # against the live stack.
+        if: matrix.service != 'lb-otel-shipper'
         run: |
           for i in {1..10}; do
             code=$(curl -sS -o /tmp/health.json -w "%{http_code}" http://localhost:8080/health || true)
@@ -105,6 +114,19 @@ jobs:
           done
           echo "Service failed to start"
           exit 1
+
+      - name: Liveness check (shipper)
+        # Shipper has no HTTP — assert the process is still running after
+        # warm-up. Compose-test validates the actual log → OTLP path.
+        if: matrix.service == 'lb-otel-shipper'
+        run: |
+          running=$(docker inspect -f '{{.State.Running}}' test-${{ matrix.service }})
+          if [ "$running" != "true" ]; then
+            echo "Shipper exited"
+            docker logs test-${{ matrix.service }}
+            exit 1
+          fi
+          echo "Shipper is running"
 
       - name: Show container logs
         if: failure()
@@ -213,10 +235,16 @@ jobs:
         # the GET /api/v1/metrics read API.
         run: pytest tests/integration/test_telemetry_ingest.py -v
 
+      - name: Run lb-otel-shipper tests against live stack
+        # T1.2 acceptance: traffic driven through NGINX results in
+        # per-request rows in `metrics` with STDDEV > 0 (per-request
+        # fidelity — the Approach B proof point).
+        run: pytest tests/integration/test_lb_otel_shipper.py -v
+
       - name: Dump service logs on failure
         if: failure()
         run: |
-          for s in nginx test-backend telemetry anomaly-detector forecasting rl-engine autoscaler policy-manager redis timescaledb; do
+          for s in load-balancer lb-otel-shipper test-backend telemetry anomaly-detector forecasting rl-engine autoscaler policy-manager otel-collector redis timescaledb; do
             echo "===== $s ====="
             docker compose logs --tail=80 "$s" || true
           done

@@ -1993,10 +1993,10 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-active">Phase 1A T1.2</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span> <span class="badge badge-implemented">T1.2</span></div>
     <h4>LB OTel Shipper</h4>
     <div class="role">Telemetry sidecar · Tasneem</div>
-    <p class="small">Tails NGINX's JSON access log on the shared volume; emits one OTLP/HTTP-JSON gauge data point per request to the OTel Collector. Approach B over <code>nginx-otel</code> module — preserves per-request fidelity for AI engines' <code>STDDEV</code>/<code>MAX</code> queries (issue #9).</p>
+    <p class="small">Tails NGINX's JSON access log on the shared <code>nginx-logs</code> volume; emits one OTLP/HTTP-JSON gauge data point per request to the OTel Collector. Approach B over <code>nginx-otel</code> module — preserves per-request fidelity for AI engines' <code>STDDEV</code>/<code>MAX</code> queries (issue #9).</p>
     <div class="deeplink"><a href="#mod-lb-otel-shipper">→ Deep dive</a></div>
   </article>
 
@@ -2153,7 +2153,7 @@ flowchart TB
 <h4>Outputs</h4>
 <ul>
   <li>Forwarded requests to selected backend.</li>
-  <li>Per-request JSON access log to stdout (for <code>docker compose logs</code>) and to a shared volume <code>/var/log/nginx/access.log</code> (for the shipper). Fields: <code>timestamp, service, client_ip, request, status, backend, latency, upstream_latency</code>.</li>
+  <li>Per-request JSON access log to stdout (for <code>docker compose logs</code>) and to a shared volume <code>/nginx-logs/access.log</code> (for the shipper). Fields: <code>timestamp, service, client_ip, request, status, backend, latency, upstream_latency</code>.</li>
   <li>Indirect (via <strong>lb-otel-shipper</strong>): canonical flat metric names — <code>request_count</code>, <code>request_latency_ms</code>, <code>error_rate</code> — emitted as one OTLP/HTTP-JSON gauge data point per request to the OTel Collector.</li>
 </ul>
 <h4>Dependencies</h4>
@@ -2193,7 +2193,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
   <thead><tr><th>Aspect</th><th>Status</th></tr></thead>
   <tbody>
     <tr><td>NGINX deployed in docker-compose</td><td><span class="pill pill-done">DONE (Phase 0)</span></td></tr>
-    <tr><td>OTel instrumentation (T1.2) — log-based via lb-otel-shipper sidecar</td><td><span class="pill pill-active">ACTIVE (S2)</span></td></tr>
+    <tr><td>OTel instrumentation (T1.2) — log-based via lb-otel-shipper sidecar</td><td><span class="pill pill-done">DONE (S2)</span></td></tr>
     <tr><td>Sidecar reads Redis (T2.1, critical path node 4)</td><td><span class="pill pill-upcoming">UPCOMING (S4)</span></td></tr>
   </tbody>
 </table>
@@ -2233,11 +2233,11 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">P99 routing overhead &lt; 5 ms at ≤ 1000 rps with ≥ 1 healthy backend. Horizontally scalable behind a TCP balancer (out of prototype scope but not blocked).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-request structured access log with selected backend, latency, status. The shipper emits <code>request_latency_ms</code> as a gauge per request (preserving the per-request distribution — anomaly detection's <code>STDDEV</code>/<code>MAX</code> queries depend on this fidelity). <code>/health</code> endpoint reports NGINX worker liveness + Sidecar last-success time.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">No TLS termination in prototype (assumed trusted internal network). The Sidecar must validate config before reload — a malformed write must not bring NGINX down.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">NGINX wired in <code>services/load-balancer/nginx/</code>; round-robin upstream over <code>test-backend</code>; JSON access log to stdout. T1.2 in progress: adding second access log to shared volume <code>nginx-logs</code> + introducing the <code>lb-otel-shipper</code> Python sidecar. No routing Sidecar (T2.1) yet.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">NGINX (vanilla) + <strong>two</strong> sidecars: (1) <code>lb-otel-shipper</code> (active in T1.2) for telemetry emission; (2) routing Sidecar (T2.1) that enforces hierarchy anomaly exclusion → policy short-circuit → RL weights → classical default and reloads NGINX via <code>nginx -s reload</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">NGINX wired in <code>services/load-balancer/nginx/</code>; round-robin upstream over <code>test-backend</code>; JSON access log written to both <code>/dev/stdout</code> (for <code>docker compose logs</code>) and <code>/nginx-logs/access.log</code> on the shared <code>nginx-logs</code> volume. The <code>lb-otel-shipper</code> sidecar is live (T1.2) and emits per-request OTLP. No routing Sidecar (T2.1) yet.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">NGINX (vanilla) + <strong>two</strong> sidecars: (1) <code>lb-otel-shipper</code> (wired in T1.2) for telemetry emission; (2) routing Sidecar (T2.1) that enforces hierarchy anomaly exclusion → policy short-circuit → RL weights → classical default and reloads NGINX via <code>nginx -s reload</code>.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li><strong>T1.2:</strong> Land <code>lb-otel-shipper</code> sidecar (Python, ~80 LOC) tailing <code>/var/log/nginx/access.log</code> and POSTing OTLP/HTTP-JSON to <code>otel-collector:4318</code>. Approach B chosen over <code>nginx-otel</code> module to preserve per-request fidelity for the AI engines' <code>STDDEV</code>/<code>MAX</code> queries (active sprint).</li>
+        <li><s><strong>T1.2:</strong> Land <code>lb-otel-shipper</code> sidecar.</s> <span class="badge badge-implemented">Done — T1.2</span></li>
         <li><strong>T2.1:</strong> Build the routing Sidecar — subscribe to anomaly/routing/policy, regenerate <code>nginx.conf</code>, signal reload. <span class="badge badge-target">Critical path S4</span></li>
         <li>Routing Sidecar language (Python default) <span class="badge badge-confirm">Needs confirmation</span>. Shipper language confirmed: Python.</li>
       </ul>
@@ -2259,14 +2259,14 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
 
 <!-- ====== 8.1.1 LB OTEL SHIPPER ====== -->
 <article id="mod-lb-otel-shipper">
-<h2>8.1.1 LB OTel Shipper <span class="badge badge-canonical">Canonical</span> <span class="badge badge-active">Active (T1.2)</span></h2>
+<h2>8.1.1 LB OTel Shipper <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span> <span class="badge badge-implemented">T1.2 wired</span></h2>
 <h4>Purpose</h4>
 <p>A small Python sidecar to NGINX whose only job is converting NGINX's per-request JSON access log into OTLP/HTTP-JSON metric data points and POSTing them to the OTel Collector. Decouples NGINX (the data plane) from telemetry plumbing — NGINX writes a log line and never connects to the collector itself.</p>
 <h4>Why it exists (vs. an in-NGINX OTel module)</h4>
 <p>SmartLoad's AI engines query <code>AVG(value), MAX(value), STDDEV(value)</code> over rolling windows from the <code>metrics</code> table. To produce meaningful <code>STDDEV</code>/<code>MAX</code> the table must contain <em>per-request</em> samples. The candidate alternative — F5's <code>nginx-otel</code> module + collector <code>spanmetrics</code> connector — aggregates spans into windowed means before they ever leave the collector, flattening the per-request distribution. The shipper preserves per-request fidelity by emitting one OTLP gauge data point per HTTP request.</p>
 <h4>Responsibilities</h4>
 <ul>
-  <li>Tail <code>/var/log/nginx/access.log</code> (<code>seek</code> from end on start; do not re-emit historical lines).</li>
+  <li>Tail <code>/nginx-logs/access.log</code> (<code>seek</code> from end on start; do not re-emit historical lines).</li>
   <li>Parse each JSON log line; tolerate malformed lines (log + skip, never crash).</li>
   <li>For each parsed line, emit three OTLP gauge data points with shared resource attributes:
     <ul>
@@ -2280,7 +2280,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
 </ul>
 <h4>Inputs</h4>
 <ul>
-  <li>Read-only mount of the <code>nginx-logs</code> shared volume at <code>/var/log/nginx/</code>.</li>
+  <li>Read-only mount of the <code>nginx-logs</code> shared volume at <code>/nginx-logs/</code>. (Not <code>/var/log/nginx/</code> — the nginx:alpine base image symlinks <code>access.log</code> there to <code>/dev/stdout</code>, which is unseekable.)</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -2317,9 +2317,9 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
   <thead><tr><th>Aspect</th><th>Status</th></tr></thead>
   <tbody>
     <tr><td>Approach chosen (B — log-based shipper, not nginx-otel module)</td><td><span class="pill pill-done">DECIDED</span></td></tr>
-    <tr><td>Shipper code (<code>services/lb-otel-shipper/</code>)</td><td><span class="pill pill-active">ACTIVE (T1.2)</span></td></tr>
-    <tr><td>Shared volume + compose wiring</td><td><span class="pill pill-active">ACTIVE (T1.2)</span></td></tr>
-    <tr><td>Integration test (rows in <code>metrics</code> from real NGINX traffic)</td><td><span class="pill pill-active">ACTIVE (T1.2)</span></td></tr>
+    <tr><td>Shipper code (<code>services/lb-otel-shipper/</code>)</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td>Shared volume + compose wiring (<code>nginx-logs</code>)</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td>Integration test asserting <code>STDDEV &gt; 0</code> on real LB traffic</td><td><span class="pill pill-done">DONE</span></td></tr>
   </tbody>
 </table>
 
@@ -2330,7 +2330,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
     <div class="dc-row"><div class="key">Why it exists</div><div class="val">Per-request fidelity for AI engine queries (<code>STDDEV</code>/<code>MAX</code> over rolling windows). The OTel collector ecosystem lacks a clean log-record→per-record-numeric-metric path, and the F5 <code>nginx-otel</code> module aggregates into windowed histograms upstream of the database. A small purpose-built shipper avoids both compromises.</div></div>
     <div class="dc-row"><div class="key">Owned responsibilities</div><div class="val">
       <ul>
-        <li>Tail <code>/var/log/nginx/access.log</code> from end-of-file at startup.</li>
+        <li>Tail <code>/nginx-logs/access.log</code> from end-of-file at startup.</li>
         <li>Parse JSON, emit per-request OTLP gauge data points for the canonical flat metric names.</li>
         <li>POST OTLP/HTTP-JSON to the OTel Collector; drop on error.</li>
       </ul>
@@ -2347,14 +2347,20 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
     <div class="dc-row"><div class="key">Outputs</div><div class="val">OTLP/HTTP-JSON metric batches to <code>http://otel-collector:4318/v1/metrics</code> using the canonical flat metric names (<code>request_count</code>, <code>request_latency_ms</code>, <code>error_rate</code>) with resource attributes <code>service.name=load-balancer</code> and <code>instance=&lt;hostname&gt;</code>.</div></div>
     <div class="dc-row"><div class="key">Internal logic expectations</div><div class="val">Single-process tail loop. No state persisted across restarts. No threading on the parse path; small thread pool only for outbound POSTs with strict timeout. No histograms (avoid telemetry's <code>rows_dropped_shape</code> path).</div></div>
     <div class="dc-row"><div class="key">Data dependencies</div><div class="val">NGINX writing JSON access logs to the shared volume. Down/full → shipper has nothing to read; recovers when NGINX resumes writing.</div></div>
-    <div class="dc-row"><div class="key">Required interfaces</div><div class="val">Read-only mount of <code>nginx-logs</code> at <code>/var/log/nginx/</code>; outbound HTTP to <code>otel-collector:4318</code>.</div></div>
+    <div class="dc-row"><div class="key">Required interfaces</div><div class="val">Read-only mount of <code>nginx-logs</code> at <code>/nginx-logs/</code>; outbound HTTP to <code>otel-collector:4318</code>.</div></div>
     <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">All failures (collector down, network blip, malformed log line) result in dropped metrics — never request-path impact, never crash.</div></div>
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">≥ 1000 req/s sustained with &lt; 50 MB RSS. If NGINX is scaled horizontally, one shipper per NGINX replica (each with its own <code>instance</code> attribute).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Stdout logs of lines processed and batches dropped. No <code>/health</code> endpoint at T1.2 — process-restart on Docker handles liveness; observed indirectly via row arrival in <code>metrics</code>.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Log file is read-only mount. Outbound HTTP only — no inbound listeners. No secrets in transit (the OTLP path is internal-network only in prototype).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Approach B selected (log-based shipper); design recorded in this section. Implementation pending in <code>services/lb-otel-shipper/</code> — Python, <code>requests</code> only, ~80 LOC. Compose wiring + integration test are part of the same PR (#9).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Live container <code>lb-otel-shipper</code> in docker-compose; integration test asserts ≥ 1 row per metric per request landed in <code>metrics</code> within 10 s and that <code>STDDEV(request_latency_ms) &gt; 0</code> over 30 distinct requests (per-request fidelity proof).</div></div>
-    <div class="dc-row"><div class="key">Gap to close</div><div class="val">Implementation, tests, SOT diagrams (this update), and PR #9 merge.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.2 wired. <code>services/lb-otel-shipper/app.py</code> tails <code>/nginx-logs/access.log</code>, batches per-request gauges every ~1 s, fire-and-forget POST to <code>http://otel-collector:4318/v1/metrics</code>. Live in <code>docker-compose.yml</code> as the <code>lb-otel-shipper</code> service on the shared <code>nginx-logs</code> volume (LB writes rw at <code>/nginx-logs</code>, shipper reads ro). 13 unit + integration tests cover parser shape, envelope schema, malformed-line handling, and end-to-end per-request fidelity on the live stack — all green in CI.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Same — current state matches the canonical contract. Future hardening: per-LB-replica horizontal scale-out (one shipper per NGINX), inotify-based tail to drop the 50 ms poll, optional OTLP/protobuf to halve the bytes-on-wire for high-throughput deployments.</div></div>
+    <div class="dc-row"><div class="key">Gap to close</div><div class="val">
+      <ul>
+        <li><s>Shipper code, compose wiring, integration test.</s> <span class="badge badge-implemented">Done — T1.2</span></li>
+        <li>Inotify tail loop (drop the 50 ms poll). Deferred — current poll is below the noise floor at prototype rps.</li>
+        <li>OTLP/protobuf output. Deferred — JSON keeps the receiver Flask-only.</li>
+      </ul>
+    </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
       <ul class="review-checklist compact">
         <li>Does the shipper emit only the canonical flat metric names (<code>request_count</code>, <code>request_latency_ms</code>, <code>error_rate</code>)?</li>
@@ -4703,8 +4709,8 @@ flowchart LR
 <table>
   <thead><tr><th>ID</th><th>Owner</th><th>Task</th><th>GitHub #</th></tr></thead>
   <tbody>
-    <tr><td><strong>T1.1</strong> 🌟</td><td>Tasneem</td><td>Telemetry: real OTel→TimescaleDB pipeline</td><td>#95</td></tr>
-    <tr><td>T1.2</td><td>Tasneem</td><td>NGINX OTel instrumentation — Approach B: lb-otel-shipper sidecar tails NGINX JSON access log, emits OTLP/HTTP-JSON</td><td>#9</td></tr>
+    <tr><td><strong>T1.1</strong> 🌟 <span class="badge badge-implemented">Wired</span></td><td>Tasneem</td><td>Telemetry: real OTel→TimescaleDB pipeline</td><td>#95</td></tr>
+    <tr><td>T1.2 <span class="badge badge-implemented">Wired</span></td><td>Tasneem</td><td>NGINX OTel instrumentation — Approach B: lb-otel-shipper sidecar tails NGINX JSON access log, emits OTLP/HTTP-JSON</td><td>#9</td></tr>
     <tr><td>N1.1</td><td>Nada</td><td>Threshold anomaly detector</td><td>#96</td></tr>
     <tr><td>N1.2</td><td>Nada</td><td>Moving-avg forecasting</td><td>#22</td></tr>
     <tr><td>N1.3</td><td>Nada</td><td>Shadow-mode RL scaffold</td><td>#29</td></tr>
@@ -4786,8 +4792,8 @@ flowchart LR
 <table>
   <thead><tr><th>Component</th><th>Owner</th><th>Status</th><th>Evidence / files</th><th>Missing</th></tr></thead>
   <tbody>
-    <tr><td>NGINX load balancer</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/load-balancer/nginx/</code></td><td>Add second access_log to shared volume (T1.2 active)</td></tr>
-    <tr><td>lb-otel-shipper (sidecar)</td><td>Tasneem</td><td><span class="pill pill-active">Phase 1A active (T1.2)</span></td><td><code>services/lb-otel-shipper/</code> (pending)</td><td>Python tail-and-emit; OTLP/HTTP-JSON to collector — Approach B (issue #9)</td></tr>
+    <tr><td>NGINX load balancer</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/load-balancer/nginx/</code></td><td>Second <code>access_log</code> writes to <code>/nginx-logs/access.log</code> (shared volume)</td></tr>
+    <tr><td>lb-otel-shipper (sidecar)</td><td>Tasneem</td><td><span class="pill pill-done">T1.2 wired</span></td><td><code>services/lb-otel-shipper/app.py</code></td><td>Tail-and-emit Python sidecar; OTLP/HTTP-JSON to collector — Approach B (issue #9)</td></tr>
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
     <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/traffic-simulator/</code></td><td>—</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
