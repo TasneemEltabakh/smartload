@@ -5765,9 +5765,22 @@ docker compose logs -f anomaly-detector</code></pre>
     } catch (e) { console.warn('Mermaid run failed', e); }
   }
 
-  if (mermaidNodes.length > 0) renderMermaid();
+  // Wait for web fonts (Inter / JetBrains Mono) before the first render.
+  // Without this, Mermaid measures node sizes using a fallback font (Arial),
+  // then the real font swaps in wider and labels overflow the white-filled
+  // node box — what looks like "text overlayed by white space".
+  function renderWhenFontsReady() {
+    if (document && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(renderMermaid).catch(renderMermaid);
+    } else {
+      renderMermaid();
+    }
+  }
 
-  // Re-render on theme toggle
+  if (mermaidNodes.length > 0) renderWhenFontsReady();
+
+  // Re-render on theme toggle (fonts are already loaded by this point, so
+  // skip the document.fonts.ready wait — going through renderMermaid directly).
   if (themeBtn) {
     themeBtn.addEventListener('click', function () {
       window.setTimeout(renderMermaid, 60);
