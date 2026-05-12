@@ -220,8 +220,33 @@ services:
       context: ./services/load-balancer/nginx
     ports:
       - "8080:80"
+    volumes:
+      # Second access_log sink (rw). The shipper sidecar reads this volume
+      # read-only and emits OTLP. NGINX is unaffected if the shipper dies.
+      # Mounted at /nginx-logs (not /var/log/nginx) to avoid the base image's
+      # access.log → /dev/stdout symlink.
+      - nginx-logs:/nginx-logs
     depends_on:
       - test-backend
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  # ── LB OTel Shipper (T1.2, SOT §8.1.1) ───────────────────────────────────────
+  # Approach B over the F5 nginx-otel module: log-based, preserves per-request
+  # fidelity required by STDDEV / MAX queries in services/shared/queries.py.
+  lb-otel-shipper:
+    build:
+      context: ./services/lb-otel-shipper
+    environment:
+      NGINX_LOG_PATH: /nginx-logs/access.log
+      OTEL_COLLECTOR_URL: http://otel-collector:4318/v1/metrics
+      SERVICE_NAME: load-balancer
+    volumes:
+      - nginx-logs:/nginx-logs:ro
+    depends_on:
+      - load-balancer
+      - otel-collector
     networks:
       - smartload-net
     restart: unless-stopped
@@ -250,3 +275,4 @@ services:
 
 volumes:
   timescaledb-data:
+  nginx-logs:

@@ -114,6 +114,14 @@ INSERT INTO metrics (time, service, instance, metric_name, value)
 VALUES (%s, %s, %s, %s, %s);
 """
 
+# Multi-row insert helper for high write rates (preferred above ~50 rps).
+# Per SOT §11 canonical SQL surface. Compose the VALUES list at the call site
+# using psycopg2.extras.execute_values to keep the query plan stable.
+METRICS_BATCH_INSERT = """
+INSERT INTO metrics (time, service, instance, metric_name, value)
+VALUES %s;
+"""
+
 BACKEND_HEALTH_INSERT = """
 INSERT INTO backend_health (time, backend_id, status, score)
 VALUES (%s, %s, %s, %s);

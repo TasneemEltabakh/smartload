@@ -25,9 +25,11 @@ exporters:
   # Forward each metric batch to the Telemetry Service so it persists into
   # the canonical `metrics` hypertable. JSON encoding keeps the receiver
   # Flask-only — no protobuf bindings needed (SOT §8.3 implementation note).
+  # Disable gzip: telemetry's Flask handler expects plain JSON bodies.
   otlphttp/telemetry:
     endpoint: "http://telemetry:8081"
     encoding: json
+    compression: none
     metrics_endpoint: "http://telemetry:8081/v1/metrics"
     tls:
       insecure: true
