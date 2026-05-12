@@ -11,20 +11,21 @@ SmartLoad sits between client traffic and backend services, combining classical 
 
 SmartLoad is a modular middleware platform that manages how HTTP requests are routed across a backend server pool. It collects real-time telemetry, detects unhealthy nodes, forecasts future load, and applies adaptive routing decisions — all without replacing existing infrastructure.
 
-**Seven authored microservices:**
+**Eight authored microservices:**
 
 | # | Service | Role |
 |---|---------|------|
 | 1 | `load-balancer` | Traffic ingress; classical and AI-driven routing |
-| 2 | `telemetry` | Metrics collection (OTel → TimescaleDB) |
-| 3 | `anomaly-detector` | Real-time detection of unhealthy backend nodes |
-| 4 | `forecasting` | Short-term workload prediction for proactive scaling |
-| 5 | `rl-engine` | Reinforcement learning routing decisions (PPO) |
-| 6 | `autoscaler` | Proactive resource scaling (Docker / K8s / AWS) |
-| 7 | `policy-manager` | Central governance, safe-mode, SLO enforcement |
+| 2 | `lb-otel-shipper` | Sidecar — tails NGINX JSON access log, emits per-request OTLP |
+| 3 | `telemetry` | OTLP/HTTP-JSON ingress → TimescaleDB; read API for engines |
+| 4 | `anomaly-detector` | Real-time detection of unhealthy backend nodes |
+| 5 | `forecasting` | Short-term workload prediction for proactive scaling |
+| 6 | `rl-engine` | Reinforcement learning routing decisions (PPO) |
+| 7 | `autoscaler` | Proactive resource scaling (Docker / K8s / AWS) |
+| 8 | `policy-manager` | Central governance, safe-mode, SLO enforcement |
 
-**Four configured infrastructure components** (not authored by the team):
-TimescaleDB · Redis (control bus) · Prometheus · Grafana
+**Five configured infrastructure components** (not authored by the team):
+TimescaleDB · Redis (control bus) · OTel Collector · Prometheus · Grafana
 
 ---
 
@@ -34,10 +35,12 @@ TimescaleDB · Redis (control bus) · Prometheus · Grafana
 Client Traffic
       |
       v
-services/load-balancer        ← NGINX ingress; future Go implementation
+services/load-balancer        ← NGINX ingress; round-robin upstream
+      |  └── writes JSON access log → shared nginx-logs volume
+      |        └── services/lb-otel-shipper (sidecar, tails the log)
+      |              └── OTLP/HTTP-JSON per request → otel-collector → telemetry
       |
-      |──── services/telemetry           (OTel → TimescaleDB metrics store)
-      |
+      |──── services/telemetry           (OTLP ingress → TimescaleDB; read API)
       |──── services/anomaly-detector    (flags unhealthy nodes → control bus)
       |──── services/forecasting         (predicts load → control bus)
       |──── services/rl-engine           (PPO routing scores → control bus)
@@ -66,15 +69,22 @@ Every file type has exactly one correct location, described below.
 smartload/
 │
 ├── services/                    ← ALL SmartLoad-authored microservices
+│   ├── shared/                  ← Cross-service canonical contracts (only allowed cross-import)
+│   │   ├── contracts.py         ←   Redis pub/sub envelope + payload dataclasses
+│   │   └── queries.py           ←   TimescaleDB SQL constants (METRICS_INSERT, ANOMALY_QUERY, …)
 │   ├── load-balancer/           ← Traffic ingress service
-│   │   ├── nginx/               ← Current NGINX implementation
+│   │   ├── nginx/               ← NGINX implementation
 │   │   │   ├── nginx.conf       ←   routing rules, upstream pool, JSON logging
 │   │   │   └── Dockerfile
-│   │   └── .gitkeep             ← Future Go implementation entrypoint goes here
-│   ├── telemetry/               ← OTel metrics collection and ingestion
+│   │   └── .gitkeep             ← Placeholder for future routing-sidecar (T2.1)
+│   ├── lb-otel-shipper/         ← NGINX log → OTLP/HTTP-JSON shipper (T1.2)
+│   │   ├── app.py               ←   Tail-and-emit Python loop (~250 LOC)
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   ├── telemetry/               ← OTLP/HTTP-JSON ingress + read API + stats counters
 │   │   ├── app.py
 │   │   ├── Dockerfile
-│   │   └── config/              ← OTel Collector YAML config goes here
+│   │   └── config/              ← Telemetry-service tunables (currently unused)
 │   ├── anomaly-detector/        ← Anomaly detection engine (Isolation Forest, LSTM)
 │   │   ├── app.py
 │   │   ├── Dockerfile
@@ -128,9 +138,7 @@ smartload/
 │       └── Dockerfile           ←   Container for running Locust
 │
 ├── docs/                        ← Human-readable technical documentation
-│   ├── architecture.md          ← System design, component interactions, diagrams
-│   ├── api-design.md            ← REST API contracts for all services
-│   └── runbooks/                ← Operational procedures (deployment, rollback, debug)
+│   └── SOURCE_OF_TRUTH.html     ← Single canonical SoT — design contracts, diagrams, roadmap
 │
 ├── config/                      ← System-wide shared configuration
 │   ├── policy.yaml              ← Global SmartLoad policy (routing mode, SLOs, limits)
@@ -138,9 +146,8 @@ smartload/
 │
 ├── scripts/                     ← Developer and ops utility scripts
 │   ├── setup.sh                 ← Bootstrap local dev environment
+│   ├── seed-metrics.py          ← Synthetic metrics seeder (N1.x development)
 │   └── download-datasets.sh     ← Fetch and verify public datasets
-│
-├── SDP/                         ← Academic design documents (do not modify)
 │
 ├── docker-compose.yml           ← Run the full dev stack from the repo root
 ├── .gitignore
@@ -198,13 +205,22 @@ docker compose up --build --scale test-backend=3
 
 | Service | Language | Port | Key Tech | Dockerfile |
 |---|---|---|---|---|
-| `load-balancer` | NGINX (Go planned) | 8080 | Round Robin, health checks | `services/load-balancer/nginx/Dockerfile` |
-| `telemetry` | Python | 8081 | OpenTelemetry SDK, TimescaleDB | `services/telemetry/Dockerfile` |
+| `load-balancer` | NGINX | 8080 | Round Robin, health checks, JSON access log | `services/load-balancer/nginx/Dockerfile` |
+| `lb-otel-shipper` | Python | — (sidecar) | Log tail loop → OTLP/HTTP-JSON | `services/lb-otel-shipper/Dockerfile` |
+| `telemetry` | Python | 8081 | Flask + psycopg2 + TimescaleDB; OTLP ingress + read API | `services/telemetry/Dockerfile` |
 | `anomaly-detector` | Python | 8082 | Isolation Forest, LSTM autoencoder | `services/anomaly-detector/Dockerfile` |
 | `forecasting` | Python | 8083 | ARIMA, Prophet, LSTM | `services/forecasting/Dockerfile` |
 | `rl-engine` | Python | 8084 | PPO via Stable-Baselines3 | `services/rl-engine/Dockerfile` |
 | `autoscaler` | Python | 8085 | Docker API, K8s API, Boto3 | `services/autoscaler/Dockerfile` |
 | `policy-manager` | Python | 8086 | YAML config + REST API | `services/policy-manager/Dockerfile` |
+
+**Telemetry HTTP API** (`services/telemetry/app.py`):
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/v1/metrics` | OTLP/HTTP-JSON ingress (collector forwards here; always 200) |
+| GET | `/api/v1/metrics?service=&window=` | Recent rows; `window` accepts `30s` / `5m` / `1h` / `2d` |
+| GET | `/api/v1/stats` | `rows_written` / `batches_written` / `rows_dropped_db` / `rows_dropped_shape` |
+| GET | `/health` | 200 if Redis + TimescaleDB reachable; 503 otherwise |
 
 ---
 
@@ -286,9 +302,10 @@ Pipeline defined in `.github/workflows/docker-publish.yml`. Triggers on push and
 | Job | What it does |
 |---|---|
 | `lint` | Runs `ruff check` on all Python in `services/` and `test-backends/` |
-| `build-services` | Matrix build for all 6 Python services; health-checks each container |
+| `unit-tests` | Pure-Python tests (parser shape, envelope, contracts, SQL parameterisation) |
+| `build-services` | Matrix build for all 7 Python services (incl. `lb-otel-shipper`); health-checks each container |
 | `build-test-backend` | Builds and health-checks the Node.js dummy backend |
-| `compose-test` | Spins up the full stack (`docker compose up`), tests the load-balancer endpoint |
+| `compose-test` | Spins up the full stack (`docker compose up`), runs Phase-0 wiring + S2 baseline + T1.1 ingest + T1.2 fidelity tests against the live stack |
 
 The `docker-compose.yml` is at the repo root — no `-f` flag needed.
 
@@ -296,7 +313,7 @@ The `docker-compose.yml` is at the repo root — no `-f` flag needed.
 
 ## Academic Context
 
-The `SDP/` directory contains design documents produced during SDP1 (the first semester of the graduation project): abstract, literature review, system design, implementation plan, API design, and progress reports. These files are for reference only and are not part of the running system.
+`docs/SOURCE_OF_TRUTH.html` is the canonical project specification — design contracts per service, the wired channel/REST/SQL surfaces, system diagrams, sprint roadmap, and component build status. Every code change must keep this document aligned.
 
 Project supervisors: Dr. Tamer Ashour (CIE) · Dr. Doaa Shawky (Software Dev Program)
 
