@@ -74,6 +74,11 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
       GF_SECURITY_ADMIN_USER: admin
+      # Forwarded so the TimescaleDB datasource provisioning yaml can
+      # resolve ${TIMESCALEDB_PASSWORD} at Grafana startup. Without this,
+      # the datasource is provisioned with an empty password and every
+      # dashboard panel fails with SASL auth error.
+      TIMESCALEDB_PASSWORD: ${TIMESCALEDB_PASSWORD:-changeme}
     ports:
       - "3000:3000"
     volumes:

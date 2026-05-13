@@ -21,7 +21,7 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -65,12 +65,12 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  count(*)::float * 1000.0 / $__interval_ms AS \"req/s\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'request_count'\nGROUP BY 1\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -114,12 +114,12 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  percentile_disc(0.50) WITHIN GROUP (ORDER BY value) AS p50,\n  percentile_disc(0.95) WITHIN GROUP (ORDER BY value) AS p95,\n  max(value) AS max\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'request_latency_ms'\nGROUP BY 1\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
@@ -172,12 +172,12 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  avg(value) * 100.0 AS \"error %\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'error_rate'\nGROUP BY 1\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
@@ -207,12 +207,12 @@
           "format": "table",
           "rawQuery": true,
           "rawSql": "SELECT count(*) AS \"requests\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'request_count'",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "thresholds"},
@@ -248,12 +248,12 @@
           "format": "table",
           "rawQuery": true,
           "rawSql": "SELECT count(DISTINCT instance) AS \"instances\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"},
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -296,7 +296,7 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  metric_name AS metric,\n  count(*) AS value\nFROM metrics\nWHERE $__timeFilter(time)\nGROUP BY 1, 2\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "P40AE60E18F02DE32"}
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
     }
