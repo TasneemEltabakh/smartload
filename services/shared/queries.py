@@ -132,6 +132,18 @@ INSERT INTO scaling_events (time, action, instance_count, reason)
 VALUES (%s, %s, %s, %s);
 """
 
+# ── autoscaler reactive fallback ──────────────────────────────────────────────
+# Single-number request rate for the autoscaler when the forecast stream goes
+# stale. Window is 60 s — large enough to smooth bursty single-second counts,
+# small enough to react to a sustained shift within one cooldown cycle. SOT
+# §8.8 "Failure / fallback behavior".
+OBSERVED_RPS_QUERY = """
+SELECT COALESCE(SUM(value), 0)::float / 60.0
+FROM metrics
+WHERE time > NOW() - INTERVAL '60 seconds'
+  AND metric_name = 'request_count';
+"""
+
 # ── schema verification ───────────────────────────────────────────────────────
 # Used by integration tests to confirm required tables exist.
 TABLE_EXISTS_QUERY = """
