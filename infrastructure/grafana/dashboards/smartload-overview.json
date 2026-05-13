@@ -247,7 +247,7 @@
           "refId": "A",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT count(DISTINCT instance) AS \"instances\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'",
+          "rawSql": "SELECT count(DISTINCT addr) AS \"instances\"\nFROM (\n  SELECT trim(unnest(string_to_array(instance, ','))) AS addr\n  FROM metrics\n  WHERE $__timeFilter(time)\n    AND service = 'load-balancer'\n    AND instance <> 'unknown'\n) sub",
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
