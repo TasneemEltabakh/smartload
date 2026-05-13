@@ -2,10 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Build context is ./services so we can pull in the canonical shared/
+# module alongside autoscaler/.
+COPY autoscaler/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py .
+COPY autoscaler/app.py            /app/app.py
+COPY autoscaler/cluster_client.py /app/cluster_client.py
+COPY autoscaler/decisions.py      /app/decisions.py
+COPY shared                       /app/shared
 
 ENV PORT=8085
 ENV SERVICE_NAME=autoscaler
