@@ -49,12 +49,34 @@ CREATE TABLE IF NOT EXISTS scaling_events (
 
 SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);
 
+-- ── policy_changes ───────────────────────────────────────────────────────────
+-- Written by policy-manager on each successful POST /api/v1/policy that
+-- changes at least one field. One row per changed field — operators can
+-- reconstruct full state diffs by joining on (time, actor).
+--
+-- Read by: operator dashboards, thesis post-hoc analysis. Engines do not
+-- consult this table — the live state arrives via smartload.policy.
+CREATE TABLE IF NOT EXISTS policy_changes (
+    time            TIMESTAMPTZ NOT NULL,
+    policy_version  INT         NOT NULL,   -- post-change version (monotonic)
+    field           TEXT        NOT NULL,   -- e.g. "max_backends"
+    old_value       TEXT,                   -- JSON-encoded previous value; NULL if newly set
+    new_value       TEXT        NOT NULL,   -- JSON-encoded new value
+    actor           TEXT        NOT NULL    -- X-Actor header, "anonymous" if absent
+);
+
+SELECT create_hypertable('policy_changes', 'time', if_not_exists => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_policy_changes_field
+    ON policy_changes (field, time DESC);
+
 -- ── retention policies ───────────────────────────────────────────────────────
 -- Bound storage growth per the canonical data classes (SOT §10).
 -- These DROP chunks older than the retention window; aggregates live longer.
 SELECT add_retention_policy('metrics',         INTERVAL '7 days',  if_not_exists => TRUE);
 SELECT add_retention_policy('backend_health',  INTERVAL '30 days', if_not_exists => TRUE);
 SELECT add_retention_policy('scaling_events',  INTERVAL '90 days', if_not_exists => TRUE);
+SELECT add_retention_policy('policy_changes',  INTERVAL '90 days', if_not_exists => TRUE);
 
 -- ── continuous aggregate: metrics_1min ───────────────────────────────────────
 -- Per-minute roll-up over the canonical long-format `metrics` table.

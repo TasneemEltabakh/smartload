@@ -132,6 +132,15 @@ INSERT INTO scaling_events (time, action, instance_count, reason)
 VALUES (%s, %s, %s, %s);
 """
 
+# ── policy-manager audit write ────────────────────────────────────────────────
+# One row per changed field per successful POST. old_value / new_value are
+# JSON-encoded at the call site so the column can store any field type
+# (string, number, bool, list) without per-type columns.
+POLICY_CHANGE_INSERT = """
+INSERT INTO policy_changes (time, policy_version, field, old_value, new_value, actor)
+VALUES (%s, %s, %s, %s, %s, %s);
+"""
+
 # ── autoscaler reactive fallback ──────────────────────────────────────────────
 # Single-number request rate for the autoscaler when the forecast stream goes
 # stale. Window is 60 s — large enough to smooth bursty single-second counts,
@@ -153,7 +162,7 @@ WHERE table_schema = 'public'
   AND table_name = ANY(%s);
 """
 
-REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events"]
+REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events", "policy_changes"]
 
 # ── canonical defaults for ANOMALY_QUERY callers ──────────────────────────────
 # Engines should pass these as the third bind parameter unless they have a

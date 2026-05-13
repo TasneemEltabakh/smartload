@@ -210,18 +210,22 @@ services:
 
   policy-manager:
     build:
-      context: ./services/policy-manager
+      context: ./services
+      dockerfile: policy-manager/Dockerfile
     ports:
       - "8086:8086"
     environment:
       PORT: "8086"
       SERVICE_NAME: policy-manager
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
       CONFIG_PATH: /config/policy.yaml
     volumes:
       - ./config/policy.yaml:/config/policy.yaml
     depends_on:
       redis:
+        condition: service_healthy
+      timescaledb:
         condition: service_healthy
     networks:
       - smartload-net

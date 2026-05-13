@@ -160,3 +160,63 @@ class TestReasonTagging:
         )
         assert d.action == decisions.ACTION_SCALE_OUT
         assert d.reason.startswith("reactive ")
+
+
+# ── policy_from_payload (T1.4 live-reload helper) ─────────────────────────────
+#
+# Tests for decisions.policy_from_payload — the pure helper the autoscaler
+# uses to translate a PolicyUpdate envelope payload into a Policy dataclass.
+# Lives here (not test_policy_validation) because it owns the autoscaler-side
+# semantics: which fields are read, how missing/garbled ones fall back, and
+# the type coercion rules. Validation belongs upstream in policy-manager.
+
+class TestPolicyFromPayload:
+
+    def _fallback(self):
+        return _policy(min_b=1, max_b=5, cap=100.0, cooldown=60.0)
+
+    def test_full_payload_yields_exact_policy(self):
+        payload = {
+            "min_backends": 2,
+            "max_backends": 10,
+            "per_instance_capacity_rps": 150,
+            "autoscaler_cooldown_seconds": 30,
+            "operating_mode": "hybrid",
+            "safe_mode": False,
+        }
+        new = decisions.policy_from_payload(payload, fallback=self._fallback())
+        assert new.min_backends == 2
+        assert new.max_backends == 10
+        assert new.per_instance_capacity_rps == 150.0
+        assert new.cooldown_seconds == 30.0
+
+    def test_missing_fields_fall_back(self):
+        # Partial publish — autoscaler must keep current bounds for any field
+        # the publisher omitted, not zero-out the scaling guards.
+        fallback = self._fallback()
+        new = decisions.policy_from_payload({"max_backends": 7}, fallback=fallback)
+        assert new.max_backends == 7
+        assert new.min_backends == fallback.min_backends
+        assert new.per_instance_capacity_rps == fallback.per_instance_capacity_rps
+        assert new.cooldown_seconds == fallback.cooldown_seconds
+
+    def test_garbled_value_falls_back(self):
+        # A misbehaving publisher could ship a string where we expect int.
+        # policy_from_payload coerces what it can and falls back on the rest,
+        # so the autoscaler keeps working with valid bounds.
+        fallback = self._fallback()
+        new = decisions.policy_from_payload(
+            {"min_backends": "not-a-number", "max_backends": "8"},
+            fallback=fallback,
+        )
+        assert new.min_backends == fallback.min_backends   # coercion failed → fallback
+        assert new.max_backends == 8                       # string "8" coerces fine
+
+    def test_unknown_fields_ignored(self):
+        # Forward-compat: a new field appears in PolicyUpdate before the
+        # autoscaler knows about it. Must not crash.
+        new = decisions.policy_from_payload(
+            {"experimental_flag": "on"}, fallback=self._fallback(),
+        )
+        # Result identical to the fallback (no scaling fields in payload).
+        assert new == self._fallback()

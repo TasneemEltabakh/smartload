@@ -8,8 +8,10 @@ Per SOT §8.8:
   - Compares predicted_rps to current_backends × per_instance_capacity_rps.
   - Scales test-backend containers via Docker SDK (step = 1).
   - Honors min_backends, max_backends, autoscaler_cooldown_seconds from
-    config/policy.yaml (loaded at startup). Live reload on smartload.policy
-    is planned under T1.4 (issue #32) but not yet wired here.
+    config/policy.yaml (loaded at startup). Live reloads arrive on
+    smartload.policy (T1.4) — the control loop subscribes to both channels
+    on a single pubsub and dispatches by channel name. Policy swaps happen
+    under _state_lock so the next forecast tick sees the new bounds.
   - Writes one row to scaling_events per action (SCALING_EVENT_INSERT).
   - Publishes ScalingEvent envelopes on smartload.scale.
   - Reactive fallback: if the last forecast is older than 2 × horizon,
@@ -64,6 +66,7 @@ from decisions import (  # noqa: E402
     Decision,
     Policy,
     decide,
+    policy_from_payload,
 )
 
 
@@ -78,6 +81,7 @@ TIMESCALEDB_URL  = os.environ.get(
 REDIS_URL        = os.environ.get("REDIS_URL", "redis://redis:6379")
 POLICY_PATH      = os.environ.get("POLICY_PATH", "/config/policy.yaml")
 FORECAST_CHANNEL = "smartload.forecast"
+POLICY_CHANNEL   = "smartload.policy"
 SCALE_CHANNEL    = "smartload.scale"
 
 # How long to block on a single pubsub.get_message() call. Doubles as the
@@ -115,6 +119,7 @@ def load_policy(path: str) -> Policy:
 
 _state_lock              = threading.Lock()
 _policy: Policy          = Policy(1, 5, 100.0, 60.0)
+_policy_version: int     = 0
 _last_action_monotonic: float | None = None
 _last_forecast_monotonic: float | None = None
 _last_forecast_horizon_min: int        = 5
@@ -231,7 +236,12 @@ def _seconds_since(monotonic_at: float | None) -> float | None:
 
 
 def control_loop(stop_event: threading.Event | None = None) -> None:
-    """Subscribe to smartload.forecast and act on each envelope.
+    """Subscribe to smartload.forecast + smartload.policy and act on each
+    envelope.
+
+    Forecasts trigger scaling decisions; policy updates swap _policy under
+    _state_lock so the next tick sees the new bounds. Channel dispatch
+    happens on each pubsub message — single thread, single connection.
 
     Between messages, run a reactive-fallback check every LOOP_TICK_SECONDS
     seconds — if the last forecast is older than 2 × horizon, scale on
@@ -244,7 +254,7 @@ def control_loop(stop_event: threading.Event | None = None) -> None:
 
     redis_client = redis_lib.from_url(REDIS_URL)
     pubsub = redis_client.pubsub()
-    pubsub.subscribe(FORECAST_CHANNEL)
+    pubsub.subscribe(FORECAST_CHANNEL, POLICY_CHANNEL)
 
     db_conn = psycopg2.connect(TIMESCALEDB_URL)
     cluster = DockerClusterClient()
@@ -259,7 +269,15 @@ def control_loop(stop_event: threading.Event | None = None) -> None:
         )
 
         if message is not None and message.get("type") == "message":
-            _handle_forecast_message(message["data"], cluster, db_conn, redis_client)
+            channel = message.get("channel")
+            if isinstance(channel, bytes):
+                channel = channel.decode()
+            if channel == FORECAST_CHANNEL:
+                _handle_forecast_message(message["data"], cluster, db_conn, redis_client)
+            elif channel == POLICY_CHANNEL:
+                _handle_policy_message(message["data"])
+            else:
+                log.warning("unexpected channel: %s", channel)
             continue
 
         # No forecast arrived this tick — consider reactive fallback.
@@ -294,6 +312,43 @@ def _handle_forecast_message(raw, cluster, db_conn, redis_client) -> None:
         now_text="forecast",
     )
     apply_decision(decision, cluster, db_conn, redis_client, envelope_meta.get("event_id"))
+
+
+def _handle_policy_message(raw) -> None:
+    """Parse a smartload.policy envelope and swap _policy under the lock.
+
+    Drops malformed messages silently — the existing on-disk policy.yaml
+    is the durable source of truth, and the next valid publish will
+    correct any missed reload."""
+    parsed = parse_envelope(raw, channel=POLICY_CHANNEL)
+    if parsed is None:
+        return
+    payload, envelope_meta = parsed
+
+    with _state_lock:
+        global _policy, _policy_version
+        old_policy = _policy
+        new_policy = policy_from_payload(payload, fallback=_policy)
+        new_version = int(payload.get("policy_version", _policy_version))
+        # Reject backwards version moves so out-of-order publishes can't
+        # roll back the live policy.
+        if new_version < _policy_version:
+            log.warning(
+                "ignoring policy update v%d (current v%d) — stale publish",
+                new_version, _policy_version,
+            )
+            return
+        _policy = new_policy
+        _policy_version = new_version
+
+    log.info(
+        "policy reloaded v%d (event_id=%s, changed=%s): %s -> %s",
+        new_version,
+        envelope_meta.get("event_id"),
+        payload.get("changed_fields"),
+        old_policy,
+        new_policy,
+    )
 
 
 def _maybe_reactive_fallback(cluster, db_conn, redis_client) -> None:
@@ -356,13 +411,17 @@ def health():
     ok     = redis_ok and db_ok
     status = "ok" if ok else "degraded"
     code   = 200 if ok else 503  # SOT §11
+    with _state_lock:
+        policy_snapshot = asdict(_policy)
+        version_snapshot = _policy_version
     return jsonify({
-        "status":      status,
-        "service":     SERVICE_NAME,
-        "redis":       redis_ok,
-        "timescaledb": db_ok,
-        "policy":      asdict(_policy),
-        "stats":       _stats_snapshot(),
+        "status":         status,
+        "service":        SERVICE_NAME,
+        "redis":          redis_ok,
+        "timescaledb":    db_ok,
+        "policy":         policy_snapshot,
+        "policy_version": version_snapshot,
+        "stats":          _stats_snapshot(),
         **({"errors": errors} if errors else {}),
     }), code
 
@@ -375,9 +434,21 @@ def index():
 # ── entrypoint ────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    global _policy
+    global _policy, _policy_version
     _policy = load_policy(POLICY_PATH)
-    log.info("loaded policy from %s: %s", POLICY_PATH, _policy)
+    # policy_version lives in policy.yaml and is bumped by policy-manager on
+    # each successful POST. Read it at boot so out-of-order publishes can be
+    # rejected (see _handle_policy_message).
+    try:
+        with open(POLICY_PATH, "r", encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+        _policy_version = int(raw.get("policy_version", 0))
+    except FileNotFoundError:
+        _policy_version = 0
+    log.info(
+        "loaded policy from %s: %s (version=%d)",
+        POLICY_PATH, _policy, _policy_version,
+    )
 
     t = threading.Thread(target=control_loop, name="autoscaler-control-loop", daemon=True)
     t.start()

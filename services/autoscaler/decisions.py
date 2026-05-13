@@ -34,6 +34,42 @@ class Policy:
     cooldown_seconds: float
 
 
+def policy_from_payload(payload: dict, fallback: Policy) -> Policy:
+    """Build a Policy from a smartload.policy PolicyUpdate payload.
+
+    Only fields that affect autoscaling decisions are pulled. Unknown fields
+    are ignored (forward-compat). Missing fields fall back to `fallback`, so
+    a partial-snapshot publish does not zero out scaling bounds.
+
+    Pure function — no I/O, no lock — so it can be unit-tested alongside
+    `decide` without spinning up the autoscaler.
+    """
+    def _int(key: str, default: int) -> int:
+        v = payload.get(key, default)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    def _float(key: str, default: float) -> float:
+        v = payload.get(key, default)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    return Policy(
+        min_backends=_int("min_backends", fallback.min_backends),
+        max_backends=_int("max_backends", fallback.max_backends),
+        per_instance_capacity_rps=_float(
+            "per_instance_capacity_rps", fallback.per_instance_capacity_rps,
+        ),
+        cooldown_seconds=_float(
+            "autoscaler_cooldown_seconds", fallback.cooldown_seconds,
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class Decision:
     action: str        # ACTION_SCALE_OUT | ACTION_SCALE_IN | ACTION_NOOP
