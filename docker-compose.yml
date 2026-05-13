@@ -232,7 +232,13 @@ services:
       # access.log → /dev/stdout symlink.
       - nginx-logs:/nginx-logs
     depends_on:
-      - test-backend
+      # service_healthy (not service_started) so NGINX boots only after
+      # every test-backend replica is reachable. Required because the
+      # NGINX upstream block enumerates 12 hostnames and aborts at
+      # config-load on any unresolved one. See the test-backend
+      # healthcheck for the gating condition.
+      test-backend:
+        condition: service_healthy
     networks:
       - smartload-net
     restart: unless-stopped
@@ -273,6 +279,18 @@ services:
     # SmartLoad Overview "Active backend instances" panel reading 1.
     deploy:
       replicas: 12
+    # Required so the load-balancer can wait on `condition:
+    # service_healthy` — NGINX's upstream block enumerates
+    # smartload-test-backend-1..12 and bails at config-load if any
+    # name doesn't resolve, so every replica must exist before NGINX
+    # starts. `service_healthy` waits for every replica's healthcheck
+    # to pass, which guarantees DNS resolves for the full set.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   traffic-simulator:
     build:
