@@ -1,10 +1,13 @@
 """
 services/anomaly-detector/app.py
 ─────────────────────────────────
-Phase 0 stub — wired to Redis and TimescaleDB, reports connectivity on /health.
-Phase 1 (N1.1): threshold-based anomaly detection, publishes AnomalyEvent to
-                 smartload.anomaly every POLL_INTERVAL_SECONDS.
-Phase 2 (N2.1): replace threshold logic with Isolation Forest model.
+Phase 0 stub — only /health is wired. Redis + TimescaleDB connectivity is
+reported but no detection runs.
+
+Planned:
+  Phase 1 (N1.1, issue #96): threshold-based detection, publish AnomalyEvent
+                              to smartload.anomaly every POLL_INTERVAL_SECONDS.
+  Phase 2 (N2.1, issue #101): replace threshold logic with Isolation Forest.
 """
 
 import os

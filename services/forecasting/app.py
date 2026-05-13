@@ -1,10 +1,13 @@
 """
 services/forecasting/app.py
 ────────────────────────────
-Phase 0 stub — wired to Redis and TimescaleDB, reports connectivity on /health.
-Phase 1 (N1.2): moving-average forecasting, publishes ForecastResult to
-                 smartload.forecast every 60 seconds.
-Phase 2 (N2.2): replace moving average with ARIMA or Prophet model.
+Phase 0 stub — only /health is wired. Redis + TimescaleDB connectivity is
+reported but no forecasts are produced.
+
+Planned:
+  Phase 1 (N1.2, issue #22): moving-average forecasting, publish
+                              ForecastResult to smartload.forecast every 60 s.
+  Phase 2 (N2.2, issue #102): replace moving average with ARIMA / Prophet.
 """
 
 import os

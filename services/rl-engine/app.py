@@ -1,10 +1,15 @@
 """
 services/rl-engine/app.py
 ──────────────────────────
-Phase 0 stub — wired to Redis and TimescaleDB, reports connectivity on /health.
-Phase 1 (N1.3): shadow-mode scaffold — random policy, publishes RoutingRecommendation
-                 to smartload.routing every 5 seconds (mode="shadow").
-Phase 2 (N2.5): load trained PPO policy.zip, switch to mode="active".
+Phase 0 stub — only /health is wired. RL_MODE env var is read but no
+routing recommendations are published. Redis + TimescaleDB connectivity is
+reported.
+
+Planned:
+  Phase 1 (N1.3, issue #29): shadow-mode scaffold — random policy publishes
+                              RoutingRecommendation to smartload.routing
+                              every 5 s, mode="shadow".
+  Phase 2 (N2.5): load trained PPO policy.zip, switch to mode="active".
 """
 
 import os

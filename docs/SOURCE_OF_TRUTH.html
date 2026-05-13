@@ -3011,13 +3011,14 @@ rl_confidence_threshold: 0.6          # below this, sidecar ignores RL and uses 
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient. Read-heavy is fine; writes are operator-initiated and rare.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Audit log per change (operator, timestamp, field diff). Metric for policy version.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Future: authn on POST. Now: trusted-network. Validation must reject incoherent states (e.g., min_backends &gt; max_backends).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Stub <code>app.py</code>; T1.4 next. <code>config/policy.yaml</code> exists with canonical fields.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real REST endpoints, validation, atomic YAML write, Redis publish, idempotent semantics.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.4 partial — <code>GET /api/v1/policy</code>, <code>POST /api/v1/policy</code>, YAML persistence and <code>smartload.policy</code> publish are wired (<code>services/policy-manager/app.py:59-95</code>). <code>config/policy.yaml</code> populated with canonical fields. Validation, audit, and idempotency are still pending.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real REST endpoints, validation, atomic YAML write, Redis publish, idempotent semantics, audit row per change.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>T1.4: real REST + YAML write + publish.</li>
-        <li>Validation rules (min_backends &lt; max_backends, etc.).</li>
-        <li>Audit table (or audit log file) for policy changes.</li>
+        <li>Validation rules on POST + service startup (min_backends &lt; max_backends, non-negative numerics, enum values for operating_mode / safe_mode) — issue #32.</li>
+        <li><code>policy_changes</code> hypertable + audit writes per successful POST — issue #32.</li>
+        <li>Idempotency: skip publish when POST is a no-op against the existing state — issue #32.</li>
+        <li>Autoscaler-side live-reload subscriber on <code>smartload.policy</code> (paired with this work) — issue #32.</li>
         <li>Future: authn for POST.</li>
       </ul>
     </div></div>

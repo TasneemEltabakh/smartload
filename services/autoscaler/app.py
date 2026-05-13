@@ -8,8 +8,8 @@ Per SOT §8.8:
   - Compares predicted_rps to current_backends × per_instance_capacity_rps.
   - Scales test-backend containers via Docker SDK (step = 1).
   - Honors min_backends, max_backends, autoscaler_cooldown_seconds from
-    config/policy.yaml (loaded at startup; live updates arrive on
-    smartload.policy).
+    config/policy.yaml (loaded at startup). Live reload on smartload.policy
+    is planned under T1.4 (issue #32) but not yet wired here.
   - Writes one row to scaling_events per action (SCALING_EVENT_INSERT).
   - Publishes ScalingEvent envelopes on smartload.scale.
   - Reactive fallback: if the last forecast is older than 2 × horizon,

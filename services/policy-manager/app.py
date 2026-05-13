@@ -1,9 +1,15 @@
 """
 services/policy-manager/app.py
 ────────────────────────────────
-Phase 0 stub — wired to Redis, reads policy.yaml, reports connectivity on /health.
-Phase 1 (T1.4): implement GET /api/v1/policy and POST /api/v1/policy with
-                 YAML persistence and smartload.policy Redis publish.
+T1.4 (partial) — GET /api/v1/policy and POST /api/v1/policy are wired with
+YAML persistence and smartload.policy Redis publish. /health reports Redis
+connectivity and whether policy.yaml loads.
+
+Remaining T1.4 work (issue #32):
+  - Validation rules on POST (reject max < min, negative numerics, unknown
+    enum values for operating_mode / safe_mode).
+  - Audit writes to the policy_changes hypertable on each successful POST.
+  - Autoscaler-side live-reload subscriber on smartload.policy.
 """
 
 import os
