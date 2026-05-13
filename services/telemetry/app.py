@@ -161,15 +161,18 @@ def parse_otlp_to_rows(envelope: dict) -> list[tuple]:
     """Walk an OTLP/JSON envelope into `metrics` rows.
 
     Returns a list of (time, service, instance, metric_name, value) tuples
-    in METRICS_INSERT order. Missing service.name → "unknown"; instance
-    falls through service.instance.id → host.name → datapoint attr
-    `instance` → "unknown".
+    in METRICS_INSERT order. Missing service.name → "unknown". Instance
+    resolution prefers the datapoint attribute (set per-request, e.g. the
+    NGINX upstream backend), then resource service.instance.id, then
+    host.name, then "unknown". Per-datapoint priority is what makes the
+    `metrics.instance` column reflect the request's *subject* rather than
+    the *emitter* (e.g. the load-balancer shipper sidecar).
     """
     rows: list[tuple] = []
     for rm in envelope.get("resourceMetrics", []) or []:
-        res_attrs = rm.get("resource", {}).get("attributes", [])
-        service   = _attr(res_attrs, "service.name", "unknown")
-        instance  = _attr(res_attrs, "service.instance.id") or _attr(res_attrs, "host.name")
+        res_attrs    = rm.get("resource", {}).get("attributes", [])
+        service      = _attr(res_attrs, "service.name", "unknown")
+        res_instance = _attr(res_attrs, "service.instance.id") or _attr(res_attrs, "host.name")
         for sm in rm.get("scopeMetrics", []) or []:
             for m in sm.get("metrics", []) or []:
                 name = m.get("name")
@@ -185,7 +188,7 @@ def parse_otlp_to_rows(envelope: dict) -> list[tuple]:
                     if val is None or ts is None:
                         _bump("rows_dropped_shape")
                         continue
-                    inst = instance or _attr(dp.get("attributes"), "instance", "unknown")
+                    inst = _attr(dp.get("attributes"), "instance") or res_instance or "unknown"
                     rows.append((ts, service, inst, name, val))
     return rows
 
