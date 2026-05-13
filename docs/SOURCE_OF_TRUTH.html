@@ -2020,7 +2020,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span></div>
     <h4>Metrics DB (TimescaleDB)</h4>
     <div class="role">Storage · Port 5432 · Tasneem</div>
-    <p class="small">3 hypertables (<code>metrics</code>, <code>backend_health</code>, <code>scaling_events</code>). PostgreSQL 16 + TimescaleDB extension. Schema in <code>infrastructure/timescaledb/init.sql</code>.</p>
+    <p class="small">4 hypertables (<code>metrics</code>, <code>backend_health</code>, <code>scaling_events</code>, <code>policy_changes</code>) + <code>metrics_1min</code> continuous aggregate. PostgreSQL 16 + TimescaleDB extension. Schema in <code>infrastructure/timescaledb/init.sql</code>.</p>
     <div class="deeplink"><a href="#mod-metrics-db">→ Deep dive</a></div>
   </article>
 
@@ -2537,7 +2537,20 @@ CREATE TABLE IF NOT EXISTS scaling_events (
   instance_count INT         NOT NULL,
   reason         TEXT
 );
-SELECT create_hypertable('scaling_events', 'time', if_not_exists =&gt; TRUE);</code></pre>
+SELECT create_hypertable('scaling_events', 'time', if_not_exists =&gt; TRUE);
+
+-- policy_changes: append-only audit of POST /api/v1/policy changes (T1.4).
+-- One row per changed field. old_value / new_value are JSON-encoded so the
+-- column can hold any field type (string, number, bool, list).
+CREATE TABLE IF NOT EXISTS policy_changes (
+    time            TIMESTAMPTZ NOT NULL,
+    policy_version  INT         NOT NULL,   -- post-change version (monotonic)
+    field           TEXT        NOT NULL,   -- e.g. "max_backends"
+    old_value       TEXT,                   -- JSON-encoded previous value; NULL if newly set
+    new_value       TEXT        NOT NULL,
+    actor           TEXT        NOT NULL    -- X-Actor header, "anonymous" if absent
+);
+SELECT create_hypertable('policy_changes', 'time', if_not_exists =&gt; TRUE);</code></pre>
 
 <h4>Schema diagram (current state)</h4>
 <figure>
@@ -2556,9 +2569,11 @@ flowchart TB
 
     backend_health[("<b>backend_health</b><br/>hypertable<br/>retention 30 d")]
     scaling_events[("<b>scaling_events</b><br/>hypertable<br/>retention 90 d")]
+    policy_changes[("<b>policy_changes</b><br/>hypertable<br/>retention 90 d")]
 
     AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
     ASL ==>|"SCALING_EVENT_INSERT"| scaling_events
+    PM["<b>Policy Manager</b><br/>on POST"] ==>|"POLICY_CHANGE_INSERT"| policy_changes
 
     FCT["Forecasting Engine"]
     GRF["Grafana / Queries"]
@@ -2574,14 +2589,15 @@ flowchart TB
     backend_health --> SC
     backend_health --> GRF
     scaling_events --> GRF
+    policy_changes --> GRF
 
     classDef table fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
     classDef cagg fill:#f5f3ff,color:#0f172a,stroke:#7c3aed,stroke-width:2px,stroke-dasharray:4 2;
     classDef writer fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef reader fill:#ecfdf5,color:#0f172a,stroke:#047857;
-    class metrics,backend_health,scaling_events table
+    class metrics,backend_health,scaling_events,policy_changes table
     class metrics_1min cagg
-    class OTel,AND,ASL writer
+    class OTel,AND,ASL,PM writer
     class FCT,RL,SC,GRF reader
 </pre>
   <figcaption><strong>Figure 8.4 — Metrics DB ownership &amp; flow.</strong> Three hypertables and one continuous aggregate, all defined in <code>infrastructure/timescaledb/init.sql</code>. Solid double arrows are <em>writes</em>; each table has exactly one writer service (single-writer ownership, principle 8). Dashed arrow is the <code>metrics_1min</code> continuous aggregate refresh (every 1 min, materialised window <code>[-1 h, -2 m]</code>). Thin arrows are reads via the canonical SQL constants in <code>services/shared/queries.py</code>. Autoscaler is shown as a writer only — its input is the <code>smartload.forecast</code> Redis channel, not the metrics table.</figcaption>
@@ -2631,7 +2647,7 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">Must NOT hold transactional state. Must NOT be the bus for ephemeral signals (use Redis for that). Must NOT be queried from the data plane.</div></div>
     <div class="dc-row"><div class="key">Required interfaces</div><div class="val">PostgreSQL wire protocol on port 5432; SQL constants in <code>services/shared/queries.py</code> are the only canonical entry points for SmartLoad services.</div></div>
     <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If the DB goes down: writes back-pressure (fail loudly, never silently); reads from engines fail their cycle and engines must skip rather than crash.</div></div>
-    <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Hypertables provide native time-based partitioning. Retention is enforced per data class: <strong>7 d</strong> for raw <code>metrics</code> (high-volume, derived signals live in CAGGs / <code>backend_health</code>), <strong>30 d</strong> for <code>backend_health</code> (longer-tail anomaly history), <strong>90 d</strong> for <code>scaling_events</code> (audit trail).</div></div>
+    <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Hypertables provide native time-based partitioning. Retention is enforced per data class: <strong>7 d</strong> for raw <code>metrics</code> (high-volume, derived signals live in CAGGs / <code>backend_health</code>), <strong>30 d</strong> for <code>backend_health</code> (longer-tail anomaly history), <strong>90 d</strong> for <code>scaling_events</code> (audit trail), <strong>90 d</strong> for <code>policy_changes</code> (audit trail).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Standard Postgres exporter to Prometheus. Grafana dashboards on hypertable size, write rate, query latency.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Trusted-network assumption; no per-service auth in prototype. Production: per-service DB roles with least-privilege.</div></div>
     <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">3-table schema with retention (7d / 30d / 90d) and the <code>metrics_1min</code> continuous aggregate. 33 Phase-0 wiring tests + 39 S2 baseline tests (incl. 6 DB-bound) passing in CI as of PR #105 + #106.</div></div>
@@ -2924,14 +2940,14 @@ respect autoscaler_cooldown_seconds (default 60)</code></pre>
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica must hold the lock on scaling decisions to avoid double-scale. Lock can be Redis-based for the prototype.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-action: forecast value, decision (scale_out / scale_in / no-op), reason, current backend count. Grafana dashboard panel.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Min/max bounds always enforced. Cooldown prevents oscillation. Step size = 1 prevents thrashing.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.3 active. Subscribes to <code>smartload.forecast</code>; on each envelope, compares <code>predicted_rps</code> to <code>current_count × per_instance_capacity_rps</code> and applies a step-1 scale via the Docker SDK (toggles compose-managed <code>smartload-test-backend-1..5</code> between running/stopped). Honors <code>min_backends</code>, <code>max_backends</code>, <code>autoscaler_cooldown_seconds</code> loaded at startup from <code>config/policy.yaml</code>. Writes one row per action to <code>scaling_events</code> via canonical <code>SCALING_EVENT_INSERT</code>. Publishes <code>ScalingEvent</code> envelopes on <code>smartload.scale</code> with <code>forecast_event_id</code> provenance. Reactive fallback fires when the last forecast is older than 2 × horizon — scales on observed RPS pulled via <code>OBSERVED_RPS_QUERY</code>. Cluster surface is split behind a <code>ClusterClient</code> ABC so a <code>KubernetesClusterClient</code> can drop in later without touching <code>decisions.py</code> or <code>app.py</code>.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Subscribes to <code>smartload.forecast</code> + <code>smartload.policy</code> (live policy reloads — T1.4); calls <code>docker.from_env().containers.run/stop</code> via the <code>DockerClusterClient</code> implementation; LB picks up the live backend set via T2.1 Sidecar regeneration of <code>nginx.conf</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.3 + T1.4 live-reload wired. Subscribes to <code>smartload.forecast</code> AND <code>smartload.policy</code> on a single pubsub; on each forecast envelope, compares <code>predicted_rps</code> to <code>current_count × per_instance_capacity_rps</code> and applies a step-1 scale via the Docker SDK (toggles compose-managed <code>smartload-test-backend-1..5</code> between running/stopped). Honors <code>min_backends</code>, <code>max_backends</code>, <code>autoscaler_cooldown_seconds</code> loaded at startup from <code>config/policy.yaml</code>; on every <code>smartload.policy</code> envelope, swaps <code>_policy</code> under <code>_state_lock</code> via <code>decisions.policy_from_payload</code> and rejects backwards <code>policy_version</code> moves. Writes one row per action to <code>scaling_events</code> via canonical <code>SCALING_EVENT_INSERT</code>. Publishes <code>ScalingEvent</code> envelopes on <code>smartload.scale</code> with <code>forecast_event_id</code> provenance. Reactive fallback fires when the last forecast is older than 2 × horizon — scales on observed RPS pulled via <code>OBSERVED_RPS_QUERY</code>. Cluster surface is split behind a <code>ClusterClient</code> ABC so a <code>KubernetesClusterClient</code> can drop in later without touching <code>decisions.py</code> or <code>app.py</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Subscribes to <code>smartload.forecast</code> + <code>smartload.policy</code>; calls <code>docker.from_env().containers.run/stop</code> via the <code>DockerClusterClient</code> implementation; LB picks up the live backend set via T2.1 Sidecar regeneration of <code>nginx.conf</code>.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
         <li><s>T1.3: forecast subscription + Docker SDK actuation + cooldown.</s> Shipped.</li>
         <li><s>Reactive fallback path on stale forecast.</s> Shipped (<code>OBSERVED_RPS_QUERY</code> + 2 × horizon threshold).</li>
         <li><s>Cluster-aware abstraction (Docker SDK for prototype; K8s API as future target).</s> Shipped (<code>ClusterClient</code> ABC + <code>DockerClusterClient</code>).</li>
-        <li>Live policy reloads on <code>smartload.policy</code> (T1.4 — still reads policy.yaml at startup only).</li>
+        <li><s>Live policy reloads on <code>smartload.policy</code> (T1.4).</s> Shipped (<code>_handle_policy_message</code> + <code>policy_from_payload</code>).</li>
         <li>T2.1 LB sidecar so scale-out beyond compose's initial set is routable (currently bounded by NGINX's static 1..5 upstream block).</li>
       </ul>
     </div></div>
@@ -3011,15 +3027,16 @@ rl_confidence_threshold: 0.6          # below this, sidecar ignores RL and uses 
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient. Read-heavy is fine; writes are operator-initiated and rare.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Audit log per change (operator, timestamp, field diff). Metric for policy version.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Future: authn on POST. Now: trusted-network. Validation must reject incoherent states (e.g., min_backends &gt; max_backends).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.4 partial — <code>GET /api/v1/policy</code>, <code>POST /api/v1/policy</code>, YAML persistence and <code>smartload.policy</code> publish are wired (<code>services/policy-manager/app.py:59-95</code>). <code>config/policy.yaml</code> populated with canonical fields. Validation, audit, and idempotency are still pending.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.4 wired. <code>GET /api/v1/policy</code> returns the on-disk snapshot. <code>POST /api/v1/policy</code> validates the payload (per-field rules + cross-field <code>min_backends ≤ max_backends</code> via <code>validation.py</code>), merges with existing, computes the diff, atomically writes the YAML (with bind-mount fallback), writes one row per changed field to <code>policy_changes</code> via canonical <code>POLICY_CHANGE_INSERT</code>, bumps <code>policy_version</code>, and publishes a canonical <code>PolicyUpdate</code> envelope on <code>smartload.policy</code>. Idempotent: a POST that matches existing state returns 200 no-op with no audit row and no publish. Startup validates the on-disk policy and logs (not crashes) on failure. Autoscaler-side live reload is wired (see §8.8). Tests: 38 unit (<code>test_policy_validation.py</code>) + 4 integration (<code>test_policy_manager.py</code>).</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real REST endpoints, validation, atomic YAML write, Redis publish, idempotent semantics, audit row per change.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>Validation rules on POST + service startup (min_backends &lt; max_backends, non-negative numerics, enum values for operating_mode / safe_mode) — issue #32.</li>
-        <li><code>policy_changes</code> hypertable + audit writes per successful POST — issue #32.</li>
-        <li>Idempotency: skip publish when POST is a no-op against the existing state — issue #32.</li>
-        <li>Autoscaler-side live-reload subscriber on <code>smartload.policy</code> (paired with this work) — issue #32.</li>
+        <li><s>Validation rules on POST + service startup (min_backends &lt; max_backends, non-negative numerics, enum values for operating_mode / safe_mode).</s> Shipped (<code>validation.py</code>, 38 unit tests).</li>
+        <li><s><code>policy_changes</code> hypertable + audit writes per successful POST.</s> Shipped (one row per changed field, <code>POLICY_CHANGE_INSERT</code>).</li>
+        <li><s>Idempotency: skip publish when POST is a no-op against the existing state.</s> Shipped (200 no-op response, no audit row, no publish).</li>
+        <li><s>Autoscaler-side live-reload subscriber on <code>smartload.policy</code>.</s> Shipped in §8.8.</li>
         <li>Future: authn for POST.</li>
+        <li>Future: Prometheus counter for <code>policy_version</code> (SOT §8.9 observability expectation).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -4814,8 +4831,8 @@ flowchart LR
     <tr><td>Anomaly detector</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.1)</span></td><td><code>services/anomaly-detector/app.py</code></td><td>Threshold logic + Redis publish</td></tr>
     <tr><td>Forecasting service</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.2)</span></td><td><code>services/forecasting/app.py</code></td><td>Moving-avg + Redis publish</td></tr>
     <tr><td>RL engine</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.3)</span></td><td><code>services/rl-engine/app.py</code></td><td>Shadow-mode random policy</td></tr>
-    <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback; tests in <code>tests/integration/test_autoscaler{,_decisions}.py</code></td></tr>
-    <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-next">Phase 1B next (T1.4)</span></td><td><code>services/policy-manager/app.py</code></td><td>POST endpoint + Redis publish</td></tr>
+    <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
+    <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-done">T1.4 wired</span></td><td><code>services/policy-manager/{app,validation}.py</code></td><td>GET/POST + validation + atomic YAML + <code>policy_changes</code> audit + envelope publish + idempotent no-op; 38 unit + 4 integration tests</td></tr>
     <tr><td>Redis message contracts</td><td>Nada</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/shared/contracts.py</code></td><td>—</td></tr>
     <tr><td>TimescaleDB query constants</td><td>Nada</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/shared/queries.py</code></td><td>—</td></tr>
     <tr><td>Dataset download scripts</td><td>Rghda</td><td><span class="pill pill-active">Phase 1A active (R0.1)</span></td><td><code>scripts/download-datasets.sh</code></td><td>—</td></tr>
