@@ -3,8 +3,19 @@
 
 apiVersion: 1
 
+# Drop any prior records of these datasources before re-provisioning. Required
+# when the datasource UID changes (e.g. from Grafana's auto-generated value to
+# the pinned `prometheus` / `timescaledb` UIDs below) — otherwise provisioning
+# fails on startup with `Datasource provisioning error: data source not found`.
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+  - name: TimescaleDB
+    orgId: 1
+
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
@@ -13,6 +24,7 @@ datasources:
       timeInterval: "15s"
 
   - name: TimescaleDB
+    uid: timescaledb
     type: postgres
     access: proxy
     url: timescaledb:5432
