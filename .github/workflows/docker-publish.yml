@@ -72,13 +72,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build service image (default context)
-        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler'
+        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler' && matrix.service != 'policy-manager'
         run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
 
       - name: Build image with wider context (services that import shared/)
-        # Telemetry and autoscaler import services/shared/*, so their build context
-        # is ./services and the Dockerfile pulls in shared/ alongside app.py.
-        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler'
+        # Telemetry, autoscaler, and policy-manager import services/shared/*, so
+        # their build context is ./services and the Dockerfile pulls in shared/
+        # alongside app.py + any service-local modules (decisions.py / validation.py).
+        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler' || matrix.service == 'policy-manager'
         run: docker build -t smartload-${{ matrix.service }} -f services/${{ matrix.service }}/Dockerfile ./services
 
       - name: Run container
