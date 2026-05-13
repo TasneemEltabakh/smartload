@@ -196,7 +196,13 @@ jobs:
         run: pip install -r tests/integration/requirements.txt
 
       - name: Start docker-compose environment
-        run: docker compose up -d --build --scale test-backend=2
+        # --scale test-backend=12 matches the 12 enumerated `server`
+        # entries in services/load-balancer/nginx/nginx.conf. NGINX bails
+        # at config-load if any upstream hostname doesn't resolve, so CI
+        # must spin up the full 12. (Local dev gets the same count via
+        # docker-compose.yml's `deploy.replicas: 12`; --scale overrides
+        # that, so CI has to spell it out.)
+        run: docker compose up -d --build --scale test-backend=12
 
       - name: Wait for stack to become healthy
         # Poll TimescaleDB and Redis directly; the AI-service /health
