@@ -3800,6 +3800,23 @@ SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists =>
   <p>Every service interaction in SmartLoad is one of three contract types: a Redis pub/sub message, a REST endpoint, or a SQL query constant. There is no fourth. Contracts are <em>typed and versionable</em> — there is no ad-hoc JSON, no inline SQL outside <code>queries.py</code>, no cross-service imports of internal code. This section is the authority on what every contract <em>should</em> look like.</p>
 </div>
 
+<div class="canonical-intent" style="border-color:#b45309;background:#fffbeb;">
+  <span class="label" style="background:#b45309;">Supersession Notice — read this before SmartLoad_API_Design.pdf</span>
+  <p>The original SDP-era <code>SDP/SmartLoad_API_Design.pdf</code> is <strong>historical</strong>. It is a design draft predating implementation. This section (§11) and the per-module §8.x deep dives are the <em>authoritative</em> contract source. Where the PDF and this SOT disagree, this SOT wins. Major intentional deviations from the PDF — each documented in its module section:</p>
+  <ul style="margin-top:0.4rem;">
+    <li><strong>REST API shape</strong>: single-document <code>/api/v1/policy</code> (GET/POST) instead of the PDF's multi-policy <code>/api/v1/policies/{id}/activate</code>. SmartLoad has one active policy at a time; the multi-policy model was scope creep. See §8.9.</li>
+    <li><strong>No <code>/internal/v1/*</code> namespace</strong>. Services coordinate via Redis pub/sub (5 canonical channels below); the PDF's internal REST namespace was rejected in favour of the pub/sub control bus to keep coupling loose. See §8.10.</li>
+    <li><strong>Channel naming</strong>: no <code>.v1</code> suffix. PDF proposes <code>smartload.&lt;topic&gt;.v1</code>; current canonical is unsuffixed (<code>smartload.anomaly</code>, etc.). Deferred — see <a href="#sec-15-changelog">§15</a>.</li>
+    <li><strong>Envelope shape</strong>: leaner. PDF envelope has <code>schema_version, message_id, type, emitted_at, source.service</code>; the wired envelope (<code>services/shared/contracts.py::Envelope</code>) has <code>event_id, source, version, timestamp, payload</code>. Functionally equivalent, less verbose. See <a href="#sec-15-changelog">§15</a>.</li>
+    <li><strong>No backend registry REST</strong>. PDF has <code>/api/v1/backends</code> + <code>/quarantine</code> + <code>/restore</code>; the running system uses Docker SDK + NGINX upstream as the implicit registry. Manual override flows are covered by the T1.4 / OUI.5 endpoints (<code>POST /api/v1/scale</code>, <code>POST /api/v1/isolate</code>). See §8.8.</li>
+    <li><strong>No <code>/api/v1/experiments</code> surface</strong>. Benchmarking is offline and CI-driven (issues #36–#39, #117), not REST-controlled.</li>
+    <li><strong>Operator UI</strong>: PDF §11.5 listed a "Rich operator UI with full runtime control" as a <em>future extension</em>. As of 2026-05-13 this is in scope as a <strong>lightweight</strong> UI — transparency + override layer, not full runtime control. See §8.11 + issues #119–#125.</li>
+    <li><strong>Error format</strong>: current responses use <code>{error, field}</code>; PDF mandates RFC 7807 Problem Details (<code>{type, title, status, detail, instance}</code>). Adoptable; left for the canonical doc landing under issue #53.</li>
+    <li><strong>Adopted from PDF as-is</strong>: TimescaleDB + raw/aggregate tables, Redis pub/sub for decision signals, channel-per-topic separation, the decision-merge hierarchy (anomaly → policy → RL → classical → forecast drives scaling), one active policy with safe-mode override, OTLP/HTTP-JSON telemetry ingest.</li>
+  </ul>
+  <p style="margin-top:0.4rem;">The reconciliation work that produces the canonical external API doc (<code>docs/api/api-v1.md</code>) is tracked under <a href="https://github.com/TasneemEltabakh/smartload/issues/53">#53</a>. Once that doc lands, the PDF is officially retired — keep it in the repo only for historical / SDP-grader context.</p>
+</div>
+
 <h3>Contract surfaces</h3>
 <table>
   <thead><tr><th>Surface</th><th>Mechanism</th><th>Canonical location</th><th>Sync / async</th><th>Versioning rule</th></tr></thead>
