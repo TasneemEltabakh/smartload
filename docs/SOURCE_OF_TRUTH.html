@@ -3148,9 +3148,9 @@ class RoutingRecommendation:
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If Grafana is down, the system continues to operate. Operators can fall back to direct SQL queries against TimescaleDB.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Grafana provisioned. Dashboards not yet implemented (Phase 2 deliverable T2.2).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">5 dashboards above, exported to <code>infrastructure/grafana/dashboards/</code> as JSON, version-controlled, restored on container restart.</div></div>
-    <div class="dc-row"><div class="key">Gap to close</div><div class="val">Author dashboards (T2.2). Wire Prometheus exporter for Redis + Postgres. Decide whether a custom React/Flask UI is ever needed.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Grafana provisioned. <strong>Overview</strong> dashboard shipped — <code>infrastructure/grafana/dashboards/smartload-overview.json</code>, six panels backed by TimescaleDB (request rate, p50/p95/max latency, error rate, total requests, active backend count, telemetry rows ingested). Anomaly / Forecast / RL / Scaling dashboards still pending T2.2 (S4).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">5 dashboards above, exported to <code>infrastructure/grafana/dashboards/</code> as JSON, version-controlled, restored on container restart. Overview <span class="badge badge-implemented">shipped</span>; four remaining.</div></div>
+    <div class="dc-row"><div class="key">Gap to close</div><div class="val">Author the four remaining dashboards (Anomaly, Forecast, RL, Scaling) in T2.2. Pin a stable provisioned <code>uid</code> for the TimescaleDB datasource so dashboard panels survive a Grafana volume wipe. Wire Prometheus exporter for Redis + Postgres. Decide whether a custom React/Flask UI is ever needed.</div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
       <ul class="review-checklist compact">
         <li>Are dashboards version-controlled as JSON?</li>
@@ -4382,7 +4382,7 @@ flowchart LR
     <tr><td><strong>Control bus</strong></td><td>Redis 7-alpine Pub/Sub</td><td><span class="pill pill-done">Implemented</span></td><td>In-memory only; <code>allkeys-lru</code>.</td></tr>
     <tr><td><strong>Telemetry SDK</strong></td><td>OpenTelemetry SDK</td><td><span class="pill pill-done">Implemented</span></td><td>OTel Collector batches OTLP → Prometheus + (Phase 1) TimescaleDB.</td></tr>
     <tr><td><strong>Telemetry pipeline</strong></td><td>OTel Collector + Prometheus</td><td><span class="pill pill-done">Implemented</span></td><td>OTLP receivers (gRPC 4317, HTTP 4318); Prometheus exporter on 8889.</td></tr>
-    <tr><td><strong>Dashboards</strong></td><td>Grafana 10+</td><td><span class="pill pill-done">Provisioning done</span></td><td>4 dashboards pending T2.2 (S4).</td></tr>
+    <tr><td><strong>Dashboards</strong></td><td>Grafana 10+</td><td><span class="pill pill-done">Provisioning done</span></td><td>Overview shipped (S2 demo); Anomaly / Forecast / RL / Scaling pending T2.2 (S4).</td></tr>
     <tr><td><strong>Workload simulator</strong></td><td>Locust</td><td><span class="pill pill-done">Implemented</span></td><td>Web UI on 8089; headless mode for benchmarks.</td></tr>
     <tr><td><strong>Container orchestration</strong></td><td>Docker Compose</td><td><span class="pill pill-done">Implemented</span></td><td>Kubernetes is stretch (out of scope for prototype).</td></tr>
     <tr><td><strong>CI / CD</strong></td><td>GitHub Actions</td><td><span class="pill pill-done">Implemented</span></td><td>Lint + unit + build images on push.</td></tr>
