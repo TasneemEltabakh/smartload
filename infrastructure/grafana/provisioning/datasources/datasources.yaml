@@ -28,11 +28,11 @@ datasources:
     type: postgres
     access: proxy
     url: timescaledb:5432
-    database: smartloaddb
     user: postgres
     secureJsonData:
       password: "${TIMESCALEDB_PASSWORD}"
     jsonData:
+      database: smartloaddb
       sslmode: disable
       timescaledb: true
       postgresVersion: 1600

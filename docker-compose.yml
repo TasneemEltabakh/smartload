@@ -266,6 +266,13 @@ services:
     networks:
       - smartload-net
     restart: unless-stopped
+    # Default replica count must match the 12 `server` entries in
+    # services/load-balancer/nginx/nginx.conf. Without this, any
+    # `docker compose up --build` silently scales test-backend back
+    # down to 1, leaving NGINX with 11 dead upstreams and the
+    # SmartLoad Overview "Active backend instances" panel reading 1.
+    deploy:
+      replicas: 12
 
   traffic-simulator:
     build:
