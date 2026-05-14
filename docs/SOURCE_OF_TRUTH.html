@@ -5955,6 +5955,309 @@ docker compose logs -f anomaly-detector</code></pre>
 </section>
 
 <!-- ========================================================================== -->
+<!--             26. API INTEGRATION GUIDE                                       -->
+<!-- ========================================================================== -->
+<section id="sec-26-api-guide">
+<h1>26. API Integration Guide <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>This section is the <strong>single navigable home</strong> for everyone who consumes SmartLoad over HTTP — operator tooling, customer middleware, the SDK, the operator UI BFF. It is the prose companion to <code>docs/openapi/smartload-v1.yaml</code>: the YAML is the machine-readable contract; this section explains what each endpoint <em>means</em>, how errors are shaped, how authentication will land, and how to choose between the four integration patterns.</p>
+</div>
+
+<h3>26.1 Audience map — start here</h3>
+<table>
+  <thead><tr><th>I want to…</th><th>Read this subsection</th><th>Plus</th></tr></thead>
+  <tbody>
+    <tr><td>Call the API from a script in under 5 minutes</td><td>§26.4 + §26.5</td><td><a href="#sec-27-sdk">§27</a> (SDK)</td></tr>
+    <tr><td>Build long-running middleware that reacts to events</td><td>§26.4 + §26.9 (pattern C/D)</td><td><a href="#sec-29-webhooks">§29</a> (Webhooks) or <a href="#sec-27-sdk">§27</a> §27.4 (Redis subscribe)</td></tr>
+    <tr><td>Understand the error model</td><td>§26.5</td><td></td></tr>
+    <tr><td>Self-host and know what ports to expose</td><td>§26.8</td><td><a href="#diag-helm">§12.10</a> (K8s topology)</td></tr>
+    <tr><td>Plan for SaaS / multi-tenant adoption</td><td>§26.3</td><td><a href="#diag-multitenant">§12.8</a></td></tr>
+    <tr><td>Know what's stable and what may change</td><td>§26.7</td><td></td></tr>
+  </tbody>
+</table>
+
+<h3>26.2 Authentication</h3>
+<table>
+  <thead><tr><th>Mode</th><th>Status</th><th>How a caller authenticates</th></tr></thead>
+  <tbody>
+    <tr><td>Anonymous (today)</td><td><span class="badge badge-implemented">Shipped</span></td><td>No headers required. Every endpoint is reachable from the compose network. The default <code>tenant_id="default"</code> is implicit. Single-tenant self-host only.</td></tr>
+    <tr><td>API key (planned)</td><td><span class="badge badge-planned">Issue #132</span></td><td>HTTP header <code>Authorization: Bearer sl_&lt;key&gt;</code> or <code>X-API-Key: sl_&lt;key&gt;</code> (both accepted). Server resolves <code>tenant_id</code> from the key, then checks the scope matrix per endpoint.</td></tr>
+    <tr><td>Operator session (UI only)</td><td><span class="badge badge-planned">Issue #125</span></td><td>Cookie-based session against the operator UI BFF; never reaches policy-manager directly. Out of scope for programmatic integration.</td></tr>
+  </tbody>
+</table>
+<p><strong>Until #132 lands</strong>: callers may still set <code>Authorization</code> / <code>X-API-Key</code> / <code>X-Tenant-Id</code> headers — they are ignored by the live service, but the SDK already populates them so integration code that sets them today will Just Work post-#132 with no caller changes.</p>
+
+<h4>API key scopes (planned)</h4>
+<table>
+  <thead><tr><th>Scope</th><th>Endpoints it unlocks</th></tr></thead>
+  <tbody>
+    <tr><td><code>policy:read</code></td><td>GET /api/v1/policy</td></tr>
+    <tr><td><code>policy:write</code></td><td>POST /api/v1/policy</td></tr>
+    <tr><td><code>metrics:read</code></td><td>GET /api/v1/metrics, GET /api/v1/stats</td></tr>
+    <tr><td><code>webhook:manage</code></td><td>POST/GET/DELETE /api/v1/webhooks</td></tr>
+    <tr><td><code>scale:write</code></td><td>POST /api/v1/scale (#123)</td></tr>
+    <tr><td><code>isolate:write</code></td><td>POST /api/v1/isolate (#123)</td></tr>
+    <tr><td><code>admin</code></td><td>POST/GET/DELETE /api/v1/api-keys; all of the above</td></tr>
+  </tbody>
+</table>
+
+<h3>26.3 Tenant scoping</h3>
+<p>Single-tenant deployments (today) map to the implicit <code>tenant_id="default"</code>. Multi-tenant rollout (#129) plumbs <code>tenant_id</code> through every isolatable surface:</p>
+<ul>
+  <li><strong>HTTP</strong>: derived from the API key. Admin paths may pass an explicit <code>X-SmartLoad-Tenant</code> header.</li>
+  <li><strong>Redis</strong>: channels become <code>t:&lt;tenant_id&gt;:smartload.&lt;topic&gt;</code>. Subscribers filter on tenant.</li>
+  <li><strong>Storage</strong>: every row in <code>policy_changes</code>, <code>metrics</code>, <code>backend_health</code>, <code>scaling_events</code> carries a <code>tenant_id</code> column indexed alongside <code>time</code>.</li>
+  <li><strong>Policy file</strong>: <code>config/tenants/&lt;tenant_id&gt;/policy.yaml</code> (today flat <code>config/policy.yaml</code> = default tenant).</li>
+</ul>
+<p>See <a href="#diag-multitenant">§12.8</a> for the data flow diagram and <a href="#sec-25-distribution">§25.4</a> for the namespacing pattern.</p>
+
+<h3>26.4 Endpoint reference</h3>
+
+<p>The machine-readable source is <code>docs/openapi/smartload-v1.yaml</code>. Below is the human reference grouped by surface. Every endpoint follows the uniform error envelope from §26.5.</p>
+
+<h4>Policy (policy-manager, port 8086)</h4>
+<table>
+  <thead><tr><th>Method · Path</th><th>Purpose</th><th>Body / params</th><th>Success</th><th>Errors</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>GET /api/v1/policy</code></td>
+      <td>Read the current operating policy</td>
+      <td>—</td>
+      <td><code>200</code> + full <code>Policy</code> object</td>
+      <td><code>404</code> if <code>policy.yaml</code> is missing or empty</td>
+    </tr>
+    <tr>
+      <td><code>POST /api/v1/policy</code></td>
+      <td>Propose and commit a policy change. <strong>Idempotent</strong> — POSTing the same body twice returns <code>{status: "no-op"}</code> the second time with no audit row, no envelope publish.</td>
+      <td>Body: any subset of <code>PolicyPatch</code>. Headers: optional <code>X-Actor</code> (recorded in audit).</td>
+      <td><code>200</code> + <code>PolicyUpdateResponse</code> = <code>{status, policy, changed_fields, policy_version, event_id}</code></td>
+      <td><code>400</code> + <code>{error, field}</code> on validation failure. <code>500</code> on persist failure (rare).</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/v1/audit/policy</code></td>
+      <td>Recent <code>policy_changes</code> rows, newest first.</td>
+      <td>Query: <code>?limit=N</code> (default 50, max 1000).</td>
+      <td><code>200</code> + array of <code>PolicyAuditRow</code></td>
+      <td><code>400</code> on bad limit; <code>503</code> if TimescaleDB is unreachable</td>
+    </tr>
+    <tr>
+      <td><code>GET /health</code></td>
+      <td>Uniform health endpoint</td>
+      <td>—</td>
+      <td><code>200</code> + <code>{status:"ok", redis:true, timescaledb:true, policy_loaded:bool, policy_version:int}</code></td>
+      <td><code>503</code> on degraded (SOT §11 — never 207)</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Telemetry (telemetry, port 8081)</h4>
+<table>
+  <thead><tr><th>Method · Path</th><th>Purpose</th><th>Body / params</th><th>Success</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>POST /v1/metrics</code></td>
+      <td>OTLP/HTTP-JSON ingress (called by the OTel Collector — not an operator surface)</td>
+      <td>OTLP body</td>
+      <td><code>200</code> (always — protocol contract)</td>
+    </tr>
+    <tr>
+      <td><code>GET /api/v1/metrics?service=&lt;svc&gt;&amp;window=&lt;dur&gt;</code></td>
+      <td>Recent metric rows for one service. <code>window</code> accepts <code>30s</code> / <code>5m</code> / <code>1h</code> / <code>2d</code>.</td>
+      <td>Query: <code>service</code> (required), <code>window</code> (default 5m)</td>
+      <td><code>200</code> + array of <code>MetricRow</code></td>
+    </tr>
+    <tr>
+      <td><code>GET /api/v1/stats</code></td>
+      <td>Telemetry-service own observability counters (rows_written, batches_written, rows_dropped_db, rows_dropped_shape)</td>
+      <td>—</td>
+      <td><code>200</code> + <code>TelemetryStats</code></td>
+    </tr>
+    <tr>
+      <td><code>GET /health</code></td>
+      <td>Uniform health</td>
+      <td>—</td>
+      <td>See policy-manager</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Autoscaler (autoscaler, port 8085)</h4>
+<table>
+  <thead><tr><th>Method · Path</th><th>Purpose</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /health</code></td><td>Uniform health + currently loaded policy snapshot</td><td><span class="badge badge-implemented">Shipped</span></td></tr>
+    <tr><td><code>POST /api/v1/scale</code></td><td>Manual override — request target backend count</td><td><span class="badge badge-planned">Issue #123</span></td></tr>
+    <tr><td><code>POST /api/v1/isolate</code></td><td>Manual override — drain traffic from a specific backend</td><td><span class="badge badge-planned">Issue #123</span></td></tr>
+  </tbody>
+</table>
+
+<h4>Operator UI BFF (operator-ui, port 8090)</h4>
+<p>The BFF is intended for browser consumption — programmatic integrators talk to policy-manager / autoscaler / telemetry directly. BFF endpoints under <code>/api/ui/*</code> are not part of <code>/api/v1</code> and may change without a version bump.</p>
+<table>
+  <thead><tr><th>Method · Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/ui/health</code></td><td>Fan-out aggregator: <code>/health</code> across every SmartLoad service, returned as a service-name → snapshot map</td></tr>
+    <tr><td><code>GET /api/ui/policy</code></td><td>Proxy to policy-manager <code>GET /api/v1/policy</code></td></tr>
+    <tr><td><code>POST /api/ui/policy</code></td><td>Proxy to policy-manager <code>POST /api/v1/policy</code> (X-Actor passthrough)</td></tr>
+    <tr><td><code>GET /api/ui/audit/policy</code></td><td>Proxy to policy-manager <code>GET /api/v1/audit/policy</code></td></tr>
+    <tr><td><code>GET /api/docs</code></td><td>Swagger UI rendered from <code>docs/openapi/smartload-v1.yaml</code></td></tr>
+    <tr><td><code>GET /api/openapi.yaml</code></td><td>Raw spec (used by Swagger UI; consumable directly by tooling)</td></tr>
+  </tbody>
+</table>
+
+<h4>Webhook management (webhook-dispatcher — planned)</h4>
+<p>Spec lives in <a href="#sec-29-webhooks">§29</a>. Endpoints (<code>POST/GET/DELETE /api/v1/webhooks</code>) ship with issue #130.</p>
+
+<h3>26.5 Request / response idioms</h3>
+
+<h4>Required and optional headers</h4>
+<table>
+  <thead><tr><th>Header</th><th>Direction</th><th>Required?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>Content-Type: application/json</code></td><td>request</td><td>POST only</td><td>Bodies are JSON. Other types rejected with 415.</td></tr>
+    <tr><td><code>Authorization: Bearer sl_…</code></td><td>request</td><td>future (#132)</td><td>Today: ignored. Future: required on non-health endpoints.</td></tr>
+    <tr><td><code>X-API-Key: sl_…</code></td><td>request</td><td>future (#132)</td><td>Alternate to Authorization; both accepted.</td></tr>
+    <tr><td><code>X-Tenant-Id: &lt;tenant&gt;</code></td><td>request</td><td>admin only (#129)</td><td>Future override; usually derived from the API key.</td></tr>
+    <tr><td><code>X-Actor: &lt;name&gt;</code></td><td>request</td><td>recommended on writes</td><td>Recorded in audit rows. SDK sets <code>smartload-client/&lt;version&gt;</code> by default.</td></tr>
+    <tr><td><code>Retry-After: &lt;sec&gt;</code></td><td>response</td><td>on 429</td><td>Number of seconds to back off. Honour it.</td></tr>
+    <tr><td><code>Sunset: &lt;date&gt;</code></td><td>response</td><td>future (#134)</td><td>Returned on deprecated endpoints. Calls still succeed.</td></tr>
+    <tr><td><code>Deprecation: true</code></td><td>response</td><td>future (#134)</td><td>Paired with <code>Sunset</code>.</td></tr>
+  </tbody>
+</table>
+
+<h4>Error envelope</h4>
+<pre><code>HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": "min_backends must be > 0 (got 0)",
+  "field": "min_backends"
+}
+</code></pre>
+<p>Every non-2xx response carries the <code>Error</code> schema: <code>{error: string, field?: string}</code>. The <code>field</code> property names the offending input when the server can pinpoint it (validation errors). The SDK maps these to typed exceptions — see <a href="#sec-27-sdk">§27</a> §27.5.</p>
+
+<h4>Status code matrix</h4>
+<table>
+  <thead><tr><th>Code</th><th>Meaning</th><th>Caller behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>200 OK</code></td><td>Success. POST returns 200 even on no-op (<code>status: "no-op"</code>).</td><td>Continue.</td></tr>
+    <tr><td><code>400 Bad Request</code></td><td>Validation failure. Body carries <code>field</code>.</td><td>Fix the request; do not retry as-is.</td></tr>
+    <tr><td><code>401 Unauthorized</code></td><td>Missing / invalid API key (future).</td><td>Refresh credentials.</td></tr>
+    <tr><td><code>403 Forbidden</code></td><td>API key valid but scope insufficient (future).</td><td>Request additional scope.</td></tr>
+    <tr><td><code>404 Not Found</code></td><td>Resource missing. <code>/api/v1/policy</code> returns this when <code>policy.yaml</code> is empty.</td><td>POST a baseline policy first.</td></tr>
+    <tr><td><code>415 Unsupported Media Type</code></td><td>POST without <code>application/json</code>.</td><td>Fix the header.</td></tr>
+    <tr><td><code>429 Too Many Requests</code></td><td>Rate limit hit (future #135). <code>Retry-After</code> set.</td><td>Sleep then retry.</td></tr>
+    <tr><td><code>500 Internal Server Error</code></td><td>Server-side bug. Logged with traceback.</td><td>Retry with backoff; file an issue if persistent.</td></tr>
+    <tr><td><code>503 Service Unavailable</code></td><td>Service or its upstream (Redis / TimescaleDB) is degraded. Returned by <code>/health</code> and <code>/api/v1/audit/policy</code>.</td><td>Retry with backoff. K8s liveness probes treat as unhealthy.</td></tr>
+  </tbody>
+</table>
+<p>SmartLoad does <strong>not</strong> use <code>207 Multi-Status</code>. K8s liveness probes interpret 2xx as healthy and were classifying degraded services as healthy under the old 207 contract — this is fixed canonically (PR #105 in §22 v1.0.1).</p>
+
+<h4>Idempotency</h4>
+<p><code>POST /api/v1/policy</code> is idempotent on body equality: posting the same patch twice produces one audit row, one envelope publish, and one policy_version bump. The second POST returns <code>{status: "no-op", changed_fields: []}</code>. Operators may safely retry without producing audit noise.</p>
+
+<h3>26.6 Rate limiting <span class="badge badge-planned">Issue #135</span></h3>
+<table>
+  <thead><tr><th>Scope</th><th>Default limit</th></tr></thead>
+  <tbody>
+    <tr><td><code>policy:write</code></td><td>60 / minute per tenant</td></tr>
+    <tr><td><code>scale:write</code> / <code>isolate:write</code></td><td>30 / minute per tenant</td></tr>
+    <tr><td><code>metrics:read</code></td><td>600 / minute per tenant</td></tr>
+    <tr><td><code>webhook:manage</code></td><td>30 / minute per tenant</td></tr>
+  </tbody>
+</table>
+<p>Response headers on every limited endpoint (today and future): <code>X-RateLimit-Remaining</code>, <code>X-RateLimit-Reset</code>. <code>429</code> response carries <code>Retry-After</code>. Token-bucket algorithm; per-tenant quota overrides stored in <code>tenant_quotas</code> (admin only).</p>
+
+<h3>26.7 Versioning and deprecation <span class="badge badge-planned">Issue #134</span></h3>
+<ul>
+  <li><strong>Path versioning only</strong>. <code>/api/v1</code> today; <code>/api/v2</code> when a breaking change ships. No header- or query-string-based version negotiation.</li>
+  <li><strong>Compatibility window</strong>: a deprecated version stays reachable for at least one calendar quarter after a successor ships.</li>
+  <li><strong>Deprecation signal</strong>: every response from a deprecated endpoint carries <code>Sunset: &lt;date&gt;</code> and <code>Deprecation: true</code>.</li>
+  <li><strong>Breaking change definition</strong>: removing a field, narrowing a type, renaming an enum value, changing default values, or moving a field from optional to required.</li>
+  <li><strong>Non-breaking</strong>: adding a new optional response field, adding a new endpoint, adding a new optional request field.</li>
+</ul>
+
+<h3>26.8 Self-host port map</h3>
+<table>
+  <thead><tr><th>Service</th><th>Compose port</th><th>K8s ServiceName:Port (Helm default)</th><th>Public-from-outside?</th></tr></thead>
+  <tbody>
+    <tr><td>load-balancer (NGINX)</td><td><code>8080</code></td><td><code>load-balancer:80</code></td><td>Yes — client traffic</td></tr>
+    <tr><td>telemetry</td><td><code>8081</code></td><td><code>telemetry:8081</code></td><td>No — collector → service</td></tr>
+    <tr><td>anomaly-detector</td><td><code>8082</code></td><td><code>anomaly-detector:8082</code></td><td>No — health only</td></tr>
+    <tr><td>forecasting</td><td><code>8083</code></td><td><code>forecasting:8083</code></td><td>No — health only</td></tr>
+    <tr><td>rl-engine</td><td><code>8084</code></td><td><code>rl-engine:8084</code></td><td>No — health only</td></tr>
+    <tr><td>autoscaler</td><td><code>8085</code></td><td><code>autoscaler:8085</code></td><td>No — health + future scale/isolate</td></tr>
+    <tr><td>policy-manager</td><td><code>8086</code></td><td><code>policy-manager:8086</code></td><td>Yes — programmatic integration target</td></tr>
+    <tr><td>operator-ui</td><td><code>8090</code></td><td><code>operator-ui:8090</code></td><td>Yes — humans</td></tr>
+    <tr><td>locust (traffic simulator)</td><td><code>8089</code></td><td>not in Helm</td><td>Dev only</td></tr>
+    <tr><td>grafana</td><td><code>3000</code></td><td>via Prometheus stack</td><td>Operator dashboards</td></tr>
+    <tr><td>prometheus</td><td><code>9090</code></td><td>via Prometheus Operator</td><td>Optional</td></tr>
+  </tbody>
+</table>
+<p>For SaaS deployments, an ingress fronts <code>operator-ui:8090</code> for humans and <code>policy-manager:8086</code> (and future <code>autoscaler</code> public endpoints) for tenants. Everything else stays internal.</p>
+
+<h3>26.9 Integration patterns</h3>
+<p>Pick the pattern that matches what your integration <em>does</em>. Most middleware uses A or D.</p>
+<table>
+  <thead><tr><th>Pattern</th><th>What it does</th><th>Surfaces used</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>A — Read-only console</strong></td>
+      <td>Dashboard / status-page integration that polls SmartLoad for state.</td>
+      <td><code>GET /api/v1/policy</code>, <code>GET /api/v1/audit/policy</code>, <code>GET /api/v1/metrics</code>, <code>GET /health</code></td>
+      <td>Internal Slack /status command, Datadog widget</td>
+    </tr>
+    <tr>
+      <td><strong>B — Synchronous operator</strong></td>
+      <td>Operator tooling that changes policy programmatically (CI flips <code>safe_mode</code> during deploys, etc.).</td>
+      <td>Pattern A + <code>POST /api/v1/policy</code></td>
+      <td>Deploy pipeline that sets <code>safe_mode=true</code> during a backend rollout</td>
+    </tr>
+    <tr>
+      <td><strong>C — Redis event listener (low-latency)</strong></td>
+      <td>Middleware that reacts to SmartLoad's decision events within seconds.</td>
+      <td>Pattern A + Redis subscribe via SDK (<code>subscribe_policy</code>, future <code>subscribe_anomaly</code> etc.)</td>
+      <td>Custom alerting that fires when a backend goes UNHEALTHY</td>
+    </tr>
+    <tr>
+      <td><strong>D — Webhook consumer (no Redis)</strong></td>
+      <td>External system that cannot run a Redis subscriber; receives signed HTTP POSTs from <code>webhook-dispatcher</code>.</td>
+      <td>Pattern A + <code>POST /api/v1/webhooks</code> registration (planned #130). See <a href="#sec-29-webhooks">§29</a>.</td>
+      <td>Customer-side incident-management bot, audit-log shipper</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>26.10 Curl walkthrough — every shipped policy endpoint</h3>
+<pre><code># Read the current policy
+curl -s http://localhost:8086/api/v1/policy | jq
+
+# Flip safe_mode (idempotent)
+curl -s -X POST http://localhost:8086/api/v1/policy \
+  -H 'Content-Type: application/json' \
+  -H 'X-Actor: ops-cli' \
+  -d '{"safe_mode": true}' | jq
+
+# Read the audit trail
+curl -s 'http://localhost:8086/api/v1/audit/policy?limit=5' | jq
+
+# Health (200 ok, 503 degraded)
+curl -i http://localhost:8086/health
+
+# Restore safe_mode
+curl -s -X POST http://localhost:8086/api/v1/policy \
+  -H 'Content-Type: application/json' \
+  -H 'X-Actor: ops-cli' \
+  -d '{"safe_mode": false}' | jq</code></pre>
+
+<h3>26.11 OpenAPI spec + Swagger UI</h3>
+<p>The canonical machine-readable spec is <code>docs/openapi/smartload-v1.yaml</code> (OpenAPI 3.1). Mounted into the operator UI BFF as a read-only volume and rendered via Swagger UI at <code>http://&lt;operator-ui&gt;:8090/api/docs</code>. The <code>scripts/lint-openapi.py</code> guardrail enforces parity: every <code>/api/v1/*</code> route in source must appear in the spec.</p>
+
+</section>
+
+<!-- ========================================================================== -->
 <!--                  A. MERGE REPORT                                            -->
 <!-- ========================================================================== -->
 <section id="sec-merge-report">
