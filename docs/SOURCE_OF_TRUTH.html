@@ -6655,6 +6655,255 @@ python app.py        # BFF on :8090</code></pre>
 </section>
 
 <!-- ========================================================================== -->
+<!--             29. WEBHOOKS SPECIFICATION                                      -->
+<!-- ========================================================================== -->
+<section id="sec-29-webhooks">
+<h1>29. Webhooks Specification <span class="badge badge-canonical">Canonical (target)</span> <span class="badge badge-planned">Issue #130</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>Webhooks are <strong>the universal middleware contract</strong> for event delivery — every external system can receive HTTP POSTs, but not every external system can run a Redis subscriber. SmartLoad's <code>webhook-dispatcher</code> service consumes the canonical Redis channels (<a href="#sec-interface-authority">§11</a>) and fans them out to customer-registered URLs with HMAC signing and retry-with-backoff. This section is the complete spec — registration, delivery semantics, signing algorithm, retry policy, customer-side verification. Implementation tracked by <a href="https://github.com/TasneemEltabakh/smartload/issues/130">#130</a>.</p>
+</div>
+
+<h3>29.1 Why webhooks (vs Redis subscribe vs polling)</h3>
+<table>
+  <thead><tr><th>Channel</th><th>Best when</th><th>Limitation</th></tr></thead>
+  <tbody>
+    <tr><td>Direct Redis subscribe (SDK <code>subscribe_*</code>)</td><td>You can run Redis client code, sub-second latency matters, you're inside the same network as SmartLoad</td><td>Customer must speak Redis protocol; pub/sub is not durable, missed messages are gone</td></tr>
+    <tr><td>Webhooks (this section)</td><td>You speak HTTP, you can host a public endpoint, sub-30-second latency is fine, you want at-least-once delivery</td><td>Up to 5 retry attempts; eventual consistency; latency in seconds</td></tr>
+    <tr><td>Polling REST</td><td>Read-only state inspection (current policy, audit history); you can't host an inbound endpoint</td><td>No event push; you only see <em>state at GET time</em>, not transitions</td></tr>
+  </tbody>
+</table>
+<p>Most external integrators land on webhooks. The SDK can register them programmatically; the operator UI will surface a webhook-management page (planned).</p>
+
+<h3>29.2 Registration lifecycle</h3>
+
+<h4>Register a webhook</h4>
+<pre><code>POST /api/v1/webhooks
+Authorization: Bearer sl_&lt;key&gt;            # admin or webhook:manage scope (#132)
+Content-Type: application/json
+
+{
+  "url":     "https://customer.example.com/smartload-events",
+  "events":  ["anomaly", "scale", "policy"],          // subset of catalog
+  "secret":  "wh_secret_<at least 32 chars>",          // HMAC key
+  "description": "incident-bot pager"                  // optional
+}
+</code></pre>
+<table>
+  <thead><tr><th>Field</th><th>Required?</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>url</code></td><td>yes</td><td>HTTPS strongly recommended; HTTP is accepted for dev but warned</td></tr>
+    <tr><td><code>events</code></td><td>yes</td><td>Non-empty array. Each value is one of <code>anomaly</code> / <code>forecast</code> / <code>routing</code> / <code>scale</code> / <code>policy</code> (catalog in §29.3)</td></tr>
+    <tr><td><code>secret</code></td><td>yes</td><td>≥ 32 chars. Stored hashed server-side. Used by both ends to compute and verify HMAC.</td></tr>
+    <tr><td><code>description</code></td><td>no</td><td>Free-form label for the operator UI dead-letter view</td></tr>
+  </tbody>
+</table>
+<h5>Response (<code>201 Created</code>)</h5>
+<pre><code>{
+  "id": "wh_8c91…",
+  "tenant_id": "default",
+  "url": "https://customer.example.com/smartload-events",
+  "events": ["anomaly", "scale", "policy"],
+  "created_at": "2026-05-14T12:00:00Z",
+  "status": "active"
+}</code></pre>
+
+<h4>List, inspect, delete</h4>
+<table>
+  <thead><tr><th>Method · Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/v1/webhooks</code></td><td>List all webhooks for the authenticated tenant. Returns array of webhook records (no <code>secret</code>).</td></tr>
+    <tr><td><code>GET /api/v1/webhooks/{id}</code></td><td>Inspect one webhook + recent delivery counters.</td></tr>
+    <tr><td><code>DELETE /api/v1/webhooks/{id}</code></td><td>Unregister. Idempotent — returns <code>204 No Content</code> whether or not the webhook existed.</td></tr>
+    <tr><td><code>POST /api/v1/webhooks/{id}/test</code></td><td>Send a synthetic <code>webhook.test</code> event to the URL. Useful for verifying the customer endpoint is reachable + signs correctly. Result returned synchronously.</td></tr>
+  </tbody>
+</table>
+
+<h4>Lifecycle states</h4>
+<table>
+  <thead><tr><th>State</th><th>Meaning</th><th>Transitions</th></tr></thead>
+  <tbody>
+    <tr><td><code>active</code></td><td>Receiving deliveries</td><td>→ <code>suspended</code> (auto, after sustained failures); ← <code>suspended</code> (admin re-enable)</td></tr>
+    <tr><td><code>suspended</code></td><td>Deliveries paused — too many consecutive failures (50 in a row in 1 h)</td><td>→ <code>active</code> via PATCH (manual re-enable); → <code>deleted</code> via DELETE</td></tr>
+  </tbody>
+</table>
+
+<h3>29.3 Event catalog</h3>
+<p>Every webhook payload is a JSON object with two top-level keys: <code>envelope</code> (the canonical envelope from <a href="#sec-interface-authority">§11</a>) and <code>data</code> (the channel-specific payload). The wrapper makes signature verification simpler — sign the whole JSON body, the customer parses it once.</p>
+
+<table>
+  <thead><tr><th>Event type</th><th>Underlying channel</th><th>Frequency</th><th><code>data</code> shape</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>anomaly</code></td>
+      <td><code>smartload.anomaly</code></td>
+      <td>Every 5 s per backend (only if status changes — coalesced)</td>
+      <td><code>{backend_id, status, score, timestamp, features?, model_version?}</code></td>
+    </tr>
+    <tr>
+      <td><code>forecast</code></td>
+      <td><code>smartload.forecast</code></td>
+      <td>Every 60 s</td>
+      <td><code>{horizon_minutes, predicted_rps, confidence_lower, confidence_upper, timestamp, model_id?}</code></td>
+    </tr>
+    <tr>
+      <td><code>routing</code></td>
+      <td><code>smartload.routing</code></td>
+      <td>Every 5 s (coalesced — only on rank change)</td>
+      <td><code>{mode, server_rankings:[{backend_id, score}], timestamp, policy_version?}</code></td>
+    </tr>
+    <tr>
+      <td><code>scale</code></td>
+      <td><code>smartload.scale</code></td>
+      <td>On scale action only</td>
+      <td><code>{action, instance_count, reason, timestamp, forecast_event_id?}</code></td>
+    </tr>
+    <tr>
+      <td><code>policy</code></td>
+      <td><code>smartload.policy</code></td>
+      <td>On policy change only</td>
+      <td>Full policy snapshot + <code>policy_version</code> + <code>changed_fields</code></td>
+    </tr>
+  </tbody>
+</table>
+<p>Event types <code>routing</code> and <code>anomaly</code> are coalesced on the dispatcher side — a repeated identical message within 30 s is suppressed. Customers receive transitions, not heartbeats.</p>
+
+<h4>Sample delivery — anomaly</h4>
+<pre><code>POST https://customer.example.com/smartload-events
+Content-Type: application/json
+X-SmartLoad-Event: anomaly
+X-SmartLoad-Event-Id: a9f2…
+X-SmartLoad-Webhook-Id: wh_8c91…
+X-SmartLoad-Signature: t=1715683200,v1=4f1d8c5e6a3b…
+X-SmartLoad-Delivery-Attempt: 1
+
+{
+  "envelope": {
+    "event_id": "a9f2…",
+    "source": "anomaly-detector",
+    "version": 1,
+    "timestamp": "2026-05-14T12:00:00.123Z"
+  },
+  "data": {
+    "backend_id": "test-backend-3",
+    "status": "unhealthy",
+    "score": 0.92,
+    "timestamp": "2026-05-14T12:00:00.000Z"
+  }
+}</code></pre>
+
+<h3>29.4 HMAC signing</h3>
+
+<h4>Algorithm — HMAC-SHA256 with timestamp prefix</h4>
+<p>Modelled on Stripe's webhook signing scheme. Resists replay attacks via a timestamp inside the signed payload; resists tampering via the body hash. Customer rejects requests where the timestamp differs from <code>now</code> by more than a tolerance (suggested: 5 minutes).</p>
+
+<pre><code>signed_payload = "{unix_timestamp}.{raw_request_body}"
+signature      = hmac_sha256(secret, signed_payload).hex()
+header         = f"t={unix_timestamp},v1={signature}"
+# sent as:        X-SmartLoad-Signature: t=…,v1=…</code></pre>
+
+<table>
+  <thead><tr><th>Element</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>unix_timestamp</code></td><td>Integer seconds, set by the dispatcher at send time. Refreshed on every retry.</td></tr>
+    <tr><td><code>raw_request_body</code></td><td>Exact UTF-8 byte body, no re-serialisation. The customer MUST verify against the bytes they received, not against a re-parsed JSON.</td></tr>
+    <tr><td>Header format</td><td>Comma-separated <code>k=v</code> pairs. Future scheme versions add <code>v2=…</code> alongside <code>v1=…</code> for graceful rotation.</td></tr>
+    <tr><td>Hex case</td><td>Lowercase hex. Customers may upper-case before constant-time compare.</td></tr>
+  </tbody>
+</table>
+
+<h4>Verification — Python</h4>
+<pre><code>import hmac, hashlib, time
+
+TOLERANCE_SECONDS = 300  # 5 minutes
+
+def verify_smartload_signature(raw_body: bytes, header: str, secret: str) -> bool:
+    parts = dict(p.split("=", 1) for p in header.split(","))
+    t   = int(parts["t"])
+    sig = parts["v1"]
+
+    if abs(time.time() - t) &gt; TOLERANCE_SECONDS:
+        return False  # too old → reject (replay defence)
+
+    signed_payload = f"{t}.".encode() + raw_body
+    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig)</code></pre>
+
+<h4>Verification — Node.js</h4>
+<pre><code>import crypto from "crypto";
+
+const TOLERANCE_SECONDS = 300;
+
+export function verifySmartLoadSignature(rawBody, header, secret) {
+  const parts = Object.fromEntries(header.split(",").map(p =&gt; p.split("=", 2)));
+  const t   = parseInt(parts.t, 10);
+  const sig = parts.v1;
+
+  if (Math.abs(Date.now() / 1000 - t) &gt; TOLERANCE_SECONDS) return false;
+
+  const signedPayload = Buffer.concat([Buffer.from(`${t}.`), rawBody]);
+  const expected      = crypto.createHmac("sha256", secret).update(signedPayload).digest("hex");
+  return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(sig, "hex"));
+}</code></pre>
+
+<h3>29.5 Delivery + retry policy</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>Setting</th></tr></thead>
+  <tbody>
+    <tr><td>Connect timeout</td><td>10 s</td></tr>
+    <tr><td>Read timeout</td><td>30 s</td></tr>
+    <tr><td>Success criterion</td><td>Customer responds <code>2xx</code> within the read timeout</td></tr>
+    <tr><td>Retry triggers</td><td>Customer returns <code>5xx</code> · network error · timeout</td></tr>
+    <tr><td>No-retry triggers</td><td>Customer returns <code>4xx</code> (other than 408 / 425 / 429) — interpreted as "your request is bad, don't bother retrying"</td></tr>
+    <tr><td>Retry schedule</td><td>Exponential backoff with jitter — attempt 1 immediate, then ~30 s, ~2 m, ~10 m, ~30 m (5 attempts max, ~45 m total window)</td></tr>
+    <tr><td>Header on retries</td><td><code>X-SmartLoad-Delivery-Attempt: N</code> (1-indexed)</td></tr>
+    <tr><td>Signature on retries</td><td>Recomputed each attempt with the current timestamp — customer's tolerance window must accommodate the latest send, not the original.</td></tr>
+  </tbody>
+</table>
+
+<h4>Final-failure path</h4>
+<ol>
+  <li>Final attempt fails → row written to <code>webhook_delivery_failures</code>.</li>
+  <li>Failure counter <code>webhook_delivery_failures_total{webhook_id, event_type}</code> incremented (Prometheus).</li>
+  <li>50 consecutive failures within 1 h → webhook auto-suspended (state transitions to <code>suspended</code>). The operator must manually re-enable.</li>
+  <li>Operator UI dead-letter view (planned with #122) renders the latest N failures per webhook with the response body / status for debugging.</li>
+</ol>
+
+<h4>At-least-once semantics</h4>
+<p>Customers MUST be idempotent on receipt. The same <code>X-SmartLoad-Event-Id</code> may arrive more than once if a retry slips past a successful-but-slow customer response. Persist the event-id in a dedup table with a short TTL (≥ 1 h).</p>
+
+<h3>29.6 Security considerations</h3>
+<ul>
+  <li><strong>Secret confidentiality</strong>: the secret is delivered <em>once</em> at registration time (in the response body). It's hashed before storage. If lost, the customer must rotate by deleting + re-registering — there is no "fetch existing secret" surface.</li>
+  <li><strong>Secret rotation</strong>: the v1 signature header supports adding <code>v2=…</code> in the future. Customers verify against any present version; the dispatcher emits whichever is configured. Migration path: dispatcher emits both v1 and v2 for a window; customer updates verifier; dispatcher drops v1.</li>
+  <li><strong>HTTPS endpoint</strong>: required for any production webhook. The dispatcher logs (and the UI surfaces) a "non-HTTPS endpoint" warning on registration.</li>
+  <li><strong>IP allow-list (future)</strong>: customers can request a static egress IP for SmartLoad-side outbound deliveries when the SaaS control plane lands. Not in scope for self-host.</li>
+  <li><strong>Replay defence</strong>: 5-minute timestamp tolerance. Customers tighten if their integration allows; loosen only when retrying across long network partitions.</li>
+  <li><strong>Body re-serialisation pitfall</strong>: customers must verify against the raw body bytes, not against a JSON re-serialisation. Any whitespace or key-ordering change breaks the hash.</li>
+</ul>
+
+<h3>29.7 Tenant + multi-tenancy</h3>
+<p>Webhook records carry <code>tenant_id</code> — a tenant cannot register webhooks for another tenant's events. After multi-tenancy lands (#129), the dispatcher consumes from <code>t:&lt;tenant_id&gt;:smartload.&lt;topic&gt;</code> per tenant; today (single-tenant), it consumes from the unsuffixed channels.</p>
+
+<h3>29.8 Implementation pointers</h3>
+<table>
+  <thead><tr><th>Where</th><th>What</th></tr></thead>
+  <tbody>
+    <tr><td><code>services/webhook-dispatcher/</code></td><td>The service itself — subscribes to Redis, signs, POSTs, retries. Scaffolded; implementation pending #130.</td></tr>
+    <tr><td><code>services/policy-manager/app.py</code> (planned)</td><td>Webhook management endpoints — the policy-manager hosts them today; may move to a dedicated <code>webhook-manager</code> service if scope expands.</td></tr>
+    <tr><td><code>docs/openapi/smartload-v1.yaml</code> (planned)</td><td>Endpoint specs land here as #130 ships.</td></tr>
+    <tr><td><code>tests/e2e/webhook-delivery/</code> (planned)</td><td>End-to-end suite: register URL → publish event → assert customer endpoint received within 5 s with valid signature.</td></tr>
+    <tr><td><code>examples/scenarios/webhook-delivery/</code> (planned)</td><td>Runnable demo: register a webhook against a local echo server, publish a synthetic anomaly, observe delivery.</td></tr>
+  </tbody>
+</table>
+
+<h3>29.9 Diagram reference</h3>
+<p><a href="#diag-webhooks">Figure 12.9 — Webhook delivery pipeline</a>: sequence diagram of producer → Redis → dispatcher → retry → customer → dead-letter.</p>
+
+</section>
+
+<!-- ========================================================================== -->
 <!--                  A. MERGE REPORT                                            -->
 <!-- ========================================================================== -->
 <section id="sec-merge-report">
