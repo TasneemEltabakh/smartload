@@ -15,7 +15,23 @@
                  └────────────────────────────────────────────────┘
 ```
 
-> **Looking for the canonical spec?** Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html). §25 covers distribution shapes; §22 has the change log.
+> **Looking for the canonical spec?** Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html). The "Find what you need — by persona" panel at the top of the SOT routes you to the right section in under 10 seconds.
+
+## Documentation map — where to go
+
+Pick the section that matches what you're trying to do. Every link points into the canonical SOT (`docs/SOURCE_OF_TRUTH.html`).
+
+| You want to… | Go to |
+|---|---|
+| **Call the API** from a script or external system | [§26 API Integration Guide](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) — every endpoint, error model, four integration patterns, curl walkthrough |
+| **Use the Python SDK** | [§27 SDK Reference](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) — every method, examples, threading model |
+| **Use the operator UI** or understand its architecture | [§28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui) — pages, workflows, BFF endpoints, security |
+| **Receive webhooks** from SmartLoad | [§29 Webhooks Specification](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) — registration, HMAC signing, retry, verification |
+| **Design or query the database** | [§30 Database Design Consolidation](docs/SOURCE_OF_TRUTH.html#sec-30-database) — every table, index, retention, query catalog |
+| **Understand the architecture** | [§5 Big Picture](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [§16 Plane Split](docs/SOURCE_OF_TRUTH.html#sec-control-plane) |
+| **Self-host or deploy** | [§25 Distribution](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) + [§20 Deployment](docs/SOURCE_OF_TRUTH.html#sec-14-deploy) |
+| **Contribute to a service** | [§7 Service Directory](docs/SOURCE_OF_TRUTH.html#sec-5-directory) + [§8 Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) |
+| **Read for thesis / research** | [§2 Overview](docs/SOURCE_OF_TRUTH.html#sec-2-overview) → [§14 ML Foundations](docs/SOURCE_OF_TRUTH.html#sec-9-data) → [§15 Routing Authority](docs/SOURCE_OF_TRUTH.html#sec-10-routing) → [§22 Changelog](docs/SOURCE_OF_TRUTH.html#sec-15-changelog) |
 
 ---
 
@@ -67,21 +83,53 @@ with SmartLoadClient(base_url="http://localhost:8086") as c:
     c.subscribe_policy(lambda payload, meta: print("policy changed:", payload))
 ```
 
-See [`clients/python/README.md`](clients/python/README.md) for the full surface and [`clients/python/examples/`](clients/python/examples/) for working examples.
+For full SDK reference (every method, exception type, threading model) see [SOT §27](docs/SOURCE_OF_TRUTH.html#sec-27-sdk). For working examples: [`clients/python/examples/`](clients/python/examples/).
+
+---
+
+## Integrate as external middleware
+
+SmartLoad publishes events over **two channels** so any integrator can consume them:
+
+| Channel | When to use | Reference |
+|---|---|---|
+| **Redis pub/sub** (sub-second latency, in-network) | You can run a Redis client, you need decisions within seconds. | SDK `subscribe_policy()` — [SOT §27.4](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
+| **Webhooks** (HMAC-signed HTTP POSTs, ~30s latency, public-internet friendly) | You speak HTTP, you can host a public endpoint, you want at-least-once delivery with retries. | [SOT §29 Webhooks](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) — registration, HMAC, retry, customer verification (Python + Node) |
+
+The full integration patterns matrix (read-only console, synchronous operator, Redis listener, webhook consumer) is in [SOT §26.9](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide).
+
+---
+
+## Operator UI
+
+The web UI at `http://localhost:8090` is the operator-facing transparency + override surface. Slice #1 ships two pages:
+
+- **Home** — service-health grid for every SmartLoad service, polled every 10 s
+- **Policy** — read current policy · edit JSON · side-by-side diff preview · commit with audit trail
+
+For workflow walkthroughs, BFF endpoint reference, configuration, security posture, and the roadmap to OUI.3 through OUI.8 see [SOT §28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui).
+
+Per the SOT lock (commit `6f89a13`), the operator UI is a **transparency + override layer**, not an admin panel — tenants integrate via the SDK / webhooks, not the UI.
 
 ---
 
 ## Contracts (single source of truth per surface)
 
-| Surface | Canonical contract | What it covers |
+| Surface | Canonical contract | Reference |
 |---|---|---|
-| HTTP REST | [`docs/openapi/smartload-v1.yaml`](docs/openapi/smartload-v1.yaml) | Every `/api/v1/*` route, request/response schemas |
-| Redis pub/sub | [`docs/redis-channels.md`](docs/redis-channels.md) | Channel registry, envelopes, retention, failure semantics |
-| Per-feature manifests | [`docs/features/`](docs/features/) | One file per shippable feature; status checklist + verification |
-| Architecture | [`docs/architecture/`](docs/architecture/) | Control plane / data plane / multi-tenancy / failure-mode design |
-| Whole-system | [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html) | Single navigable reference for everything else |
+| HTTP REST | [`docs/openapi/smartload-v1.yaml`](docs/openapi/smartload-v1.yaml) (OpenAPI 3.1) | [SOT §26 API Guide](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) (prose) |
+| Redis pub/sub | [`docs/redis-channels.md`](docs/redis-channels.md) | [SOT §11](docs/SOURCE_OF_TRUTH.html#sec-interface-authority) (envelope rules) |
+| Webhooks | inline in OpenAPI spec (planned #130) | [SOT §29 Webhooks](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) |
+| Python SDK | `clients/python/smartload_client/` | [SOT §27 SDK Reference](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
+| Database schema | [`infrastructure/timescaledb/init.sql`](infrastructure/timescaledb/init.sql) | [SOT §30 DB Design](docs/SOURCE_OF_TRUTH.html#sec-30-database) (consolidated) |
+| Per-feature manifests | [`docs/features/`](docs/features/) | one file per shipped feature |
+| Architecture (in-tree) | [`docs/architecture/`](docs/architecture/) | control / data plane, multi-tenancy, failure modes |
+| Whole-system | [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html) | single navigable reference for everything else |
 
-Two CI guardrails enforce the contracts: every Redis channel in source must appear in the registry, and every `/api/v1/*` route in source must appear in the OpenAPI spec.
+Three CI guardrails enforce the contracts:
+- `scripts/lint-redis-channels.py` — every Redis channel in source must appear in the registry
+- `scripts/lint-openapi.py` — every `/api/v1/*` route in source must appear in the OpenAPI spec
+- `scripts/lint-structure.py` — every `tests/e2e/<feature>/` must have a sibling `docs/features/<feature>.md` + `examples/scenarios/<feature>/`
 
 ---
 
