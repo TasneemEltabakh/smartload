@@ -1,324 +1,258 @@
 # SmartLoad
 
-AI-driven intelligent load management middleware for distributed systems.
-SmartLoad sits between client traffic and backend services, combining classical load balancing with reinforcement learning, predictive autoscaling, and anomaly detection.
-
-> **Academic project** — Zewail City of Science, Technology, and Innovation | CIE Graduation Project 2025/2026
-
----
-
-## System Overview
-
-SmartLoad is a modular middleware platform that manages how HTTP requests are routed across a backend server pool. It collects real-time telemetry, detects unhealthy nodes, forecasts future load, and applies adaptive routing decisions — all without replacing existing infrastructure.
-
-**Eight authored microservices:**
-
-| # | Service | Role |
-|---|---------|------|
-| 1 | `load-balancer` | Traffic ingress; classical and AI-driven routing |
-| 2 | `lb-otel-shipper` | Sidecar — tails NGINX JSON access log, emits per-request OTLP |
-| 3 | `telemetry` | OTLP/HTTP-JSON ingress → TimescaleDB; read API for engines |
-| 4 | `anomaly-detector` | Real-time detection of unhealthy backend nodes |
-| 5 | `forecasting` | Short-term workload prediction for proactive scaling |
-| 6 | `rl-engine` | Reinforcement learning routing decisions (PPO) |
-| 7 | `autoscaler` | Proactive resource scaling (Docker / K8s / AWS) |
-| 8 | `policy-manager` | Central governance, safe-mode, SLO enforcement |
-
-**Five configured infrastructure components** (not authored by the team):
-TimescaleDB · Redis (control bus) · OTel Collector · Prometheus · Grafana
-
----
-
-## Architecture
+**SmartLoad is middleware (and a candidate SaaS) for AI-driven load management.** It sits between client traffic and a pool of backend services and combines classical load balancing with telemetry-driven decision intelligence — anomaly detection, workload forecasting, and reinforcement-learning routing — to make adaptive routing and proactive autoscaling decisions while preserving deterministic safety fallbacks. Customers run it on-prem (Docker Compose / Helm) or, in the future, consume it via the managed control plane.
 
 ```
-Client Traffic
-      |
-      v
-services/load-balancer        ← NGINX ingress; round-robin upstream
-      |  └── writes JSON access log → shared nginx-logs volume
-      |        └── services/lb-otel-shipper (sidecar, tails the log)
-      |              └── OTLP/HTTP-JSON per request → otel-collector → telemetry
-      |
-      |──── services/telemetry           (OTLP ingress → TimescaleDB; read API)
-      |──── services/anomaly-detector    (flags unhealthy nodes → control bus)
-      |──── services/forecasting         (predicts load → control bus)
-      |──── services/rl-engine           (PPO routing scores → control bus)
-      |──── services/policy-manager      (safe-mode, SLOs, scaling limits)
-      |
-      v
-services/autoscaler           ← scales test-backends up/down
-      |
-      v
-test-backends                 ← dummy Node.js Express backends (testing only)
+                 ┌────────────────────────────────────────────────┐
+   Client ──►   │  load-balancer (NGINX)                          │  ──►  backend pool
+                 │   ▲ rewrite upstream weights                    │
+                 │   │                                             │
+                 │   └── decision plane:                           │
+                 │        anomaly-detector · forecasting           │
+                 │        rl-engine · autoscaler · policy-manager  │
+                 │   └── operator-ui (BFF + web)                   │
+                 │   └── webhook-dispatcher  ─────────────────────► customer URL
+                 └────────────────────────────────────────────────┘
 ```
 
-**Routing decision hierarchy** (always applied in this order):
-1. Exclude nodes flagged `UNHEALTHY` by `anomaly-detector`
-2. Apply RL routing scores from `rl-engine` (if enabled and confident)
-3. Fall back to classical algorithm (Round Robin / Least Connections)
+> **Looking for the canonical spec?** Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html). §25 covers distribution shapes; §22 has the change log.
 
 ---
 
-## Repository Structure
+## What it does
 
-This structure is the **team's canonical reference**. Do not create new top-level folders.
-Every file type has exactly one correct location, described below.
+- **Anomaly-aware routing.** A backend that starts misbehaving is excluded from the upstream pool before clients see the latency hit.
+- **Forecast-driven autoscaling.** The pool grows ahead of the spike, not in response to it.
+- **Reinforcement-learning routing.** Trained against real workload traces; switchable between `shadow` (observe-only) and `active` per policy.
+- **Operator-first overrides.** A `safe_mode` flag forces every engine to the deterministic fallback. Every change is audit-logged.
+
+---
+
+## Quick Start (Docker Compose)
+
+```bash
+git clone <repo-url> && cd smartload
+cp config/.env.example .env             # fill in values
+docker compose up -d                    # 14 containers come up
+```
+
+What you get:
+
+| Surface | URL | Notes |
+|---|---|---|
+| Client traffic ingress | `http://localhost:8080` | NGINX load balancer |
+| Operator UI | `http://localhost:8090` | Home page + Policy editor + API docs |
+| API docs (Swagger UI) | `http://localhost:8090/api/docs` | Live from `docs/openapi/smartload-v1.yaml` |
+| Locust traffic simulator | `http://localhost:8089` | Run synthetic load |
+| Grafana | `http://localhost:3000` | Telemetry dashboards (admin / admin) |
+| Prometheus | `http://localhost:9090` | Metrics |
+
+---
+
+## Try it from Python (SDK)
+
+```bash
+pip install -e clients/python                                # editable install
+python clients/python/examples/quickstart.py                 # prints current policy
+python examples/scenarios/policy-management/policy_walk.py   # end-to-end walkthrough
+```
+
+```python
+from smartload_client import SmartLoadClient
+
+with SmartLoadClient(base_url="http://localhost:8086") as c:
+    policy = c.get_policy()
+    print(policy["operating_mode"], policy["safe_mode"])
+    c.set_policy({"safe_mode": True}, actor="my-tool")
+    c.subscribe_policy(lambda payload, meta: print("policy changed:", payload))
+```
+
+See [`clients/python/README.md`](clients/python/README.md) for the full surface and [`clients/python/examples/`](clients/python/examples/) for working examples.
+
+---
+
+## Contracts (single source of truth per surface)
+
+| Surface | Canonical contract | What it covers |
+|---|---|---|
+| HTTP REST | [`docs/openapi/smartload-v1.yaml`](docs/openapi/smartload-v1.yaml) | Every `/api/v1/*` route, request/response schemas |
+| Redis pub/sub | [`docs/redis-channels.md`](docs/redis-channels.md) | Channel registry, envelopes, retention, failure semantics |
+| Per-feature manifests | [`docs/features/`](docs/features/) | One file per shippable feature; status checklist + verification |
+| Architecture | [`docs/architecture/`](docs/architecture/) | Control plane / data plane / multi-tenancy / failure-mode design |
+| Whole-system | [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html) | Single navigable reference for everything else |
+
+Two CI guardrails enforce the contracts: every Redis channel in source must appear in the registry, and every `/api/v1/*` route in source must appear in the OpenAPI spec.
+
+---
+
+## Repository structure
+
+This repo follows a **role-based** organisation: services mirror deployment topology, plugins live one folder per implementation, and feature artefacts triangulate across `docs/features/` + `examples/scenarios/` + `tests/e2e/`.
 
 ```
 smartload/
-│
-├── services/                    ← ALL SmartLoad-authored microservices
-│   ├── shared/                  ← Cross-service canonical contracts (only allowed cross-import)
-│   │   ├── contracts.py         ←   Redis pub/sub envelope + payload dataclasses
-│   │   └── queries.py           ←   TimescaleDB SQL constants (METRICS_INSERT, ANOMALY_QUERY, …)
-│   ├── load-balancer/           ← Traffic ingress service
-│   │   ├── nginx/               ← NGINX implementation
-│   │   │   ├── nginx.conf       ←   routing rules, upstream pool, JSON logging
-│   │   │   └── Dockerfile
-│   │   └── .gitkeep             ← Placeholder for future routing-sidecar (T2.1)
-│   ├── lb-otel-shipper/         ← NGINX log → OTLP/HTTP-JSON shipper (T1.2)
-│   │   ├── app.py               ←   Tail-and-emit Python loop (~250 LOC)
-│   │   ├── Dockerfile
-│   │   └── requirements.txt
-│   ├── telemetry/               ← OTLP/HTTP-JSON ingress + read API + stats counters
-│   │   ├── app.py
-│   │   ├── Dockerfile
-│   │   └── config/              ← Telemetry-service tunables (currently unused)
-│   ├── anomaly-detector/        ← Anomaly detection engine (Isolation Forest, LSTM)
-│   │   ├── app.py
-│   │   ├── Dockerfile
-│   │   ├── models/              ← Trained model weights (.pkl, .pt) go here
-│   │   └── config/              ← Detection thresholds and model selection config
-│   ├── forecasting/             ← Workload forecasting (ARIMA, Prophet, LSTM)
-│   │   ├── app.py
-│   │   ├── Dockerfile
-│   │   ├── models/              ← Trained forecasting model artifacts go here
-│   │   └── config/              ← Model selection and horizon config
-│   ├── rl-engine/               ← RL decision engine (PPO via Stable-Baselines3)
-│   │   ├── app.py
-│   │   ├── Dockerfile
-│   │   ├── models/              ← PPO policy checkpoints (.zip) go here
-│   │   └── config/              ← Hyperparameters, environment config
-│   ├── autoscaler/              ← Resource manager (Docker / K8s / AWS)
-│   │   ├── app.py
-│   │   ├── Dockerfile
-│   │   └── config/              ← Scaling thresholds, cooldown periods, provider config
-│   └── policy-manager/          ← Central policy and safe-mode API
-│       ├── app.py
-│       ├── Dockerfile
-│       └── config/              ← Service-level policy overrides
-│
-├── test-backends/               ← Dummy backends (Node.js Express) — testing only
-│   ├── app.js                   ← Supports RESPONSE_DELAY_MS, FAIL_ALL, FAIL_HEALTH
-│   ├── Dockerfile
-│   ├── package.json
-│   └── package-lock.json
-│
-├── infrastructure/              ← Config for 3rd-party infra components ONLY
-│   │                               (no team-authored application code goes here)
-│   ├── grafana/                 ← Grafana dashboard JSON and provisioning config
-│   ├── k8s/                     ← Kubernetes manifests (deployments, services, ingress)
-│   ├── otel-collector/          ← OpenTelemetry Collector config (otelcol-config.yaml)
-│   ├── prometheus/              ← Prometheus scrape config (prometheus.yml)
-│   ├── redis/                   ← Redis config (redis.conf); Redis is the control bus
-│   └── timescaledb/             ← DB init SQL, schema migrations
-│
-├── datasets/                    ← Raw training and evaluation data (one folder per source)
-│   ├── borg/                    ← Google Borg cluster traces → RL training, Forecasting
-│   ├── alibaba/                 ← Alibaba microservice traces → RL, Forecasting, Anomaly
-│   ├── nab/                     ← Numenta Anomaly Benchmark → Anomaly Detection
-│   └── yahoo-smd/               ← Yahoo Server Machine Dataset → Anomaly Detection
-│
-├── tests/                       ← All test suites
-│   ├── unit/                    ← Per-module unit tests (pytest)
-│   ├── integration/             ← Cross-service integration tests (pytest + compose stack)
-│   └── performance/             ← Load and stress tests
-│       ├── locustfile.py        ←   Locust traffic simulation
-│       └── Dockerfile           ←   Container for running Locust
-│
-├── docs/                        ← Human-readable technical documentation
-│   └── SOURCE_OF_TRUTH.html     ← Single canonical SoT — design contracts, diagrams, roadmap
-│
-├── config/                      ← System-wide shared configuration
-│   ├── policy.yaml              ← Global SmartLoad policy (routing mode, SLOs, limits)
-│   └── .env.example             ← Template for all required environment variables
-│
-├── scripts/                     ← Developer and ops utility scripts
-│   ├── setup.sh                 ← Bootstrap local dev environment
-│   ├── seed-metrics.py          ← Synthetic metrics seeder (N1.x development)
-│   └── download-datasets.sh     ← Fetch and verify public datasets
-│
-├── docker-compose.yml           ← Run the full dev stack from the repo root
-├── .gitignore
-├── LICENSE
-└── README.md
+├── services/                         # one folder per deployable service
+│   ├── load-balancer/                # NGINX
+│   ├── lb-otel-shipper/              # NGINX log → OTLP shipper
+│   ├── telemetry/                    # OTLP ingress + read API
+│   ├── anomaly-detector/             # plugin-per-folder under engines/
+│   ├── forecasting/                  # plugin-per-folder under engines/
+│   ├── rl-engine/                    # plugin-per-folder under policies/
+│   ├── autoscaler/                   # Docker SDK → test-backend pool
+│   ├── policy-manager/               # operating policy + audit
+│   ├── operator-ui/                  # bff/ (Flask) + web/ (React) — slice #1
+│   ├── webhook-dispatcher/           # planned (#130)
+│   └── shared/
+│       ├── contracts.py              # Redis envelope dataclasses
+│       ├── queries.py                # canonical SQL constants
+│       └── lb_adapters/              # nginx / envoy / haproxy / alb (plugin-per-folder)
+├── clients/python/                   # smartload_client SDK + examples + tests
+├── examples/
+│   ├── scenarios/<feature>/          # runnable end-to-end demos
+│   └── deployments/                  # reference deployment shapes
+├── infrastructure/
+│   ├── grafana/ otel-collector/ prometheus/ redis/ timescaledb/
+│   ├── k8s/                          # raw manifests
+│   └── helm/smartload/               # Chart.yaml + values.yaml (#133)
+├── tests/
+│   ├── unit/<service>/               # pure-function tests per service
+│   ├── integration/                  # service-pair / contract tests
+│   ├── e2e/<feature>/                # feature-level tests via the SDK
+│   ├── conformance/lb_adapter/       # every adapter must pass these
+│   └── performance/                  # Locust
+├── docs/                             # see "Contracts" above
+├── scripts/
+│   ├── lint-structure.py             # per-service README + plugin layout + e2e/feature alignment
+│   ├── lint-redis-channels.py        # channel-registry anti-drift
+│   ├── lint-openapi.py               # spec anti-drift
+│   ├── seed-metrics.py               # synthetic telemetry seeder
+│   └── download-datasets.sh
+├── config/                           # policy.yaml + .env.example
+├── datasets/                         # public training data (Borg, Alibaba, NAB, Yahoo SMD)
+├── test-backends/                    # Node.js stubs the autoscaler scales
+└── docker-compose.yml
 ```
 
-### Placement Rules
-
-These rules eliminate ambiguity. When in doubt, follow these:
-
-| File type | Where it goes |
-|---|---|
-| New SmartLoad microservice | `services/<service-name>/` with its own `Dockerfile` |
-| Trained ML model weights | `services/<service-name>/models/` — never in `datasets/` |
-| Service-specific config (thresholds, hyperparams) | `services/<service-name>/config/` |
-| 3rd-party infra config (Grafana dashboard, prometheus.yml) | `infrastructure/<tool-name>/` |
-| Raw dataset files | `datasets/<source-name>/` |
-| Dataset preprocessing scripts | `scripts/` |
-| Unit test for a service | `tests/unit/` |
-| Integration test | `tests/integration/` |
-| Load test | `tests/performance/` |
-| Global policy (safe_mode, SLO targets) | `config/policy.yaml` |
-| Secret environment variables | `config/.env.example` (template); `.env` at root (gitignored) |
-| Kubernetes manifests | `infrastructure/k8s/` |
+A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TRUTH.html).
 
 ---
 
-## Quick Start
+## Services
 
-```bash
-# 1. Clone the repository
-git clone <repo-url> && cd smartload
+| Service | Language | Port | Status |
+|---|---|---|---|
+| `load-balancer` | NGINX | 8080 | wired |
+| `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
+| `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
+| `anomaly-detector` | Python | 8082 | engines/ scaffolded (#138 wires app.py) |
+| `forecasting` | Python | 8083 | engines/ scaffolded (#138 wires app.py) |
+| `rl-engine` | Python | 8084 | policies/ scaffolded (#138 wires app.py) |
+| `autoscaler` | Python | 8085 | T1.3 shipped |
+| `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
+| `operator-ui` | Flask + React | 8090 | slice #1 (Home + Policy page) |
+| `webhook-dispatcher` | Python | — | scaffolded; #130 |
 
-# 2. Set up environment variables
-cp config/.env.example .env
-# Edit .env and fill in required values
-
-# 3. Start the full stack
-docker compose up --build
-```
-
-Services will be available at:
-- **Load balancer**: `http://localhost:8080`
-- **Locust UI** (traffic simulator): `http://localhost:8089`
-
-Scale the backend pool for testing:
-```bash
-docker compose up --build --scale test-backend=3
-```
+Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
 
 ---
 
-## Services Reference
+## Examples & scenarios
 
-| Service | Language | Port | Key Tech | Dockerfile |
-|---|---|---|---|---|
-| `load-balancer` | NGINX | 8080 | Round Robin, health checks, JSON access log | `services/load-balancer/nginx/Dockerfile` |
-| `lb-otel-shipper` | Python | — (sidecar) | Log tail loop → OTLP/HTTP-JSON | `services/lb-otel-shipper/Dockerfile` |
-| `telemetry` | Python | 8081 | Flask + psycopg2 + TimescaleDB; OTLP ingress + read API | `services/telemetry/Dockerfile` |
-| `anomaly-detector` | Python | 8082 | Isolation Forest, LSTM autoencoder | `services/anomaly-detector/Dockerfile` |
-| `forecasting` | Python | 8083 | ARIMA, Prophet, LSTM | `services/forecasting/Dockerfile` |
-| `rl-engine` | Python | 8084 | PPO via Stable-Baselines3 | `services/rl-engine/Dockerfile` |
-| `autoscaler` | Python | 8085 | Docker API, K8s API, Boto3 | `services/autoscaler/Dockerfile` |
-| `policy-manager` | Python | 8086 | YAML config + REST API | `services/policy-manager/Dockerfile` |
+Runnable Python scripts that exercise each shipped feature end-to-end. New features must add a script here before they are considered "done."
 
-**Telemetry HTTP API** (`services/telemetry/app.py`):
-| Method | Path | Purpose |
+| Feature | Scenario script | Status |
 |---|---|---|
-| POST | `/v1/metrics` | OTLP/HTTP-JSON ingress (collector forwards here; always 200) |
-| GET | `/api/v1/metrics?service=&window=` | Recent rows; `window` accepts `30s` / `5m` / `1h` / `2d` |
-| GET | `/api/v1/stats` | `rows_written` / `batches_written` / `rows_dropped_db` / `rows_dropped_shape` |
-| GET | `/health` | 200 if Redis + TimescaleDB reachable; 503 otherwise |
+| Policy management | [`examples/scenarios/policy-management/policy_walk.py`](examples/scenarios/policy-management/policy_walk.py) | shipped |
+| Forecast burst → scale-out | `examples/scenarios/forecast-autoscale/` | planned |
+| Anomaly → reroute | `examples/scenarios/anomaly-routing/` | planned (depends on T2.1) |
 
----
-
-## Infrastructure Components
-
-| Component | Purpose | Config location |
-|---|---|---|
-| **TimescaleDB** | Time-series metrics store (PostgreSQL extension) | `infrastructure/timescaledb/` |
-| **Redis** | Async control bus (Pub/Sub between decision modules) | `infrastructure/redis/` |
-| **Prometheus** | Metrics scraping from all services | `infrastructure/prometheus/` |
-| **Grafana** | Dashboards for latency, throughput, anomalies | `infrastructure/grafana/` |
-| **OTel Collector** | Aggregates and forwards telemetry to TimescaleDB | `infrastructure/otel-collector/` |
-
-**Control bus channels** (Redis Pub/Sub):
-- `smartload.anomaly` — health signals from anomaly-detector
-- `smartload.forecast` — load predictions from forecasting
-- `smartload.routing` — server rankings from rl-engine
-- `smartload.scale` — scale-up/down events from autoscaler
-- `smartload.policy` — policy updates from policy-manager
+Reference deployments live under [`examples/deployments/`](examples/deployments/).
 
 ---
 
 ## Testing
 
-**Unit tests** — test individual service logic in isolation:
 ```bash
+# Pure-function tests (no live stack required)
 pytest tests/unit/
-```
 
-**Integration tests** — test the full compose stack end-to-end:
-```bash
-docker compose up -d
+# Service-pair / wire-protocol tests (need docker compose up -d)
 pytest tests/integration/
-docker compose down
+
+# Feature-level end-to-end tests via the SDK
+pytest tests/e2e/
+
+# Interface conformance suites (one per plugin contract)
+pytest tests/conformance/
+
+# Load tests
+docker compose up traffic-simulator
+# open http://localhost:8089
 ```
 
-**Performance / load tests** — run Locust traffic simulation:
+CI structural lints (permissive today; strict mode tracked by #139):
+
 ```bash
-docker compose up --build
-# Open http://localhost:8089 and configure load parameters
-```
-Or run Locust directly:
-```bash
-docker compose run --rm traffic-simulator
+python scripts/lint-structure.py
+python scripts/lint-redis-channels.py
+python scripts/lint-openapi.py
 ```
 
 ---
 
 ## Datasets
 
-All datasets are publicly available. Raw files go in `datasets/<source>/`; use `scripts/download-datasets.sh` to fetch them.
+Public datasets used by the ML services. `scripts/download-datasets.sh` fetches them.
 
-| Dataset | Directory | Used by | License |
-|---|---|---|---|
-| Google Borg Cluster Traces | `datasets/borg/` | rl-engine, forecasting | CC-BY |
-| Alibaba Microservice Traces | `datasets/alibaba/` | rl-engine, forecasting, anomaly-detector | Open |
-| Numenta Anomaly Benchmark (NAB) | `datasets/nab/` | anomaly-detector | MIT |
-| Yahoo Server Machine Dataset (SMD) | `datasets/yahoo-smd/` | anomaly-detector | Open |
+| Dataset | Used by | License |
+|---|---|---|
+| Google Borg Cluster Traces | rl-engine, forecasting | CC-BY |
+| Alibaba Microservice Traces | rl-engine, forecasting, anomaly-detector | Open |
+| Numenta Anomaly Benchmark (NAB) | anomaly-detector | MIT |
+| Yahoo Server Machine Dataset (SMD) | anomaly-detector | Open |
 
 ---
 
 ## Configuration
 
-**Global policy** (`config/policy.yaml`):
-Controls system-wide behavior — operating mode (`classical` / `hybrid` / `learning`), `safe_mode` flag (disables RL), SLO P95 latency target, autoscaler min/max instance limits.
+- `config/policy.yaml` — operating policy (mode, safe_mode, SLOs, scaling limits). Edited via the operator UI or `POST /api/v1/policy`.
+- `config/.env.example` — template for required env vars (DB password, Redis URL, model paths). Copy to `.env` at the repo root.
+- Per-service runtime knobs read from env vars; see each service's `README.md`.
 
-**Environment variables** (`config/.env.example`):
-Copy to `.env` at the repo root and fill in values. Contains database credentials, Redis connection strings, and cloud provider keys. The `.env` file is gitignored and must never be committed.
-
-**Service-specific config** (`services/<name>/config/`):
-Each service reads its own tuning config from this directory — model hyperparameters, detection thresholds, scaling policies. Changes here do not require a rebuild if the service reads the file at runtime.
+API versioning: `/api/v1` is the current stable surface. Breaking changes follow path versioning + a `Sunset`/`Deprecation` header window (tracked by issue #134).
 
 ---
 
 ## CI/CD
 
-Pipeline defined in `.github/workflows/docker-publish.yml`. Triggers on push and PR to `main`.
+Pipeline defined in `.github/workflows/`. Triggers on push and PR to `main`.
 
 | Job | What it does |
 |---|---|
-| `lint` | Runs `ruff check` on all Python in `services/` and `test-backends/` |
-| `unit-tests` | Pure-Python tests (parser shape, envelope, contracts, SQL parameterisation) |
-| `build-services` | Matrix build for all 7 Python services (incl. `lb-otel-shipper`); health-checks each container |
-| `build-test-backend` | Builds and health-checks the Node.js dummy backend |
-| `compose-test` | Spins up the full stack (`docker compose up`), runs Phase-0 wiring + S2 baseline + T1.1 ingest + T1.2 fidelity tests against the live stack |
+| `lint` | `ruff check` on all Python; three structural lints (`scripts/lint-*.py`) in permissive mode |
+| `unit-tests` | Pure-Python tests including the SDK suite |
+| `build-services` | Matrix build for every service; health-check each container |
+| `compose-test` | Spin up the full stack and run integration + e2e suites against it |
 
-The `docker-compose.yml` is at the repo root — no `-f` flag needed.
+The structural lints will flip from warnings to fail-on-violation once issue #139 closes.
 
 ---
 
-## Academic Context
+## Stability and Versioning
 
-`docs/SOURCE_OF_TRUTH.html` is the canonical project specification — design contracts per service, the wired channel/REST/SQL surfaces, system diagrams, sprint roadmap, and component build status. Every code change must keep this document aligned.
+- **HTTP API**: path versioning (`/api/v1`, `/api/v2`). Breaking changes require a successor path + at least one quarter of overlap.
+- **`policy.yaml` schema**: `schema_version` field is the migration anchor (planned via #134).
+- **Redis envelopes**: every envelope carries a `version` field; subscribers must tolerate unknown fields.
+- **SDK**: semver discipline; major bumps mirror API breaking changes.
 
-Project supervisors: Dr. Tamer Ashour (CIE) · Dr. Doaa Shawky (Software Dev Program)
+---
+
+## Project provenance
+
+Originally developed as a graduation project at Zewail City of Science, Technology, and Innovation (CIE 2025/2026, Team 09: Tasneem Muhammed, Nada Nabil, Rghda Salah; supervisors Dr. Tamer Ashour, Dr. Doaa Shawky). The canonical design history is in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html).
 
 ---
 
 ## License
 
-This project is developed as part of an academic research project at Zewail City of Science, Technology, and Innovation.
+See [`LICENSE`](LICENSE).
