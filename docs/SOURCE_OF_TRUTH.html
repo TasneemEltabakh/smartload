@@ -6472,6 +6472,189 @@ pytest tests/e2e/policy-management/ -v</code></pre>
 </section>
 
 <!-- ========================================================================== -->
+<!--             28. OPERATOR UI GUIDE                                           -->
+<!-- ========================================================================== -->
+<section id="sec-28-operator-ui">
+<h1>28. Operator UI Guide <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>The operator UI is a <strong>transparency + override layer</strong> (per SOT lock <code>6f89a13</code>), not an admin panel. A human operator opens it to see what every engine is currently doing, change policy with a diff preview, and trigger manual scale / isolate actions. It is <em>not</em> a tenant-facing surface — integrators use the SDK and webhooks. This section is the complete user + architecture reference for the UI shipped in vertical slice #1.</p>
+</div>
+
+<h3>28.1 Architecture — two components, one image</h3>
+<table>
+  <thead><tr><th>Component</th><th>Tech</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>services/operator-ui/bff/</code></td>
+      <td>Flask + gunicorn + httpx + flask-swagger-ui</td>
+      <td>Backend-for-frontend. Aggregates <code>/health</code> across services, proxies <code>/api/ui/*</code> to upstream (policy-manager etc.), mounts Swagger UI at <code>/api/docs</code>, serves the built SPA at <code>/</code>. Listens on port 8090.</td>
+    </tr>
+    <tr>
+      <td><code>services/operator-ui/web/</code></td>
+      <td>React 18 + Vite + TypeScript + react-diff-viewer-continued + react-router-dom</td>
+      <td>Single-page app. Two pages today (Home + Policy); more pages planned (#121–#125, #131). Talks to the BFF via <code>/api/ui/*</code>.</td>
+    </tr>
+  </tbody>
+</table>
+<p>The two ship as <strong>one Docker image</strong>: a multi-stage Dockerfile builds the Vite app in a Node 20 stage then copies <code>dist/</code> into a Python 3.11 slim runtime that runs the BFF. The runtime image carries no <code>node_modules</code> and no build tools.</p>
+
+<figure>
+<pre class="mermaid">
+flowchart LR
+    Browser["Operator browser"]
+    subgraph OperatorUI["operator-ui (one container, port 8090)"]
+        Web["web/dist/index.html<br/>+ JS bundle<br/>(served at /)"]
+        BFF["bff/app.py<br/>(Flask + gunicorn)"]
+    end
+    PM["policy-manager :8086"]
+    AS["autoscaler :8085"]
+    TLM["telemetry :8081"]
+    AD["anomaly-detector :8082"]
+    FC["forecasting :8083"]
+    RL["rl-engine :8084"]
+    LB["load-balancer :80"]
+
+    Browser ==> Web
+    Web -.fetch /api/ui/*.-> BFF
+    Web -.fetch /api/docs.-> BFF
+    BFF -. /api/v1/policy* .-> PM
+    BFF -. /health .-> AS
+    BFF -. /health .-> TLM
+    BFF -. /health .-> AD
+    BFF -. /health .-> FC
+    BFF -. /health .-> RL
+    BFF -. /health .-> LB
+    BFF -. /health .-> PM
+
+    classDef ui fill:#f5f3ff,color:#0f172a,stroke:#7c3aed;
+    classDef svc fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
+    class Web,BFF ui
+    class PM,AS,TLM,AD,FC,RL,LB svc
+</pre>
+  <figcaption><strong>Figure 28.1 — Operator UI traffic.</strong> The browser reaches the BFF; the BFF reaches the rest of the stack. There is no direct browser → upstream-service connection — that would force every service to ship CORS, auth, and rate limits independently. Consolidating those concerns in the BFF is the entire reason the split exists.</figcaption>
+</figure>
+
+<h3>28.2 What the operator sees</h3>
+
+<h4>Home page (path <code>/</code>)</h4>
+<table>
+  <tr><th>Purpose</th><td>One-screen overview of every SmartLoad service's health.</td></tr>
+  <tr><th>Polling</th><td>Fetches <code>/api/ui/health</code> every 10 seconds.</td></tr>
+  <tr><th>Layout</th><td>Service-health grid — one pill per service, coloured by status.</td></tr>
+  <tr><th>Per-service pill</th><td>Name · status (<code>ok</code> / <code>degraded</code> / <code>unreachable</code>) · HTTP code · redis/timescaledb booleans · any error message.</td></tr>
+  <tr><th>Source</th><td><code>services/operator-ui/web/src/pages/Home.tsx</code></td></tr>
+</table>
+
+<h4>Policy page (path <code>/policy</code>)</h4>
+<table>
+  <tr><th>Purpose</th><td>Read, edit, diff-preview, commit operating policy; see recent audit rows.</td></tr>
+  <tr><th>Polling</th><td>Refreshes current policy + audit every 10 seconds.</td></tr>
+  <tr><th>Layout</th><td>Four cards top-to-bottom — Current policy (read-only), Edit (JSON textarea), Diff preview (side-by-side), Recent audit (table).</td></tr>
+  <tr><th>Source</th><td><code>services/operator-ui/web/src/pages/Policy.tsx</code></td></tr>
+</table>
+
+<h5>Policy editor workflow</h5>
+<ol>
+  <li><strong>Read</strong>: page mount fetches <code>GET /api/ui/policy</code>. Top card renders the response as formatted JSON. Editor textarea is pre-filled with the same content.</li>
+  <li><strong>Edit</strong>: operator modifies the textarea. Live validation: <code>JSON.parse</code> on every keystroke; invalid JSON disables the Commit button and shows the parser error inline.</li>
+  <li><strong>Diff</strong>: the side-by-side diff viewer (react-diff-viewer-continued, dark theme) renders <em>current vs draft</em>. Updates as the operator types.</li>
+  <li><strong>Commit</strong>: button calls <code>POST /api/ui/policy</code>. <code>policy_version</code> is stripped from the body (server-managed). Header <code>X-Actor: operator-ui</code> attached. On 2xx, a toast confirms — green for <code>updated</code>, neutral for <code>no-op</code>. On 4xx, toast carries <code>error</code> + <code>field</code>.</li>
+  <li><strong>Audit</strong>: bottom card re-fetches and displays the latest 20 rows. The operator sees their own change land at the top within one refresh tick.</li>
+  <li><strong>Reset</strong>: dedicated button — discards the draft and restores the textarea to the on-disk policy.</li>
+</ol>
+
+<h5>Diff preview semantics</h5>
+<ul>
+  <li>Compares <em>current JSON</em> (left) against the <em>parsed draft</em> (right).</li>
+  <li>If the draft is invalid JSON, the right side renders <code>(invalid JSON)</code> and the parser error appears next to the Commit button (which is disabled).</li>
+  <li>Added / removed / changed fields are highlighted line-by-line. The viewer is purely textual — no semantic awareness of field types.</li>
+  <li>If the operator manually adds a <code>policy_version</code> to the draft, it is silently stripped on commit (the server bumps it).</li>
+</ul>
+
+<h3>28.3 Authentication and authorization</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>Today</th><th>Future</th></tr></thead>
+  <tbody>
+    <tr><td>Operator login</td><td>None enforced — anyone on the host can reach <code>:8090</code></td><td>Session-based login (#125)</td></tr>
+    <tr><td>BFF-to-upstream auth</td><td>None (all calls anonymous)</td><td>BFF holds a service-account API key; passes <code>X-Actor</code> from the session (#125 + #132)</td></tr>
+    <tr><td>Browser-to-BFF CSRF</td><td>None enforced</td><td>Standard CSRF token + Same-Site cookie (#125)</td></tr>
+    <tr><td>Tenant scoping</td><td>Single tenant (<code>default</code>)</td><td>Operator's session resolves which tenant the UI is scoped to (#129)</td></tr>
+  </tbody>
+</table>
+<p>Until #125 lands, deploy the operator UI behind an existing trusted boundary (VPN, mTLS gateway, single-sign-on proxy) — it is not safe to expose <code>:8090</code> directly to the internet.</p>
+
+<h3>28.4 BFF endpoint reference</h3>
+<p>BFF endpoints live under <code>/api/ui/*</code>. They are <em>not</em> part of the public <code>/api/v1</code> contract and may change without a version bump. Programmatic integrators talk to policy-manager directly via <code>/api/v1/*</code>.</p>
+<table>
+  <thead><tr><th>Method · Path</th><th>Behaviour</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/ui/health</code></td><td>Fan-out via <code>ThreadPoolExecutor</code> to <code>/health</code> on every upstream service (3 s/call). Returns <code>{all_ok: bool, services: {name: {status, status_code, redis, timescaledb, error?, extra}}}</code>.</td></tr>
+    <tr><td><code>GET /api/ui/policy</code></td><td>Proxy → <code>policy-manager:8086/api/v1/policy</code>. Body passthrough.</td></tr>
+    <tr><td><code>POST /api/ui/policy</code></td><td>Proxy → <code>policy-manager:8086/api/v1/policy</code>. <code>Content-Type: application/json</code>. <code>X-Actor</code> is read from incoming header, defaulting to <code>operator-ui</code> when absent.</td></tr>
+    <tr><td><code>GET /api/ui/audit/policy</code></td><td>Proxy → <code>policy-manager:8086/api/v1/audit/policy</code>. Forwards <code>?limit</code> query string.</td></tr>
+    <tr><td><code>GET /api/docs</code></td><td>Swagger UI rendered from the canonical OpenAPI spec.</td></tr>
+    <tr><td><code>GET /api/openapi.yaml</code></td><td>Raw spec from <code>/app/openapi/smartload-v1.yaml</code> (mounted as a read-only Docker volume).</td></tr>
+    <tr><td><code>GET /health</code></td><td>BFF's own health endpoint.</td></tr>
+    <tr><td><code>GET /</code>, <code>GET /&lt;anything&gt;</code></td><td>SPA fallback — serves <code>web/dist/index.html</code> so the React router can pick up the path.</td></tr>
+  </tbody>
+</table>
+
+<h3>28.5 Configuration</h3>
+<table>
+  <thead><tr><th>Env var</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>PORT</code></td><td><code>8090</code></td><td>Bind port</td></tr>
+    <tr><td><code>POLICY_MANAGER_URL</code></td><td><code>http://policy-manager:8086</code></td><td>Upstream — proxied by <code>/api/ui/policy*</code></td></tr>
+    <tr><td><code>AUTOSCALER_URL</code></td><td><code>http://autoscaler:8085</code></td><td>Aggregated by <code>/api/ui/health</code></td></tr>
+    <tr><td><code>TELEMETRY_URL</code> · <code>ANOMALY_DETECTOR_URL</code> · <code>FORECASTING_URL</code> · <code>RL_ENGINE_URL</code> · <code>LOAD_BALANCER_URL</code></td><td>compose hostnames</td><td>Aggregated by <code>/api/ui/health</code></td></tr>
+    <tr><td><code>WEB_DIST</code></td><td><code>/app/web/dist</code></td><td>Static build path (overridable for dev)</td></tr>
+    <tr><td><code>OPENAPI_PATH</code></td><td><code>/app/openapi/smartload-v1.yaml</code></td><td>Path mounted from <code>./docs/openapi/</code> at runtime</td></tr>
+    <tr><td><code>LOG_LEVEL</code></td><td><code>INFO</code></td><td>Standard logging level</td></tr>
+  </tbody>
+</table>
+
+<h3>28.6 Page roadmap</h3>
+<table>
+  <thead><tr><th>Page</th><th>Tracking</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>OUI.1 BFF scaffold + Home page</td><td>#119</td><td><span class="badge badge-implemented">Slice #1</span></td></tr>
+    <tr><td>OUI.2 Policy editor with diff preview</td><td>#120</td><td><span class="badge badge-implemented">Slice #1</span></td></tr>
+    <tr><td>OUI.3 Live Engines + Redis event stream</td><td>#121</td><td><span class="badge badge-planned">Sprint 4</span></td></tr>
+    <tr><td>OUI.4 Audit log viewer (policy_changes + scaling_events)</td><td>#122</td><td><span class="badge badge-planned">Sprint 4</span></td></tr>
+    <tr><td>OUI.5 Manual actions — scale + isolate</td><td>#123</td><td><span class="badge badge-planned">Sprint 4</span></td></tr>
+    <tr><td>OUI.6 Service log viewer (optional)</td><td>#124</td><td><span class="badge badge-planned">Sprint 5</span></td></tr>
+    <tr><td>OUI.7 Operator UI authentication</td><td>#125</td><td><span class="badge badge-planned">Sprint 5</span></td></tr>
+    <tr><td>OUI.8 Embedded charts (no Grafana context switch)</td><td>#131</td><td><span class="badge badge-planned">Sprint 4–5</span></td></tr>
+  </tbody>
+</table>
+
+<h3>28.7 Design choices — what we explicitly didn't do</h3>
+<ul>
+  <li><strong>No iframe-Grafana</strong>. Charts are first-class UI elements (planned #131), not embedded Grafana dashboards. Grafana stays for SRE-grade ad-hoc PromQL exploration — the operator UI is for transparency and override during incidents.</li>
+  <li><strong>No backend management surface</strong> (delete tenant, edit user). The UI is operator-facing, not admin-facing. SaaS-side admin tooling is a separate concern outside this SOT.</li>
+  <li><strong>No client-side caching beyond the React state</strong>. Auto-refresh is the correctness model — the operator should always see fresh state during an incident.</li>
+  <li><strong>No realtime WebSocket transport</strong>. Polling at 10 s is sufficient for slice #1; SSE / WebSocket lands with OUI.3 (#121) for the Live Engines page where sub-second updates matter.</li>
+</ul>
+
+<h3>28.8 Running the UI</h3>
+<pre><code># Production-equivalent (whole stack)
+docker compose up -d
+# open http://localhost:8090/
+
+# Dev with hot-reload (frontend only)
+cd services/operator-ui/web
+npm install
+npm run dev          # Vite on :5173; proxies /api/ui to localhost:8090
+# in another terminal:
+cd ../bff
+pip install -r requirements.txt
+python app.py        # BFF on :8090</code></pre>
+
+</section>
+
+<!-- ========================================================================== -->
 <!--                  A. MERGE REPORT                                            -->
 <!-- ========================================================================== -->
 <section id="sec-merge-report">
