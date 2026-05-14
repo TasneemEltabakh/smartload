@@ -1,0 +1,13 @@
+apiVersion: v2
+name: smartload
+description: SmartLoad — AI-driven load balancing control plane.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/TasneemEltabakh/smartload
+keywords:
+  - load-balancer
+  - autoscaling
+  - control-plane
+  - kubernetes
+maintainers: []

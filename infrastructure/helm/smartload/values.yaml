@@ -1,0 +1,43 @@
+# Default values for the SmartLoad chart.
+# Implementation pending — issue #133.
+
+# Image overrides per service. Defaults assume locally-built images.
+images:
+  policy_manager:   { repository: smartload/policy-manager,   tag: latest }
+  autoscaler:       { repository: smartload/autoscaler,       tag: latest }
+  telemetry:        { repository: smartload/telemetry,        tag: latest }
+  lb_otel_shipper:  { repository: smartload/lb-otel-shipper,  tag: latest }
+  anomaly_detector: { repository: smartload/anomaly-detector, tag: latest }
+  forecasting:      { repository: smartload/forecasting,      tag: latest }
+  rl_engine:        { repository: smartload/rl-engine,        tag: latest }
+  operator_ui:      { repository: smartload/operator-ui,      tag: latest }
+
+# Use cluster-managed services when set; otherwise the chart deploys
+# StatefulSets for both.
+timescaledb:
+  external: false
+  url: ""        # used when external: true
+redis:
+  external: false
+  url: ""
+
+# Policy defaults — overridable per deployment.
+policy:
+  operating_mode: hybrid
+  safe_mode: false
+  min_backends: 1
+  max_backends: 5
+  slo_p95_latency_ms: 200
+  anomaly_latency_multiplier: 3.0
+  per_instance_capacity_rps: 100
+  autoscaler_cooldown_seconds: 60
+
+# Ingress disabled by default; user must opt in.
+ingress:
+  enabled: false
+  host: smartload.local
+  tlsSecretName: ""
+
+# Service monitor for Prometheus Operator installations.
+serviceMonitor:
+  enabled: false
