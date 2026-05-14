@@ -6258,6 +6258,220 @@ curl -s -X POST http://localhost:8086/api/v1/policy \
 </section>
 
 <!-- ========================================================================== -->
+<!--             27. SDK REFERENCE                                               -->
+<!-- ========================================================================== -->
+<section id="sec-27-sdk">
+<h1>27. SDK Reference (Python) <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>The <code>smartload-client</code> Python package is the supported way to integrate with SmartLoad programmatically. The SDK is version-locked to the HTTP and Redis contracts — when those evolve, the SDK ships in lockstep. Lives in the same repo as the services (anti-Temporal-multi-repo-coupling, <a href="#sec-25-distribution">§25</a>). This section is the complete API reference; the source is <code>clients/python/smartload_client/</code>.</p>
+</div>
+
+<h3>27.1 Installation</h3>
+<pre><code># Development (editable, from a clone of the SmartLoad repo)
+pip install -e clients/python
+
+# Production (after the first release; not yet on PyPI)
+pip install smartload-client</code></pre>
+<table>
+  <thead><tr><th>Dependency</th><th>Version</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><code>httpx</code></td><td>≥ 0.27</td><td>HTTP client (sync; connection pooling per client instance)</td></tr>
+    <tr><td><code>redis</code></td><td>≥ 5.0</td><td>Pub/sub subscriber; lazy-initialised on first <code>subscribe_*</code> call</td></tr>
+    <tr><td>Python</td><td>≥ 3.10</td><td>Type hints + match statements; modern <code>dict</code>/<code>list</code> generics</td></tr>
+  </tbody>
+</table>
+
+<h3>27.2 Constructor and configuration</h3>
+<pre><code>from smartload_client import SmartLoadClient
+
+client = SmartLoadClient(
+    base_url      = "http://localhost:8086",   # policy-manager URL
+    redis_url     = "redis://localhost:6379",  # Redis URL (lazy)
+    api_key       = None,                       # bearer token (future #132)
+    tenant_id     = "default",                  # tenant scope (future #129)
+    default_actor = "smartload-client",         # value sent in X-Actor on writes
+    timeout       = 10.0,                       # request timeout (seconds)
+    connect_timeout = 3.0,                      # connect timeout (seconds)
+)</code></pre>
+
+<h4>Environment-variable fallbacks</h4>
+<table>
+  <thead><tr><th>Parameter</th><th>Env var</th><th>Default</th></tr></thead>
+  <tbody>
+    <tr><td><code>base_url</code></td><td>—</td><td><code>http://localhost:8086</code></td></tr>
+    <tr><td><code>redis_url</code></td><td><code>REDIS_URL</code></td><td><code>redis://localhost:6379</code></td></tr>
+    <tr><td><code>api_key</code></td><td><code>SMARTLOAD_API_KEY</code></td><td>None</td></tr>
+    <tr><td><code>tenant_id</code></td><td><code>SMARTLOAD_TENANT_ID</code></td><td><code>default</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Context manager (recommended)</h4>
+<pre><code>with SmartLoadClient(base_url="http://localhost:8086") as c:
+    policy = c.get_policy()
+
+# __exit__ closes httpx.Client and any lazily-created Redis client.
+# Equivalent to calling c.close() explicitly.</code></pre>
+
+<h3>27.3 Method reference (slice #1 surface)</h3>
+
+<h4><code>SmartLoadClient.get_policy()</code></h4>
+<table>
+  <tr><th>Returns</th><td><code>dict</code> — full policy snapshot. Keys: <code>operating_mode</code>, <code>safe_mode</code>, <code>min_backends</code>, <code>max_backends</code>, <code>slo_p95_latency_ms</code>, <code>anomaly_latency_multiplier</code>, <code>per_instance_capacity_rps</code>, <code>autoscaler_cooldown_seconds</code>, <code>policy_version</code>, <code>anomaly_response</code>, <code>anomaly_recovery_window_seconds</code>, <code>rl_exploration_rate</code>, <code>rl_confidence_threshold</code>.</td></tr>
+  <tr><th>Raises</th><td><code>SmartLoadError</code> (404 if <code>policy.yaml</code> empty), <code>AuthenticationError</code> (future), <code>SmartLoadError</code> on network failure.</td></tr>
+  <tr><th>Wire call</th><td><code>GET /api/v1/policy</code></td></tr>
+</table>
+
+<h4><code>SmartLoadClient.set_policy(patch, *, actor=None)</code></h4>
+<table>
+  <tr><th>Parameters</th><td><code>patch: dict</code> — any subset of policy fields. <code>actor: Optional[str]</code> — recorded in audit; defaults to <code>default_actor</code>.</td></tr>
+  <tr><th>Returns</th><td><code>dict</code> — <code>{status, policy, changed_fields, policy_version, event_id}</code>. <code>status</code> is <code>"updated"</code> on real change, <code>"no-op"</code> on idempotent retry.</td></tr>
+  <tr><th>Raises</th><td><code>ValidationError</code> with <code>.field</code> set on 400. <code>AuthenticationError</code> on 401/403. <code>RateLimitError</code> with <code>.retry_after</code> on 429. <code>SmartLoadError</code> on 5xx or network failure.</td></tr>
+  <tr><th>Wire call</th><td><code>POST /api/v1/policy</code> with header <code>X-Actor</code>.</td></tr>
+  <tr><th>Idempotency</th><td>Posting the same patch twice produces one audit row, one envelope publish, and one <code>policy_version</code> bump. The second call returns <code>{status: "no-op", changed_fields: []}</code>.</td></tr>
+</table>
+
+<h4><code>SmartLoadClient.audit_policy(limit=50)</code></h4>
+<table>
+  <tr><th>Parameters</th><td><code>limit: int</code> — max rows (default 50, max 1000).</td></tr>
+  <tr><th>Returns</th><td><code>list[dict]</code> — each row is <code>{time, policy_version, field, old_value, new_value, actor}</code>, newest first. <code>old_value</code> / <code>new_value</code> are JSON-decoded native values.</td></tr>
+  <tr><th>Raises</th><td><code>ValidationError</code> on bad limit. <code>SmartLoadError</code> on 503 if TimescaleDB is unreachable.</td></tr>
+  <tr><th>Wire call</th><td><code>GET /api/v1/audit/policy?limit=N</code></td></tr>
+</table>
+
+<h4><code>SmartLoadClient.subscribe_policy(callback)</code></h4>
+<table>
+  <tr><th>Parameters</th><td><code>callback: Callable[[dict, dict], None]</code> — invoked with <code>(payload, envelope_meta)</code> for every PolicyUpdate envelope received on <code>smartload.policy</code>.</td></tr>
+  <tr><th>Returns</th><td><code>PolicySubscription</code> — a handle. Call <code>.close()</code> or use as a context manager to stop the background thread.</td></tr>
+  <tr><th>Threading</th><td>Runs the callback on a <em>daemon</em> thread named <code>smartload-policy-sub</code>. Callback exceptions are caught + logged via <code>logging.getLogger("smartload_client").exception</code>; they never propagate or kill the thread.</td></tr>
+  <tr><th>Stop</th><td>Call <code>sub.close()</code> (sets a stop event, joins the thread up to 2 s, closes the underlying pubsub).</td></tr>
+</table>
+
+<h4>Surface stubs (slice #1 — raise NotImplementedError)</h4>
+<p>The following methods are reachable but not yet wired. Each raises <code>NotImplementedError</code> with a pointer to the issue that lands the real implementation.</p>
+<table>
+  <thead><tr><th>Method</th><th>Tracking issue</th></tr></thead>
+  <tbody>
+    <tr><td><code>get_metrics(service, window)</code></td><td>#127 (full SDK)</td></tr>
+    <tr><td><code>subscribe_anomaly(cb)</code> / <code>subscribe_forecast</code> / <code>subscribe_routing</code> / <code>subscribe_scale</code></td><td>#127</td></tr>
+    <tr><td><code>client.webhooks.register(url, events, secret)</code></td><td>#130</td></tr>
+    <tr><td><code>client.webhooks.list()</code> / <code>unregister(id)</code></td><td>#130</td></tr>
+  </tbody>
+</table>
+
+<h3>27.4 Event subscriptions — model and lifecycle</h3>
+<pre><code>import threading
+
+with SmartLoadClient(base_url="http://localhost:8086") as c:
+    received = []
+    arrived  = threading.Event()
+
+    def on_update(payload, meta):
+        received.append(payload)
+        arrived.set()
+
+    sub = c.subscribe_policy(on_update)
+    try:
+        # Drain pre-attach backlog if relevant (cooperating tests).
+        # The SDK does not auto-drain because the right policy is
+        # caller-specific.
+        c.set_policy({"safe_mode": True}, actor="my-tool")
+        arrived.wait(timeout=5.0)
+        print("envelope received:", received[-1]["policy_version"])
+    finally:
+        sub.close()</code></pre>
+<ul>
+  <li><strong>Channel TTL</strong>: the SDK applies the canonical per-channel TTL (<a href="#sec-interface-authority">§11</a>). Stale messages are dropped before the callback runs.</li>
+  <li><strong>Redis disconnect</strong>: if the underlying socket drops, the SDK logs and retries with a 1 s backoff. For long-running subscribers, monitor the <code>smartload_client</code> logger.</li>
+  <li><strong>Threading model</strong>: one daemon thread per <code>subscribe_*</code> call. Several active subscriptions are fine; close them when done.</li>
+  <li><strong>Backlog before attach</strong>: pub/sub is not durable. Messages published before <code>subscribe_policy</code> is called are not delivered.</li>
+</ul>
+
+<h3>27.5 Exception types</h3>
+<table>
+  <thead><tr><th>Exception</th><th>Raised when</th><th>Useful attribute</th></tr></thead>
+  <tbody>
+    <tr><td><code>SmartLoadError</code></td><td>Base class; raised on 5xx, network errors, or anything not mapped below.</td><td>Standard <code>str(exc)</code></td></tr>
+    <tr><td><code>ValidationError</code></td><td>HTTP 400 — body validation failed.</td><td><code>.field: str | None</code> — names the offending input.</td></tr>
+    <tr><td><code>AuthenticationError</code></td><td>HTTP 401 / 403 — credentials missing, invalid, revoked, or insufficient scope.</td><td>—</td></tr>
+    <tr><td><code>RateLimitError</code></td><td>HTTP 429 — rate limit hit (future #135).</td><td><code>.retry_after: int | None</code> — seconds parsed from <code>Retry-After</code> header.</td></tr>
+  </tbody>
+</table>
+<p>All four inherit from <code>SmartLoadError</code>, so <code>except SmartLoadError</code> catches everything the SDK throws. Catch specific subtypes when you can recover differently (e.g., back off on <code>RateLimitError</code>).</p>
+
+<h3>27.6 Examples — by integration pattern</h3>
+
+<h4>Quickstart — 20-line read</h4>
+<pre><code>from smartload_client import SmartLoadClient, SmartLoadError
+
+with SmartLoadClient(base_url="http://localhost:8086") as c:
+    try:
+        p = c.get_policy()
+    except SmartLoadError as exc:
+        print("could not read policy:", exc)
+        raise
+    print(p["operating_mode"], p["safe_mode"], p["policy_version"])</code></pre>
+<p>Source: <code>clients/python/examples/quickstart.py</code>.</p>
+
+<h4>Pattern B — synchronous operator (flip safe_mode for a deploy)</h4>
+<pre><code>with SmartLoadClient(base_url="http://localhost:8086") as c:
+    # Snapshot for restore
+    baseline = c.get_policy()
+    c.set_policy({"safe_mode": True}, actor="deploy-pipeline")
+
+    # ... run the deploy ...
+
+    c.set_policy({"safe_mode": baseline["safe_mode"]},
+                 actor="deploy-pipeline-restore")</code></pre>
+
+<h4>Pattern C — Redis event listener (full slice walk)</h4>
+<p>The runnable end-to-end script for the policy-management slice: <code>examples/scenarios/policy-management/policy_walk.py</code>. It snapshots policy, subscribes to <code>smartload.policy</code>, toggles a field, waits for the envelope, restores, and prints the audit trail. Used as the canonical demo + the e2e test driver.</p>
+
+<h4>Pattern D — Webhook consumer</h4>
+<p>Use the webhooks management methods (planned, <a href="#sec-29-webhooks">§29</a>) to register URLs. The SDK does not implement webhook receiver logic — your application's HTTP server handles incoming POSTs. The SDK provides the registration surface only.</p>
+
+<h3>27.7 Package layout</h3>
+<table>
+  <thead><tr><th>Path</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>clients/python/smartload_client/__init__.py</code></td><td>Re-exports <code>SmartLoadClient</code>, <code>PolicySubscription</code>, exception classes, channel constants.</td></tr>
+    <tr><td><code>client.py</code></td><td><code>SmartLoadClient</code> aggregator — owns the <code>httpx.Client</code>, lazy Redis client, default auth headers, context manager.</td></tr>
+    <tr><td><code>policy.py</code></td><td><code>PolicyClient</code> — HTTP methods for the policy surface. <code>_raise_for_status</code> maps status codes to typed exceptions.</td></tr>
+    <tr><td><code>events.py</code></td><td><code>EventsClient</code> + <code>PolicySubscription</code> — pub/sub helpers.</td></tr>
+    <tr><td><code>metrics.py</code></td><td><code>MetricsClient</code> — stub today (#127).</td></tr>
+    <tr><td><code>webhooks.py</code></td><td><code>WebhooksClient</code> — stub today (#130).</td></tr>
+    <tr><td><code>exceptions.py</code></td><td>Typed exceptions.</td></tr>
+    <tr><td><code>_envelope.py</code></td><td>Internal — pure-stdlib parser for Redis envelopes. Mirrors <code>services/shared/contracts.py</code> without importing it (SDK has zero monorepo dependencies).</td></tr>
+    <tr><td><code>examples/quickstart.py</code></td><td>20-line "hello world" + 404 hint.</td></tr>
+    <tr><td><code>examples/middleware_integration/</code></td><td>Runnable middleware example (planned #137).</td></tr>
+  </tbody>
+</table>
+
+<h3>27.8 Roadmap and language support</h3>
+<table>
+  <thead><tr><th>Language / surface</th><th>Status</th><th>Issue</th></tr></thead>
+  <tbody>
+    <tr><td>Python — policy + events + audit</td><td><span class="badge badge-implemented">Shipped (slice #1)</span></td><td>part of slice</td></tr>
+    <tr><td>Python — metrics, webhooks, anomaly/forecast/routing/scale subscribers</td><td><span class="badge badge-planned">NotImplementedError stubs</span></td><td>#127, #130</td></tr>
+    <tr><td>Python — middleware-integration full example</td><td><span class="badge badge-planned">Scaffolded</span></td><td>#137</td></tr>
+    <tr><td>Node.js SDK</td><td><span class="badge badge-target">When demand exists</span></td><td>not filed</td></tr>
+    <tr><td>Go SDK</td><td><span class="badge badge-target">When demand exists</span></td><td>not filed</td></tr>
+  </tbody>
+</table>
+<p>Cross-language SDKs are kept in-repo, not split into sibling repos — version-locking the SDK to the contracts is more important than independent release cadence. See <a href="#sec-25-distribution">§25</a> for the reasoning.</p>
+
+<h3>27.9 Testing the SDK</h3>
+<pre><code># 18 pure-function tests (no live stack required)
+pytest tests/unit/test_smartload_client.py -v
+
+# Feature-level tests via the SDK (need docker compose up -d)
+pytest tests/e2e/policy-management/ -v</code></pre>
+<p>Unit tests cover the status-code → exception mapping and the envelope parser. The e2e suite proves the SDK end-to-end against the live stack — it doubles as the slice's customer-surface acceptance.</p>
+
+</section>
+
+<!-- ========================================================================== -->
 <!--                  A. MERGE REPORT                                            -->
 <!-- ========================================================================== -->
 <section id="sec-merge-report">
