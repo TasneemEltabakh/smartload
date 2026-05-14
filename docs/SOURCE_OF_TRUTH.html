@@ -1350,54 +1350,108 @@
 <!--                              SIDEBAR / TOC                                  -->
 <!-- ========================================================================== -->
 <nav class="toc" aria-label="Table of Contents">
-  <h3>Table of Contents</h3>
-  <ol>
+  <h3>Table of Contents — by category</h3>
+
+  <div class="callout" style="background:#eff6ff;border:1px solid #1d4ed8;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>📘 Foundations</strong> — what the project is and why</p>
+  <ol start="1" style="margin:0;">
     <li><a href="#sec-1-header">1. Document Header</a></li>
     <li><a href="#sec-2-overview">2. Executive Overview</a></li>
     <li><a href="#sec-3-definition">3. Canonical Project Definition</a></li>
     <li><a href="#sec-design-principles">4. System Design Principles</a></li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#f5f3ff;border:1px solid #7c3aed;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>🏗 Architecture</strong> — big picture, runtime model, control / data plane</p>
+  <ol start="5" style="margin:0;">
     <li><a href="#sec-4-architecture">5. Big Picture Architecture</a></li>
     <li><a href="#sec-runtime-model">6. Canonical Runtime Model</a></li>
     <li><a href="#sec-5-directory">7. Service &amp; Module Directory</a></li>
+    <li><a href="#sec-control-plane">16. Control Plane vs Data Plane</a></li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#ecfdf5;border:1px solid #047857;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>🔧 Services (Deep Dives)</strong> — one entry per running service</p>
+  <ol start="8" style="margin:0;">
     <li><a href="#sec-6-deepdives">8. Service Deep Dives</a>
       <ol>
-        <li><a href="#mod-load-balancer">Load Balancer (NGINX)</a></li>
-        <li><a href="#mod-lb-otel-shipper">LB OTel Shipper (sidecar)</a></li>
-        <li><a href="#mod-classical-routing">Classical Routing Engine</a></li>
-        <li><a href="#mod-telemetry">Telemetry Service</a></li>
-        <li><a href="#mod-metrics-db">Metrics Database (TimescaleDB)</a></li>
-        <li><a href="#mod-anomaly">Anomaly Detection Engine</a></li>
-        <li><a href="#mod-forecasting">Forecasting Engine</a></li>
-        <li><a href="#mod-rl">Reinforcement Learning Engine</a></li>
-        <li><a href="#mod-autoscaler">Autoscaler / Resource Manager</a></li>
-        <li><a href="#mod-policy">Policy &amp; Configuration Manager</a></li>
-        <li><a href="#mod-control-bus">Control Bus (Redis)</a></li>
-        <li><a href="#mod-ui">Operator UI / Dashboards</a></li>
-        <li><a href="#mod-datasets">Dataset / Data Prep Pipeline</a></li>
-        <li><a href="#mod-testing">Testing &amp; Benchmarking Harness</a></li>
-        <li><a href="#mod-deployment">Deployment Layer</a></li>
+        <li><a href="#mod-load-balancer">8.1 Load Balancer (NGINX)</a></li>
+        <li><a href="#mod-lb-otel-shipper">8.1.1 LB OTel Shipper (sidecar)</a></li>
+        <li><a href="#mod-classical-routing">8.2 Classical Routing Engine</a></li>
+        <li><a href="#mod-telemetry">8.3 Telemetry Service</a></li>
+        <li><a href="#mod-metrics-db">8.4 Metrics Database (TimescaleDB)</a></li>
+        <li><a href="#mod-anomaly">8.5 Anomaly Detection Engine</a></li>
+        <li><a href="#mod-forecasting">8.6 Forecasting Engine</a></li>
+        <li><a href="#mod-rl">8.7 Reinforcement Learning Engine</a></li>
+        <li><a href="#mod-autoscaler">8.8 Autoscaler / Resource Manager</a></li>
+        <li><a href="#mod-policy">8.9 Policy &amp; Configuration Manager</a></li>
+        <li><a href="#mod-control-bus">8.10 Control Bus (Redis Pub/Sub)</a></li>
+        <li><a href="#mod-ui">8.11 Operator UI &amp; Dashboards</a></li>
+        <li><a href="#mod-datasets">8.12 Datasets / Data Prep</a></li>
+        <li><a href="#mod-testing">8.13 Testing Harness</a></li>
+        <li><a href="#mod-deployment">8.14 Deployment Layer</a></li>
       </ol>
     </li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#fffbeb;border:1px solid #b45309;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>📜 Contracts &amp; Schema</strong> — what every interface says, what every table looks like</p>
+  <ol start="9" style="margin:0;">
     <li><a href="#sec-data-ownership">9. Data Ownership &amp; Information Flow</a></li>
     <li><a href="#sec-storage-authority">10. Storage &amp; Schema Authority</a></li>
     <li><a href="#sec-interface-authority">11. Interface &amp; Contract Authority</a></li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#fef2f2;border:1px solid #b91c1c;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>🧩 Integration Surfaces</strong> — how to use SmartLoad from outside <span class="badge badge-canonical">v1.0.2</span></p>
+  <ol style="margin:0;list-style:none;padding-left:0;">
+    <li><a href="#sec-25-distribution"><strong>25. Distribution &amp; Operating Surfaces</strong></a> — delivery shapes, operator vs tenant, multi-tenancy</li>
+    <li><a href="#sec-26-api-guide"><strong>26. API Integration Guide</strong></a> — every HTTP endpoint, error model, integration patterns</li>
+    <li><a href="#sec-27-sdk"><strong>27. SDK Reference (Python)</strong></a> — every method, examples, threading model</li>
+    <li><a href="#sec-28-operator-ui"><strong>28. Operator UI Guide</strong></a> — pages, workflows, BFF endpoints</li>
+    <li><a href="#sec-29-webhooks"><strong>29. Webhooks Specification</strong></a> — registration, HMAC, retry, verification</li>
+    <li><a href="#sec-30-database"><strong>30. Database Design Consolidation</strong></a> — every table, index, retention, multi-tenancy plan</li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#f3f4f6;border:1px solid #475569;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>🗺 Reference Maps</strong> — diagrams, tech stack, data and routing references</p>
+  <ol start="12" style="margin:0;">
     <li><a href="#sec-7-arch-map">12. Architecture Map (Diagrams)</a></li>
     <li><a href="#sec-8-stack">13. Current Tech Stack</a></li>
     <li><a href="#sec-9-data">14. Data &amp; ML Foundations</a></li>
     <li><a href="#sec-10-routing">15. Routing &amp; Decision Authority</a></li>
-    <li><a href="#sec-control-plane">16. Control Plane vs Data Plane</a></li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#eff6ff;border:1px solid #1d4ed8;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>🚀 Operations</strong> — roadmap, build status, testing, deployment, checklists</p>
+  <ol start="17" style="margin:0;">
     <li><a href="#sec-11-roadmap">17. Roadmap &amp; Delivery Strategy</a></li>
     <li><a href="#sec-12-status">18. Build Status &amp; Implementation Gaps</a></li>
     <li><a href="#sec-13-testing">19. Testing &amp; Verification Authority</a></li>
     <li><a href="#sec-14-deploy">20. Deployment &amp; Operational Design</a></li>
     <li><a href="#sec-review-checklists">21. Architecture Review Checklists</a></li>
+  </ol>
+  </div>
+
+  <div class="callout" style="background:#f3f4f6;border:1px solid #94a3b8;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <p style="margin:0 0 0.4em;"><strong>📚 History &amp; Provenance</strong> — change log, source traceability, superseded designs</p>
+  <ol start="22" style="margin:0;">
     <li><a href="#sec-15-changelog">22. Change Log &amp; Decisions</a></li>
     <li><a href="#sec-16-traceability">23. Source Traceability</a></li>
     <li><a href="#sec-historical-alternatives">24. Historical &amp; Superseded Designs</a></li>
-    <li><a href="#sec-merge-report">A. Merge Report</a></li>
-    <li><a href="#sec-inventory">B. Source Inventory</a></li>
-    <li><a href="#sec-glossary">C. Glossary</a></li>
+    <li style="list-style:none;margin-top:0.4em;"><a href="#sec-merge-report">A. Merge Report</a></li>
+    <li style="list-style:none;"><a href="#sec-inventory">B. Source Inventory</a></li>
+    <li style="list-style:none;"><a href="#sec-glossary">C. Glossary</a></li>
   </ol>
+  </div>
+
+  <p class="small muted" style="margin-top:1em;">All section numbers remain stable across releases (commit messages reference them). New top-level sections are appended; existing ones never renumbered.</p>
   <h3>Status badges</h3>
   <p class="small" style="margin:0;line-height:1.9;">
     <span class="badge badge-canonical">Canonical</span>
@@ -1450,6 +1504,52 @@
     </div>
   </div>
 </header>
+
+<!-- ── Find what you need (persona panel) ──────────────────────────────────── -->
+<div class="canonical-intent" style="margin-top: 1.5rem;">
+  <span class="label">Find what you need — by persona</span>
+  <p style="margin: 0 0 0.6rem;">Pick the row that matches what you're trying to do. Each row routes you to the canonical starting section, plus one or two follow-ups for depth. Together these cover every API, SDK, UI, webhook, database, and architecture concern with no gaps.</p>
+  <table>
+    <thead><tr><th>I am a…</th><th>Start here</th><th>Then read</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>External integrator</strong><br><span class="small muted">call the API from another system</span></td>
+        <td><a href="#sec-26-api-guide">§26 API Integration Guide</a></td>
+        <td><a href="#sec-27-sdk">§27 SDK</a> · <a href="#sec-29-webhooks">§29 Webhooks</a> · <a href="#sec-interface-authority">§11 Contracts</a></td>
+      </tr>
+      <tr>
+        <td><strong>Operator</strong><br><span class="small muted">run, observe, override</span></td>
+        <td><a href="#sec-28-operator-ui">§28 Operator UI Guide</a></td>
+        <td><a href="#sec-25-distribution">§25 Distribution</a> · <a href="#sec-14-deploy">§20 Deployment</a></td>
+      </tr>
+      <tr>
+        <td><strong>Database / schema designer</strong></td>
+        <td><a href="#sec-30-database">§30 Database Design Consolidation</a></td>
+        <td><a href="#sec-storage-authority">§10 Storage Authority</a> · <a href="#diag-schema">Figure 12.7 Schema</a> · <a href="#sec-data-ownership">§9 Data Ownership</a></td>
+      </tr>
+      <tr>
+        <td><strong>Architect</strong><br><span class="small muted">whole-system view</span></td>
+        <td><a href="#sec-4-architecture">§5 Big Picture</a></td>
+        <td><a href="#sec-design-principles">§4 Principles</a> · <a href="#sec-control-plane">§16 Plane Split</a> · <a href="#sec-25-distribution">§25 Distribution</a></td>
+      </tr>
+      <tr>
+        <td><strong>Researcher / thesis reader</strong></td>
+        <td><a href="#sec-2-overview">§2 Executive Overview</a></td>
+        <td><a href="#sec-3-definition">§3 Definition</a> · <a href="#sec-9-data">§14 ML Foundations</a> · <a href="#sec-10-routing">§15 Routing Authority</a> · <a href="#sec-15-changelog">§22 Changelog</a></td>
+      </tr>
+      <tr>
+        <td><strong>Service contributor</strong><br><span class="small muted">write code in this repo</span></td>
+        <td><a href="#sec-5-directory">§7 Service Directory</a></td>
+        <td><a href="#sec-6-deepdives">§8 Service Deep Dives</a> · <a href="#sec-interface-authority">§11 Contracts</a> · <a href="#sec-13-testing">§19 Testing</a></td>
+      </tr>
+      <tr>
+        <td><strong>AI agent / future prompting</strong></td>
+        <td><a href="#sec-25-distribution">§25 Distribution</a></td>
+        <td>The five integration sections (<a href="#sec-26-api-guide">§26</a>, <a href="#sec-27-sdk">§27</a>, <a href="#sec-28-operator-ui">§28</a>, <a href="#sec-29-webhooks">§29</a>, <a href="#sec-30-database">§30</a>) collectively contain every contract — no triangulation required.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 </section>
 
 <!-- ========================================================================== -->
