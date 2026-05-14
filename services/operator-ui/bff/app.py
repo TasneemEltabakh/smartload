@@ -187,13 +187,24 @@ def health():
     })
 
 
-# ── SPA fallback: serve index.html for any unknown path ───────────────────────
+# ── SPA fallback ──────────────────────────────────────────────────────────────
+# Flask auto-registers a static endpoint when static_folder is set, and that
+# endpoint returns 404 for paths that don't map to real files. To make the
+# React Router routes (/, /policy, /<anything>) survive page reloads + direct
+# URL access, we serve index.html on every 404 that isn't an /api/* call. The
+# 404 handler runs AFTER the static handler and AFTER all routed endpoints,
+# so real files still win and real /api/* 404s still surface.
 
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def serve_spa(path: str):
-    if path and os.path.isfile(os.path.join(WEB_DIST, path)):
-        return send_from_directory(WEB_DIST, path)
+@app.route("/")
+def serve_root():
+    return send_from_directory(WEB_DIST, "index.html")
+
+
+@app.errorhandler(404)
+def spa_fallback(_err):
+    # Real API misses stay as 404 (don't shadow them with a 200 + HTML body).
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "not found", "path": request.path}), 404
     index_path = os.path.join(WEB_DIST, "index.html")
     if os.path.isfile(index_path):
         return send_from_directory(WEB_DIST, "index.html")
@@ -201,7 +212,7 @@ def serve_spa(path: str):
         "service": SERVICE_NAME,
         "message": "Operator UI BFF up; web/ build not found",
         "web_dist": WEB_DIST,
-    })
+    }), 404
 
 
 if __name__ == "__main__":
