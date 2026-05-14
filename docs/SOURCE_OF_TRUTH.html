@@ -1425,16 +1425,16 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.2.0 &nbsp;·&nbsp;
-    <strong>Last updated:</strong> 2026-05-04 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">Sprint 2 Active — Phase 1A</span> &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.2 &nbsp;·&nbsp;
+    <strong>Last updated:</strong> 2026-05-14 &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">Sprint 3 — Vertical Slice #1 (Policy Management) shipped</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
     <strong>Supervisors:</strong> Dr. Tamer Ashour, Dr. Doaa Shawky
   </div>
   <p style="margin: 1em 0 0 0;">
-    SmartLoad is an AI-driven <strong>middleware</strong> that sits between client traffic and a pool of backend services. It combines classical load balancing with telemetry-driven decision intelligence — anomaly detection, workload forecasting, and reinforcement learning — to make adaptive routing and proactive autoscaling decisions while preserving deterministic safety fallbacks.
+    SmartLoad is <strong>middleware (and a candidate SaaS)</strong> for AI-driven load management. It sits between client traffic and a pool of backend services and combines classical load balancing with telemetry-driven decision intelligence — anomaly detection, workload forecasting, and reinforcement-learning routing — to make adaptive routing and proactive autoscaling decisions while preserving deterministic safety fallbacks. Customers run it on-prem (Docker Compose / Helm) or consume it via the managed control plane.
   </p>
   <div class="authority-banner">
     <div>
@@ -4060,7 +4060,11 @@ cursor.execute(ANOMALY_QUERY, ('60 seconds', 'load-balancer', ['request_latency_
     <tr><td><strong>12.4 Routing Decision Hierarchy</strong> <span class="badge badge-target">New</span></td><td><a href="#diag-controlloop2">§12 below</a></td><td><code>ControlLoopDiagram1.png</code> (was redundant)</td></tr>
     <tr><td><strong>12.5 Request Sequence</strong></td><td><a href="#diag-sequence">§12 below</a></td><td><code>SequenceDiagram.png</code></td></tr>
     <tr><td><strong>12.6 Deployment</strong></td><td><a href="#diag-deployment">§12 below</a></td><td><code>DeploymentDiagram.png</code></td></tr>
-    <tr><td><strong>12.7 Canonical Schema (3-table)</strong> <span class="badge badge-target">New</span></td><td><a href="#diag-schema">§12 below</a></td><td>(no legacy)</td></tr>
+    <tr><td><strong>12.7 Canonical Schema (3-table)</strong></td><td><a href="#diag-schema">§12 below</a></td><td>(no legacy)</td></tr>
+    <tr><td><strong>12.8 Multi-tenancy isolation</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-multitenant">§12 below</a></td><td>(no legacy)</td></tr>
+    <tr><td><strong>12.9 Webhook delivery pipeline</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-webhooks">§12 below</a></td><td>(no legacy)</td></tr>
+    <tr><td><strong>12.10 Helm / K8s topology</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-helm">§12 below</a></td><td>(no legacy; supersedes §12.6 for K8s)</td></tr>
+    <tr><td><strong>12.11 LB adapter pattern</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-lbadapter">§12 below</a></td><td>(no legacy)</td></tr>
     <tr><td><strong>16.1 Boundary Rule</strong></td><td><a href="#sec-control-plane">§16 Control Plane</a></td><td>(no legacy)</td></tr>
   </tbody>
 </table>
@@ -4116,9 +4120,12 @@ flowchart TB
         ASL["autoscaler :8085"]
         POL["policy :8086"]
         SDC["lb-sidecar"]
+        OUI["operator-ui :8090<br/>(BFF + web)"]
+        WHD["webhook-dispatcher<br/>(planned #130)"]
     end
 
     GRF["grafana :3000"]
+    CUS["Customer<br/>webhook URL"]
 
     Client --> NGINX --> BE
     NGINX -. "JSON access log<br/>(shared volume)" .-> SHP
@@ -4132,14 +4139,21 @@ flowchart TB
     POL --> RDS
     RDS --> ASL
     RDS --> SDC
+    RDS --> WHD
+    WHD -. HMAC-signed POST .-> CUS
     SDC ==> |"reload"| NGINX
     TDB --> GRF
+    OUI <==> POL
+    OUI <==> ASL
+    OUI --> GRF
 
     classDef data fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
     classDef telemetry fill:#ecfdf5,color:#0f172a,stroke:#047857;
     classDef ai fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef ctrl fill:#f5f3ff,color:#0f172a,stroke:#6d28d9;
     classDef bridge fill:#ecfdf5,color:#0f172a,stroke:#047857,stroke-width:2px;
+    classDef planned fill:#f3f4f6,color:#475569,stroke:#94a3b8,stroke-dasharray:4 2;
+    class WHD,CUS planned;
     class NGINX,BE,Client data
     class SHP,OTC,TLM,TDB,GRF telemetry
     class AND,FCT,RLE ai
@@ -4360,7 +4374,7 @@ sequenceDiagram
 </article>
 
 <article id="diag-deployment">
-<h3>Deployment</h3>
+<h3>Deployment <span class="badge badge-historical">Compose-only; see §12.10 for K8s/Helm</span></h3>
 <figure>
 <pre class="mermaid">
 flowchart LR
@@ -4377,6 +4391,7 @@ flowchart LR
         RLE["rl-engine :8084"]
         ASL["autoscaler :8085"]
         POL["policy :8086"]
+        OUI["operator-ui :8090"]
         SDC["lb-sidecar"]
     end
 
@@ -4451,6 +4466,229 @@ flowchart LR
     class Engines,SC,PM,GRF reader
 </pre>
   <figcaption><strong>Figure 12.7 — Canonical Schema.</strong> Three TimescaleDB hypertables plus the <code>metrics_1min</code> continuous aggregate. Each base table has exactly one authoritative writer service. The <code>metrics</code> table uses a <em>wide-narrow</em> shape — one row per metric reading rather than one column per metric — so adding new metric kinds does not require ALTER TABLE. <code>metrics_1min</code> is materialised every minute over the <code>[-1 h, -2 m]</code> window for cheap minute-resolution queries; engines that need sub-minute resolution still read raw <code>metrics</code>. All cross-service SQL access goes through the named query constants in <code>services/shared/queries.py</code>. Indexes: <code>(service, instance, time DESC)</code> and <code>(metric_name, time DESC)</code> on metrics; <code>(backend_id, time DESC)</code> on backend_health. The richer V1 6-table schema is preserved in §24 as a future-iteration draft.</figcaption>
+</figure>
+</article>
+
+<article id="diag-multitenant">
+<h3>Multi-tenancy isolation <span class="badge badge-target">Target — issue #129</span></h3>
+<figure>
+<pre class="mermaid">
+flowchart TB
+    subgraph Request["Request plane"]
+        API[/"/api/v1/policy<br/>X-API-Key: sl_xyz"/]
+        KEY[("api_keys<br/>key_id → tenant_id<br/>+ scopes")]
+        AUTHZ{"Auth middleware<br/>resolve tenant_id<br/>+ check scope"}
+        API --> AUTHZ
+        KEY -.lookup.-> AUTHZ
+    end
+
+    subgraph Storage["Storage plane (tenant-scoped writes)"]
+        PYAML[("config/tenants/&lt;tenant_id&gt;<br/>policy.yaml")]
+        PCH[("policy_changes<br/>tenant_id NOT NULL")]
+        MET[("metrics<br/>tenant_id NOT NULL")]
+        SCE[("scaling_events<br/>tenant_id NOT NULL")]
+    end
+
+    subgraph Bus["Redis pub/sub"]
+        CHA[("t:&lt;tenant_id&gt;:<br/>smartload.policy")]
+        CHB[("t:&lt;tenant_id&gt;:<br/>smartload.anomaly")]
+        CHC[("t:&lt;tenant_id&gt;:<br/>smartload.forecast")]
+    end
+
+    AUTHZ ==>|"writes scoped"| PYAML
+    AUTHZ ==>|"audit row"| PCH
+    AUTHZ ==>|"publish scoped"| CHA
+
+    SUB["Subscriber<br/>(per-tenant)"] -.filter on tenant_id.-> CHA
+    SUB -.filter.-> CHB
+    SUB -.filter.-> CHC
+
+    classDef tenant fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
+    classDef auth   fill:#fef3c7,color:#0f172a,stroke:#b45309;
+    classDef bus    fill:#f5f3ff,color:#0f172a,stroke:#7c3aed;
+    classDef store  fill:#ecfdf5,color:#0f172a,stroke:#047857;
+    class API,SUB tenant
+    class AUTHZ,KEY auth
+    class CHA,CHB,CHC bus
+    class PYAML,PCH,MET,SCE store
+</pre>
+  <figcaption><strong>Figure 12.8 — Multi-tenancy isolation (target).</strong> Tenant identity is resolved at the API edge from the bearer API key (#132), stamped onto every storage write, and embedded in every Redis channel suffix (<code>t:&lt;tenant_id&gt;:smartload.&lt;topic&gt;</code>). Subscribers filter on tenant_id, so a single shared subscriber on the SmartLoad ops side can serve every tenant without leaking events. Single-tenant deployments default to <code>tenant_id = "default"</code>. The plumbing is what issue #129 lands; until then the columns and channel suffixes exist as <em>forward-compatible no-ops</em> so the migration is mechanical.</figcaption>
+</figure>
+</article>
+
+<article id="diag-webhooks">
+<h3>Webhook delivery pipeline <span class="badge badge-target">Target — issue #130</span></h3>
+<figure>
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Engine as Producer<br/>(anomaly-detector)
+    participant Redis as Redis<br/>(smartload.anomaly)
+    participant Dispatcher as webhook-<br/>dispatcher
+    participant DB as webhooks table<br/>+ webhook_delivery_failures
+    participant Customer as Customer<br/>webhook URL
+
+    Engine->>Redis: PUBLISH AnomalyEvent envelope
+    Redis-->>Dispatcher: SUBSCRIBE delivers envelope
+    Dispatcher->>DB: SELECT webhooks WHERE event_type<br/>= 'anomaly' AND tenant_id = $1
+    DB-->>Dispatcher: rows (url, secret, scopes)
+    loop For each registered webhook
+        Dispatcher->>Dispatcher: Compute HMAC-SHA256<br/>X-SmartLoad-Signature
+        Dispatcher->>Customer: POST &lt;url&gt; (signed)
+        alt Success (2xx)
+            Customer-->>Dispatcher: 200 OK
+            Dispatcher->>DB: UPDATE last_delivery_at
+        else Failure (4xx/5xx/timeout)
+            Customer-->>Dispatcher: error
+            Dispatcher->>Dispatcher: Exponential backoff<br/>(up to 5 attempts ~10 min)
+            alt Final failure
+                Dispatcher->>DB: INSERT webhook_delivery_failures
+                Dispatcher->>Redis: emit dispatcher metric
+            end
+        end
+    end
+</pre>
+  <figcaption><strong>Figure 12.9 — Webhook delivery pipeline (target).</strong> Customers who can't subscribe to Redis (the universal middleware case) receive outbound HTTP POSTs from <code>webhook-dispatcher</code>. Each delivery is signed with HMAC-SHA256 keyed on the registered secret so customers can verify origin without trusting transport. Final-failure rows are queryable from the operator UI dead-letter view. Implementation tracked by issue #130; pairs with #129 (tenant scoping) and #132 (key issuance for webhook auth).</figcaption>
+</figure>
+</article>
+
+<article id="diag-helm">
+<h3>Helm / Kubernetes deployment topology <span class="badge badge-target">Target — issue #133</span></h3>
+<figure>
+<pre class="mermaid">
+flowchart TB
+    subgraph Ingress["Edge"]
+        ING["Ingress<br/>+ TLS"]
+    end
+
+    subgraph DataPlane["Data plane (Deployment)"]
+        LB["load-balancer<br/>(NGINX)"]
+        SHIPPER["lb-otel-shipper<br/>(sidecar)"]
+        BE["test-backend<br/>(Deployment, scaled by HPA)"]
+    end
+
+    subgraph ControlPlane["Control plane (Deployments)"]
+        PM["policy-manager"]
+        AS["autoscaler"]
+        TEL["telemetry"]
+        AD["anomaly-detector"]
+        FC["forecasting"]
+        RL["rl-engine"]
+        OUI["operator-ui<br/>(BFF + web)"]
+        WH["webhook-dispatcher"]
+    end
+
+    subgraph Stateful["Stateful (StatefulSet or external Service)"]
+        TS[("TimescaleDB")]
+        RDS[("Redis")]
+    end
+
+    subgraph Observability["Observability (Deployments)"]
+        OTC["otel-collector"]
+        PROM["Prometheus<br/>(or ServiceMonitor)"]
+        GRF["Grafana"]
+    end
+
+    ConfigMap["ConfigMap<br/>policy.yaml"]
+    Secret["Secret<br/>DB + API keys"]
+
+    ING --> LB
+    LB --> BE
+    LB -.access.log.-> SHIPPER
+    SHIPPER --> OTC
+    BE --> OTC
+    OTC --> TEL
+    TEL --> TS
+    PM <--> TS
+    PM <--> RDS
+    AS <--> RDS
+    AD <--> RDS
+    FC <--> RDS
+    RL <--> RDS
+    AS --> BE
+    OUI <--> PM
+    OUI <--> AS
+    WH <--> RDS
+    PROM --> OTC
+    GRF --> PROM
+    GRF --> TS
+
+    ConfigMap -.mount.-> PM
+    ConfigMap -.mount.-> AS
+    Secret -.mount.-> PM
+    Secret -.mount.-> WH
+
+    classDef edge   fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
+    classDef ctl    fill:#f5f3ff,color:#0f172a,stroke:#7c3aed;
+    classDef state  fill:#fef3c7,color:#0f172a,stroke:#b45309;
+    classDef obs    fill:#ecfdf5,color:#0f172a,stroke:#047857;
+    class ING,LB,SHIPPER,BE edge
+    class PM,AS,TEL,AD,FC,RL,OUI,WH ctl
+    class TS,RDS state
+    class OTC,PROM,GRF obs
+</pre>
+  <figcaption><strong>Figure 12.10 — Helm / Kubernetes deployment topology (target).</strong> The Helm chart at <code>infrastructure/helm/smartload/</code> deploys every service as a Kubernetes Deployment; TimescaleDB and Redis are StatefulSets in the default chart or external managed services via <code>values.yaml</code>. <code>policy.yaml</code> ships as a ConfigMap; DB password and API-key signing secret as Kubernetes Secrets. The Horizontal Pod Autoscaler scales <code>test-backend</code> as a mirror of what the SmartLoad autoscaler does in Compose mode — when both are present, HPA wins per K8s semantics. ServiceMonitor (Prometheus Operator) provisioned when detected. Figure 12.6 documents the Compose-equivalent topology; this figure supersedes it for K8s deployments.</figcaption>
+</figure>
+</article>
+
+<article id="diag-lbadapter">
+<h3>LB adapter pattern <span class="badge badge-target">Target — issue #136</span></h3>
+<figure>
+<pre class="mermaid">
+flowchart LR
+    subgraph Decision["Decision plane (NGINX-agnostic)"]
+        AD["anomaly-detector<br/>(exclude_backend)"]
+        RL["rl-engine<br/>(set_upstream_weights)"]
+        PM["policy-manager<br/>(safe_mode reset)"]
+    end
+
+    ABC["<b>LoadBalancerAdapter</b><br/>(ABC)<br/>set_upstream_weights()<br/>exclude_backend()<br/>include_backend()<br/>current_state()"]
+
+    subgraph Plugins["Plugin per folder (services/shared/lb_adapters/)"]
+        NGX["<b>nginx/</b><br/>nginx.conf rewrite<br/>+ nginx -s reload"]
+        ENV["envoy/<br/><i>NotImplementedError</i>"]
+        HAP["haproxy/<br/><i>NotImplementedError</i>"]
+        ALB["alb/<br/><i>NotImplementedError</i>"]
+    end
+
+    subgraph Backends["Backend topology (varies per adapter)"]
+        NGINX_BE["NGINX upstream<br/>(test-backend pool)"]
+        ENVOY_BE["Envoy clusters"]
+        HAP_BE["HAProxy backend"]
+        ALB_BE["AWS ALB target group"]
+    end
+
+    Conf["Conformance tests<br/>tests/conformance/lb_adapter/"]
+
+    AD ==> ABC
+    RL ==> ABC
+    PM ==> ABC
+
+    ABC --> NGX
+    ABC --> ENV
+    ABC --> HAP
+    ABC --> ALB
+
+    NGX --> NGINX_BE
+    ENV -. future .-> ENVOY_BE
+    HAP -. future .-> HAP_BE
+    ALB -. future .-> ALB_BE
+
+    Conf -. exercise contract .-> NGX
+    Conf -. exercise contract .-> ENV
+    Conf -. exercise contract .-> HAP
+    Conf -. exercise contract .-> ALB
+
+    classDef abc   fill:#fef3c7,color:#0f172a,stroke:#b45309,stroke-width:2px;
+    classDef wired fill:#ecfdf5,color:#0f172a,stroke:#047857;
+    classDef stub  fill:#f3f4f6,color:#475569,stroke:#94a3b8,stroke-dasharray:4 2;
+    classDef decision fill:#f5f3ff,color:#0f172a,stroke:#7c3aed;
+    class ABC abc
+    class NGX,NGINX_BE wired
+    class ENV,HAP,ALB,ENVOY_BE,HAP_BE,ALB_BE stub
+    class AD,RL,PM decision
+</pre>
+  <figcaption><strong>Figure 12.11 — Load-balancer adapter pattern (target).</strong> The decision plane (anomaly-detector, rl-engine, policy-manager) calls four methods on the <code>LoadBalancerAdapter</code> ABC; it never references NGINX directly. Only <code>nginx/</code> is wired in v1; <code>envoy/</code>, <code>haproxy/</code>, and <code>alb/</code> are real Python modules that raise <code>NotImplementedError</code> on construction so the imports are real, the conformance suite is real, and adding a new adapter is a folder-creation exercise rather than a refactor. Issue #136 lands the interface and refactors the in-flight T2.1 sidecar work to use it.</figcaption>
 </figure>
 </article>
 
@@ -5223,6 +5461,58 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.2 — 2026-05-14 — Middleware framing, plugin layout, Policy Management slice #1</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Product framing (§1–§3, §25)</strong></td>
+      <td>SmartLoad is positioned as <strong>middleware + candidate SaaS</strong>, not a thesis-bounded artefact. New <strong>§25 Distribution &amp; Operating Surfaces</strong> consolidates Compose, Helm, and managed SaaS shapes and the operator-vs-tenant trust split.</td>
+      <td>This SOT update</td>
+    </tr>
+    <tr>
+      <td><strong>Repo structure (§7)</strong></td>
+      <td>Added the <em>plugin-per-folder</em> pattern under <code>services/&lt;svc&gt;/engines/&lt;plugin&gt;/</code> (anomaly-detector, forecasting) and <code>policies/&lt;policy&gt;/</code> (rl-engine), and <code>services/shared/lb_adapters/&lt;adapter&gt;/</code>. New <code>clients/python/</code> SDK tree; <code>examples/scenarios/&lt;feature&gt;/</code>, <code>examples/deployments/</code>; <code>infrastructure/helm/smartload/</code>; <code>tests/e2e/&lt;feature&gt;/</code>, <code>tests/conformance/lb_adapter/</code>; <code>docs/features/</code>, <code>docs/architecture/</code>, <code>docs/openapi/smartload-v1.yaml</code>, <code>docs/redis-channels.md</code>.</td>
+      <td>Scaffolding session 2026-05-14</td>
+    </tr>
+    <tr>
+      <td><strong>Vertical Slice #1 — Policy Management</strong></td>
+      <td>First feature shipped end-to-end across every product surface: HTTP (<code>GET /api/v1/audit/policy</code> added), Redis (already covered), SDK (real <code>httpx</code> + <code>redis-py</code>), runnable scenario (<code>examples/scenarios/policy-management/policy_walk.py</code>), e2e tests (<code>tests/e2e/policy-management/test_policy_walk.py</code>), Operator UI (Policy page with diff preview + audit table). Every later feature follows this template; see <code>docs/features/policy-management.md</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Canonical contracts (§11)</strong></td>
+      <td><strong>OpenAPI 3.1 spec</strong> at <code>docs/openapi/smartload-v1.yaml</code> declared the canonical HTTP contract; §11 endpoint tables become a human summary. <strong>Redis channel registry</strong> at <code>docs/redis-channels.md</code> declared the canonical pub/sub catalog. Both have CI lint scripts (<code>scripts/lint-openapi.py</code>, <code>scripts/lint-redis-channels.py</code>) in permissive mode.</td>
+      <td>Issues #60, #128</td>
+    </tr>
+    <tr>
+      <td><strong>LB adapter pattern (§8.1)</strong></td>
+      <td>New <code>services/shared/lb_adapters/base.py</code> ABC + plugin folders (<code>nginx/</code> working; <code>envoy/</code>, <code>haproxy/</code>, <code>alb/</code> stubs raising <code>NotImplementedError</code>). Decision plane never speaks NGINX directly. Conformance tests at <code>tests/conformance/lb_adapter/</code>.</td>
+      <td>Issue #136</td>
+    </tr>
+    <tr>
+      <td><strong>Operator UI (§8.11)</strong></td>
+      <td>Status flipped from <em>deferred</em> to <em>scaffolded</em>; Policy page shipped in slice #1. BFF (Flask) on port 8090 aggregates <code>/health</code> across services, proxies <code>/api/ui/*</code> to upstream, serves Swagger UI at <code>/api/docs</code>. Web frontend in React + Vite. Multi-stage Dockerfile; <code>docker-compose.yml</code> entry added.</td>
+      <td>Issues #119, #120; slice #1</td>
+    </tr>
+    <tr>
+      <td><strong>New product-surface issues (filed, not yet implemented)</strong></td>
+      <td>#129 multi-tenancy, #130 webhook delivery, #131 embedded charts, #132 tenant API keys + RBAC, #133 Helm chart, #134 versioning + deprecation policy, #135 rate limiting + quotas, #136 LB adapter, #137 SDK middleware-integration example, #138 engine-wrapper integration, #139 lint-flip-to-strict, #140 e2e test migration.</td>
+      <td>Issues #129–#140</td>
+    </tr>
+    <tr>
+      <td><strong>CI structural lints (permissive)</strong></td>
+      <td>Three new scripts under <code>scripts/</code>: <code>lint-structure.py</code> (per-service README, plugin folders, e2e/feature/scenario alignment), <code>lint-redis-channels.py</code> (every <code>smartload.&lt;topic&gt;</code> in source must be in the registry), <code>lint-openapi.py</code> (every <code>/api/v1/*</code> route must be in the spec). All ship in permissive mode; flip to strict tracked by #139.</td>
+      <td>Scaffolding session 2026-05-14</td>
+    </tr>
+    <tr>
+      <td><strong>New diagrams (§12)</strong></td>
+      <td>Added §12.8 Multi-tenancy, §12.9 Webhook delivery, §12.10 Helm/K8s topology, §12.11 LB adapter pattern. §5.1 context diagram and §12.1 system diagram updated to include <code>operator-ui</code> and <code>webhook-dispatcher</code>.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.1 — 2026-05-05 — S2 integration baseline + CI hardening</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -5526,6 +5816,142 @@ docker compose logs -f anomaly-detector</code></pre>
   <li><span class="badge badge-confirm">Needs confirmation</span> — Adopt Service Contracts SLA targets (99.5% availability, HTTP 207) as canonical operational commitments?</li>
   <li><span class="badge badge-confirm">Needs confirmation</span> — Migrate to <code>.v1</code> envelopes once V1 schema is reviewed?</li>
 </ul>
+</section>
+
+<!-- ========================================================================== -->
+<!--             25. DISTRIBUTION & OPERATING SURFACES                           -->
+<!-- ========================================================================== -->
+<section id="sec-25-distribution">
+<h1>25. Distribution &amp; Operating Surfaces <span class="badge badge-canonical">Canonical</span></h1>
+
+<p>
+  This section is the single canonical statement of <strong>how SmartLoad is delivered, how customers integrate, and where the operator-vs-tenant trust boundary sits</strong>. Added 2026-05-14 after the product was explicitly reframed from a thesis-bounded artefact to <strong>middleware + candidate SaaS</strong>. Everything else in this SOT remains accurate for the engineering view; §25 is the product view that the README and presentations route into.
+</p>
+
+<h3>25.1 Three delivery shapes</h3>
+<table>
+  <thead><tr><th>Shape</th><th>Who runs it</th><th>How it ships</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>On-prem — Docker Compose</strong></td>
+      <td>Customer ops team</td>
+      <td><code>docker compose up</code> against the canonical <code>docker-compose.yml</code> at the repo root. Single-tenant.</td>
+      <td><span class="badge badge-implemented">Shipped today</span></td>
+    </tr>
+    <tr>
+      <td><strong>On-prem — Helm chart</strong></td>
+      <td>Customer ops team on Kubernetes</td>
+      <td><code>helm install smartload ./infrastructure/helm/smartload</code>. Single-tenant by default; multi-tenant by setting <code>tenancy.enabled=true</code> once #129 lands.</td>
+      <td><span class="badge badge-planned">Scaffolded, Chart.yaml/values.yaml present; templates pending issue #133</span></td>
+    </tr>
+    <tr>
+      <td><strong>Managed SaaS</strong></td>
+      <td>SmartLoad operations team</td>
+      <td>Same images, single shared control plane, per-tenant namespacing across DB, Redis, policy storage, API keys.</td>
+      <td><span class="badge badge-planned">Future; depends on #129 (multi-tenancy) and #132 (API keys + RBAC)</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>25.2 Customer integration surfaces</h3>
+<p>What an external system uses to plug into SmartLoad. Each surface has a canonical contract source; the SOT §11 endpoint tables become a human summary, not the contract.</p>
+<table>
+  <thead><tr><th>Surface</th><th>Canonical contract source</th><th>SDK / tooling</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>HTTP REST (<code>/api/v1/*</code>)</td>
+      <td><code>docs/openapi/smartload-v1.yaml</code> (OpenAPI 3.1)</td>
+      <td>Swagger UI at <code>http://&lt;operator-ui&gt;:8090/api/docs</code></td>
+      <td><span class="badge badge-implemented">v1 covers policy + audit + telemetry + health</span></td>
+    </tr>
+    <tr>
+      <td>Redis pub/sub (control bus)</td>
+      <td><code>docs/redis-channels.md</code></td>
+      <td>SDK <code>events.py</code> helpers (Python today; Node / Go future)</td>
+      <td><span class="badge badge-implemented">5 channels registered; SDK <code>subscribe_policy</code> shipped slice #1</span></td>
+    </tr>
+    <tr>
+      <td>Webhook delivery (outbound HTTP)</td>
+      <td><code>docs/openapi/smartload-v1.yaml</code> (planned §11.3)</td>
+      <td>HMAC-SHA256 signed; <code>X-SmartLoad-Signature</code> header; retry with exponential backoff</td>
+      <td><span class="badge badge-planned">Scaffolded; implementation tracked by #130</span></td>
+    </tr>
+    <tr>
+      <td>Python SDK</td>
+      <td><code>clients/python/smartload_client/</code></td>
+      <td><code>pip install smartload-client</code> (post-release); <code>pip install -e clients/python</code> for dev</td>
+      <td><span class="badge badge-implemented">Policy methods shipped slice #1; other surfaces pending #127, #137</span></td>
+    </tr>
+    <tr>
+      <td>Operator UI</td>
+      <td><code>services/operator-ui/</code> (BFF + web)</td>
+      <td>Reachable at <code>http://localhost:8090</code> against the live compose stack</td>
+      <td><span class="badge badge-implemented">Home + Policy page shipped slice #1; other pages pending #121–#125, #131</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>25.3 Operator vs Tenant — trust boundary</h3>
+<p>SmartLoad has two distinct human roles whose privileges, surfaces, and audit trails must not overlap.</p>
+<table>
+  <thead><tr><th>Role</th><th>Identity</th><th>What they can do</th><th>Authentication</th><th>Audit ledger</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Operator</strong></td>
+      <td>Human inside the customer's ops team (self-host) or the SmartLoad ops team (SaaS)</td>
+      <td>Edit policy, view audit, trigger scale/isolate (#123), view all engines</td>
+      <td>Operator UI login (#125)</td>
+      <td><code>policy_changes</code>, <code>scaling_events</code></td>
+    </tr>
+    <tr>
+      <td><strong>Tenant integrator</strong></td>
+      <td>Service principal (machine-to-machine)</td>
+      <td>Scoped subset: read policy + metrics, manage own webhooks, receive own events</td>
+      <td>API key (#132) with role scopes: <code>policy:read</code>, <code>policy:write</code>, <code>metrics:read</code>, <code>webhook:manage</code>, <code>scale:write</code>, <code>isolate:write</code>, <code>admin</code></td>
+      <td>Per-tenant API-key issue/revoke log (planned)</td>
+    </tr>
+  </tbody>
+</table>
+<p>The operator UI is <strong>not</strong> a tenant-facing surface. Tenants integrate via the SDK + webhooks + OpenAPI, not the UI. Per the SOT lock (commit <code>6f89a13</code>) the UI is a <em>transparency + override layer</em>, not an admin panel.</p>
+
+<h3>25.4 Multi-tenancy namespacing pattern</h3>
+<p>Single-tenant deployments map to <code>tenant_id = "default"</code>. Multi-tenant rollout (issue #129) plumbs <code>tenant_id</code> through every isolatable surface from day one — retrofitting later means breaking every SDK consumer.</p>
+<table>
+  <thead><tr><th>Surface</th><th>Namespacing rule</th></tr></thead>
+  <tbody>
+    <tr><td>TimescaleDB hypertables</td><td>Every row carries <code>tenant_id</code>; indexed on <code>(tenant_id, time)</code>. Migration plumbing tracked by #129.</td></tr>
+    <tr><td>Redis pub/sub channels</td><td><code>t:&lt;tenant_id&gt;:smartload.&lt;topic&gt;</code> for fan-out; unsuffixed <code>smartload.&lt;topic&gt;</code> remains as the single-tenant default during transition.</td></tr>
+    <tr><td>Policy storage</td><td><code>config/tenants/&lt;tenant_id&gt;/policy.yaml</code>. Today's <code>config/policy.yaml</code> is the <code>default</code> tenant.</td></tr>
+    <tr><td>HTTP requests</td><td><code>tenant_id</code> resolved from the API key (#132) or <code>X-SmartLoad-Tenant</code> header (admin path only).</td></tr>
+  </tbody>
+</table>
+
+<h3>25.5 LB adapter pattern — substitutability over coupling</h3>
+<p>SmartLoad is not "an NGINX product." The decision plane speaks to the <code>LoadBalancerAdapter</code> interface defined at <code>services/shared/lb_adapters/base.py</code>; only the <code>nginx/</code> adapter is wired in v1, but <code>envoy/</code>, <code>haproxy/</code>, and <code>alb/</code> folders exist as stubs so the import paths are real and the conformance contract (<code>tests/conformance/lb_adapter/</code>) is enforceable from day one.</p>
+
+<h3>25.6 Plugin-per-folder convention</h3>
+<p>Inside each AI service, replaceable strategies live one folder per plugin under <code>engines/</code> or <code>policies/</code>:</p>
+<ul>
+  <li><code>services/anomaly-detector/engines/threshold/</code>, <code>engines/isolation_forest/</code></li>
+  <li><code>services/forecasting/engines/moving_average/</code>, <code>engines/arima/</code></li>
+  <li><code>services/rl-engine/policies/random_shadow/</code>, <code>policies/ppo/</code></li>
+</ul>
+<p>Each plugin folder is self-contained: <code>engine.py</code> implementation, <code>README.md</code> describing rationale + fallback, and per-plugin <code>test_engine.py</code>. The factory in <code>engine_base.py</code> / <code>policy_base.py</code> selects the plugin from an env var; missing model files fall back to the baseline plugin without service restart. This is the design that lets Nada drop an <code>isolation_forest.pkl</code> into <code>models/</code> and have the service swap engines with no code change in the service shell. Issue #138 wires the engine factory into the service run loop.</p>
+
+<h3>25.7 CI structural lints — the discipline that keeps the surfaces honest</h3>
+<table>
+  <thead><tr><th>Script</th><th>Invariant</th></tr></thead>
+  <tbody>
+    <tr><td><code>scripts/lint-structure.py</code></td><td>Every <code>services/&lt;svc&gt;/</code> has README; every plugin folder has README + test; every <code>tests/e2e/&lt;feature&gt;/</code> has sibling <code>docs/features/&lt;feature&gt;.md</code> + <code>examples/scenarios/&lt;feature&gt;/</code>.</td></tr>
+    <tr><td><code>scripts/lint-redis-channels.py</code></td><td>Every <code>smartload.&lt;topic&gt;</code> string in <code>services/</code> appears in <code>docs/redis-channels.md</code>.</td></tr>
+    <tr><td><code>scripts/lint-openapi.py</code></td><td>Every <code>/api/v1/*</code> route in <code>services/</code> appears in <code>docs/openapi/smartload-v1.yaml</code>.</td></tr>
+  </tbody>
+</table>
+<p>All three ship in <strong>permissive mode</strong> (warnings, exit 0). Issue #139 flips them to <code>--strict</code> in CI once the team has settled the convention. Without this enforcement, the structural decisions documented here would drift in the same way Istio's <code>architecture/</code> docs drifted from its code — visible failure mode, deliberately avoided.</p>
+
+<h3>25.8 Feature manifest pattern</h3>
+<p>Every shippable feature has a single navigable home at <code>docs/features/&lt;feature&gt;.md</code> with a fixed shape: <em>what the slice delivers</em>, <em>customer surfaces</em>, <em>implementation pointers</em>, <em>status checklist</em>, <em>how to verify</em>, <em>non-goals</em>. The first manifest is <code>policy-management.md</code> (slice #1, 2026-05-14). Every feature follows this template; see <code>docs/features/README.md</code> for the canonical shape.</p>
+
 </section>
 
 <!-- ========================================================================== -->
