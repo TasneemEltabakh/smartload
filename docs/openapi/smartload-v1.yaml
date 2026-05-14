@@ -1,0 +1,320 @@
+openapi: 3.1.0
+info:
+  title: SmartLoad API
+  version: 1.0.0
+  summary: Operating-policy, telemetry, scaling, and audit API for the SmartLoad stack.
+  description: |
+    Canonical contract for the SmartLoad HTTP surface. Every shipped
+    `/api/v1/*` route appears here. Generated client SDKs (`smartload-client`
+    for Python) and the operator UI both consume this spec.
+
+    Stability: every breaking change requires a path-version bump
+    (`/api/v2`) and a `Sunset` header on the deprecated version. See SOT
+    §11.5 (versioning policy).
+servers:
+  - url: http://localhost:8086
+    description: policy-manager (local dev)
+  - url: http://localhost:8081
+    description: telemetry (local dev)
+
+tags:
+  - name: policy
+    description: Read / write / audit the operating policy
+  - name: telemetry
+    description: Read recent metric rows
+  - name: audit
+    description: Append-only audit surface for policy changes
+
+paths:
+  /health:
+    get:
+      summary: Uniform service health
+      description: |
+        Returns `{ status, redis, timescaledb }`. Returns HTTP 503 on degraded
+        per SOT §11; never returns multi-status 207.
+      responses:
+        '200':
+          description: All upstream dependencies healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthOk'
+        '503':
+          description: One or more dependencies degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthDegraded'
+
+  /api/v1/policy:
+    get:
+      summary: Read the current operating policy
+      tags: [policy]
+      responses:
+        '200':
+          description: Current policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Policy'
+        '404':
+          description: policy.yaml missing or empty
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Propose and commit a policy change
+      description: |
+        Idempotent. A POST whose body matches the on-disk state returns
+        `{"status": "no-op", ...}` with no audit row and no envelope publish.
+      tags: [policy]
+      parameters:
+        - in: header
+          name: X-Actor
+          required: false
+          schema: { type: string }
+          description: Logical actor name persisted in the audit row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyPatch'
+      responses:
+        '200':
+          description: Change accepted (or idempotent no-op)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyUpdateResponse'
+        '400':
+          description: Validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/audit/policy:
+    get:
+      summary: Recent policy-change audit rows
+      description: One row per changed field, newest first.
+      tags: [policy, audit]
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+      responses:
+        '200':
+          description: Recent audit rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PolicyAuditRow'
+        '400':
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Audit datastore unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/metrics:
+    get:
+      summary: Read recent metric rows
+      tags: [telemetry]
+      parameters:
+        - in: query
+          name: service
+          required: true
+          schema: { type: string }
+        - in: query
+          name: window
+          schema: { type: string, default: '5m' }
+      responses:
+        '200':
+          description: Metric rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MetricRow'
+
+  /api/v1/stats:
+    get:
+      summary: Telemetry service own-observability counters
+      tags: [telemetry]
+      responses:
+        '200':
+          description: Counters describing the telemetry ingest path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryStats'
+
+components:
+  schemas:
+    HealthOk:
+      type: object
+      required: [status, service, redis, timescaledb]
+      properties:
+        status:      { type: string, enum: [ok] }
+        service:     { type: string }
+        redis:       { type: boolean }
+        timescaledb: { type: boolean }
+        policy_loaded:  { type: boolean }
+        policy_version: { type: integer }
+    HealthDegraded:
+      type: object
+      required: [status, service, redis, timescaledb, errors]
+      properties:
+        status:      { type: string, enum: [degraded] }
+        service:     { type: string }
+        redis:       { type: boolean }
+        timescaledb: { type: boolean }
+        errors:
+          type: array
+          items: { type: string }
+
+    Policy:
+      type: object
+      description: |
+        Canonical operating policy snapshot. Reflects services/policy-manager
+        validation.py; the live validator is authoritative when the spec lags.
+      required:
+        - operating_mode
+        - safe_mode
+        - min_backends
+        - max_backends
+        - slo_p95_latency_ms
+        - anomaly_latency_multiplier
+        - per_instance_capacity_rps
+        - autoscaler_cooldown_seconds
+        - policy_version
+      properties:
+        operating_mode:
+          type: string
+          enum: [classical-only, hybrid, rl-only]
+        safe_mode:                       { type: boolean }
+        min_backends:                    { type: integer, minimum: 1 }
+        max_backends:                    { type: integer, minimum: 1 }
+        slo_p95_latency_ms:              { type: integer, minimum: 1 }
+        anomaly_latency_multiplier:      { type: number, minimum: 0 }
+        per_instance_capacity_rps:       { type: number, minimum: 0 }
+        autoscaler_cooldown_seconds:     { type: number, minimum: 0 }
+        policy_version:                  { type: integer, minimum: 0 }
+        anomaly_response:
+          type: string
+          enum: [auto-isolate, advisory]
+          default: auto-isolate
+        anomaly_recovery_window_seconds: { type: integer, minimum: 1 }
+        rl_exploration_rate:             { type: number, minimum: 0, maximum: 1 }
+        rl_confidence_threshold:         { type: number, minimum: 0, maximum: 1 }
+
+    PolicyPatch:
+      type: object
+      description: |
+        Any subset of Policy fields. Missing fields keep their current value.
+        `policy_version` is server-managed; clients should not send it.
+      additionalProperties: true
+      properties:
+        operating_mode:
+          type: string
+          enum: [classical-only, hybrid, rl-only]
+        safe_mode:                       { type: boolean }
+        min_backends:                    { type: integer }
+        max_backends:                    { type: integer }
+        slo_p95_latency_ms:              { type: integer }
+        anomaly_latency_multiplier:      { type: number }
+        per_instance_capacity_rps:       { type: number }
+        autoscaler_cooldown_seconds:     { type: number }
+        anomaly_response:
+          type: string
+          enum: [auto-isolate, advisory]
+        anomaly_recovery_window_seconds: { type: integer }
+        rl_exploration_rate:             { type: number }
+        rl_confidence_threshold:         { type: number }
+
+    PolicyUpdateResponse:
+      type: object
+      required: [status, policy, changed_fields, policy_version]
+      properties:
+        status:
+          type: string
+          enum: [updated, no-op]
+        policy:
+          $ref: '#/components/schemas/Policy'
+        changed_fields:
+          type: array
+          items: { type: string }
+        policy_version:
+          type: integer
+        event_id:
+          type: [string, "null"]
+          description: |
+            Envelope event_id published on smartload.policy. Null when the
+            publish was skipped (best-effort path).
+
+    PolicyAuditRow:
+      type: object
+      required: [time, policy_version, field, new_value, actor]
+      properties:
+        time:           { type: string, format: date-time }
+        policy_version: { type: integer }
+        field:          { type: string }
+        old_value:
+          description: Previous value (JSON-decoded). Null on first write of the field.
+        new_value:
+          description: New value (JSON-decoded).
+        actor:
+          type: string
+
+    MetricRow:
+      type: object
+      properties:
+        time:        { type: string, format: date-time }
+        service:     { type: string }
+        instance:    { type: string }
+        metric_name: { type: string }
+        value:       { type: number }
+
+    TelemetryStats:
+      type: object
+      required: [service, rows_written, batches_written, rows_dropped_db, rows_dropped_shape]
+      properties:
+        service:            { type: string }
+        rows_written:       { type: integer }
+        batches_written:    { type: integer }
+        rows_dropped_db:    { type: integer }
+        rows_dropped_shape: { type: integer }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:   { type: string }
+        field:
+          type: [string, "null"]
+          description: |
+            Names the offending field when the server can pinpoint it
+            (validation errors). Null otherwise.
+
+# Out of v1.0.0 (filed but not yet specified):
+#   POST /api/v1/scale       (#123)
+#   POST /api/v1/isolate     (#123)
+#   POST /api/v1/webhooks    (#130)
+#   GET  /api/v1/webhooks    (#130)
+#   DELETE /api/v1/webhooks/{id}  (#130)
+#   POST /api/v1/api-keys    (#132)
