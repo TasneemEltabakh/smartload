@@ -310,6 +310,72 @@ def get_policy():
     return jsonify(policy)
 
 
+_AUDIT_QUERY = """
+SELECT time, policy_version, field, old_value, new_value, actor
+FROM policy_changes
+ORDER BY time DESC
+LIMIT %s;
+"""
+
+_AUDIT_LIMIT_DEFAULT = 50
+_AUDIT_LIMIT_MAX     = 1000
+
+
+@app.route("/api/v1/audit/policy", methods=["GET"])
+def get_audit_policy():
+    """Return recent policy_changes rows, newest first.
+
+    Read-only. The audit table is observability, never a write surface
+    from this endpoint.
+
+      ?limit=N  — bounded by _AUDIT_LIMIT_MAX (1000). Defaults to 50.
+
+    old_value / new_value are stored as JSON text in the hypertable
+    (json.dumps at write time) and are JSON-decoded here so callers receive
+    native JSON values rather than escaped strings.
+    """
+    try:
+        limit = int(request.args.get("limit", _AUDIT_LIMIT_DEFAULT))
+    except (TypeError, ValueError):
+        return jsonify({"error": "limit must be an integer", "field": "limit"}), 400
+    if limit <= 0:
+        return jsonify({"error": "limit must be > 0", "field": "limit"}), 400
+    limit = min(limit, _AUDIT_LIMIT_MAX)
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+    except Exception as exc:
+        log.exception("audit DB connection failed")
+        return jsonify({"error": f"audit unavailable: {exc}"}), 503
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(_AUDIT_QUERY, (limit,))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    def _maybe_json(raw):
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+
+    return jsonify([
+        {
+            "time":           ts.isoformat() if ts is not None else None,
+            "policy_version": policy_version,
+            "field":          field_name,
+            "old_value":      _maybe_json(old),
+            "new_value":      _maybe_json(new),
+            "actor":          actor,
+        }
+        for (ts, policy_version, field_name, old, new, actor) in rows
+    ])
+
+
 @app.route("/api/v1/policy", methods=["POST"])
 def update_policy():
     """Update one or more policy fields atomically.

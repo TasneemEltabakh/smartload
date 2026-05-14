@@ -257,6 +257,64 @@ class TestPolicyUpdateValidation:
         assert resp.json()["field"] == "operating_mode"
 
 
+class TestPolicyAuditEndpoint:
+
+    def test_audit_returns_recent_change(self, db_conn, policy_backup):
+        """A POST that changes a field should be visible via
+        GET /api/v1/audit/policy on the next read."""
+        # Trigger a change with a distinctive actor so we can find it in the rows.
+        new_max = 9
+        resp = requests.post(
+            f"{POLICY_MGR_URL}/api/v1/policy",
+            json={"max_backends": new_max},
+            headers={"X-Actor": "pytest-audit"},
+            timeout=5,
+        )
+        assert resp.status_code == 200, resp.text
+
+        # Brief settle to let the audit write complete (best-effort path).
+        time.sleep(0.3)
+
+        audit_resp = requests.get(
+            f"{POLICY_MGR_URL}/api/v1/audit/policy",
+            params={"limit": 20},
+            timeout=5,
+        )
+        assert audit_resp.status_code == 200, audit_resp.text
+        rows = audit_resp.json()
+        assert isinstance(rows, list)
+        # Find our row.
+        matching = [
+            r for r in rows
+            if r.get("field") == "max_backends"
+            and r.get("new_value") == new_max
+            and r.get("actor") == "pytest-audit"
+        ]
+        assert matching, f"audit row for max_backends=new_max actor=pytest-audit not found in {rows[:5]}"
+        row = matching[0]
+        # Every row must carry the canonical columns.
+        for key in ("time", "policy_version", "field", "old_value", "new_value", "actor"):
+            assert key in row
+
+    def test_audit_limit_caps_results(self, policy_backup):
+        """?limit=N must return at most N rows, and a non-positive limit is 400."""
+        resp = requests.get(
+            f"{POLICY_MGR_URL}/api/v1/audit/policy",
+            params={"limit": 1},
+            timeout=5,
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()) <= 1
+
+        bad = requests.get(
+            f"{POLICY_MGR_URL}/api/v1/audit/policy",
+            params={"limit": 0},
+            timeout=5,
+        )
+        assert bad.status_code == 400, bad.text
+        assert bad.json().get("field") == "limit"
+
+
 class TestPolicyUpdateIdempotency:
 
     def test_repeated_identical_post_is_noop(self, db_conn, policy_backup):
