@@ -318,6 +318,38 @@ services:
       - smartload-net
     restart: unless-stopped
 
+  # ── Operator UI (Slice #1) ──────────────────────────────────────────────────
+  # Browser-facing control surface. Serves the React frontend at / and proxies
+  # /api/ui/* to the upstream SmartLoad services. Mounts the canonical OpenAPI
+  # spec read-only so /api/docs renders Swagger UI without rebuilding the image.
+  operator-ui:
+    build:
+      context: ./services/operator-ui
+    ports:
+      - "8090:8090"
+    environment:
+      PORT: "8090"
+      SERVICE_NAME: operator-ui
+      POLICY_MANAGER_URL:   http://policy-manager:8086
+      AUTOSCALER_URL:       http://autoscaler:8085
+      TELEMETRY_URL:        http://telemetry:8081
+      ANOMALY_DETECTOR_URL: http://anomaly-detector:8082
+      FORECASTING_URL:      http://forecasting:8083
+      RL_ENGINE_URL:        http://rl-engine:8084
+      LOAD_BALANCER_URL:    http://load-balancer:80
+    volumes:
+      - ./docs/openapi:/app/openapi:ro
+    depends_on:
+      - policy-manager
+      - autoscaler
+      - telemetry
+      - anomaly-detector
+      - forecasting
+      - rl-engine
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
 volumes:
   timescaledb-data:
   nginx-logs:
