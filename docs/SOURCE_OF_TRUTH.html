@@ -6904,6 +6904,229 @@ export function verifySmartLoadSignature(rawBody, header, secret) {
 </section>
 
 <!-- ========================================================================== -->
+<!--             30. DATABASE DESIGN CONSOLIDATION                               -->
+<!-- ========================================================================== -->
+<section id="sec-30-database">
+<h1>30. Database Design Consolidation <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>Everything you need to know about SmartLoad's persistence layer in one section. The actual schema authority is <a href="#sec-storage-authority">§10</a>; the data ownership rules are in <a href="#sec-data-ownership">§9</a>; the canonical query constants live in <code>services/shared/queries.py</code>; the visual reference is <a href="#diag-schema">Figure 12.7</a>. This section ties all of those together — table catalog, indexes, retention, query patterns, multi-tenancy plan, migration story, backup. The reader should not have to triangulate four other sections to answer a database question.</p>
+</div>
+
+<h3>30.1 Storage layer at a glance</h3>
+<table>
+  <thead><tr><th>Store</th><th>Role</th><th>Source of truth</th></tr></thead>
+  <tbody>
+    <tr><td><strong>TimescaleDB</strong> (PostgreSQL 16 + TimescaleDB extension)</td><td>Durable time-series + audit storage</td><td><code>infrastructure/timescaledb/init.sql</code></td></tr>
+    <tr><td><strong>Redis</strong></td><td>Control bus (pub/sub only — not a data store). LRU cache config disables persistence intentionally.</td><td><code>infrastructure/redis/redis.conf</code> · <a href="#mod-control-bus">§8.10</a></td></tr>
+    <tr><td><strong>Filesystem</strong></td><td><code>config/policy.yaml</code> (operating policy, mounted into services that read it)</td><td>policy-manager owns writes via <code>POST /api/v1/policy</code></td></tr>
+  </tbody>
+</table>
+<p>Nothing else is durable. Service container disks are ephemeral; the only state that survives a <code>docker compose down</code> is the <code>timescaledb-data</code> named volume + <code>config/policy.yaml</code> on the host.</p>
+
+<h3>30.2 Canonical table catalog (shipped + planned)</h3>
+
+<h4>Shipped — the canonical three</h4>
+<table>
+  <thead><tr><th>Table</th><th>Owner (writer)</th><th>Readers</th><th>Hypertable?</th></tr></thead>
+  <tbody>
+    <tr><td><code>metrics</code></td><td>telemetry</td><td>anomaly-detector, forecasting, rl-engine, autoscaler (reactive fallback), grafana</td><td>Yes — <code>time</code>, default chunk interval</td></tr>
+    <tr><td><code>backend_health</code></td><td>anomaly-detector</td><td>lb-otel-shipper / future T2.1 sidecar, rl-engine</td><td>Yes — <code>time</code></td></tr>
+    <tr><td><code>scaling_events</code></td><td>autoscaler</td><td>policy-manager (audit), operator-ui (planned dead-letter), grafana</td><td>Yes — <code>time</code></td></tr>
+    <tr><td><code>policy_changes</code></td><td>policy-manager</td><td>policy-manager <code>GET /api/v1/audit/policy</code>, operator-ui audit page</td><td>Yes — <code>time</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Planned tables</h4>
+<table>
+  <thead><tr><th>Table</th><th>Tracking</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>tenants</code></td><td>#129</td><td>Tenant catalog. <code>{tenant_id, name, created_at, plan, status}</code></td></tr>
+    <tr><td><code>api_keys</code></td><td>#132</td><td><code>{tenant_id, key_id, hashed_secret, name, scopes[], created_at, last_used_at, revoked_at}</code></td></tr>
+    <tr><td><code>webhooks</code></td><td>#130</td><td><code>{tenant_id, id, url, hashed_secret, events[], description, created_at, last_delivery_at, status}</code></td></tr>
+    <tr><td><code>webhook_delivery_failures</code></td><td>#130</td><td>Hypertable on <code>time</code>. <code>{tenant_id, webhook_id, event_id, attempt, status_code, error, time}</code></td></tr>
+    <tr><td><code>tenant_quotas</code></td><td>#135</td><td>Per-tenant rate-limit overrides keyed by scope</td></tr>
+  </tbody>
+</table>
+
+<h3>30.3 Shipped schema (full DDL reference)</h3>
+
+<h4><code>metrics</code> — wide-narrow telemetry rows</h4>
+<pre><code>CREATE TABLE metrics (
+    time         TIMESTAMPTZ      NOT NULL,
+    service      TEXT             NOT NULL,
+    instance     TEXT             NOT NULL,
+    metric_name  TEXT             NOT NULL,
+    value        DOUBLE PRECISION NOT NULL
+);
+SELECT create_hypertable('metrics', 'time');
+
+CREATE INDEX metrics_service_instance_time ON metrics (service, instance, time DESC);
+CREATE INDEX metrics_metric_name_time       ON metrics (metric_name, time DESC);
+
+-- Continuous aggregate — minute-resolution roll-up for cheap dashboard queries.
+-- Engines that need sub-minute resolution still read raw `metrics`.
+CREATE MATERIALIZED VIEW metrics_1min
+WITH (timescaledb.continuous, timescaledb.materialized_only = true) AS
+  SELECT
+    time_bucket('1 minute', time) AS bucket,
+    service, instance, metric_name,
+    AVG(value) AS avg_value,
+    MAX(value) AS max_value,
+    MIN(value) AS min_value,
+    SUM(value) AS sum_value,
+    COUNT(*)   AS sample_count
+  FROM metrics
+  GROUP BY bucket, service, instance, metric_name;
+
+SELECT add_continuous_aggregate_policy('metrics_1min',
+    start_offset      =&gt; INTERVAL '1 hour',
+    end_offset        =&gt; INTERVAL '2 minutes',
+    schedule_interval =&gt; INTERVAL '1 minute');
+
+SELECT add_retention_policy('metrics', INTERVAL '7 days');</code></pre>
+<p><strong>Why wide-narrow</strong>: one row per metric reading instead of one column per metric. Adding a new metric kind never requires <code>ALTER TABLE</code>. Cost: queries that fetch many metric types do their own pivoting (see <code>RL_STATE_QUERY</code> in <code>queries.py</code>). Accepted trade-off for forward-compatibility.</p>
+<p><strong>Why no PERCENTILE_CONT in the CAGG</strong>: percentile computation inside continuous aggregates rejects refreshes — engines that need P95 read raw <code>metrics</code> directly. The CAGG carries first-moment stats only. Documented in <code>infrastructure/timescaledb/init.sql</code>.</p>
+
+<h4><code>backend_health</code> — anomaly-detector health flags</h4>
+<pre><code>CREATE TABLE backend_health (
+    time        TIMESTAMPTZ      NOT NULL,
+    backend_id  TEXT             NOT NULL,
+    status      TEXT             NOT NULL,   -- "healthy" | "degraded" | "unhealthy"
+    score       DOUBLE PRECISION NOT NULL    -- anomaly score; higher = worse
+);
+SELECT create_hypertable('backend_health', 'time');
+
+CREATE INDEX backend_health_backend_id_time ON backend_health (backend_id, time DESC);
+
+SELECT add_retention_policy('backend_health', INTERVAL '30 days');</code></pre>
+<p>Latest health per backend is read via the <code>SELECT DISTINCT ON</code> pattern (see <code>BACKEND_HEALTH_QUERY</code> in <code>queries.py</code>).</p>
+
+<h4><code>scaling_events</code> — autoscaler audit + operator UI feed</h4>
+<pre><code>CREATE TABLE scaling_events (
+    time           TIMESTAMPTZ NOT NULL,
+    action         TEXT        NOT NULL,   -- "scale_out" | "scale_in"
+    instance_count INT         NOT NULL,   -- resulting backend count
+    reason         TEXT        NOT NULL    -- human-readable rationale
+);
+SELECT create_hypertable('scaling_events', 'time');
+
+SELECT add_retention_policy('scaling_events', INTERVAL '90 days');</code></pre>
+
+<h4><code>policy_changes</code> — policy-manager audit</h4>
+<pre><code>CREATE TABLE policy_changes (
+    time           TIMESTAMPTZ NOT NULL,
+    policy_version INT         NOT NULL,
+    field          TEXT        NOT NULL,    -- the changed field's name
+    old_value      TEXT,                    -- JSON-encoded previous value (NULL on first write)
+    new_value      TEXT        NOT NULL,    -- JSON-encoded new value
+    actor          TEXT        NOT NULL     -- from X-Actor header (default "anonymous")
+);
+SELECT create_hypertable('policy_changes', 'time');</code></pre>
+<p>One row per <em>changed field</em> per accepted POST. The audit endpoint (<a href="#sec-26-api-guide">§26</a> §26.4) JSON-decodes <code>old_value</code> / <code>new_value</code> before serving so callers receive native values.</p>
+
+<h3>30.4 Retention policies — summary</h3>
+<table>
+  <thead><tr><th>Hypertable</th><th>Retention window</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td><code>metrics</code></td><td>7 days</td><td>High volume (per-request rows). One week is enough for engine training cycles + Grafana dashboards.</td></tr>
+    <tr><td><code>backend_health</code></td><td>30 days</td><td>Lower volume (per-poll cycle, ~12/min per backend). 30 days covers SLO trend analysis.</td></tr>
+    <tr><td><code>scaling_events</code></td><td>90 days</td><td>Event-driven (only on action). 90 days for incident retrospectives.</td></tr>
+    <tr><td><code>policy_changes</code></td><td>(no policy — append only)</td><td>One row per changed field per POST; growth is bounded by operator activity. Auto-retention not enforced; archival left to deployer.</td></tr>
+    <tr><td><code>metrics_1min</code> CAGG</td><td>(no policy)</td><td>Aggregate is much smaller than raw <code>metrics</code>; no need to drop.</td></tr>
+  </tbody>
+</table>
+
+<h3>30.5 Index strategy</h3>
+<table>
+  <thead><tr><th>Index</th><th>Supports query</th></tr></thead>
+  <tbody>
+    <tr><td><code>metrics (service, instance, time DESC)</code></td><td><code>ANOMALY_QUERY</code> filtering on service + instance over a window</td></tr>
+    <tr><td><code>metrics (metric_name, time DESC)</code></td><td><code>FORECAST_QUERY</code> and <code>OBSERVED_RPS_QUERY</code> filtering on metric_name</td></tr>
+    <tr><td><code>backend_health (backend_id, time DESC)</code></td><td>Latest-status-per-backend via <code>DISTINCT ON</code></td></tr>
+    <tr><td>Default time index on every hypertable</td><td>Bounded window scans</td></tr>
+  </tbody>
+</table>
+
+<h3>30.6 Query catalog (canonical SQL)</h3>
+<p>Every cross-service SQL access goes through <code>services/shared/queries.py</code>. No inline SQL in service code. Bind parameters only — no string interpolation, including intervals.</p>
+<table>
+  <thead><tr><th>Constant</th><th>Caller</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>ANOMALY_QUERY</code></td><td>anomaly-detector</td><td>Per-(instance, metric_name) avg / max / stddev over a window</td></tr>
+    <tr><td><code>FORECAST_QUERY</code></td><td>forecasting</td><td>Minute-bucketed request_rate over a window</td></tr>
+    <tr><td><code>RL_STATE_QUERY</code></td><td>rl-engine</td><td>Per-instance latency / request_count / error_rate snapshot</td></tr>
+    <tr><td><code>BACKEND_HEALTH_QUERY</code></td><td>rl-engine, LB sidecar</td><td>Latest health per backend</td></tr>
+    <tr><td><code>METRICS_INSERT</code> / <code>METRICS_BATCH_INSERT</code></td><td>telemetry</td><td>Single + batch row insert</td></tr>
+    <tr><td><code>BACKEND_HEALTH_INSERT</code></td><td>anomaly-detector</td><td>Health-flag write</td></tr>
+    <tr><td><code>SCALING_EVENT_INSERT</code></td><td>autoscaler</td><td>Scale-action write</td></tr>
+    <tr><td><code>POLICY_CHANGE_INSERT</code></td><td>policy-manager</td><td>One row per changed field per POST</td></tr>
+    <tr><td><code>OBSERVED_RPS_QUERY</code></td><td>autoscaler (reactive fallback)</td><td>Single-number RPS when forecast stream is stale</td></tr>
+    <tr><td><code>TABLE_EXISTS_QUERY</code> + <code>REQUIRED_TABLES</code></td><td>integration tests</td><td>Smoke check that init.sql ran</td></tr>
+  </tbody>
+</table>
+
+<h3>30.7 Multi-tenancy plan <span class="badge badge-planned">Issue #129</span></h3>
+<p>Each hypertable gets a <code>tenant_id TEXT NOT NULL</code> column and a composite index <code>(tenant_id, time DESC)</code>. Indexes used by existing queries get rebuilt as <code>(tenant_id, &lt;original columns&gt;)</code>. Writers stamp <code>tenant_id</code> at insert time; readers scope every SELECT.</p>
+<table>
+  <thead><tr><th>Phase</th><th>What lands</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Phase 1 — schema only</td>
+      <td>Add <code>tenant_id</code> column (NULLABLE for one release cycle, defaulting to <code>'default'</code>). Backfill existing rows. Switch index definitions to composite. Zero query changes.</td>
+    </tr>
+    <tr>
+      <td>Phase 2 — writers</td>
+      <td>Every service includes <code>tenant_id</code> in every INSERT. Today's single-tenant writers default to <code>'default'</code>.</td>
+    </tr>
+    <tr>
+      <td>Phase 3 — readers + NOT NULL</td>
+      <td>Every SELECT includes a <code>tenant_id = $X</code> predicate. Column flipped to <code>NOT NULL</code>. Backfill is complete; legacy NULL rows are gone.</td>
+    </tr>
+    <tr>
+      <td>Phase 4 — tenants + api_keys + webhooks</td>
+      <td>New tables (§30.2 planned) land. API auth middleware resolves <code>tenant_id</code> from the API key (#132) and stamps it on every downstream call.</td>
+    </tr>
+  </tbody>
+</table>
+<p>Rollout sequencing avoids any moment where the database is in a half-applied state. Each phase is independently revertable.</p>
+
+<h3>30.8 Migration strategy</h3>
+<ul>
+  <li><strong>Source of truth</strong>: <code>infrastructure/timescaledb/init.sql</code> contains the full canonical DDL applied on first container start. Subsequent schema evolutions live as numbered scripts under <code>infrastructure/timescaledb/migrations/&lt;N&gt;__&lt;description&gt;.sql</code> (planned — <code>migrations/</code> folder not yet created; first migration arrives with #129).</li>
+  <li><strong>Idempotency</strong>: every migration is <code>CREATE … IF NOT EXISTS</code> + <code>ALTER TABLE … IF NOT EXISTS</code> compatible. Re-running a migration on a partially-applied database completes the operation rather than failing.</li>
+  <li><strong>Application strategy</strong>: services apply pending migrations on startup (planned). For Helm deploys, a Kubernetes Job runs migrations before the rolling update of dependent services.</li>
+  <li><strong>Rollback</strong>: every migration ships with a paired <code>migrations/&lt;N&gt;__&lt;description&gt;_down.sql</code>. Not all migrations are reversible — destructive operations are flagged in the up script's comment header.</li>
+  <li><strong>Policy schema versioning</strong>: orthogonal to DB migrations. Tracked by <code>schema_version</code> in <code>policy.yaml</code> (#134). The DB doesn't enforce policy schema — policy-manager does.</li>
+</ul>
+
+<h3>30.9 Backup and restore</h3>
+<p>Self-host deployers are responsible for backup; SmartLoad does not bundle a backup orchestrator. Recommended baseline (planned — not yet enforced):</p>
+<ul>
+  <li><strong>Compose</strong>: nightly <code>pg_dump</code> against the <code>smartloaddb</code> database. The <code>timescaledb-data</code> named volume is the live store.</li>
+  <li><strong>Kubernetes</strong>: use the TimescaleDB Operator's continuous WAL archiving + scheduled snapshots; ship the Helm chart with a sample <code>CronJob</code> in <code>infrastructure/helm/smartload/templates/backup.yaml</code> (planned).</li>
+  <li><strong>Restore drill</strong>: documented in <code>SDP/runbooks/restore-from-snapshot.md</code> (planned).</li>
+</ul>
+<p>Audit ledgers (<code>policy_changes</code>, <code>scaling_events</code>) deserve special attention: losing them loses the "who changed what" story. For SaaS, these tables are replicated to an immutable archive.</p>
+
+<h3>30.10 Cross-references</h3>
+<table>
+  <thead><tr><th>Need</th><th>Section</th></tr></thead>
+  <tbody>
+    <tr><td>Data-ownership rules and producer / consumer matrix</td><td><a href="#sec-data-ownership">§9</a></td></tr>
+    <tr><td>Authoritative table definitions and storage rules</td><td><a href="#sec-storage-authority">§10</a></td></tr>
+    <tr><td>Schema diagram (Mermaid)</td><td><a href="#diag-schema">Figure 12.7</a></td></tr>
+    <tr><td>Metrics DB module description</td><td><a href="#mod-metrics-db">§8.4</a></td></tr>
+    <tr><td>Policy manager (writer for <code>policy_changes</code>)</td><td><a href="#mod-policy">§8.9</a></td></tr>
+    <tr><td>Multi-tenancy diagram</td><td><a href="#diag-multitenant">Figure 12.8</a></td></tr>
+    <tr><td>Storage choices for Redis</td><td><a href="#mod-control-bus">§8.10</a></td></tr>
+  </tbody>
+</table>
+
+</section>
+
+<!-- ========================================================================== -->
 <!--                  A. MERGE REPORT                                            -->
 <!-- ========================================================================== -->
 <section id="sec-merge-report">
