@@ -34,14 +34,14 @@ import numpy as np
 import pandas as pd
 
 warnings.filterwarnings("ignore")
-import logging
+import logging  # noqa: E402
 logging.getLogger("prophet").setLevel(logging.WARNING)
 logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
 logging.getLogger("statsmodels").setLevel(logging.WARNING)
 
 _HERE = Path(__file__).parent
 sys.path.insert(0, str(_HERE))
-from preprocess import load_alibaba, load_alibaba_with_exog
+from preprocess import load_alibaba, load_alibaba_with_exog  # noqa: E402
 
 ARIMA_MODEL_OUT   = _HERE / "models" / "arima_model.pkl"
 ARIMAX_MODEL_OUT  = _HERE / "models" / "arimax_model.pkl"
@@ -387,10 +387,10 @@ def train_arimax(data_dir: str) -> None:
     n_train = int(n * 0.70)
     n_val   = int(n * 0.85)
 
-    y_train    = y[:n_train];      exog_train    = exog[:n_train]
-    y_val      = y[n_train:n_val]; exog_val      = exog[n_train:n_val]
-    y_test     = y[n_val:];        exog_test     = exog[n_val:]
-    y_trainval = y[:n_val];        exog_trainval = exog[:n_val]
+    y_train    = y[:n_train];  exog_train    = exog[:n_train]  # noqa: E702
+    y_val      = y[n_train:n_val]
+    y_test     = y[n_val:];    exog_test     = exog[n_val:]    # noqa: E702
+    y_trainval = y[:n_val];    exog_trainval = exog[:n_val]    # noqa: E702
 
     print(f"\n[train] split — train: {n_train:,}  val: {len(y_val):,}  "
           f"test: {len(y_test):,}  exog_cols: {exog_cols}")

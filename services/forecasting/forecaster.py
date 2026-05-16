@@ -30,7 +30,7 @@ logging.getLogger("statsmodels").setLevel(logging.WARNING)
 logging.getLogger("prophet").setLevel(logging.WARNING)
 logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
 
-from shared.contracts import ForecastResult
+from shared.contracts import ForecastResult  # noqa: E402
 
 _ARIMAX_PATH  = Path(__file__).parent / "models" / "arimax_model.pkl"
 _ARIMA_PATH   = Path(__file__).parent / "models" / "arima_model.pkl"
