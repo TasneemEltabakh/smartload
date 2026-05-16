@@ -5,3 +5,8 @@ redis==5.0.4
 # Required for the unit-tests job to import services/telemetry/app.py
 # (parser tests live in test_telemetry_parser.py and load the module).
 flask==3.0.3
+# Required by tests/integration/test_autoscaler.py to read the live
+# test-backend container count via the Docker socket — the autoscaler's
+# /health doesn't expose it, and scaling_events is empty at test start.
+docker==7.1.0
+PyYAML==6.0.2

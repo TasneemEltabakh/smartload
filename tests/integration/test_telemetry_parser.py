@@ -111,6 +111,48 @@ class TestParseOTLP:
         rows = telemetry_app.parse_otlp_to_rows(body)
         assert rows[0][2] == "backend_dp"
 
+    def test_datapoint_instance_overrides_resource_instance(self):
+        # This is the contract the lb-otel-shipper relies on: it sets the
+        # resource service.instance.id to its OWN hostname (so the shipper
+        # is identifiable for debugging) but stamps the actual upstream
+        # backend on each datapoint as the `instance` attribute. The parser
+        # must prefer the datapoint attribute so the metrics.instance column
+        # carries the per-request backend, not the shipper's identity.
+        body = _envelope(
+            [{
+                "name":  "request_latency_ms",
+                "gauge": {"dataPoints": [{
+                    "timeUnixNano": "1715200000000000000",
+                    "asDouble":     12.0,
+                    "attributes": [
+                        {"key": "instance", "value": {"stringValue": "172.18.0.7:8080"}},
+                    ],
+                }]},
+            }],
+            resource=_resource(instance="lb-otel-shipper-host"),
+        )
+        rows = telemetry_app.parse_otlp_to_rows(body)
+        assert rows[0][2] == "172.18.0.7:8080"
+
+    def test_two_datapoints_yield_distinct_instance_values(self):
+        # The dashboard's "Active backend instances" panel runs
+        # count(DISTINCT instance) — that count is only meaningful if a
+        # single envelope can produce rows with different instance values.
+        body = _envelope(
+            [{
+                "name":  "request_count",
+                "gauge": {"dataPoints": [
+                    {"timeUnixNano": "1715200000000000000", "asDouble": 1.0,
+                     "attributes": [{"key": "instance", "value": {"stringValue": "backend_a"}}]},
+                    {"timeUnixNano": "1715200000001000000", "asDouble": 1.0,
+                     "attributes": [{"key": "instance", "value": {"stringValue": "backend_b"}}]},
+                ]},
+            }],
+            resource=_resource(instance="shipper-host"),
+        )
+        rows = telemetry_app.parse_otlp_to_rows(body)
+        assert {r[2] for r in rows} == {"backend_a", "backend_b"}
+
     def test_missing_service_name_becomes_unknown(self):
         body = _envelope(
             [_gauge("request_latency_ms", 1.0)],

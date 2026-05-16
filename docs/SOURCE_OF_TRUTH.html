@@ -1713,6 +1713,7 @@ flowchart LR
     Client["Clients<br/>HTTP/1.1"]
     Operator["Operator"]
     Grafana["Grafana<br/>Dashboards"]
+    OUI["Operator UI<br/>(transparency + override)"]
 
     subgraph SL["SmartLoad Middleware"]
         direction TB
@@ -1730,19 +1731,21 @@ flowchart LR
     Pool -- "responses" --> Ing
     Ing -- "responses" --> Client
 
-    Operator -- "REST POST<br/>/api/v1/policy" --> Dec
+    Operator -- "policy / config<br/>updates" --> Dec
     Operator -. "YAML edit<br/>(out-of-band)" .-> Dec
-
+    SL -- "alerts &amp; dashboard" --> OUI
     SL -- "telemetry" --> Grafana
+    OUI -- "embeds" --> Grafana
+    Operator <--> OUI
 
     classDef external fill:#eff6ff,color:#0f172a,stroke:#2563eb,stroke-width:1px;
     classDef middleware fill:#ecfdf5,color:#0f172a,stroke:#047857,stroke-width:2px;
     classDef pool fill:#fffbeb,color:#0f172a,stroke:#b45309,stroke-width:1px;
-    class Client,Operator,Grafana external
+    class Client,Operator,Grafana,OUI external
     class SL,Ing,Dec,Act middleware
     class Pool pool
 </pre>
-  <figcaption><strong>Figure 5.1 — Context Diagram.</strong> SmartLoad as middleware between clients and a backend pool. Operators interact in two ways: in-band via <code>POST /api/v1/policy</code>, and out-of-band by editing <code>config/policy.yaml</code>. Telemetry flows out to Grafana for operator visibility.</figcaption>
+  <figcaption><strong>Figure 5.1 — Context Diagram.</strong> SmartLoad as middleware between clients and a backend pool. The operator has two arrows with the middleware: <em>policy / config updates</em> (write, in-band via <code>POST /api/v1/policy</code> or out-of-band YAML edit) and <em>alerts &amp; dashboard</em> (read). The read side is rendered by two operator-side tools, <strong>Grafana</strong> (charts / time series) and the <strong>Operator UI</strong> (transparency + override surface — §8.11). The Operator UI is not a SmartLoad layer; it owns no channel, table, or decision path, and embeds Grafana for charts.</figcaption>
 </figure>
 
 <h3>Layered architecture</h3>
@@ -2020,7 +2023,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span></div>
     <h4>Metrics DB (TimescaleDB)</h4>
     <div class="role">Storage · Port 5432 · Tasneem</div>
-    <p class="small">3 hypertables (<code>metrics</code>, <code>backend_health</code>, <code>scaling_events</code>). PostgreSQL 16 + TimescaleDB extension. Schema in <code>infrastructure/timescaledb/init.sql</code>.</p>
+    <p class="small">4 hypertables (<code>metrics</code>, <code>backend_health</code>, <code>scaling_events</code>, <code>policy_changes</code>) + <code>metrics_1min</code> continuous aggregate. PostgreSQL 16 + TimescaleDB extension. Schema in <code>infrastructure/timescaledb/init.sql</code>.</p>
     <div class="deeplink"><a href="#mod-metrics-db">→ Deep dive</a></div>
   </article>
 
@@ -2049,18 +2052,18 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-planned">Phase 1B T1.3</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">T1.3 + T1.4 wired</span></div>
     <h4>Autoscaler</h4>
     <div class="role">Actuation · Port 8085 · Tasneem</div>
-    <p class="small">Subscribes to <code>smartload.forecast</code>; uses Docker SDK to start/stop <code>test-backend</code> containers. Enforces MIN/MAX_BACKENDS.</p>
+    <p class="small">Subscribes to <code>smartload.forecast</code> + <code>smartload.policy</code>; toggles compose-managed <code>test-backend-1..5</code> between running/stopped via Docker SDK. Enforces MIN/MAX_BACKENDS + cooldown from <code>config/policy.yaml</code>; reactive fallback on stale forecast; live policy reload via <code>policy_from_payload</code> with version monotonicity.</p>
     <div class="deeplink"><a href="#mod-autoscaler">→ Deep dive</a></div>
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-planned">Phase 1B T1.4</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">T1.4 wired</span></div>
     <h4>Policy &amp; Configuration Manager</h4>
     <div class="role">Governance · Port 8086 · Tasneem</div>
-    <p class="small">REST API <code>/api/v1/policy</code>; reads <code>config/policy.yaml</code>; publishes updates to <code>smartload.policy</code>. Toggles safe-mode, mode, scaling limits, SLOs.</p>
+    <p class="small">REST API <code>GET/POST /api/v1/policy</code>; reads <code>config/policy.yaml</code>; validates per-field + cross-field invariants; atomic YAML write; one audit row per changed field to <code>policy_changes</code>; idempotent no-op; publishes canonical <code>PolicyUpdate</code> envelopes on <code>smartload.policy</code>.</p>
     <div class="deeplink"><a href="#mod-policy">→ Deep dive</a></div>
   </article>
 
@@ -2073,10 +2076,18 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-planned">Phase 2 T2.2</span></div>
-    <h4>Operator UI / Dashboards</h4>
-    <div class="role">Visualization · Port 3000 · Rghda</div>
-    <p class="small">Grafana with auto-provisioned datasources (Prometheus + TimescaleDB). 4 dashboards planned: Overview, Anomaly, Forecast, RL.</p>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Provisioning + Overview done</span> <span class="badge badge-planned">T2.2</span></div>
+    <h4>Grafana Dashboards</h4>
+    <div class="role">Operator-side tool · Port 3000</div>
+    <p class="small">Auto-provisioned datasources (Prometheus + TimescaleDB). Overview dashboard shipped; Anomaly / Forecast / RL / Scaling dashboards planned for T2.2 (S4). Embedded by the Operator UI for chart panels. <strong>Not a SmartLoad layer</strong> — sits outside the middleware bubble per §5.</p>
+    <div class="deeplink"><a href="#mod-ui">→ Deep dive</a></div>
+  </article>
+
+  <article class="service-card">
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-planned">OUI.1–5 — S4–S5</span></div>
+    <h4>Operator UI</h4>
+    <div class="role">Operator-side tool · Port 8087 · Tasneem</div>
+    <p class="small">Flask + Jinja + HTMX. Transparency + override surface: Home (service health, policy snapshot), Live Engines (suggestion stream from Redis ring buffer), Policy editor with diff preview, Audit Log viewer (<code>policy_changes</code> + <code>scaling_events</code>), Manual Actions (scale / isolate, confirmation-modal'd). Embeds Grafana for charts. <strong>Not a SmartLoad layer</strong> — owns no channel, table, or decision path; pure read + thin REST client.</p>
     <div class="deeplink"><a href="#mod-ui">→ Deep dive</a></div>
   </article>
 
@@ -2537,7 +2548,20 @@ CREATE TABLE IF NOT EXISTS scaling_events (
   instance_count INT         NOT NULL,
   reason         TEXT
 );
-SELECT create_hypertable('scaling_events', 'time', if_not_exists =&gt; TRUE);</code></pre>
+SELECT create_hypertable('scaling_events', 'time', if_not_exists =&gt; TRUE);
+
+-- policy_changes: append-only audit of POST /api/v1/policy changes (T1.4).
+-- One row per changed field. old_value / new_value are JSON-encoded so the
+-- column can hold any field type (string, number, bool, list).
+CREATE TABLE IF NOT EXISTS policy_changes (
+    time            TIMESTAMPTZ NOT NULL,
+    policy_version  INT         NOT NULL,   -- post-change version (monotonic)
+    field           TEXT        NOT NULL,   -- e.g. "max_backends"
+    old_value       TEXT,                   -- JSON-encoded previous value; NULL if newly set
+    new_value       TEXT        NOT NULL,
+    actor           TEXT        NOT NULL    -- X-Actor header, "anonymous" if absent
+);
+SELECT create_hypertable('policy_changes', 'time', if_not_exists =&gt; TRUE);</code></pre>
 
 <h4>Schema diagram (current state)</h4>
 <figure>
@@ -2556,9 +2580,11 @@ flowchart TB
 
     backend_health[("<b>backend_health</b><br/>hypertable<br/>retention 30 d")]
     scaling_events[("<b>scaling_events</b><br/>hypertable<br/>retention 90 d")]
+    policy_changes[("<b>policy_changes</b><br/>hypertable<br/>retention 90 d")]
 
     AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
     ASL ==>|"SCALING_EVENT_INSERT"| scaling_events
+    PM["<b>Policy Manager</b><br/>on POST"] ==>|"POLICY_CHANGE_INSERT"| policy_changes
 
     FCT["Forecasting Engine"]
     GRF["Grafana / Queries"]
@@ -2574,14 +2600,15 @@ flowchart TB
     backend_health --> SC
     backend_health --> GRF
     scaling_events --> GRF
+    policy_changes --> GRF
 
     classDef table fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
     classDef cagg fill:#f5f3ff,color:#0f172a,stroke:#7c3aed,stroke-width:2px,stroke-dasharray:4 2;
     classDef writer fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef reader fill:#ecfdf5,color:#0f172a,stroke:#047857;
-    class metrics,backend_health,scaling_events table
+    class metrics,backend_health,scaling_events,policy_changes table
     class metrics_1min cagg
-    class OTel,AND,ASL writer
+    class OTel,AND,ASL,PM writer
     class FCT,RL,SC,GRF reader
 </pre>
   <figcaption><strong>Figure 8.4 — Metrics DB ownership &amp; flow.</strong> Three hypertables and one continuous aggregate, all defined in <code>infrastructure/timescaledb/init.sql</code>. Solid double arrows are <em>writes</em>; each table has exactly one writer service (single-writer ownership, principle 8). Dashed arrow is the <code>metrics_1min</code> continuous aggregate refresh (every 1 min, materialised window <code>[-1 h, -2 m]</code>). Thin arrows are reads via the canonical SQL constants in <code>services/shared/queries.py</code>. Autoscaler is shown as a writer only — its input is the <code>smartload.forecast</code> Redis channel, not the metrics table.</figcaption>
@@ -2631,7 +2658,7 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">Must NOT hold transactional state. Must NOT be the bus for ephemeral signals (use Redis for that). Must NOT be queried from the data plane.</div></div>
     <div class="dc-row"><div class="key">Required interfaces</div><div class="val">PostgreSQL wire protocol on port 5432; SQL constants in <code>services/shared/queries.py</code> are the only canonical entry points for SmartLoad services.</div></div>
     <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If the DB goes down: writes back-pressure (fail loudly, never silently); reads from engines fail their cycle and engines must skip rather than crash.</div></div>
-    <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Hypertables provide native time-based partitioning. Retention is enforced per data class: <strong>7 d</strong> for raw <code>metrics</code> (high-volume, derived signals live in CAGGs / <code>backend_health</code>), <strong>30 d</strong> for <code>backend_health</code> (longer-tail anomaly history), <strong>90 d</strong> for <code>scaling_events</code> (audit trail).</div></div>
+    <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Hypertables provide native time-based partitioning. Retention is enforced per data class: <strong>7 d</strong> for raw <code>metrics</code> (high-volume, derived signals live in CAGGs / <code>backend_health</code>), <strong>30 d</strong> for <code>backend_health</code> (longer-tail anomaly history), <strong>90 d</strong> for <code>scaling_events</code> (audit trail), <strong>90 d</strong> for <code>policy_changes</code> (audit trail).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Standard Postgres exporter to Prometheus. Grafana dashboards on hypertable size, write rate, query latency.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Trusted-network assumption; no per-service auth in prototype. Production: per-service DB roles with least-privilege.</div></div>
     <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">3-table schema with retention (7d / 30d / 90d) and the <code>metrics_1min</code> continuous aggregate. 33 Phase-0 wiring tests + 39 S2 baseline tests (incl. 6 DB-bound) passing in CI as of PR #105 + #106.</div></div>
@@ -2877,7 +2904,7 @@ cur.execute(ANOMALY_QUERY,
 
 <!-- ====== 8.8 AUTOSCALER ====== -->
 <article id="mod-autoscaler">
-<h2>8.8 Autoscaler / Resource Manager <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-planned">T1.3 next</span></h2>
+<h2>8.8 Autoscaler / Resource Manager <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Implemented</span> <span class="badge badge-active">T1.3 active</span></h2>
 <h4>Purpose</h4>
 <p>The actuation arm of the control loop. Adjusts the number of running <code>test-backend</code> containers based on forecast-driven and reactive signals.</p>
 <h4>Inputs / Outputs</h4>
@@ -2887,10 +2914,11 @@ cur.execute(ANOMALY_QUERY,
 </ul>
 <h4>Logic (T1.3)</h4>
 <pre><code>if predicted_rps &gt; current_backends × PER_INSTANCE_CAPACITY_RPS:
-    scale_out(1)   # respect MAX_BACKENDS
-elif predicted_rps &lt; current_backends × LOWER_THRESHOLD for cooldown:
-    scale_in(1)    # respect MIN_BACKENDS
+    scale_out(1)                                          # respect MAX_BACKENDS
+elif predicted_rps &lt; (current_backends − 1) × PER_INSTANCE_CAPACITY_RPS:
+    scale_in(1)                                           # respect MIN_BACKENDS
 respect autoscaler_cooldown_seconds (default 60)</code></pre>
+<p class="small">Lower-bound: shed one backend only when doing so still leaves capacity above demand. Avoids a hysteresis tuning parameter — the cooldown timer is the sole anti-oscillation lever.</p>
 <h4>Constraints (canonical from <code>config/policy.yaml</code>)</h4>
 <ul>
   <li><code>min_backends: 1</code> · <code>max_backends: 5</code></li>
@@ -2923,13 +2951,15 @@ respect autoscaler_cooldown_seconds (default 60)</code></pre>
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica must hold the lock on scaling decisions to avoid double-scale. Lock can be Redis-based for the prototype.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-action: forecast value, decision (scale_out / scale_in / no-op), reason, current backend count. Grafana dashboard panel.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Min/max bounds always enforced. Cooldown prevents oscillation. Step size = 1 prevents thrashing.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Stub <code>app.py</code>; T1.3 next.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Subscribes to <code>smartload.forecast</code>; calls <code>docker.from_env().containers.run/stop</code>; honors <code>config/policy.yaml</code> bounds; writes <code>scaling_events</code>; LB picks up new instances via Sidecar regeneration of <code>nginx.conf</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.3 + T1.4 live-reload wired. Subscribes to <code>smartload.forecast</code> AND <code>smartload.policy</code> on a single pubsub; on each forecast envelope, compares <code>predicted_rps</code> to <code>current_count × per_instance_capacity_rps</code> and applies a step-1 scale via the Docker SDK (toggles compose-managed <code>smartload-test-backend-1..5</code> between running/stopped). Honors <code>min_backends</code>, <code>max_backends</code>, <code>autoscaler_cooldown_seconds</code> loaded at startup from <code>config/policy.yaml</code>; on every <code>smartload.policy</code> envelope, swaps <code>_policy</code> under <code>_state_lock</code> via <code>decisions.policy_from_payload</code> and rejects backwards <code>policy_version</code> moves. Writes one row per action to <code>scaling_events</code> via canonical <code>SCALING_EVENT_INSERT</code>. Publishes <code>ScalingEvent</code> envelopes on <code>smartload.scale</code> with <code>forecast_event_id</code> provenance. Reactive fallback fires when the last forecast is older than 2 × horizon — scales on observed RPS pulled via <code>OBSERVED_RPS_QUERY</code>. Cluster surface is split behind a <code>ClusterClient</code> ABC so a <code>KubernetesClusterClient</code> can drop in later without touching <code>decisions.py</code> or <code>app.py</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Subscribes to <code>smartload.forecast</code> + <code>smartload.policy</code>; calls <code>docker.from_env().containers.run/stop</code> via the <code>DockerClusterClient</code> implementation; LB picks up the live backend set via T2.1 Sidecar regeneration of <code>nginx.conf</code>.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>T1.3: forecast subscription + Docker SDK actuation + cooldown.</li>
-        <li>Reactive fallback path on stale forecast.</li>
-        <li>Cluster-aware abstraction (Docker SDK for prototype; K8s API as future target).</li>
+        <li><s>T1.3: forecast subscription + Docker SDK actuation + cooldown.</s> Shipped.</li>
+        <li><s>Reactive fallback path on stale forecast.</s> Shipped (<code>OBSERVED_RPS_QUERY</code> + 2 × horizon threshold).</li>
+        <li><s>Cluster-aware abstraction (Docker SDK for prototype; K8s API as future target).</s> Shipped (<code>ClusterClient</code> ABC + <code>DockerClusterClient</code>).</li>
+        <li><s>Live policy reloads on <code>smartload.policy</code> (T1.4).</s> Shipped (<code>_handle_policy_message</code> + <code>policy_from_payload</code>).</li>
+        <li>T2.1 LB sidecar so scale-out beyond compose's initial set is routable (currently bounded by NGINX's static 1..5 upstream block).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -3008,14 +3038,16 @@ rl_confidence_threshold: 0.6          # below this, sidecar ignores RL and uses 
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient. Read-heavy is fine; writes are operator-initiated and rare.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Audit log per change (operator, timestamp, field diff). Metric for policy version.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Future: authn on POST. Now: trusted-network. Validation must reject incoherent states (e.g., min_backends &gt; max_backends).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Stub <code>app.py</code>; T1.4 next. <code>config/policy.yaml</code> exists with canonical fields.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real REST endpoints, validation, atomic YAML write, Redis publish, idempotent semantics.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.4 wired. <code>GET /api/v1/policy</code> returns the on-disk snapshot. <code>POST /api/v1/policy</code> validates the payload (per-field rules + cross-field <code>min_backends ≤ max_backends</code> via <code>validation.py</code>), merges with existing, computes the diff, atomically writes the YAML (with bind-mount fallback), writes one row per changed field to <code>policy_changes</code> via canonical <code>POLICY_CHANGE_INSERT</code>, bumps <code>policy_version</code>, and publishes a canonical <code>PolicyUpdate</code> envelope on <code>smartload.policy</code>. Idempotent: a POST that matches existing state returns 200 no-op with no audit row and no publish. Startup validates the on-disk policy and logs (not crashes) on failure. Autoscaler-side live reload is wired (see §8.8). Tests: 38 unit (<code>test_policy_validation.py</code>) + 4 integration (<code>test_policy_manager.py</code>).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real REST endpoints, validation, atomic YAML write, Redis publish, idempotent semantics, audit row per change.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>T1.4: real REST + YAML write + publish.</li>
-        <li>Validation rules (min_backends &lt; max_backends, etc.).</li>
-        <li>Audit table (or audit log file) for policy changes.</li>
+        <li><s>Validation rules on POST + service startup (min_backends &lt; max_backends, non-negative numerics, enum values for operating_mode / safe_mode).</s> Shipped (<code>validation.py</code>, 38 unit tests).</li>
+        <li><s><code>policy_changes</code> hypertable + audit writes per successful POST.</s> Shipped (one row per changed field, <code>POLICY_CHANGE_INSERT</code>).</li>
+        <li><s>Idempotency: skip publish when POST is a no-op against the existing state.</s> Shipped (200 no-op response, no audit row, no publish).</li>
+        <li><s>Autoscaler-side live-reload subscriber on <code>smartload.policy</code>.</s> Shipped in §8.8.</li>
         <li>Future: authn for POST.</li>
+        <li>Future: Prometheus counter for <code>policy_version</code> (SOT §8.9 observability expectation).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -3115,48 +3147,97 @@ class RoutingRecommendation:
 
 <!-- ====== 8.11 OPERATOR UI / DASHBOARDS ====== -->
 <article id="mod-ui">
-<h2>8.11 Operator UI / Dashboards <span class="badge badge-canonical">Canonical</span> <span class="badge badge-planned">T2.2</span></h2>
-<h4>Decision: Grafana, no custom UI</h4>
-<p>For the prototype, SmartLoad uses <strong>Grafana dashboards</strong> (auto-provisioned datasources for Prometheus + TimescaleDB) plus log streams. A custom React/Flask UI is explicitly out-of-scope and listed as a future-extension item in <code>SmartLoad_API_Design.pdf §11.5</code>.</p>
-<h4>Four planned dashboards (T2.2 — S4)</h4>
+<h2>8.11 Operator-Side Tools — Grafana + Operator UI <span class="badge badge-canonical">Canonical</span> <span class="badge badge-planned">OUI.1–5 — S4–S5</span></h2>
+<h4>Decision: Grafana for charts, lightweight Operator UI for transparency + override</h4>
+<p>The §5 context diagram has two arrows between the Operator and the SmartLoad middleware: <em>policy / config updates</em> (write) and <em>alerts &amp; dashboard</em> (read). The read-side surface is rendered by <strong>two operator-side tools</strong>, both sitting <em>outside</em> the SmartLoad middleware bubble:</p>
+<ul>
+  <li><strong>Grafana</strong> — time-series charts (Overview / Anomaly / Forecast / RL / Scaling). The thing operators look at to <em>understand the data</em>.</li>
+  <li><strong>Operator UI</strong> — Flask + Jinja + HTMX app on port 8087. The thing operators look at to <em>understand the decisions</em> and to <em>act on them safely</em>: live engine signals, policy editing with diff preview, audit log viewer, manual override actions with confirmation modals. Embeds Grafana iframes for charts (does not rebuild charting).</li>
+</ul>
+<p>Neither tool is a SmartLoad layer. Neither owns a Redis channel, a TimescaleDB hypertable, or a decision path. Remove them tomorrow and every backend feature still works — operators just drop back to <code>curl</code> + <code>docker logs</code> + raw SQL.</p>
+
+<h4>Why two tools, not one</h4>
+<p>Grafana is excellent at charts and time-series correlation, weak at: confirming manual actions, project-specific decision explanation, in-place policy editing with validation feedback, audit log viewing in domain language. The Operator UI fills exactly those gaps. Building charts in the Operator UI would be duplicate work; running operator-grade governance flows through a Grafana annotation hack would be brittle.</p>
+
+<h4>Confirmation model (operator-grade safety)</h4>
+<p>Per locked design: the UI is <strong>not</strong> an approval gate for autonomous decisions. The autoscaler keeps reacting to forecasts, the anomaly detector keeps publishing, the LB keeps rerouting around unhealthy backends — none of these wait for an operator click. The UI is an approval gate <strong>only for operator-initiated manual overrides</strong>: manual scale, manual isolate, force route weights, and policy edits. Each of those gets a confirmation modal before the POST fires. This preserves system autonomy while ensuring no destructive operator click is one accidental keystroke away.</p>
+
+<h4>Grafana — five planned dashboards (T2.2 — S4)</h4>
 <table>
-  <thead><tr><th>Dashboard</th><th>Panels</th></tr></thead>
+  <thead><tr><th>Dashboard</th><th>Panels</th><th>Status</th></tr></thead>
   <tbody>
-    <tr><td>Overview</td><td>Request rate, P95 latency, active backend count over time</td></tr>
-    <tr><td>Anomaly</td><td>Anomaly events per backend (timeline), DEGRADED/UNHEALTHY durations</td></tr>
-    <tr><td>Forecast</td><td>Predicted vs actual request rate (overlay)</td></tr>
-    <tr><td>RL</td><td>RL routing weights per backend vs round-robin baseline</td></tr>
+    <tr><td>Overview</td><td>Request rate, latency p50/p95/max, error rate, total requests, active backend count, telemetry rows ingested</td><td><span class="badge badge-implemented">Shipped (S2 demo)</span></td></tr>
+    <tr><td>Anomaly</td><td>Anomaly events per backend (timeline), DEGRADED/UNHEALTHY durations</td><td><span class="badge badge-planned">T2.2</span></td></tr>
+    <tr><td>Forecast</td><td>Predicted vs actual request rate (overlay)</td><td><span class="badge badge-planned">T2.2</span></td></tr>
+    <tr><td>RL</td><td>RL routing weights per backend vs round-robin baseline</td><td><span class="badge badge-planned">T2.2</span></td></tr>
+    <tr><td>Scaling</td><td>Scale events overlay on request rate</td><td><span class="badge badge-planned">T2.2</span></td></tr>
   </tbody>
 </table>
-<h4>Mockups (legacy)</h4>
-<p class="small muted">Exploratory operator UI mockups exist at <code>SDP/System Design/Mockup/{1,2,3,4}.png</code>. <span class="badge badge-historical">Historical / not adopted</span></p>
+
+<h4>Operator UI — six planned pages (OUI.1–6)</h4>
+<table>
+  <thead><tr><th>Page</th><th>Purpose</th><th>Issue</th><th>Sprint</th></tr></thead>
+  <tbody>
+    <tr><td>Home</td><td>Aggregated <code>/health</code> across all services, policy snapshot, last 10 events, Grafana Overview iframe</td><td>#119 (OUI.1)</td><td>S4</td></tr>
+    <tr><td>Live Engines</td><td>Per-engine card + suggestion stream from Redis ring buffer (<code>smartload:events:recent</code>)</td><td>#121 (OUI.3)</td><td>S4</td></tr>
+    <tr><td>Policy</td><td>Form editor with diff preview + confirmation modal; wraps <code>POST /api/v1/policy</code></td><td>#120 (OUI.2)</td><td>S4</td></tr>
+    <tr><td>Audit Log</td><td>Paginated viewer over <code>policy_changes</code> + <code>scaling_events</code> with field/actor/time filters</td><td>#122 (OUI.4)</td><td>S5</td></tr>
+    <tr><td>Manual Actions</td><td>Scale-to-N (autoscaler), isolate backend (anomaly-detector), force route weights (T2.1 placeholder). All confirmation-modal'd</td><td>#123 (OUI.5)</td><td>S5</td></tr>
+    <tr><td>Logs</td><td>Per-service tail viewer (optional / drop if time tightens)</td><td>#124 (OUI.6)</td><td>S6 low</td></tr>
+  </tbody>
+</table>
+
+<h4>Architectural notes</h4>
+<ul>
+  <li><strong>Manual action endpoints live on the existing services</strong>, not on the UI: <code>POST /api/v1/scale</code> on the autoscaler, <code>POST /api/v1/isolate</code> on the anomaly-detector. The UI is a client; the actions remain accessible to <code>curl</code> with or without it.</li>
+  <li><strong>Live engine stream</strong> is fed by a tiny subscriber in the telemetry/observability layer (new service <code>services/events-archiver/</code> or thread in <code>services/telemetry/</code>) that pushes summarised envelopes to a Redis LIST capped at 1000 entries. UI reads with <code>LRANGE</code>. No new hypertable required for the Sprint 4 cut.</li>
+  <li><strong>Durable event archive</strong> as a <code>events_log</code> TimescaleDB hypertable is a Sprint 5 stretch — strengthens the thesis "explainability" claim with queryable history beyond 1000 entries. Not required for the demo.</li>
+</ul>
 
 <div class="design-contract">
-  <div class="header">Design Contract — Operator UI / Dashboards</div>
+  <div class="header">Design Contract — Operator-Side Tools (Grafana + Operator UI)</div>
   <div class="body">
-    <div class="dc-row"><div class="key">Role in the middleware</div><div class="val">The operator's window into the system. Read-only visibility plus command-line / curl-driven policy edits.</div></div>
-    <div class="dc-row"><div class="key">Why it exists</div><div class="val">A middleware that cannot be inspected at runtime is unmaintainable. Grafana gives that visibility for free if telemetry is correctly emitted.</div></div>
-    <div class="dc-row"><div class="key">Owned responsibilities</div><div class="val">Render dashboards from TimescaleDB + Prometheus. Provide curl-friendly CLI for safe-mode toggle and policy edits.</div></div>
-    <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">Must NOT be on the request path. Must NOT have its own backing store. Custom React/Flask UI is explicitly NOT in scope (deferred to future extension).</div></div>
-    <div class="dc-row"><div class="key">Required dashboards (target deliverable)</div><div class="val">
+    <div class="dc-row"><div class="key">Role in the middleware</div><div class="val">The operator's window into the system. Renders the "alerts &amp; dashboard" arrow from §5. Provides safe in-place edit + override surface for policy and manual actions.</div></div>
+    <div class="dc-row"><div class="key">Why it exists</div><div class="val">A middleware that cannot be inspected and steered at runtime is unmaintainable. Grafana delivers visibility for free given correct telemetry; the Operator UI delivers decision transparency, governance, and human-in-the-loop override safety — the missing pieces beyond charts.</div></div>
+    <div class="dc-row"><div class="key">Owned responsibilities</div><div class="val">
       <ul>
-        <li><strong>Overview:</strong> request rate, P95 latency, active backend count.</li>
-        <li><strong>Anomaly:</strong> per-backend timeline, DEGRADED/UNHEALTHY durations.</li>
-        <li><strong>Forecast:</strong> predicted vs actual overlay.</li>
-        <li><strong>RL:</strong> weights per backend vs round-robin baseline.</li>
-        <li><strong>Scaling:</strong> scale events overlay on request rate.</li>
+        <li><strong>Grafana</strong>: render time-series dashboards from TimescaleDB + Prometheus.</li>
+        <li><strong>Operator UI</strong>: aggregate <code>/health</code>; surface decision-engine envelope stream; wrap <code>POST /api/v1/policy</code> with diff preview + confirmation; render <code>policy_changes</code> + <code>scaling_events</code> in domain language; expose manual action forms with confirmation modals before any POST.</li>
       </ul>
     </div></div>
-    <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If Grafana is down, the system continues to operate. Operators can fall back to direct SQL queries against TimescaleDB.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Grafana provisioned. <strong>Overview</strong> dashboard shipped — <code>infrastructure/grafana/dashboards/smartload-overview.json</code>, six panels backed by TimescaleDB (request rate, p50/p95/max latency, error rate, total requests, active backend count, telemetry rows ingested). Anomaly / Forecast / RL / Scaling dashboards still pending T2.2 (S4).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">5 dashboards above, exported to <code>infrastructure/grafana/dashboards/</code> as JSON, version-controlled, restored on container restart. Overview <span class="badge badge-implemented">shipped</span>; four remaining.</div></div>
-    <div class="dc-row"><div class="key">Gap to close</div><div class="val">Author the four remaining dashboards (Anomaly, Forecast, RL, Scaling) in T2.2. Wire Prometheus exporter for Redis + Postgres. Decide whether a custom React/Flask UI is ever needed.</div></div>
+    <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">
+      <ul>
+        <li>Must NOT be on the request path (neither tool sees client traffic).</li>
+        <li>Must NOT own any Redis channel, TimescaleDB hypertable, or decision path.</li>
+        <li>Must NOT be in the loop for autonomous decisions — autoscaler reacts to forecasts without operator approval; anomaly detector publishes without operator approval; LB reroutes without operator approval. The UI is transparency + override, never gate.</li>
+        <li>Must NOT rebuild charting — embed Grafana iframes for any chart panel.</li>
+        <li>Must NOT have its own backing store. Reads from existing tables and Redis.</li>
+      </ul>
+    </div></div>
+    <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If Grafana is down, the system continues to operate; operators fall back to direct SQL. If the Operator UI is down, every operator action remains reachable via <code>curl</code> (the UI is a client of the same REST surface). Neither tool is on a critical path.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Grafana provisioned; Overview dashboard shipped (<code>infrastructure/grafana/dashboards/smartload-overview.json</code>). Anomaly / Forecast / RL / Scaling dashboards pending T2.2 (S4). <strong>Operator UI not started</strong> — design locked, issues filed (#119–#125), implementation begins in Sprint 4 (OUI.1–3) and continues in Sprint 5 (OUI.4–5).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Five Grafana dashboards version-controlled as JSON; Operator UI on port 8087 exposing Home / Live Engines / Policy / Audit Log / Manual Actions, with Logs deferred or optional. Operator UI embeds Grafana for charts. Both tools restored on container restart via compose.</div></div>
+    <div class="dc-row"><div class="key">Gap to close</div><div class="val">
+      <ul>
+        <li>Four remaining Grafana dashboards (Anomaly, Forecast, RL, Scaling) — T2.2 (S4).</li>
+        <li>Operator UI BFF scaffold + Home page — #119 OUI.1 (S4).</li>
+        <li>Policy editor with diff preview — #120 OUI.2 (S4).</li>
+        <li>Live Engines page + Redis ring-buffer event stream subscriber — #121 OUI.3 (S4).</li>
+        <li>Audit log viewer — #122 OUI.4 (S5).</li>
+        <li>Manual actions endpoints (<code>POST /api/v1/scale</code> on autoscaler, <code>POST /api/v1/isolate</code> on anomaly-detector) + UI panel — #123 OUI.5 (S5).</li>
+        <li>Logs page — #124 OUI.6 (S6, low priority, optional).</li>
+        <li>Operator UI authn (paired with #56) — #125 OUI.7 (S6).</li>
+        <li>Optional Sprint 5 stretch: durable <code>events_log</code> hypertable for thesis explainability claim.</li>
+      </ul>
+    </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
       <ul class="review-checklist compact">
-        <li>Are dashboards version-controlled as JSON?</li>
-        <li>Are panels driven only by TimescaleDB + Prometheus (no extra storage)?</li>
-        <li>Does every dashboard have a working time range and a documented purpose?</li>
-        <li>Is the operator CLI documented in <code>running-the-project.md</code>?</li>
+        <li>Is every operator action available via <code>curl</code> even without the UI?</li>
+        <li>Does every manual override action have a confirmation modal before the POST?</li>
+        <li>Do autonomous decisions ever wait for operator approval? (They must not.)</li>
+        <li>Are Grafana dashboards version-controlled as JSON?</li>
+        <li>Does the Operator UI embed Grafana iframes, not rebuild charting?</li>
+        <li>Does the Operator UI own any Redis channel or TimescaleDB hypertable? (It must not.)</li>
       </ul>
     </div></div>
   </div>
@@ -3719,6 +3800,23 @@ SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists =>
   <p>Every service interaction in SmartLoad is one of three contract types: a Redis pub/sub message, a REST endpoint, or a SQL query constant. There is no fourth. Contracts are <em>typed and versionable</em> — there is no ad-hoc JSON, no inline SQL outside <code>queries.py</code>, no cross-service imports of internal code. This section is the authority on what every contract <em>should</em> look like.</p>
 </div>
 
+<div class="canonical-intent" style="border-color:#b45309;background:#fffbeb;">
+  <span class="label" style="background:#b45309;">Supersession Notice — read this before SmartLoad_API_Design.pdf</span>
+  <p>The original SDP-era <code>SDP/SmartLoad_API_Design.pdf</code> is <strong>historical</strong>. It is a design draft predating implementation. This section (§11) and the per-module §8.x deep dives are the <em>authoritative</em> contract source. Where the PDF and this SOT disagree, this SOT wins. Major intentional deviations from the PDF — each documented in its module section:</p>
+  <ul style="margin-top:0.4rem;">
+    <li><strong>REST API shape</strong>: single-document <code>/api/v1/policy</code> (GET/POST) instead of the PDF's multi-policy <code>/api/v1/policies/{id}/activate</code>. SmartLoad has one active policy at a time; the multi-policy model was scope creep. See §8.9.</li>
+    <li><strong>No <code>/internal/v1/*</code> namespace</strong>. Services coordinate via Redis pub/sub (5 canonical channels below); the PDF's internal REST namespace was rejected in favour of the pub/sub control bus to keep coupling loose. See §8.10.</li>
+    <li><strong>Channel naming</strong>: no <code>.v1</code> suffix. PDF proposes <code>smartload.&lt;topic&gt;.v1</code>; current canonical is unsuffixed (<code>smartload.anomaly</code>, etc.). Deferred — see <a href="#sec-15-changelog">§15</a>.</li>
+    <li><strong>Envelope shape</strong>: leaner. PDF envelope has <code>schema_version, message_id, type, emitted_at, source.service</code>; the wired envelope (<code>services/shared/contracts.py::Envelope</code>) has <code>event_id, source, version, timestamp, payload</code>. Functionally equivalent, less verbose. See <a href="#sec-15-changelog">§15</a>.</li>
+    <li><strong>No backend registry REST</strong>. PDF has <code>/api/v1/backends</code> + <code>/quarantine</code> + <code>/restore</code>; the running system uses Docker SDK + NGINX upstream as the implicit registry. Manual override flows are covered by the T1.4 / OUI.5 endpoints (<code>POST /api/v1/scale</code>, <code>POST /api/v1/isolate</code>). See §8.8.</li>
+    <li><strong>No <code>/api/v1/experiments</code> surface</strong>. Benchmarking is offline and CI-driven (issues #36–#39, #117), not REST-controlled.</li>
+    <li><strong>Operator UI</strong>: PDF §11.5 listed a "Rich operator UI with full runtime control" as a <em>future extension</em>. As of 2026-05-13 this is in scope as a <strong>lightweight</strong> UI — transparency + override layer, not full runtime control. See §8.11 + issues #119–#125.</li>
+    <li><strong>Error format</strong>: current responses use <code>{error, field}</code>; PDF mandates RFC 7807 Problem Details (<code>{type, title, status, detail, instance}</code>). Adoptable; left for the canonical doc landing under issue #53.</li>
+    <li><strong>Adopted from PDF as-is</strong>: TimescaleDB + raw/aggregate tables, Redis pub/sub for decision signals, channel-per-topic separation, the decision-merge hierarchy (anomaly → policy → RL → classical → forecast drives scaling), one active policy with safe-mode override, OTLP/HTTP-JSON telemetry ingest.</li>
+  </ul>
+  <p style="margin-top:0.4rem;">The reconciliation work that produces the canonical external API doc (<code>docs/api/api-v1.md</code>) is tracked under <a href="https://github.com/TasneemEltabakh/smartload/issues/53">#53</a>. Once that doc lands, the PDF is officially retired — keep it in the repo only for historical / SDP-grader context.</p>
+</div>
+
 <h3>Contract surfaces</h3>
 <table>
   <thead><tr><th>Surface</th><th>Mechanism</th><th>Canonical location</th><th>Sync / async</th><th>Versioning rule</th></tr></thead>
@@ -3764,7 +3862,7 @@ SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists =>
       <td>Autoscaler</td>
       <td>Policy Manager (audit)</td>
       <td><code>action, instance_count, reason, timestamp</code></td>
-      <td><code>forecast_id</code> (provenance)</td>
+      <td><code>forecast_event_id</code> (provenance — joins back to triggering ForecastResult)</td>
       <td>on action</td>
     </tr>
     <tr>
@@ -4803,15 +4901,16 @@ flowchart LR
     <tr><td>OTel Collector config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/otel-collector/otelcol-config.yaml</code></td><td>—</td></tr>
     <tr><td>Redis config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/redis/redis.conf</code></td><td>—</td></tr>
     <tr><td>Prometheus config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/prometheus/prometheus.yml</code></td><td>—</td></tr>
-    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources only</span></td><td><code>infrastructure/grafana/provisioning/</code></td><td>4 dashboards (T2.2, S4)</td></tr>
+    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + Overview dashboard</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview shipped; 4 remaining (Anomaly / Forecast / RL / Scaling) — T2.2 (S4)</td></tr>
+    <tr><td>Operator UI</td><td>Tasneem</td><td><span class="pill pill-next">OUI.1–5 — S4–S5</span></td><td><code>services/operator-ui/</code> (planned)</td><td>Flask + Jinja + HTMX; transparency + override surface; embeds Grafana for charts; issues #119–#125</td></tr>
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
     <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
     <tr><td>Anomaly detector</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.1)</span></td><td><code>services/anomaly-detector/app.py</code></td><td>Threshold logic + Redis publish</td></tr>
     <tr><td>Forecasting service</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.2)</span></td><td><code>services/forecasting/app.py</code></td><td>Moving-avg + Redis publish</td></tr>
     <tr><td>RL engine</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.3)</span></td><td><code>services/rl-engine/app.py</code></td><td>Shadow-mode random policy</td></tr>
-    <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-next">Phase 1B next (T1.3)</span></td><td><code>services/autoscaler/app.py</code></td><td>Docker SDK scale logic</td></tr>
-    <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-next">Phase 1B next (T1.4)</span></td><td><code>services/policy-manager/app.py</code></td><td>POST endpoint + Redis publish</td></tr>
+    <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
+    <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-done">T1.4 wired</span></td><td><code>services/policy-manager/{app,validation}.py</code></td><td>GET/POST + validation + atomic YAML + <code>policy_changes</code> audit + envelope publish + idempotent no-op; 38 unit + 4 integration tests</td></tr>
     <tr><td>Redis message contracts</td><td>Nada</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/shared/contracts.py</code></td><td>—</td></tr>
     <tr><td>TimescaleDB query constants</td><td>Nada</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/shared/queries.py</code></td><td>—</td></tr>
     <tr><td>Dataset download scripts</td><td>Rghda</td><td><span class="pill pill-active">Phase 1A active (R0.1)</span></td><td><code>scripts/download-datasets.sh</code></td><td>—</td></tr>

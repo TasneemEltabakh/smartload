@@ -18,7 +18,13 @@ Per SOT §8.1.1 (LB OTel Shipper):
         request_count        = 1
         request_latency_ms   = latency * 1000  (NGINX $request_time is seconds)
         error_rate           = 1 if status >= 500 else 0
-  - Resource attrs: service.name=load-balancer, service.instance.id=<hostname>.
+  - Resource attrs: service.name=load-balancer, service.instance.id=<hostname>
+    (identifies the shipper process, used for debugging — not the upstream).
+  - Per-datapoint attribute `instance` = NGINX `$upstream_addr` (the backend
+    that handled the request). The telemetry parser prefers this over the
+    resource attribute so the `metrics.instance` column carries the
+    per-request backend identity (required for the dashboard's "Active
+    backend instances" panel to count distinct backends, not shippers).
   - POST OTLP/HTTP-JSON to http://otel-collector:4318/v1/metrics with a
     strict timeout. On any error (timeout, conn refused, 5xx) → log + drop.
     Never raise into the tailing loop. Fire-and-forget at every hop.
@@ -95,12 +101,15 @@ def _stats_snapshot() -> dict:
 
 # ── log line → metric data points ─────────────────────────────────────────────
 
-def line_to_datapoints(line: str, now_ns: int) -> list[tuple[str, float, int]]:
-    """Parse one JSON access-log line into (metric_name, value, time_ns) tuples.
+def line_to_datapoints(line: str, now_ns: int) -> list[tuple[str, float, int, str]]:
+    """Parse one JSON access-log line into (metric_name, value, time_ns, backend) tuples.
 
     Returns an empty list for malformed input (the caller bumps lines_skipped).
     The three canonical metric names are hardcoded — they are the names that
     `services/shared/queries.py:ANOMALY_QUERY` and RL_STATE_QUERY filter on.
+    `backend` is NGINX's `$upstream_addr` (the chosen upstream for this
+    request). Falls back to "unknown" when NGINX didn't reach an upstream
+    (e.g. error before proxy_pass).
     """
     try:
         record = json.loads(line)
@@ -118,11 +127,12 @@ def line_to_datapoints(line: str, now_ns: int) -> list[tuple[str, float, int]]:
     except (TypeError, ValueError):
         return []
 
+    backend    = record.get("backend") or "unknown"
     error_rate = 1.0 if status_int >= 500 else 0.0
     return [
-        ("request_count",      1.0,        now_ns),
-        ("request_latency_ms", latency_ms, now_ns),
-        ("error_rate",         error_rate, now_ns),
+        ("request_count",      1.0,        now_ns, backend),
+        ("request_latency_ms", latency_ms, now_ns, backend),
+        ("error_rate",         error_rate, now_ns, backend),
     ]
 
 
@@ -131,12 +141,15 @@ def line_to_datapoints(line: str, now_ns: int) -> list[tuple[str, float, int]]:
 # metrics[].gauge.dataPoints[] with asDouble + timeUnixNano. Histograms /
 # summaries are out of the SmartLoad metric set (telemetry drops them).
 
-def build_envelope(datapoints: list[tuple[str, float, int]]) -> dict:
+def build_envelope(datapoints: list[tuple[str, float, int, str]]) -> dict:
     by_name: dict[str, list[dict]] = {}
-    for name, value, ts_ns in datapoints:
+    for name, value, ts_ns, backend in datapoints:
         by_name.setdefault(name, []).append({
             "timeUnixNano": str(ts_ns),
             "asDouble":     value,
+            "attributes":   [
+                {"key": "instance", "value": {"stringValue": backend}},
+            ],
         })
     metrics = [
         {"name": name, "gauge": {"dataPoints": dps}}

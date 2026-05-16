@@ -179,7 +179,10 @@ services:
 
   autoscaler:
     build:
-      context: ./services/autoscaler
+      # Build context is ./services so the Dockerfile can pull in the
+      # canonical shared/ module (envelope contracts + SQL constants).
+      context: ./services
+      dockerfile: autoscaler/Dockerfile
     ports:
       - "8085:8085"
     environment:
@@ -187,10 +190,16 @@ services:
       SERVICE_NAME: autoscaler
       TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      MIN_BACKENDS: ${MIN_BACKENDS:-1}
-      MAX_BACKENDS: ${MAX_BACKENDS:-5}
+      POLICY_PATH: /config/policy.yaml
     volumes:
+      # Docker socket — autoscaler uses the Docker SDK to start/stop
+      # test-backend containers (T1.3). Read-write because container
+      # state transitions require write access on the socket.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Policy snapshot for startup config (min_backends, max_backends,
+      # per_instance_capacity_rps, autoscaler_cooldown_seconds). Live
+      # updates arrive on smartload.policy when policy-manager publishes.
+      - ./config/policy.yaml:/config/policy.yaml:ro
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -202,18 +211,22 @@ services:
 
   policy-manager:
     build:
-      context: ./services/policy-manager
+      context: ./services
+      dockerfile: policy-manager/Dockerfile
     ports:
       - "8086:8086"
     environment:
       PORT: "8086"
       SERVICE_NAME: policy-manager
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
       CONFIG_PATH: /config/policy.yaml
     volumes:
       - ./config/policy.yaml:/config/policy.yaml
     depends_on:
       redis:
+        condition: service_healthy
+      timescaledb:
         condition: service_healthy
     networks:
       - smartload-net
@@ -233,7 +246,13 @@ services:
       # access.log → /dev/stdout symlink.
       - nginx-logs:/nginx-logs
     depends_on:
-      - test-backend
+      # service_healthy (not service_started) so NGINX boots only after
+      # every test-backend replica is reachable. Required because the
+      # NGINX upstream block enumerates 12 hostnames and aborts at
+      # config-load on any unresolved one. See the test-backend
+      # healthcheck for the gating condition.
+      test-backend:
+        condition: service_healthy
     networks:
       - smartload-net
     restart: unless-stopped
@@ -267,6 +286,27 @@ services:
     networks:
       - smartload-net
     restart: unless-stopped
+    # Default replica count matches the 5 `server` entries in
+    # services/load-balancer/nginx/nginx.conf and config/policy.yaml's
+    # max_backends. Without this, any `docker compose up --build`
+    # silently scales test-backend back down to 1, leaving NGINX with
+    # 4 dead upstreams at startup. The autoscaler (T1.3) toggles these
+    # 5 containers between running/stopped at runtime — it never creates
+    # or destroys them, so this is the steady-state count compose owns.
+    deploy:
+      replicas: 5
+    # Required so the load-balancer can wait on `condition:
+    # service_healthy` — NGINX's upstream block enumerates
+    # smartload-test-backend-1..5 and bails at config-load if any
+    # name doesn't resolve, so every replica must exist before NGINX
+    # starts. `service_healthy` waits for every replica's healthcheck
+    # to pass, which guarantees DNS resolves for the full set.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
   traffic-simulator:
     build:

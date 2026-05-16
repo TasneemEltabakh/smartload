@@ -72,14 +72,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build service image (default context)
-        if: matrix.service != 'telemetry'
+        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler' && matrix.service != 'policy-manager'
         run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
 
-      - name: Build telemetry image (wider context for shared/)
-        # Telemetry imports services/shared/queries.py, so its build context
-        # is ./services and the Dockerfile pulls in shared/ alongside app.py.
-        if: matrix.service == 'telemetry'
-        run: docker build -t smartload-telemetry -f services/telemetry/Dockerfile ./services
+      - name: Build image with wider context (services that import shared/)
+        # Telemetry, autoscaler, and policy-manager import services/shared/*, so
+        # their build context is ./services and the Dockerfile pulls in shared/
+        # alongside app.py + any service-local modules (decisions.py / validation.py).
+        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler' || matrix.service == 'policy-manager'
+        run: docker build -t smartload-${{ matrix.service }} -f services/${{ matrix.service }}/Dockerfile ./services
 
       - name: Run container
         # The shipper has no HTTP port (it's a tail-and-emit sidecar) — start
@@ -196,7 +197,14 @@ jobs:
         run: pip install -r tests/integration/requirements.txt
 
       - name: Start docker-compose environment
-        run: docker compose up -d --build --scale test-backend=2
+        # --scale test-backend=5 matches the 5 enumerated `server`
+        # entries in services/load-balancer/nginx/nginx.conf and
+        # config/policy.yaml's max_backends. NGINX bails at config-load
+        # if any upstream hostname doesn't resolve, so CI must spin up
+        # the full 5. (Local dev gets the same count via
+        # docker-compose.yml's `deploy.replicas: 5`; --scale overrides
+        # that, so CI has to spell it out.)
+        run: docker compose up -d --build --scale test-backend=5
 
       - name: Wait for stack to become healthy
         # Poll TimescaleDB and Redis directly; the AI-service /health

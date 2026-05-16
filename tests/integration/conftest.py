@@ -52,7 +52,7 @@ REDIS_CHANNELS = [
 ]
 
 # Tables that must exist in TimescaleDB
-REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events"]
+REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events", "policy_changes"]
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

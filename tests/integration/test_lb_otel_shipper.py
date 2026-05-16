@@ -44,23 +44,38 @@ class TestLineToDataPoints:
         )
         dps = shipper.line_to_datapoints(line, now_ns=1_700_000_000_000_000_000)
 
-        names = [name for name, _, _ in dps]
+        names = [name for name, _, _, _ in dps]
         assert names == ["request_count", "request_latency_ms", "error_rate"]
 
-        values = {name: value for name, value, _ in dps}
+        values = {name: value for name, value, _, _ in dps}
         assert values["request_count"]      == 1.0
         assert values["request_latency_ms"] == pytest.approx(12.3, rel=1e-6)
         assert values["error_rate"]         == 0.0
 
-    def test_5xx_status_flags_error(self):
-        line = '{"status":503,"latency":0.001}'
+    def test_backend_address_carried_on_every_datapoint(self):
+        line = '{"status":200,"latency":0.001,"backend":"172.18.0.7:8080"}'
         dps  = shipper.line_to_datapoints(line, now_ns=1)
-        assert dict((n, v) for n, v, _ in dps)["error_rate"] == 1.0
+        backends = {backend for _, _, _, backend in dps}
+        # All three datapoints from the same log line share the same backend.
+        assert backends == {"172.18.0.7:8080"}
+
+    def test_missing_backend_falls_back_to_unknown(self):
+        # NGINX leaves $upstream_addr empty when it never reached an upstream
+        # (e.g. 499 client-closed before proxy_pass). Don't drop the row;
+        # downstream rolls "unknown" up as a sentinel for unrouted requests.
+        line = '{"status":200,"latency":0.001}'
+        dps  = shipper.line_to_datapoints(line, now_ns=1)
+        assert all(backend == "unknown" for _, _, _, backend in dps)
+
+    def test_5xx_status_flags_error(self):
+        line = '{"status":503,"latency":0.001,"backend":"test-backend:8080"}'
+        dps  = shipper.line_to_datapoints(line, now_ns=1)
+        assert dict((n, v) for n, v, _, _ in dps)["error_rate"] == 1.0
 
     def test_4xx_status_is_not_an_error(self):
-        line = '{"status":404,"latency":0.001}'
+        line = '{"status":404,"latency":0.001,"backend":"test-backend:8080"}'
         dps  = shipper.line_to_datapoints(line, now_ns=1)
-        assert dict((n, v) for n, v, _ in dps)["error_rate"] == 0.0
+        assert dict((n, v) for n, v, _, _ in dps)["error_rate"] == 0.0
 
     @pytest.mark.parametrize("bad", [
         "not-json",                  # malformed
@@ -78,12 +93,12 @@ class TestBuildEnvelope:
 
     def test_envelope_groups_datapoints_by_metric_name(self):
         dps = [
-            ("request_count",      1.0,  1),
-            ("request_latency_ms", 12.3, 1),
-            ("error_rate",         0.0,  1),
-            ("request_count",      1.0,  2),
-            ("request_latency_ms", 8.7,  2),
-            ("error_rate",         0.0,  2),
+            ("request_count",      1.0,  1, "backend_a"),
+            ("request_latency_ms", 12.3, 1, "backend_a"),
+            ("error_rate",         0.0,  1, "backend_a"),
+            ("request_count",      1.0,  2, "backend_b"),
+            ("request_latency_ms", 8.7,  2, "backend_b"),
+            ("error_rate",         0.0,  2, "backend_b"),
         ]
         env = shipper.build_envelope(dps)
 
@@ -95,13 +110,40 @@ class TestBuildEnvelope:
             for dp in m["gauge"]["dataPoints"]:
                 assert "timeUnixNano" in dp and "asDouble" in dp
 
+    def test_each_datapoint_carries_per_request_instance_attribute(self):
+        # Two requests in one batch hit different upstreams. The shipper
+        # must stamp each datapoint with its OWN backend — not collapse
+        # to one value — otherwise the dashboard's distinct-instance
+        # count is meaningless.
+        env = shipper.build_envelope([
+            ("request_count",      1.0, 1, "10.0.0.1:8080"),
+            ("request_count",      1.0, 2, "10.0.0.2:8080"),
+            ("request_latency_ms", 5.0, 1, "10.0.0.1:8080"),
+            ("request_latency_ms", 9.0, 2, "10.0.0.2:8080"),
+        ])
+        all_dps = [
+            dp
+            for m in env["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            for dp in m["gauge"]["dataPoints"]
+        ]
+        backends = {
+            a["value"]["stringValue"]
+            for dp in all_dps
+            for a in dp.get("attributes", [])
+            if a.get("key") == "instance"
+        }
+        assert backends == {"10.0.0.1:8080", "10.0.0.2:8080"}
+
     def test_resource_attributes_match_sot_contract(self):
-        env  = shipper.build_envelope([("request_count", 1.0, 1)])
+        env  = shipper.build_envelope([("request_count", 1.0, 1, "backend_a")])
         attrs = {
             a["key"]: a["value"]["stringValue"]
             for a in env["resourceMetrics"][0]["resource"]["attributes"]
         }
         assert attrs["service.name"] == "load-balancer"
+        # Resource-level instance.id still identifies the shipper process
+        # (for debugging). Per-request backend identity is on the
+        # data-point `instance` attribute, asserted in the prior test.
         assert attrs.get("service.instance.id")  # non-empty hostname
 
 
