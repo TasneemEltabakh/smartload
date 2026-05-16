@@ -228,3 +228,6 @@ build/
 
 # optional npm cache
 .npm
+
+# Claude Code
+CLAUDE.md

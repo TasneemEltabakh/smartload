@@ -1,0 +1,43 @@
+[
+  {
+    "run_at": "2026-05-13T11:59:31.382167+00:00",
+    "data_dir": "datasets/alibaba/alibaba_industrial_data.csv",
+    "n_total": 16208,
+    "n_train": 11345,
+    "n_val": 2431,
+    "n_test": 2432,
+    "sampling_freq": "5min",
+    "best_params": {
+      "changepoint_prior_scale": 0.5,
+      "seasonality_prior_scale": 10.0,
+      "seasonality_mode": "multiplicative"
+    },
+    "test_mape": 38.827,
+    "test_mae_normalised": 0.2969,
+    "persistence_mape": 35.7424,
+    "moving_avg_mape": 34.9024,
+    "rel_improvement_pct": -8.63,
+    "passed": false
+  },
+  {
+    "run_at": "2026-05-13T12:12:20.083783+00:00",
+    "model": "arima",
+    "data_dir": "datasets/alibaba/alibaba_industrial_data.csv",
+    "n_total": 16208,
+    "n_train": 11345,
+    "n_val": 2431,
+    "n_test": 2432,
+    "sampling_freq": "5min",
+    "arima_order": [
+      2,
+      0,
+      2
+    ],
+    "test_mape": 25.0082,
+    "test_mae_normalised": 0.2164,
+    "persistence_mape": 32.3796,
+    "moving_avg_mape": 34.2846,
+    "rel_improvement_pct": 22.77,
+    "passed": false
+  }
+]
