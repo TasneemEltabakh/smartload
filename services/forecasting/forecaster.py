@@ -135,10 +135,10 @@ class ProphetForecaster:
             # Forecast next step using LAST known exog as lagged predictor
             x_next = exog_recent[-1:] if exog_recent.ndim == 2 else exog_recent[-1].reshape(1, -1)
             fc     = updated.get_forecast(steps=1, exog=x_next)
-            pred   = max(float(fc.predicted_mean.iloc[0]), 0.0)
-            ci     = fc.conf_int(alpha=0.05)
-            lower  = max(float(ci.iloc[0, 0]), 0.0)
-            upper  = max(float(ci.iloc[0, 1]), pred)
+            pred   = max(float(np.asarray(fc.predicted_mean).flat[0]), 0.0)
+            ci     = np.asarray(fc.conf_int(alpha=0.05))
+            lower  = max(float(ci.flat[0]), 0.0)
+            upper  = max(float(ci.flat[1]), pred)
             return ForecastResult(
                 horizon_minutes=HORIZON,
                 predicted_rps=pred,
@@ -180,10 +180,10 @@ class ProphetForecaster:
             y_recent = self._resample_to_freq(df)["y"].values
             updated  = self._arima_result.append(y_recent, refit=False)
             fc       = updated.get_forecast(steps=1)
-            pred     = max(float(fc.predicted_mean.iloc[0]), 0.0)
-            ci       = fc.conf_int(alpha=0.05)
-            lower    = max(float(ci.iloc[0, 0]), 0.0)
-            upper    = max(float(ci.iloc[0, 1]), pred)
+            pred     = max(float(np.asarray(fc.predicted_mean).flat[0]), 0.0)
+            ci       = np.asarray(fc.conf_int(alpha=0.05))
+            lower    = max(float(ci.flat[0]), 0.0)
+            upper    = max(float(ci.flat[1]), pred)
             return ForecastResult(
                 horizon_minutes=HORIZON,
                 predicted_rps=pred,

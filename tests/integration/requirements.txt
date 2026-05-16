@@ -10,3 +10,7 @@ flask==3.0.3
 # /health doesn't expose it, and scaling_events is empty at test start.
 docker==7.1.0
 PyYAML==6.0.2
+# Required by test_forecaster.py (forecaster.py imports these)
+statsmodels==0.14.2
+numpy==1.26.4
+pandas==2.2.2
