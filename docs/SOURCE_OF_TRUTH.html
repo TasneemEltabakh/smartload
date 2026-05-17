@@ -2766,7 +2766,7 @@ cur.execute(ANOMALY_QUERY,
 
 <!-- ====== 8.6 FORECASTING ====== -->
 <article id="mod-forecasting">
-<h2>8.6 Forecasting Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">N1.2 active</span></h2>
+<h2>8.6 Forecasting Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Implemented</span> <span class="badge badge-active">N2.2 complete</span></h2>
 <h4>Purpose</h4>
 <p>Anticipates near-future load so the autoscaler can act <em>before</em> demand peaks — moving SmartLoad from reactive to proactive scaling.</p>
 <h4>Two-tier delivery</h4>
@@ -2774,13 +2774,37 @@ cur.execute(ANOMALY_QUERY,
   <thead><tr><th>Tier</th><th>Sprint</th><th>Approach</th></tr></thead>
   <tbody>
     <tr><td>Phase 1A (skeleton)</td><td>S2 — N1.2</td><td>Every 60 s: query last 1 h of <code>request_rate</code>; compute rolling mean → next-5-min forecast.</td></tr>
-    <tr><td>Phase 2 (real model)</td><td>S4 — N2.2</td><td>ARIMA or Prophet trained on Borg traces (<code>load_borg_timeseries()</code>). Hold-out evaluation reports MAE / MAPE. Falls back to moving average if model file missing.</td></tr>
+    <tr><td>Phase 2 (real model)</td><td>S4 — N2.2 ✓</td><td>ARIMA(2,0,2) and ARIMAX(3,0,1) trained on Alibaba Industrial Microservice Trace (16,208 samples at 5-min resolution). AIC-based order selection + walk-forward evaluation. Test MAPE: ARIMA 25.01%, ARIMAX 25.07% — both beat persistence baseline by ~23%. Runtime fallback chain: ARIMAX → ARIMA → moving average. Model artifacts: <code>arimax_model.pkl</code>, <code>arima_model.pkl</code>.</td></tr>
   </tbody>
 </table>
 <h4>Outputs</h4>
 <p><code>ForecastResult{ horizon_minutes, predicted_rps, confidence_lower, confidence_upper, timestamp }</code> on <code>smartload.forecast</code> every ~60 s.</p>
 <h4>KPI</h4>
 <p>MAPE &lt; 20% on 5-minute horizon over held-out data (target N2.2).</p>
+<h4>Approaches Considered</h4>
+<table>
+  <thead><tr><th>Approach</th><th>Target</th><th>Result</th><th>Decision</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>LSTM (LSTM(64) → Dense(32), dropout 0.2)</td>
+      <td>CPU utilization</td>
+      <td>MAPE 27.5% vs persistence baseline 44.1%. Early stopped at epoch 7/30 (11,321 training samples, 5-min intervals).</td>
+      <td>Discarded — target variable (CPU util) is a resource metric, not a demand signal. Forecasting CPU does not directly drive proactive scaling decisions; request rate is the correct target.</td>
+    </tr>
+    <tr>
+      <td>Prophet (grid search: changepoint 0.5, seasonality 10.0, multiplicative)</td>
+      <td>Request rate</td>
+      <td>MAPE 38.8% — worse than persistence baseline (35.7%). Negative relative improvement.</td>
+      <td>Discarded — calendar-based seasonality model does not fit the Alibaba trace which lacks strong weekly/daily patterns.</td>
+    </tr>
+    <tr>
+      <td>ARIMA(2,0,2) + ARIMAX(3,0,1)</td>
+      <td>Request rate</td>
+      <td>MAPE 25.0% / 25.1% — beats persistence by ~23%. Selected as primary model.</td>
+      <td><strong>Adopted.</strong> Autocorrelation structure of request rate matches ARIMA assumptions. ARIMAX exog (CPU util, system load) confirmed no additional predictive value.</td>
+    </tr>
+  </tbody>
+</table>
 <h4>Limitations</h4>
 <p>Forecasting cannot capture flash crowds. Autoscaler always retains a reactive fallback path based on current telemetry.</p>
 
@@ -2793,7 +2817,7 @@ cur.execute(ANOMALY_QUERY,
       <ul>
         <li>Run a 60 s forecast cycle.</li>
         <li>Publish <code>ForecastResult</code> on <code>smartload.forecast</code>.</li>
-        <li>Own one model artifact (<code>arima.pkl</code> or <code>prophet.pkl</code>).</li>
+        <li>Own two model artifacts: <code>arimax_model.pkl</code> (primary) and <code>arima_model.pkl</code> (silent backup).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">Must NOT influence per-request routing (forecast errors must not corrupt routing). Must NOT trigger scaling itself (Autoscaler is the actuator).</div></div>
@@ -2805,11 +2829,10 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica. Inference is constant-time after model load.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle: predicted vs actual (lag join 5 min later). MAPE rolling. Cycle duration. <code>/health</code>.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">No client-controlled inputs. KPI: MAPE &lt; 20% on 5 min horizon.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">N1.2 active: moving-average rolling mean every 60 s.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">ARIMA or Prophet trained on Borg traces; 5 min horizon for fast scale-out, 1 h horizon for capacity planning. Held-out evaluation reports MAE / MAPE.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">N2.2 complete: ARIMA(2,0,2) primary + ARIMAX(3,0,1) parallel probe, trained on Alibaba Industrial Trace. Runtime fallback chain: ARIMAX → ARIMA → moving average. Test MAPE 25.01% (ARIMA), 25.07% (ARIMAX) — ~23% improvement over persistence baseline. ARIMAX exog features (avg_cpu_util, system_load) confirmed no additional predictive value; request rate is externally driven.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">MAPE &lt; 20% gate not yet met. Confidence intervals wired to Autoscaler heuristic. Forecast-vs-actual Grafana panel.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>N2.2: ARIMA/Prophet training pipeline + offline evaluation.</li>
         <li>Wire confidence intervals through to Autoscaler heuristic.</li>
         <li>Forecast-vs-actual dashboard panel in Grafana.</li>
       </ul>
