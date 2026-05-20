@@ -1,6 +1,6 @@
 """Envoy adapter — stub. Real implementation pending."""
 
-from ..base import LoadBalancerAdapter, AdapterState
+from ..base import LoadBalancerAdapter
 
 
 class EnvoyAdapter(LoadBalancerAdapter):
