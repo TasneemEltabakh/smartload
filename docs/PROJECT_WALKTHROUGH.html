@@ -1,0 +1,2003 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SmartLoad — Project Walkthrough</title>
+
+<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.css" />
+
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg-card: #161b22;
+    --bg-soft: #1c2129;
+    --border: #2d333b;
+    --text: #e6edf3;
+    --text-dim: #9ba8b6;
+    --text-faint: #6e7681;
+    --accent: #58a6ff;
+    --accent-soft: #1f6feb33;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --pink: #db61a2;
+    --teal: #39c5cf;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; margin: 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: var(--mono); font-size: 13px; }
+  pre { background: #0d1117 !important; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px !important; overflow: auto; margin: 12px 0; }
+  pre code { background: transparent !important; padding: 0 !important; }
+  :not(pre) > code { background: var(--bg-soft); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 90%; color: #ffa657; }
+
+  /* ── layout ─────────────────────────────────────────── */
+  .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
+  aside.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; border-right: 1px solid var(--border); background: #0b0e13; padding: 24px 18px; }
+  aside.toc h1 { font-size: 18px; margin: 0 0 4px; color: var(--text); }
+  aside.toc .tagline { font-size: 12px; color: var(--text-faint); margin-bottom: 18px; }
+  aside.toc nav { font-size: 13.5px; }
+  aside.toc nav details { margin-bottom: 6px; }
+  aside.toc nav details > summary { cursor: pointer; padding: 4px 6px; color: var(--text-dim); border-radius: 4px; }
+  aside.toc nav details[open] > summary { color: var(--text); }
+  aside.toc nav details > summary:hover { background: var(--bg-soft); color: var(--text); }
+  aside.toc nav a { display: block; padding: 4px 6px 4px 22px; color: var(--text-dim); border-radius: 4px; font-size: 13px; }
+  aside.toc nav a:hover { background: var(--bg-soft); color: var(--text); text-decoration: none; }
+  aside.toc nav a.section { padding-left: 6px; color: var(--text); font-weight: 600; }
+  main { padding: 32px 48px 64px; max-width: 1100px; }
+  h1.page-title { font-size: 32px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .subtitle { color: var(--text-dim); margin: 0 0 28px; }
+  h2 { font-size: 24px; margin: 48px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 8px; letter-spacing: -0.01em; }
+  h3 { font-size: 19px; margin: 32px 0 10px; color: var(--text); }
+  h4 { font-size: 16px; margin: 22px 0 8px; color: var(--text); }
+  h5 { font-size: 14px; margin: 16px 0 6px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin: 8px 0; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 4px 0; }
+
+  /* ── cards / callouts ────────────────────────────────── */
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin: 14px 0; }
+  .card.tight { padding: 12px 14px; }
+  .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 12px 16px; margin: 14px 0; font-size: 14px; }
+  .callout.warn { border-color: var(--amber); background: #d2992233; }
+  .callout.danger { border-color: var(--red); background: #f8514933; }
+  .callout.success { border-color: var(--green); background: #3fb95033; }
+  .callout.muted { border-color: var(--text-faint); background: #2d333b66; }
+  .callout > .title { font-weight: 600; margin-bottom: 4px; display: block; font-size: 13px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-dim); }
+
+  /* ── tables ─────────────────────────────────────────── */
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; background: var(--bg-card); border-radius: 8px; overflow: hidden; font-size: 13.5px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--bg-soft); color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: #1f242c; }
+
+  /* ── badges ─────────────────────────────────────────── */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .badge.shipped { background: #3fb95033; color: var(--green); border: 1px solid #3fb95066; }
+  .badge.stub { background: #d2992233; color: var(--amber); border: 1px solid #d2992266; }
+  .badge.planned { background: #6e768133; color: var(--text-faint); border: 1px solid #6e768166; }
+  .badge.phase0 { background: #bc8cff33; color: var(--purple); border: 1px solid #bc8cff66; }
+  .badge.lang-py { background: #1f6feb33; color: var(--accent); border: 1px solid #1f6feb66; }
+  .badge.lang-ts { background: #39c5cf33; color: var(--teal); border: 1px solid #39c5cf66; }
+  .badge.lang-sql { background: #db61a233; color: var(--pink); border: 1px solid #db61a266; }
+  .badge.lang-yaml { background: #f8514933; color: var(--red); border: 1px solid #f8514966; }
+  .badge.lang-conf { background: #6e768133; color: var(--text-dim); border: 1px solid #6e768166; }
+
+  /* ── mermaid container ──────────────────────────────── */
+  .mermaid { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; margin: 18px 0; text-align: center; overflow-x: auto; }
+
+  /* ── grids ──────────────────────────────────────────── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .stat .num { font-size: 26px; font-weight: 700; color: var(--accent); display: block; }
+  .stat .label { font-size: 12px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* ── service header ─────────────────────────────────── */
+  .service-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-left: 4px solid var(--accent); padding: 12px 16px; background: linear-gradient(90deg, var(--accent-soft), transparent 80%); border-radius: 8px; margin: 28px 0 14px; }
+  .service-head h3 { margin: 0; font-size: 18px; }
+  .service-head .meta { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* ── file tree ──────────────────────────────────────── */
+  .filetree { font-family: var(--mono); font-size: 13px; line-height: 1.7; background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; white-space: pre; color: var(--text-dim); }
+  .filetree .impl { color: var(--green); }
+  .filetree .stub { color: var(--amber); }
+  .filetree .stable { color: var(--text); }
+
+  /* ── kv list ────────────────────────────────────────── */
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 14px; }
+  .kv dt { color: var(--text-dim); font-family: var(--mono); font-size: 12.5px; }
+  .kv dd { margin: 0; }
+
+  /* ── responsive ─────────────────────────────────────── */
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: 1fr; }
+    aside.toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    main { padding: 24px 20px 48px; }
+    .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 640px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  }
+
+  /* ── tag list ──────────────────────────────────────── */
+  .tag-list { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  .tag { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); }
+
+  /* ── arrows in tables ──────────────────────────────── */
+  .arr { color: var(--accent); font-weight: 700; }
+
+  /* ── small ──────────────────────────────────────────── */
+  small.muted { color: var(--text-faint); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- SIDEBAR TOC                                                              -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<aside class="toc">
+  <h1>SmartLoad</h1>
+  <div class="tagline">Project Walkthrough</div>
+  <nav>
+    <a href="#overview" class="section">1 · System overview</a>
+    <a href="#shared" class="section">2 · Shared layer</a>
+    <details>
+      <summary>2 · Subsections</summary>
+      <a href="#contracts">2.1 contracts.py</a>
+      <a href="#queries">2.2 queries.py</a>
+      <a href="#lb-adapters">2.3 lb_adapters/</a>
+    </details>
+    <a href="#data-plane" class="section">3 · Data plane</a>
+    <details>
+      <summary>3 · Subsections</summary>
+      <a href="#load-balancer">3.1 load-balancer</a>
+      <a href="#lb-otel-shipper">3.2 lb-otel-shipper</a>
+      <a href="#telemetry">3.3 telemetry</a>
+    </details>
+    <a href="#decision-plane" class="section">4 · Decision plane</a>
+    <details>
+      <summary>4 · Subsections</summary>
+      <a href="#anomaly-detector">4.1 anomaly-detector</a>
+      <a href="#forecasting">4.2 forecasting</a>
+      <a href="#rl-engine">4.3 rl-engine</a>
+      <a href="#autoscaler">4.4 autoscaler</a>
+    </details>
+    <a href="#control-plane" class="section">5 · Control plane + UI</a>
+    <details>
+      <summary>5 · Subsections</summary>
+      <a href="#policy-manager">5.1 policy-manager</a>
+      <a href="#webhook-dispatcher">5.2 webhook-dispatcher</a>
+      <a href="#operator-ui-bff">5.3 operator-ui/bff</a>
+      <a href="#operator-ui-web">5.4 operator-ui/web</a>
+    </details>
+    <a href="#sdk" class="section">6 · Python SDK</a>
+    <a href="#infra" class="section">7 · Infrastructure</a>
+    <details>
+      <summary>7 · Subsections</summary>
+      <a href="#timescaledb">7.1 TimescaleDB</a>
+      <a href="#redis">7.2 Redis</a>
+      <a href="#prometheus">7.3 Prometheus</a>
+      <a href="#otel-collector">7.4 OTel Collector</a>
+      <a href="#grafana">7.5 Grafana</a>
+      <a href="#helm">7.6 Helm chart</a>
+    </details>
+  </nav>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- MAIN                                                                     -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<main>
+
+<h1 class="page-title">SmartLoad — Project Walkthrough</h1>
+<p class="subtitle">A visual file-by-file tour of every service, shared module, infrastructure component, and the Python SDK. Diagrams, tables, and code excerpts — explained.</p>
+
+<div class="grid-4">
+  <div class="stat"><span class="num">11</span><span class="label">Services</span></div>
+  <div class="stat"><span class="num">5</span><span class="label">Redis channels</span></div>
+  <div class="stat"><span class="num">4</span><span class="label">DB hypertables</span></div>
+  <div class="stat"><span class="num">3</span><span class="label">Planes</span></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 1. SYSTEM OVERVIEW                                                       -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="overview">1 · System overview</h2>
+
+<p>SmartLoad sits between client traffic and a backend pool. It combines a classical load balancer with a telemetry-driven decision plane (anomaly detection, forecasting, RL routing) and operator-facing control surfaces. Three planes, ten services, two cross-service contracts.</p>
+
+<h3>The three planes</h3>
+
+<div class="mermaid">
+flowchart TB
+  subgraph DATA["DATA PLANE - carries client traffic"]
+    direction LR
+    LB["load-balancer<br/>NGINX :8080"]
+    SHIP["lb-otel-shipper<br/>log tailer"]
+    TEL["telemetry<br/>:8081"]
+    LB -- "access.log" --> SHIP
+    SHIP -- "OTLP" --> OTEL[otel-collector]
+    OTEL -- "OTLP/HTTP" --> TEL
+    TEL -- "INSERT" --> DB[("TimescaleDB")]
+  end
+
+  subgraph DECISION["DECISION PLANE - reads telemetry, publishes events"]
+    direction LR
+    AD["anomaly-detector<br/>:8082"]
+    FC["forecasting<br/>:8083"]
+    RL["rl-engine<br/>:8084"]
+    AS["autoscaler<br/>:8085"]
+    AD -- "smartload.anomaly" --> R{{Redis}}
+    FC -- "smartload.forecast" --> R
+    RL -- "smartload.routing" --> R
+    AS -- "smartload.scale" --> R
+    R -. "forecast" .-> AS
+  end
+
+  subgraph CONTROL["CONTROL PLANE - policy + UI + outbound webhooks"]
+    direction LR
+    PM["policy-manager<br/>:8086"]
+    OUI["operator-ui<br/>:8090"]
+    WHD["webhook-dispatcher<br/>scaffold"]
+    PM -- "smartload.policy" --> R2{{Redis}}
+    OUI -- "HTTP" --> PM
+    WHD -- "HMAC POST" --> EXT[Customer URL]
+  end
+
+  DATA -. "metrics" .-> DECISION
+  DECISION -. "policy" .-> CONTROL
+  CONTROL -. "policy" .-> DECISION
+
+  classDef plane fill:#161b22,stroke:#2d333b,color:#e6edf3
+  classDef redis fill:#db61a233,stroke:#db61a2,color:#e6edf3
+  classDef db fill:#39c5cf33,stroke:#39c5cf,color:#e6edf3
+  class DATA,DECISION,CONTROL plane
+  class R,R2 redis
+  class DB db
+</div>
+
+<h3>End-to-end request lifecycle</h3>
+
+<div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant N as NGINX (load-balancer)
+  participant B as Backend
+  participant S as lb-otel-shipper
+  participant O as otel-collector
+  participant T as telemetry
+  participant DB as TimescaleDB
+  participant AD as anomaly-detector
+  participant R as Redis
+
+  C->>N: HTTP request
+  N->>B: proxy_pass to chosen upstream
+  B-->>N: 200 or 5xx
+  N-->>C: response
+  N->>S: access.log line as JSON
+  S->>O: OTLP HTTP JSON batch
+  O->>T: POST /v1/metrics
+  T->>DB: INSERT metrics x3 rows
+  Note over DB: rows: request_count, request_latency_ms, error_rate
+  AD->>DB: SELECT ANOMALY_QUERY
+  AD->>R: PUBLISH smartload.anomaly
+</div>
+
+<h3>Contract surfaces</h3>
+
+<table>
+  <thead><tr><th>Surface</th><th>Canonical contract</th><th>Carried by</th></tr></thead>
+  <tbody>
+    <tr><td>HTTP REST <code>/api/v1/*</code></td><td><code>docs/openapi/smartload-v1.yaml</code> (OpenAPI 3.1)</td><td>Operator UI, SDK, external integrators</td></tr>
+    <tr><td>Redis pub/sub</td><td><code>docs/redis-channels.md</code> + <code>services/shared/contracts.py</code></td><td>Inter-service events</td></tr>
+    <tr><td>Database schema</td><td><code>infrastructure/timescaledb/init.sql</code></td><td>Engines, dashboards, audit views</td></tr>
+    <tr><td>Python SDK</td><td><code>clients/python/smartload_client/</code></td><td>External Python consumers</td></tr>
+  </tbody>
+</table>
+
+<h3>Service directory at a glance</h3>
+
+<table>
+  <thead><tr><th>Service</th><th>Plane</th><th>Lang</th><th>Port</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td><code>load-balancer</code></td><td>Data</td><td><span class="badge lang-conf">NGINX</span></td><td>8080</td><td><span class="badge shipped">Wired</span></td></tr>
+    <tr><td><code>lb-otel-shipper</code></td><td>Data</td><td><span class="badge lang-py">Python</span></td><td>sidecar</td><td><span class="badge shipped">T1.2 shipped</span></td></tr>
+    <tr><td><code>telemetry</code></td><td>Data</td><td><span class="badge lang-py">Python</span></td><td>8081</td><td><span class="badge shipped">T1.1 shipped</span></td></tr>
+    <tr><td><code>anomaly-detector</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8082</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
+    <tr><td><code>forecasting</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8083</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
+    <tr><td><code>rl-engine</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8084</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
+    <tr><td><code>autoscaler</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8085</td><td><span class="badge shipped">T1.3 shipped</span></td></tr>
+    <tr><td><code>policy-manager</code></td><td>Control</td><td><span class="badge lang-py">Python</span></td><td>8086</td><td><span class="badge shipped">T1.4 shipped</span></td></tr>
+    <tr><td><code>operator-ui</code></td><td>Control</td><td><span class="badge lang-py">Flask</span> + <span class="badge lang-ts">React</span></td><td>8090</td><td><span class="badge shipped">Slice #1</span></td></tr>
+    <tr><td><code>webhook-dispatcher</code></td><td>Control</td><td><span class="badge lang-py">Python</span></td><td>—</td><td><span class="badge stub">Scaffold</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 2. SHARED LAYER                                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="shared">2 · The shared layer (<code>services/shared/</code>)</h2>
+
+<div class="callout">
+  <span class="title">Read this first</span>
+  Every service depends on <code>shared/</code>. It is the single source of truth for the Redis envelope shape and the SQL query strings. Without it, services would silently drift on the wire format.
+</div>
+
+<div class="filetree">services/shared/
+├── __init__.py                  <span class="stable"># empty package marker</span>
+├── README.md
+├── contracts.py                 <span class="impl"># Redis envelopes + pub/sub helpers  (362 lines)</span>
+├── queries.py                   <span class="impl"># canonical SQL constants            (171 lines)</span>
+└── lb_adapters/
+    ├── __init__.py              <span class="stable"># exports LoadBalancerAdapter</span>
+    ├── base.py                  <span class="impl"># abstract base class                (52 lines)</span>
+    ├── nginx/                   <span class="stable"># placeholder for v1 default</span>
+    ├── envoy/                   <span class="stub"># stub — NotImplementedError</span>
+    ├── haproxy/                 <span class="stub"># stub</span>
+    └── alb/                     <span class="stub"># stub</span></div>
+
+<!-- ── 2.1 contracts.py ───────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="contracts">2.1 · <code>contracts.py</code> — Redis envelope contracts</h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">Live</span></div>
+</div>
+
+<h4>Channel registry</h4>
+
+<table>
+  <thead><tr><th>Channel</th><th>Publisher</th><th>Subscribers</th><th>Payload</th><th>TTL</th></tr></thead>
+  <tbody>
+    <tr><td><code>smartload.anomaly</code></td><td>anomaly-detector</td><td>LB sidecar, policy-manager</td><td>AnomalyEvent</td><td>30 s</td></tr>
+    <tr><td><code>smartload.forecast</code></td><td>forecasting</td><td>autoscaler, policy-manager</td><td>ForecastResult</td><td>180 s</td></tr>
+    <tr><td><code>smartload.routing</code></td><td>rl-engine</td><td>LB sidecar</td><td>RoutingRecommendation</td><td>30 s</td></tr>
+    <tr><td><code>smartload.scale</code></td><td>autoscaler</td><td>policy-manager, LB</td><td>ScalingEvent</td><td>∞ (audit)</td></tr>
+    <tr><td><code>smartload.policy</code></td><td>policy-manager</td><td>all AI services</td><td>PolicyUpdate</td><td>∞ (snapshot)</td></tr>
+  </tbody>
+</table>
+
+<h4>Canonical envelope shape</h4>
+
+<div class="mermaid">
+classDiagram
+  class Envelope {
+    +string event_id
+    +string source
+    +int version
+    +string timestamp
+    +dict payload
+  }
+  class AnomalyEvent {
+    +string backend_id
+    +string status
+    +float score
+    +dict features
+    +string model_version
+  }
+  class ForecastResult {
+    +int horizon_minutes
+    +float predicted_rps
+    +float confidence_lower
+    +float confidence_upper
+    +string model_id
+  }
+  class RoutingRecommendation {
+    +string mode
+    +list server_rankings
+    +int policy_version
+  }
+  class ScalingEvent {
+    +string action
+    +int instance_count
+    +string reason
+    +string forecast_event_id
+  }
+  class PolicyUpdate {
+    +string operating_mode
+    +bool safe_mode
+    +int min_backends
+    +int max_backends
+    +int slo_p95_latency_ms
+    +int policy_version
+    +list changed_fields
+  }
+  Envelope --> AnomalyEvent : payload
+  Envelope --> ForecastResult : payload
+  Envelope --> RoutingRecommendation : payload
+  Envelope --> ScalingEvent : payload
+  Envelope --> PolicyUpdate : payload
+</div>
+
+<h4>Publisher API</h4>
+
+<pre><code class="language-python">def publish_envelope(redis_client, channel: str, source: str, payload: Any) -> str:
+    env = make_envelope(source=source, payload=payload)
+    redis_client.publish(channel, json.dumps(asdict(env)))
+    return env.event_id   # returned for correlation / audit
+</code></pre>
+
+<h4>Subscriber drop reasons</h4>
+
+<table>
+  <thead><tr><th>Reason</th><th>When</th><th>Operator response</th></tr></thead>
+  <tbody>
+    <tr><td><code>malformed_json</code></td><td>Body is not JSON-parseable</td><td>Investigate publisher</td></tr>
+    <tr><td><code>not_an_envelope</code></td><td>Missing <code>payload</code> or <code>timestamp</code></td><td>Schema drift — check publisher version</td></tr>
+    <tr><td><code>naive_timestamp</code></td><td>No timezone info</td><td>Publisher bug</td></tr>
+    <tr><td><code>unparseable_timestamp</code></td><td>Not RFC 3339</td><td>Publisher bug</td></tr>
+    <tr><td><code>stale</code></td><td>Older than channel TTL</td><td>Network / scheduler delay — normal in bursts</td></tr>
+  </tbody>
+</table>
+
+<div class="mermaid">
+flowchart TD
+  A[raw bytes from pubsub] --> B{"decode UTF-8?"}
+  B -- fail --> X1["drop: malformed_json"]
+  B -- ok --> C{"json.loads?"}
+  C -- fail --> X1
+  C -- ok --> D{"has payload + timestamp?"}
+  D -- no --> X2["drop: not_an_envelope"]
+  D -- yes --> E{"TTL for channel?"}
+  E -- None --> P["return payload, meta"]
+  E -- N_seconds --> F{"parseable ISO?"}
+  F -- no --> X3["drop: unparseable_timestamp"]
+  F -- yes --> G{"has timezone?"}
+  G -- no --> X4["drop: naive_timestamp"]
+  G -- yes --> H{"age within TTL?"}
+  H -- no --> X5["drop: stale"]
+  H -- yes --> P
+
+  classDef drop fill:#f8514933,stroke:#f85149,color:#fff
+  classDef pass fill:#3fb95033,stroke:#3fb950,color:#fff
+  class X1,X2,X3,X4,X5 drop
+  class P pass
+</div>
+
+<h4>Envelope JSON on the wire</h4>
+
+<pre><code class="language-json">{
+  "event_id":  "9d4f7a2e-3b1d-4f6a-9b5e-2c1f0a4d7e8b",
+  "source":    "anomaly-detector",
+  "version":   1,
+  "timestamp": "2026-05-18T14:23:55.812000+00:00",
+  "payload": {
+    "backend_id": "smartload-test-backend-3",
+    "status":     "degraded",
+    "score":      0.82,
+    "features":   { "latency_z": 4.1, "err_rate": 0.001 }
+  }
+}
+</code></pre>
+
+<!-- ── 2.2 queries.py ─────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="queries">2.2 · <code>queries.py</code> — canonical SQL constants</h3>
+  <div class="meta"><span class="badge lang-sql">SQL</span> <span class="badge shipped">Live</span></div>
+</div>
+
+<div class="callout warn">
+  <span class="title">Parameterisation rule</span>
+  All dynamic values — <em>including time intervals</em> — are passed as bind parameters, never via Python string formatting. Postgres only caches the prepared plan when query <em>text</em> is stable.
+</div>
+
+<h4>Query catalog</h4>
+
+<table>
+  <thead><tr><th>Constant</th><th>Used by</th><th>Returns</th><th>Bind params</th></tr></thead>
+  <tbody>
+    <tr><td><code>ANOMALY_QUERY</code></td><td>anomaly-detector</td><td>avg/max/stddev/count per (instance, metric)</td><td>window, service, metric_names</td></tr>
+    <tr><td><code>FORECAST_QUERY</code></td><td>forecasting</td><td>1-min buckets of request_rate</td><td>window</td></tr>
+    <tr><td><code>RL_STATE_QUERY</code></td><td>rl-engine</td><td>latency / count / err_rate per instance (pivoted)</td><td>window</td></tr>
+    <tr><td><code>BACKEND_HEALTH_QUERY</code></td><td>rl-engine, LB sidecar</td><td>latest health verdict per backend</td><td>window</td></tr>
+    <tr><td><code>OBSERVED_RPS_QUERY</code></td><td>autoscaler (reactive fallback)</td><td>scalar RPS over last 60 s</td><td>—</td></tr>
+    <tr><td><code>METRICS_INSERT</code></td><td>telemetry</td><td>—</td><td>5 columns × N rows</td></tr>
+    <tr><td><code>BACKEND_HEALTH_INSERT</code></td><td>anomaly-detector</td><td>—</td><td>time, backend_id, status, score</td></tr>
+    <tr><td><code>SCALING_EVENT_INSERT</code></td><td>autoscaler</td><td>—</td><td>time, action, count, reason</td></tr>
+    <tr><td><code>POLICY_CHANGE_INSERT</code></td><td>policy-manager</td><td>—</td><td>6 columns per changed field</td></tr>
+  </tbody>
+</table>
+
+<h4>The two cleverest queries</h4>
+
+<pre><code class="language-sql">-- RL_STATE_QUERY: SQL pivots three metric_name rows into three columns
+SELECT
+    instance,
+    AVG(CASE WHEN metric_name = 'request_latency_ms' THEN value END) AS latency,
+    SUM(CASE WHEN metric_name = 'request_count'      THEN value END) AS request_count,
+    MAX(CASE WHEN metric_name = 'error_rate'         THEN value END) AS error_rate
+FROM metrics
+WHERE time > NOW() - %s::interval
+GROUP BY instance
+ORDER BY instance;
+
+-- BACKEND_HEALTH_QUERY: most-recent-per-group via DISTINCT ON
+SELECT DISTINCT ON (backend_id)
+    backend_id, status, score, time
+FROM backend_health
+WHERE time > NOW() - %s::interval
+ORDER BY backend_id, time DESC;
+</code></pre>
+
+<!-- ── 2.3 lb_adapters ────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="lb-adapters">2.3 · <code>lb_adapters/</code> — load-balancer plugin contract</h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge planned">Refactor pending</span></div>
+</div>
+
+<p>The interface that decouples SmartLoad's decision plane from any specific load balancer. If decision-plane code called <code>nginx -s reload</code> directly, the stack would be NGINX-only forever.</p>
+
+<div class="mermaid">
+classDiagram
+  class LoadBalancerAdapter {
+    &lt;&lt;abstract&gt;&gt;
+    +set_upstream_weights(dict)
+    +exclude_backend(string)
+    +include_backend(string)
+    +current_state() AdapterState
+  }
+  class AdapterState {
+    +dict upstream_weights
+    +set excluded_backends
+  }
+  class NginxAdapter
+  class EnvoyAdapter
+  class HAProxyAdapter
+  class ALBAdapter
+  LoadBalancerAdapter &lt;|-- NginxAdapter
+  LoadBalancerAdapter &lt;|-- EnvoyAdapter
+  LoadBalancerAdapter &lt;|-- HAProxyAdapter
+  LoadBalancerAdapter &lt;|-- ALBAdapter
+</div>
+
+<table>
+  <thead><tr><th>Folder</th><th>Status</th><th>Behavior</th></tr></thead>
+  <tbody>
+    <tr><td><code>nginx/</code></td><td><span class="badge planned">v1 placeholder</span></td><td>Rewrites upstream block + signals reload (logic still in lb-otel-shipper / planned T2.1)</td></tr>
+    <tr><td><code>envoy/</code></td><td><span class="badge stub">Stub</span></td><td><code>NotImplementedError</code> on construct</td></tr>
+    <tr><td><code>haproxy/</code></td><td><span class="badge stub">Stub</span></td><td>Same</td></tr>
+    <tr><td><code>alb/</code></td><td><span class="badge stub">Stub</span></td><td>Will depend on boto3</td></tr>
+  </tbody>
+</table>
+
+<div class="callout muted">
+  <span class="title">Contract guarantees</span>
+  Every adapter must be <strong>idempotent</strong> (double-call is a no-op), <strong>bounded-latency</strong> (~1 s under normal conditions), and <strong>fail-safe</strong> (all-or-nothing — never half-applied). Verified by <code>tests/conformance/lb_adapter/</code>.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 3. DATA PLANE                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="data-plane">3 · Data plane</h2>
+
+<p>Carries client traffic and the telemetry derived from it. Three services in a linear pipeline.</p>
+
+<div class="mermaid">
+flowchart LR
+  C[Client] --> N["load-balancer<br/>NGINX :8080"]
+  N --> B1[backend-1]
+  N --> B2[backend-2]
+  N --> B3[backend-3]
+  N --> B4[backend-4]
+  N --> B5[backend-5]
+  N -- "access.log<br/>JSON in /nginx-logs" --> S[lb-otel-shipper]
+  S -- "OTLP HTTP JSON<br/>3 datapoints per request" --> O[otel-collector]
+  O -- "POST /v1/metrics" --> T["telemetry :8081"]
+  T -- "execute_batch<br/>page_size=500" --> DB[("metrics<br/>hypertable")]
+
+  classDef inf fill:#bc8cff33,stroke:#bc8cff,color:#fff
+  classDef db fill:#39c5cf33,stroke:#39c5cf,color:#fff
+  class O,N inf
+  class DB db
+</div>
+
+<!-- ── 3.1 load-balancer ──────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="load-balancer">3.1 · <code>load-balancer</code> — NGINX</h3>
+  <div class="meta"><span class="badge lang-conf">NGINX</span> <span class="badge shipped">Wired</span></div>
+</div>
+
+<dl class="kv">
+  <dt>Container</dt><dd>nginx:1.25-alpine</dd>
+  <dt>Listens on</dt><dd>port 80 (host 8080)</dd>
+  <dt>Files</dt><dd><code>nginx/Dockerfile</code> · <code>nginx/nginx.conf</code></dd>
+</dl>
+
+<h4>Three concerns: log format, dual sinks, static upstream</h4>
+
+<pre><code class="language-nginx">log_format smartload_json escape=json
+'{'
+'"timestamp":"$time_iso8601",'
+'"service":"nginx",'
+'"client_ip":"$remote_addr",'
+'"request":"$request",'
+'"request_path":"$uri",'
+'"status":$status,'
+'"backend":"$upstream_addr",'
+'"latency":$request_time,'
+'"upstream_latency":"$upstream_response_time"'
+'}';
+
+access_log /dev/stdout            smartload_json;
+access_log /nginx-logs/access.log smartload_json;   # <-- shipper tails this
+
+upstream backend_pool {
+    server smartload-test-backend-1:8080 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-2:8080 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-3:8080 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-4:8080 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-5:8080 max_fails=3 fail_timeout=10s;
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://backend_pool;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+}
+</code></pre>
+
+<div class="grid-2">
+  <div class="callout">
+    <span class="title">Why two log sinks?</span>
+    The first goes to <code>docker logs</code>. The second is tailed by <strong>lb-otel-shipper</strong>. Path is <code>/nginx-logs/access.log</code> — NOT <code>/var/log/nginx/access.log</code> — because the Alpine base symlinks <code>access.log → /dev/stdout</code>, which can't be tailed.
+  </div>
+  <div class="callout">
+    <span class="title">Why a static 5-backend block?</span>
+    Open-source NGINX doesn't round-robin across DNS A-records, and lacks the Plus-only <code>resolve</code> directive. The autoscaler <em>toggles running state</em> of these 5 fixed containers — never creates/destroys — keeping NGINX's static block valid. <code>proxy_next_upstream</code> retries past stopped members.
+  </div>
+</div>
+
+<!-- ── 3.2 lb-otel-shipper ─────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="lb-otel-shipper">3.2 · <code>lb-otel-shipper</code> — log tail → OTLP</h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">T1.2</span></div>
+</div>
+
+<p>A 260-line sidecar that tails NGINX's JSON access log and emits one OTLP/HTTP-JSON gauge data point per request, per metric.</p>
+
+<div class="callout">
+  <span class="title">Why "Approach B" (log shipper) instead of NGINX-OTel module?</span>
+  The module aggregates upstream of the DB. SmartLoad's anomaly + RL queries compute <code>STDDEV/MAX</code> over rolling windows — that requires <strong>per-request rows</strong>, not pre-aggregated histograms. The shipper preserves fidelity.
+</div>
+
+<h4>Per-line transformation</h4>
+
+<div class="mermaid">
+flowchart LR
+  L["JSON log line:<br/>latency, status, backend"] --> P[line_to_datapoints]
+  P --> M1["request_count = 1.0"]
+  P --> M2["request_latency_ms = latency x 1000"]
+  P --> M3["error_rate = 1 if status is 5xx else 0"]
+  B["buffer deque"]
+  M1 --> B
+  M2 --> B
+  M3 --> B
+  B -- "flush every 1s OR 500 datapoints" --> E[build_envelope]
+  E --> POST["POST /v1/metrics<br/>fire-and-forget"]
+</div>
+
+<h4>Tunables (all env-overridable)</h4>
+
+<table>
+  <thead><tr><th>Env var</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>POST_TIMEOUT_S</code></td><td>2.0</td><td>HTTP POST timeout</td></tr>
+    <tr><td><code>FLUSH_INTERVAL_S</code></td><td>1.0</td><td>Max time between flushes</td></tr>
+    <tr><td><code>FLUSH_BATCH_MAX</code></td><td>500</td><td>Max datapoints per batch</td></tr>
+    <tr><td><code>REOPEN_BACKOFF_S</code></td><td>1.0</td><td>Wait before reopening log file</td></tr>
+  </tbody>
+</table>
+
+<h4>The OTLP envelope construction</h4>
+
+<pre><code class="language-python">def build_envelope(datapoints):
+    by_name = {}
+    for name, value, ts_ns, backend in datapoints:
+        by_name.setdefault(name, []).append({
+            "timeUnixNano": str(ts_ns),
+            "asDouble":     value,
+            "attributes":   [
+                {"key": "instance", "value": {"stringValue": backend}},
+            ],
+        })
+    return {
+        "resourceMetrics": [{
+            "resource": {"attributes": [
+                {"key": "service.name",        "value": {"stringValue": SERVICE_NAME}},
+                {"key": "service.instance.id", "value": {"stringValue": INSTANCE_ID}},
+            ]},
+            "scopeMetrics": [{"metrics": [
+                {"name": name, "gauge": {"dataPoints": dps}}
+                for name, dps in by_name.items()
+            ]}],
+        }],
+    }
+</code></pre>
+
+<div class="callout warn">
+  <span class="title">The instance-attribute trick</span>
+  <strong>Resource attributes</strong> (<code>service.name</code>, <code>service.instance.id</code>) identify the <em>shipper</em>. The <strong>per-datapoint <code>instance</code> attribute</strong> identifies the <em>backend that handled the request</em>. The telemetry parser prefers the per-datapoint one — so <code>metrics.instance</code> stores the backend, not the shipper.
+</div>
+
+<h4>Fire-and-forget POST + counters</h4>
+
+<pre><code class="language-python">def post_envelope(envelope):
+    try:
+        resp = requests.post(COLLECTOR_URL, json=envelope, timeout=POST_TIMEOUT_S)
+        if resp.status_code >= 400:
+            _bump("batches_dropped");  return
+        _bump("batches_sent")
+    except requests.RequestException as exc:
+        _bump("batches_dropped")
+        log.warning("collector POST failed: %s", exc)
+</code></pre>
+
+<p>Backpressure must <strong>never</strong> reach the data plane. Any failure → count + log + drop. Heartbeat thread logs <code>{lines_parsed, lines_skipped, batches_sent, batches_dropped}</code> every 30 s.</p>
+
+<!-- ── 3.3 telemetry ──────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="telemetry">3.3 · <code>telemetry</code> — OTLP ingest + read API</h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">T1.1</span></div>
+</div>
+
+<dl class="kv">
+  <dt>Listens on</dt><dd>port 8081</dd>
+  <dt>Role</dt><dd>Sole writer of the <code>metrics</code> hypertable</dd>
+  <dt>Deps</dt><dd>flask, psycopg2-binary, redis</dd>
+</dl>
+
+<h4>HTTP surface</h4>
+
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Status codes</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>POST</td><td><code>/v1/metrics</code></td><td>200 / 400 / 415</td><td>OTLP/HTTP-JSON ingress (always 200 on DB failure)</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/metrics</code></td><td>200 / 400 / 503</td><td>Read API <code>?service=&amp;window=</code></td></tr>
+    <tr><td>GET</td><td><code>/api/v1/stats</code></td><td>200</td><td>Counters: rows_written, dropped, etc</td></tr>
+    <tr><td>GET</td><td><code>/health</code></td><td>200 / 503</td><td>Redis + DB probes</td></tr>
+  </tbody>
+</table>
+
+<h4>OTLP parser policies</h4>
+
+<table>
+  <thead><tr><th>Rule</th><th>Behavior</th></tr></thead>
+  <tbody>
+    <tr><td>Histograms / summaries</td><td>Counted as <code>rows_dropped_shape</code>, not persisted</td></tr>
+    <tr><td>Instance resolution priority</td><td>per-datapoint <code>instance</code> &rarr; resource <code>service.instance.id</code> &rarr; resource <code>host.name</code> &rarr; <code>"unknown"</code></td></tr>
+    <tr><td>DB failure</td><td>Returns 200 with <code>{accepted:0, dropped_db:N}</code>; bump <code>rows_dropped_db</code></td></tr>
+    <tr><td>Read API failure</td><td>Returns 503 (operators need to know DB is down)</td></tr>
+    <tr><td>Batch size</td><td><code>execute_batch(... page_size=500)</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Window string syntax (Prometheus-style)</h4>
+
+<pre><code class="language-python">_WINDOW_RE    = re.compile(r"^\s*(\d+)\s*([smhd])\s*$")
+_WINDOW_UNITS = {"s": "seconds", "m": "minutes", "h": "hours", "d": "days"}
+# "30s" -> "30 seconds"   ·   "5m" -> "5 minutes"   ·   "2d" -> "2 days"
+</code></pre>
+
+<h4>Shared-module resolution (dev vs container)</h4>
+
+<pre><code class="language-python">_HERE = os.path.dirname(os.path.abspath(__file__))
+for _cand in (_HERE, os.path.dirname(_HERE)):
+    if os.path.isdir(os.path.join(_cand, "shared")):
+        sys.path.insert(0, _cand);  break
+from shared.queries import METRICS_INSERT
+</code></pre>
+
+<p>Two layouts to support — container has <code>shared/</code> as a sibling of <code>app.py</code>; dev has it as a parent. The same loop works for telemetry, autoscaler, and policy-manager.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 4. DECISION PLANE                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="decision-plane">4 · Decision plane</h2>
+
+<div class="callout muted">
+  <span class="title">Phase-0 reality check</span>
+  Three of four decision-plane services (<code>anomaly-detector</code>, <code>forecasting</code>, <code>rl-engine</code>) ship today as <strong>Phase 0 stubs</strong> with <code>/health</code> only. The engine/policy plugin folders + ABCs + factories + baseline implementations exist; <code>app.py</code> does not yet wire them. Only <strong>autoscaler</strong> is fully wired in T1.x.
+</div>
+
+<h3>Plugin pattern across all four services</h3>
+
+<div class="mermaid">
+flowchart LR
+  ENV["ENGINE or POLICY env var"] --> F["select_engine<br/>or select_policy"]
+  F -- "threshold" --> T[ThresholdEngine]
+  F -- "isolation_forest" --> I["IsolationForestEngine<br/>stub"]
+  F -- "moving_average" --> MA[MovingAverageEngine]
+  F -- "arima" --> AR["ArimaEngine<br/>stub"]
+  F -- "random_shadow" --> RS[RandomShadowPolicy]
+  F -- "ppo" --> PPO["PPOPolicy<br/>stub"]
+
+  classDef live fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef stub fill:#d2992233,stroke:#d29922,color:#fff
+  class T,MA,RS live
+  class I,AR,PPO stub
+</div>
+
+<h3>Plugin inventory</h3>
+
+<table>
+  <thead><tr><th>Service</th><th>Plugin dir</th><th>v1 default</th><th>Stub</th></tr></thead>
+  <tbody>
+    <tr><td>anomaly-detector</td><td><code>engines/</code></td><td><code>threshold</code> <span class="badge shipped">live</span></td><td><code>isolation_forest</code> <span class="badge stub">#101</span></td></tr>
+    <tr><td>forecasting</td><td><code>engines/</code></td><td><code>moving_average</code> <span class="badge shipped">live</span></td><td><code>arima</code> <span class="badge stub">#102</span></td></tr>
+    <tr><td>rl-engine</td><td><code>policies/</code></td><td><code>random_shadow</code> <span class="badge shipped">live</span></td><td><code>ppo</code> <span class="badge stub">#27</span></td></tr>
+  </tbody>
+</table>
+
+<!-- ── 4.1 anomaly-detector ───────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="anomaly-detector">4.1 · <code>anomaly-detector</code></h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge phase0">Phase 0 + plugins</span></div>
+</div>
+
+<h4>Engine contract</h4>
+
+<div class="mermaid">
+classDiagram
+  class AnomalyEngine {
+    &lt;&lt;abstract&gt;&gt;
+    +score(BackendFeatures) AnomalyScore
+    +reload()
+  }
+  class BackendFeatures {
+    +string backend_id
+    +float latency_ms
+    +float latency_rolling_mean_ms
+    +float error_rate
+    +int sample_count
+  }
+  class AnomalyScore {
+    +string backend_id
+    +string status
+    +float score
+  }
+  class ThresholdEngine
+  class IsolationForestEngine
+  AnomalyEngine &lt;|-- ThresholdEngine
+  AnomalyEngine &lt;|-- IsolationForestEngine
+  AnomalyEngine ..&gt; BackendFeatures
+  AnomalyEngine ..&gt; AnomalyScore
+</div>
+
+<h4>Threshold engine — classification flow</h4>
+
+<div class="mermaid">
+flowchart TD
+  S[BackendFeatures] --> A{"samples below min count?"}
+  A -- yes --> H1["healthy · score=0"]
+  A -- no --> B{"error_rate above threshold?"}
+  B -- yes --> U["unhealthy<br/>score = err / threshold"]
+  B -- no --> C{"rolling_mean is zero?"}
+  C -- yes --> H2["healthy · score=0"]
+  C -- no --> D{"latency / mean above multiplier?"}
+  D -- yes --> G["degraded<br/>score = ratio / (mult x 2)"]
+  D -- no --> H3["healthy · score=0"]
+
+  classDef ok fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef warn fill:#d2992233,stroke:#d29922,color:#fff
+  classDef bad fill:#f8514933,stroke:#f85149,color:#fff
+  class H1,H2,H3 ok
+  class G warn
+  class U bad
+</div>
+
+<h4>Backend health state machine</h4>
+
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> healthy
+  healthy --> degraded: latency exceeds 3x rolling mean
+  healthy --> unhealthy: error_rate above threshold
+  degraded --> healthy: latency normalises
+  degraded --> unhealthy: error_rate spikes
+  unhealthy --> degraded: errors clear, latency still high
+  unhealthy --> healthy: both metrics normalise
+</div>
+
+<h4>Threshold engine implementation</h4>
+
+<pre><code class="language-python">class ThresholdEngine(AnomalyEngine):
+    def __init__(self, latency_multiplier=3.0, error_rate_threshold=0.05, min_sample_count=10):
+        self.latency_multiplier = latency_multiplier
+        self.error_rate_threshold = error_rate_threshold
+        self.min_sample_count = min_sample_count
+
+    def score(self, features):
+        if features.sample_count &lt; self.min_sample_count:
+            return AnomalyScore(features.backend_id, "healthy", 0.0)
+        if features.error_rate &gt; self.error_rate_threshold:
+            return AnomalyScore(features.backend_id, "unhealthy",
+                                min(1.0, features.error_rate / self.error_rate_threshold))
+        if features.latency_rolling_mean_ms &lt;= 0:
+            return AnomalyScore(features.backend_id, "healthy", 0.0)
+        ratio = features.latency_ms / features.latency_rolling_mean_ms
+        if ratio &gt; self.latency_multiplier:
+            return AnomalyScore(features.backend_id, "degraded",
+                                min(1.0, ratio / (self.latency_multiplier * 2)))
+        return AnomalyScore(features.backend_id, "healthy", 0.0)
+</code></pre>
+
+<!-- ── 4.2 forecasting ────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="forecasting">4.2 · <code>forecasting</code></h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge phase0">Phase 0 + plugins</span></div>
+</div>
+
+<div class="mermaid">
+classDiagram
+  class ForecastEngine {
+    &lt;&lt;abstract&gt;&gt;
+    +forecast(HistoryWindow) Forecast
+    +reload()
+  }
+  class HistoryWindow {
+    +list~string~ timestamps
+    +list~float~ request_rates
+  }
+  class Forecast {
+    +int horizon_minutes
+    +float predicted_rps
+    +float confidence_lower
+    +float confidence_upper
+  }
+  class MovingAverageEngine
+  class ArimaEngine
+  ForecastEngine &lt;|-- MovingAverageEngine
+  ForecastEngine &lt;|-- ArimaEngine
+</div>
+
+<h4>Moving-average baseline</h4>
+
+<pre><code class="language-python">class MovingAverageEngine(ForecastEngine):
+    def __init__(self, horizon_minutes=5, window_samples=60):
+        self.horizon_minutes = horizon_minutes
+        self.window_samples = window_samples
+
+    def forecast(self, history):
+        rates = history.request_rates[-self.window_samples:]
+        if not rates:
+            return Forecast(self.horizon_minutes, 0.0, 0.0, 0.0)
+        mean = sum(rates) / len(rates)
+        if len(rates) &gt;= 2:
+            var = sum((r - mean) ** 2 for r in rates) / (len(rates) - 1)
+            std = var ** 0.5
+        else:
+            std = 0.0
+        return Forecast(
+            horizon_minutes=self.horizon_minutes,
+            predicted_rps=mean,
+            confidence_lower=max(0.0, mean - std),
+            confidence_upper=mean + std,
+        )
+</code></pre>
+
+<div class="callout">
+  <span class="title">Why sample variance (n−1)?</span>
+  The denominator <code>(len(rates) - 1)</code> gives the <strong>sample variance</strong>. The confidence band reflects uncertainty about the <em>true</em> mean rather than the observed one. <code>max(0.0, mean - std)</code> clamps the lower bound — RPS can't be negative.
+</div>
+
+<!-- ── 4.3 rl-engine ──────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="rl-engine">4.3 · <code>rl-engine</code></h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge phase0">Phase 0 + plugins</span></div>
+</div>
+
+<div class="callout muted">
+  <span class="title">Terminology shift: <code>policies/</code> not <code>engines/</code></span>
+  In RL usage, "policy" is the term for "the function that maps state to action". Readers familiar with RL get the right mental model immediately.
+</div>
+
+<h4>Policy contract</h4>
+
+<div class="mermaid">
+classDiagram
+  class RoutingPolicy {
+    &lt;&lt;abstract&gt;&gt;
+    +act(list~BackendState~) RoutingAction
+    +reload()
+  }
+  class BackendState {
+    +string backend_id
+    +float latency_ms
+    +int queue_depth
+    +string health
+  }
+  class Ranking {
+    +string backend_id
+    +float score
+  }
+  class RoutingAction {
+    +string mode
+    +list~Ranking~ rankings
+  }
+  class RandomShadowPolicy
+  class PPOPolicy
+  RoutingPolicy &lt;|-- RandomShadowPolicy
+  RoutingPolicy &lt;|-- PPOPolicy
+  RoutingAction o-- Ranking
+</div>
+
+<h4>Mode lifecycle: shadow → active</h4>
+
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> shadow_random: boot, no model
+  shadow_random --> shadow_ppo: PPO model loaded, operating_mode hybrid
+  shadow_ppo --> active_ppo: confidence threshold met
+  active_ppo --> shadow_ppo: safe_mode true OR low confidence
+  shadow_random --> shadow_random: emits rankings, LB ignores
+  active_ppo --> active_ppo: LB applies weights
+</div>
+
+<h4>RandomShadowPolicy (the baseline)</h4>
+
+<pre><code class="language-python">class RandomShadowPolicy(RoutingPolicy):
+    def __init__(self, seed=None):
+        self._rng = random.Random(seed)
+
+    def act(self, state):
+        rankings = [Ranking(backend_id=b.backend_id, score=self._rng.random())
+                    for b in state]
+        return RoutingAction(mode="shadow", rankings=rankings)
+</code></pre>
+
+<div class="callout">
+  <span class="title">Why ship a random policy?</span>
+  It validates the full pipeline <strong>state → policy → action → envelope → Redis → subscriber</strong> without needing a trained model. When PPO ships, the only wire-level difference is <code>mode="active"</code>.
+</div>
+
+<!-- ── 4.4 autoscaler ─────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="autoscaler">4.4 · <code>autoscaler</code></h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">T1.3 fully wired</span></div>
+</div>
+
+<dl class="kv">
+  <dt>Listens on</dt><dd>port 8085</dd>
+  <dt>Subscribes</dt><dd><code>smartload.forecast</code>, <code>smartload.policy</code></dd>
+  <dt>Publishes</dt><dd><code>smartload.scale</code></dd>
+  <dt>Writes</dt><dd><code>scaling_events</code> hypertable</dd>
+  <dt>Files</dt><dd><code>app.py</code> (462) · <code>cluster_client.py</code> · <code>decisions.py</code></dd>
+</dl>
+
+<h4>Service architecture</h4>
+
+<div class="mermaid">
+flowchart TB
+  subgraph PROC["autoscaler process"]
+    direction TB
+    F["Flask /health<br/>main thread"] -.- L
+    L["control_loop<br/>daemon thread"] --> D["decide<br/>pure function"]
+    L --> CC[DockerClusterClient]
+    L --> DB1[psycopg2 conn]
+    L --> RC[redis client]
+    D --> AP[apply_decision]
+    AP --> CC
+    AP --> DB1
+    AP --> RC
+  end
+
+  R1{{"Redis<br/>smartload.forecast"}} --> L
+  R2{{"Redis<br/>smartload.policy"}} --> L
+  RC --> R3{{"Redis<br/>smartload.scale"}}
+  DB1 --> DB[("scaling_events")]
+  CC --> DCK[("Docker socket")]
+
+  classDef pure fill:#3fb95033,stroke:#3fb950,color:#fff
+  class D pure
+</div>
+
+<h4>Scale decision logic — the dead band</h4>
+
+<div class="mermaid">
+flowchart TD
+  S[ForecastResult arrives] --> Z[predicted_rps]
+  Z --> CAP["capacity = current x per_instance_capacity_rps"]
+  Z --> SHED["shed_cap = current-1 x per_instance_capacity_rps"]
+  CAP --> A{"predicted above capacity?"}
+  A -- yes --> B{"current at max?"}
+  B -- yes --> NOOP1["NOOP: at max"]
+  B -- no --> C{"cooldown active?"}
+  C -- yes --> NOOP2["NOOP: cooldown"]
+  C -- no --> OUT["SCALE_OUT<br/>target = current+1"]
+  A -- no --> D{"predicted below shed_cap?"}
+  D -- yes --> E{"current at min?"}
+  E -- yes --> NOOP3["NOOP: at min"]
+  E -- no --> F{"cooldown active?"}
+  F -- yes --> NOOP4["NOOP: cooldown"]
+  F -- no --> IN["SCALE_IN<br/>target = current-1"]
+  D -- no --> NOOP5["NOOP: within dead band"]
+
+  classDef act fill:#1f6feb33,stroke:#58a6ff,color:#fff
+  classDef noop fill:#6e768133,stroke:#9ba8b6,color:#fff
+  class OUT,IN act
+  class NOOP1,NOOP2,NOOP3,NOOP4,NOOP5 noop
+</div>
+
+<h4>Decision matrix</h4>
+
+<table>
+  <thead><tr><th>predicted_rps vs current × cap</th><th>vs (current-1) × cap</th><th>action</th></tr></thead>
+  <tbody>
+    <tr><td>&gt;</td><td>—</td><td><span class="badge lang-py">scale_out (unless at max OR cooling down)</span></td></tr>
+    <tr><td>≤</td><td>≥</td><td><strong>dead band</strong> — NOOP</td></tr>
+    <tr><td>≤</td><td>&lt;</td><td><span class="badge lang-py">scale_in (unless at min OR cooling down)</span></td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <span class="title">Why the asymmetric thresholds?</span>
+  Scale out when <code>predicted &gt; current × capacity</code>, scale in only when <code>predicted &lt; (current-1) × capacity</code>. The gap is a <strong>dead band</strong> of one full backend's worth of capacity — prevents oscillation around the boundary without needing hysteresis tuning.
+</div>
+
+<h4>Cluster client — 5 fixed containers, toggle running state</h4>
+
+<div class="mermaid">
+flowchart LR
+  subgraph PRE["Compose: deploy.replicas = 5"]
+    direction LR
+    B1["backend-1<br/>running"]
+    B2["backend-2<br/>running"]
+    B3["backend-3<br/>running"]
+    B4["backend-4<br/>stopped"]
+    B5["backend-5<br/>stopped"]
+  end
+  PRE -- "scale_out" --> POST1["start lowest-numbered stopped<br/>backend-4"]
+  PRE -- "scale_in" --> POST2["stop highest-numbered running<br/>backend-3"]
+</div>
+
+<pre><code class="language-python">def scale_out(self):
+    for container in self._backends():           # sorted by replica number
+        if container.status != "running":
+            container.start()
+            return container.name
+    return None                                   # no stopped containers
+
+def scale_in(self):
+    running = [c for c in self._backends() if c.status == "running"]
+    if not running: return None
+    target = running[-1]                          # highest-numbered
+    target.stop(timeout=5)
+    return target.name
+</code></pre>
+
+<h4>Apply-decision: action ordering</h4>
+
+<div class="mermaid">
+sequenceDiagram
+  participant DEC as decide()
+  participant APP as apply_decision
+  participant DK as Docker
+  participant DB as TimescaleDB
+  participant R as Redis
+  DEC->>APP: Decision action target reason
+  alt action is NOOP
+    APP-->>APP: log + bump counter, return
+  else
+    APP->>DK: scale_out or scale_in
+    DK-->>APP: container name or None
+    alt name is None
+      APP-->>APP: log "couldn't actuate", bump NOOP
+    else
+      APP->>DB: INSERT scaling_events
+      APP->>R: PUBLISH smartload.scale with forecast_event_id
+      APP-->>APP: _last_action_monotonic = now
+    end
+  end
+</div>
+
+<div class="callout warn">
+  <span class="title">Failure ordering</span>
+  Docker first (real state change) &rarr; DB (audit) &rarr; Redis (notify). If Docker succeeds and DB fails, the action <em>happened</em> but the audit row is missing — accepted compromise per SOT §8.8; production-grade Outbox pattern is a future issue.
+</div>
+
+<h4>Reactive fallback</h4>
+
+<div class="mermaid">
+flowchart TD
+  T[control loop tick<br/>no message this tick] --> A{"any forecast ever received?"}
+  A -- no --> W["wait, do nothing"]
+  A -- yes --> B{"age above 2 x horizon?"}
+  B -- no --> W2["forecast still fresh"]
+  B -- yes --> O[observed_rps from DB<br/>last 60s]
+  O --> DEC["decide with now_text = reactive"]
+  DEC --> AP[apply_decision]
+</div>
+
+<h4>Policy anti-rollback</h4>
+
+<pre><code class="language-python">def _handle_policy_message(raw):
+    parsed = parse_envelope(raw, channel=POLICY_CHANNEL)
+    if parsed is None: return
+    payload, envelope_meta = parsed
+    with _state_lock:
+        new_policy  = policy_from_payload(payload, fallback=_policy)
+        new_version = int(payload.get("policy_version", _policy_version))
+        if new_version &lt; _policy_version:
+            log.warning("ignoring policy update v%d (current v%d) — stale publish",
+                        new_version, _policy_version)
+            return
+        _policy = new_policy
+        _policy_version = new_version
+</code></pre>
+
+<p>Monotonic version check. A network-partitioned policy-manager that catches up by re-publishing every snapshot must <strong>not</strong> rewind the live policy.</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 5. CONTROL PLANE                                                         -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="control-plane">5 · Control plane + UI</h2>
+
+<!-- ── 5.1 policy-manager ─────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="policy-manager">5.1 · <code>policy-manager</code></h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">T1.4</span></div>
+</div>
+
+<p>Sole writer of <code>config/policy.yaml</code>, sole publisher on <code>smartload.policy</code>, owner of the policy audit trail.</p>
+
+<h4>HTTP surface</h4>
+
+<table>
+  <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>GET</td><td><code>/health</code></td><td>Redis + DB probes, policy_loaded flag</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/policy</code></td><td>Current policy (404 if file missing)</td></tr>
+    <tr><td>POST</td><td><code>/api/v1/policy</code></td><td>Validate, diff, write, audit, publish</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/audit/policy?limit=N</code></td><td>Recent changes (capped at 1000)</td></tr>
+  </tbody>
+</table>
+
+<h4>POST /api/v1/policy — the seven-step commit flow</h4>
+
+<div class="mermaid">
+sequenceDiagram
+  participant C as Client
+  participant PM as policy-manager
+  participant V as validation.py
+  participant FS as filesystem
+  participant DB as TimescaleDB
+  participant R as Redis
+  C->>PM: POST JSON body
+  PM->>V: validate_updates body existing
+  alt validation fails
+    V-->>PM: PolicyValidationError with field
+    PM-->>C: 400 error + field
+  else
+    V-->>PM: merged policy
+    PM->>PM: compute diff
+    alt no fields changed
+      PM-->>C: 200 status no-op
+    else
+      PM->>PM: bump policy_version
+      PM->>FS: atomic write policy.yaml
+      Note over PM,FS: fallback for Docker bind mounts<br/>EBUSY then direct overwrite
+      PM->>DB: INSERT policy_changes one row per field
+      Note over PM,DB: best-effort, failure does NOT roll back publish
+      PM->>R: PUBLISH smartload.policy
+      Note over PM,R: best-effort, file is source of truth
+      PM-->>C: 200 status updated, policy, event_id
+    end
+  end
+</div>
+
+<h4>Validation rules (per-field)</h4>
+
+<table>
+  <thead><tr><th>Field</th><th>Type</th><th>Constraint</th></tr></thead>
+  <tbody>
+    <tr><td><code>operating_mode</code></td><td>enum</td><td><code>classical-only | hybrid | rl-only</code></td></tr>
+    <tr><td><code>anomaly_response</code></td><td>enum</td><td><code>auto-isolate | advisory</code></td></tr>
+    <tr><td><code>safe_mode</code></td><td>bool</td><td>strict <code>isinstance(v, bool)</code></td></tr>
+    <tr><td><code>min_backends</code> / <code>max_backends</code></td><td>int</td><td>&gt; 0; <strong>min ≤ max</strong> (cross-field)</td></tr>
+    <tr><td><code>slo_p95_latency_ms</code></td><td>int</td><td>&gt; 0</td></tr>
+    <tr><td><code>per_instance_capacity_rps</code></td><td>number</td><td>≥ 0</td></tr>
+    <tr><td><code>autoscaler_cooldown_seconds</code></td><td>number</td><td>≥ 0</td></tr>
+    <tr><td><code>anomaly_latency_multiplier</code></td><td>number</td><td>≥ 0</td></tr>
+    <tr><td><code>rl_exploration_rate</code></td><td>number</td><td>∈ [0, 1]</td></tr>
+    <tr><td><code>rl_confidence_threshold</code></td><td>number</td><td>∈ [0, 1]</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <span class="title">The bool-int trap</span>
+  Python's <code>bool</code> is a subclass of <code>int</code> (<code>True == 1</code>). Without an explicit <code>isinstance(value, bool)</code> guard, <code>min_backends: true</code> would pass int validation. Every numeric check rejects bools first.
+</div>
+
+<h4>Atomic YAML write — the Docker bind-mount problem</h4>
+
+<div class="mermaid">
+flowchart TD
+  S[validated policy + bumped version] --> T[mkstemp in same dir]
+  T --> W["yaml.safe_dump to temp file"]
+  W --> R{"os.replace tmp to path?"}
+  R -- success --> OK["done"]
+  R -- "EBUSY / EACCES" --> F["fall back: direct overwrite"]
+  F --> OK
+  R -- "other errno" --> X["raise; cleanup temp"]
+</div>
+
+<p>Docker single-file bind mounts mount the <strong>inode</strong>, not the directory entry. <code>os.replace</code> fails with EBUSY. The fallback overwrites in place — accepted because <code>yaml.safe_dump</code> buffers the full text and writes once, bounding the partial-read window to one OS write.</p>
+
+<h4>Why audit + publish are best-effort</h4>
+
+<div class="grid-3">
+  <div class="callout success tight">
+    <span class="title">YAML write</span>
+    Must succeed. 500 on failure. This is the source of truth.
+  </div>
+  <div class="callout tight">
+    <span class="title">Audit row</span>
+    Best-effort. Failure logged. Observability, not consistency-critical.
+  </div>
+  <div class="callout tight">
+    <span class="title">Redis publish</span>
+    Best-effort. Subscribers re-sync from disk on next poll if missed.
+  </div>
+</div>
+
+<!-- ── 5.2 webhook-dispatcher ─────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="webhook-dispatcher">5.2 · <code>webhook-dispatcher</code></h3>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge stub">Scaffold #130</span></div>
+</div>
+
+<div class="callout muted">
+  <span class="title">Not running</span>
+  The folder contains only a README. Not in <code>docker-compose.yml</code>. Depends on #129 (multi-tenancy), #132 (API keys), #60 (OpenAPI).
+</div>
+
+<h4>Planned data flow</h4>
+
+<div class="mermaid">
+flowchart LR
+  R{{"Redis<br/>4 channels"}} --> WHD[webhook-dispatcher]
+  DB[("webhooks table")] --> WHD
+  WHD -- "HMAC-SHA256 signed<br/>X-SmartLoad-Signature" --> EXT1[Customer URL 1]
+  WHD --> EXT2[Customer URL 2]
+  WHD -- "5 retries<br/>exponential backoff<br/>about 10 min total" --> EXT3[Customer URL 3]
+  EXT3 -.-> DLQ[("dead-letter rows<br/>for operator UI")]
+</div>
+
+<!-- ── 5.3 operator-ui/bff ────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="operator-ui-bff">5.3 · <code>operator-ui/bff</code></h3>
+  <div class="meta"><span class="badge lang-py">Flask</span> <span class="badge shipped">Slice #1</span></div>
+</div>
+
+<h4>BFF architecture</h4>
+
+<div class="mermaid">
+flowchart LR
+  BR["Browser :8090"] --> BFF["operator-ui BFF<br/>Flask + gunicorn"]
+  BFF --> WD["static React build<br/>/app/web/dist"]
+  BFF --> SU["Swagger UI<br/>/api/docs"]
+  SU --> OAS["/api/openapi.yaml<br/>read-only bind mount"]
+
+  subgraph FAN["/api/ui/health - parallel fan-out"]
+    PM2[policy-manager]
+    AS2[autoscaler]
+    TEL2[telemetry]
+    AD2[anomaly-detector]
+    FC2[forecasting]
+    RL2[rl-engine]
+    LB2[load-balancer]
+  end
+  BFF -- "ThreadPoolExecutor" --> FAN
+
+  BFF -- "/api/ui/policy<br/>X-Actor inserted" --> PM3[policy-manager]
+</div>
+
+<h4>Routes</h4>
+
+<table>
+  <thead><tr><th>Path</th><th>Behavior</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/ui/health</code></td><td>Fan out <code>/health</code> to 7 services in parallel; aggregate</td></tr>
+    <tr><td><code>GET /api/ui/policy</code></td><td>Proxy to policy-manager (verbatim body + status)</td></tr>
+    <tr><td><code>POST /api/ui/policy</code></td><td>Proxy + insert <code>X-Actor</code> if missing</td></tr>
+    <tr><td><code>GET /api/ui/audit/policy</code></td><td>Proxy with <code>limit</code> query param</td></tr>
+    <tr><td><code>GET /api/docs/</code></td><td>Swagger UI (blueprint)</td></tr>
+    <tr><td><code>GET /api/openapi.yaml</code></td><td>Serves bind-mounted OpenAPI spec</td></tr>
+    <tr><td><code>GET /*</code> (catch-all)</td><td>SPA fallback to <code>index.html</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Multi-stage Dockerfile</h4>
+
+<div class="mermaid">
+flowchart LR
+  subgraph S1["Stage 1: node:20-alpine"]
+    NPM[npm install] --> BUILD[npm run build]
+    BUILD --> DIST["/web/dist"]
+  end
+  subgraph S2["Stage 2: python:3.11-slim"]
+    PIP[pip install] --> COPY["COPY bff/"]
+    DIST -. "COPY --from=web-builder" .-> WBD["/app/web/dist"]
+    COPY --> RUN["gunicorn -w 2"]
+  end
+</div>
+
+<!-- ── 5.4 operator-ui/web ────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="operator-ui-web">5.4 · <code>operator-ui/web</code> — React + Vite</h3>
+  <div class="meta"><span class="badge lang-ts">TypeScript</span> <span class="badge shipped">Slice #1</span></div>
+</div>
+
+<dl class="kv">
+  <dt>Framework</dt><dd>React 18 + Vite 5 + TypeScript 5</dd>
+  <dt>Routing</dt><dd>react-router-dom v6</dd>
+  <dt>Diff viewer</dt><dd>react-diff-viewer-continued</dd>
+</dl>
+
+<h4>Page graph</h4>
+
+<div class="mermaid">
+flowchart LR
+  M["main.tsx<br/>BrowserRouter"] --> A["App.tsx<br/>layout + routes"]
+  A --> H["Home.tsx<br/>health grid, poll 10s"]
+  A --> P["Policy.tsx<br/>read, edit, diff, commit, audit"]
+  H --> API["api.ts<br/>typed BFF client"]
+  P --> API
+  API --> BFF{{"BFF :8090"}}
+</div>
+
+<h4>api.ts — typed BFF client</h4>
+
+<pre><code class="language-typescript">async function _fetchJson&lt;T&gt;(input: string, init?: RequestInit): Promise&lt;T&gt; {
+  const r = await fetch(input, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  const text = await r.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; }
+  catch { body = { error: text }; }
+  if (!r.ok) {
+    const err = new Error(body?.error || `HTTP ${r.status}`);
+    (err as any).status = r.status;
+    (err as any).field  = body?.field;     // round-trips server-side validation hint
+    throw err;
+  }
+  return body as T;
+}
+
+export const api = {
+  health:      ()              =&gt; _fetchJson&lt;HealthSummary&gt;("/api/ui/health"),
+  getPolicy:   ()              =&gt; _fetchJson&lt;Policy&gt;("/api/ui/policy"),
+  setPolicy:   (patch, actor?) =&gt; _fetchJson&lt;PolicyUpdateResponse&gt;(...),
+  auditPolicy: (limit = 50)    =&gt; _fetchJson&lt;AuditRow[]&gt;(...),
+};
+</code></pre>
+
+<h4>Policy page — UI flow</h4>
+
+<div class="mermaid">
+flowchart TD
+  L[loadAll] --> P1[setCurrent]
+  L --> P2[setAudit]
+  L --> P3{"draft already set?"}
+  P3 -- no --> P4[seed draft from current]
+  P3 -- yes --> P5[keep operator in-progress edits]
+  EDIT[user edits textarea] --> PARSE{"JSON.parse"}
+  PARSE -- ok --> DIFF[ReactDiffViewer side-by-side]
+  PARSE -- fail --> ERR[show parse error]
+  COMMIT[Click Commit] --> POST["api.setPolicy<br/>X-Actor operator-ui"]
+  POST --> RES{"server response"}
+  RES -- updated --> TOAST_OK["toast: changed N fields"]
+  RES -- no-op --> TOAST_NOP["toast: no change"]
+  RES -- 400 --> TOAST_BAD["toast: msg + field hint"]
+  POST --> RELOAD[loadAll]
+</div>
+
+<div class="callout success">
+  <span class="title">The killer feature</span>
+  Side-by-side diff between current on-disk policy and operator's draft, via <code>react-diff-viewer-continued</code>. Operators see exactly what they're about to commit before they hit the button.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 6. PYTHON SDK                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="sdk">6 · Python SDK (<code>clients/python/</code>)</h2>
+
+<div class="callout">
+  <span class="title">Why in the monorepo?</span>
+  <em>"The SDK is version-locked to the API and the envelopes. Splitting it into a sibling repo (Temporal's pattern) creates drift the moment one side ships a breaking change."</em>
+</div>
+
+<h4>Module layout</h4>
+
+<div class="filetree">clients/python/
+├── pyproject.toml               <span class="impl">smartload-client v0.1.0 · py&ge;3.10 · httpx + redis</span>
+├── smartload_client/
+│   ├── __init__.py              <span class="stable">re-exports public API</span>
+│   ├── client.py                <span class="impl">SmartLoadClient — facade (140 lines)</span>
+│   ├── policy.py                <span class="impl">PolicyClient — fully implemented (93 lines)</span>
+│   ├── events.py                <span class="impl">EventsClient · PolicySubscription (127 lines)</span>
+│   ├── metrics.py               <span class="stub">stub — #127</span>
+│   ├── webhooks.py              <span class="stub">stub — #130</span>
+│   ├── exceptions.py            <span class="impl">4 typed errors</span>
+│   └── _envelope.py             <span class="impl">SDK-side parser (mirrors shared/)</span>
+└── examples/
+    ├── quickstart.py            <span class="impl">20-line hello world</span>
+    └── middleware_integration/  <span class="stub">scaffold — #137</span></div>
+
+<h4>Class diagram</h4>
+
+<div class="mermaid">
+classDiagram
+  class SmartLoadClient {
+    -httpx_Client _http
+    -redis_client _redis_lazy
+    +get_policy() dict
+    +set_policy(patch, actor) dict
+    +audit_policy(limit) list
+    +subscribe_policy(callback) PolicySubscription
+    +subscribe_anomaly() NotImplemented
+    +subscribe_forecast() NotImplemented
+    +close()
+  }
+  class PolicyClient {
+    +get() dict
+    +update(patch, actor) dict
+    +audit(limit) list
+  }
+  class EventsClient {
+    +subscribe_policy(callback) PolicySubscription
+  }
+  class MetricsClient {
+    +read(service, window) NotImplemented
+  }
+  class PolicySubscription {
+    -Thread _thread
+    -Event _stop
+    +close()
+  }
+  class SmartLoadError
+  class ValidationError {
+    +field
+  }
+  class RateLimitError {
+    +retry_after
+  }
+  class AuthenticationError
+  SmartLoadClient o-- PolicyClient
+  SmartLoadClient o-- EventsClient
+  SmartLoadClient o-- MetricsClient
+  EventsClient ..&gt; PolicySubscription
+  SmartLoadError &lt;|-- ValidationError
+  SmartLoadError &lt;|-- RateLimitError
+  SmartLoadError &lt;|-- AuthenticationError
+</div>
+
+<h4>HTTP-status → exception mapping</h4>
+
+<table>
+  <thead><tr><th>Status</th><th>Exception</th><th>Carries</th></tr></thead>
+  <tbody>
+    <tr><td>2xx</td><td>—</td><td>returns parsed JSON</td></tr>
+    <tr><td>400</td><td><code>ValidationError</code></td><td><code>.field</code> (from server body)</td></tr>
+    <tr><td>401, 403</td><td><code>AuthenticationError</code></td><td>—</td></tr>
+    <tr><td>429</td><td><code>RateLimitError</code></td><td><code>.retry_after</code> (from header)</td></tr>
+    <tr><td>5xx, other</td><td><code>SmartLoadError</code></td><td>message</td></tr>
+    <tr><td>connection error</td><td><code>SmartLoadError</code></td><td>wraps <code>httpx.RequestError</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Pub/sub subscription lifecycle</h4>
+
+<div class="mermaid">
+sequenceDiagram
+  participant U as User code
+  participant SC as SmartLoadClient
+  participant E as EventsClient
+  participant T as background thread
+  participant R as Redis
+  U->>SC: subscribe_policy callback
+  SC->>E: subscribe_policy callback
+  E->>R: pubsub.subscribe smartload.policy
+  E->>T: Thread target=_run daemon=True
+  E-->>U: PolicySubscription handle
+  loop until stop is set
+    T->>R: get_message timeout 0.5s
+    alt valid envelope
+      T->>U: callback payload meta
+      Note over T,U: callback exception is logged only
+    else stale or malformed
+      T-->>T: skip
+    end
+  end
+  U->>SC: subscription.close
+  SC->>T: stop.set
+  T-->>SC: join timeout 2.0s
+</div>
+
+<h4>Why a separate <code>_envelope.py</code>?</h4>
+
+<div class="callout">
+  <span class="title">No backend imports</span>
+  The SDK is a separately-installable PyPI package. It must not import from <code>services/shared/</code>. The envelope parser is duplicated — and that duplication is enforced by a conformance test ensuring the two files stay in sync.
+</div>
+
+<h4>Quickstart</h4>
+
+<pre><code class="language-python">from smartload_client import SmartLoadClient, SmartLoadError
+
+with SmartLoadClient(base_url="http://localhost:8086") as c:
+    try:
+        policy = c.get_policy()
+    except SmartLoadError as exc:
+        print(f"could not read policy: {exc}")
+        print("hint: POST a baseline to /api/v1/policy first")
+        return 1
+    print(f"operating_mode = {policy.get('operating_mode')}")
+    print(f"safe_mode      = {policy.get('safe_mode')}")
+</code></pre>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- 7. INFRASTRUCTURE                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2 id="infra">7 · Infrastructure (<code>infrastructure/</code>)</h2>
+
+<div class="mermaid">
+flowchart LR
+  subgraph EXT["client traffic"]
+    C[Client]
+  end
+
+  subgraph CONTAINERS["docker-compose services"]
+    NGX["load-balancer<br/>:8080"]
+    SHIP2[lb-otel-shipper]
+    OC["otel-collector<br/>:4317 :4318 :8889"]
+    TEL3["telemetry<br/>:8081"]
+    PROM["prometheus<br/>:9090"]
+    GR["grafana<br/>:3000"]
+    TS["timescaledb<br/>:5432"]
+    RED["redis<br/>:6379"]
+  end
+
+  C --> NGX
+  NGX --> SHIP2
+  SHIP2 --> OC
+  OC --> TEL3
+  OC --> PROM
+  TEL3 --> TS
+  PROM --> GR
+  TS --> GR
+  RED -.-> TEL3
+  RED -.-> NGX
+</div>
+
+<table>
+  <thead><tr><th>Component</th><th>Image</th><th>Config file</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>TimescaleDB</td><td><code>timescale/timescaledb:latest-pg16</code></td><td><code>init.sql</code></td><td>Durable storage; 4 hypertables</td></tr>
+    <tr><td>Redis</td><td><code>redis:7-alpine</code></td><td><code>redis.conf</code></td><td>Control bus (pub/sub only)</td></tr>
+    <tr><td>OTel Collector</td><td><code>otel/opentelemetry-collector-contrib</code></td><td><code>otelcol-config.yaml</code></td><td>OTLP ingest → 3 exporters</td></tr>
+    <tr><td>Prometheus</td><td><code>prom/prometheus</code></td><td><code>prometheus.yml</code></td><td>Scrapes OTel + service /health</td></tr>
+    <tr><td>Grafana</td><td><code>grafana/grafana</code></td><td>provisioning/*</td><td>Dashboards over TS + Prometheus</td></tr>
+    <tr><td>Helm chart</td><td>—</td><td><code>smartload/values.yaml</code></td><td>K8s deployment (scaffold #133)</td></tr>
+  </tbody>
+</table>
+
+<!-- ── 7.1 TimescaleDB ────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="timescaledb">7.1 · TimescaleDB schema</h3>
+  <div class="meta"><span class="badge lang-sql">SQL</span> <span class="badge shipped">init.sql</span></div>
+</div>
+
+<h4>Entity-relationship</h4>
+
+<div class="mermaid">
+erDiagram
+  metrics {
+    TIMESTAMPTZ time
+    TEXT service
+    TEXT instance
+    TEXT metric_name
+    DOUBLE value
+  }
+  backend_health {
+    TIMESTAMPTZ time
+    TEXT backend_id
+    TEXT status
+    DOUBLE score
+  }
+  scaling_events {
+    TIMESTAMPTZ time
+    TEXT action
+    INT instance_count
+    TEXT reason
+  }
+  policy_changes {
+    TIMESTAMPTZ time
+    INT policy_version
+    TEXT field
+    TEXT old_value
+    TEXT new_value
+    TEXT actor
+  }
+  metrics ||--o{ backend_health : "instance maps to backend_id"
+</div>
+
+<h4>Writer / reader matrix</h4>
+
+<table>
+  <thead><tr><th>Table</th><th>Sole writer</th><th>Readers</th><th>Retention</th></tr></thead>
+  <tbody>
+    <tr><td><code>metrics</code></td><td>telemetry</td><td>anomaly-detector, forecasting, rl-engine, dashboards</td><td>7 d</td></tr>
+    <tr><td><code>backend_health</code></td><td>anomaly-detector</td><td>rl-engine, LB sidecar</td><td>30 d</td></tr>
+    <tr><td><code>scaling_events</code></td><td>autoscaler</td><td>policy-manager (audit), dashboards</td><td>90 d</td></tr>
+    <tr><td><code>policy_changes</code></td><td>policy-manager</td><td>operator UI, post-hoc analysis</td><td>90 d</td></tr>
+  </tbody>
+</table>
+
+<h4>Continuous aggregate: <code>metrics_1min</code></h4>
+
+<div class="mermaid">
+flowchart LR
+  RAW[("metrics<br/>raw rows<br/>7-day retention")] -- "every 1 min<br/>materialize -1h to -2m" --> CAGG[("metrics_1min<br/>1-min buckets<br/>30-day retention")]
+  CAGG --> GR[Grafana panels]
+  CAGG --> FE["forecasting engine<br/>cheaper than raw"]
+  RAW --> AD["anomaly-detector<br/>sub-minute needs raw"]
+  RAW --> RL["rl-engine<br/>state vector needs raw"]
+</div>
+
+<pre><code class="language-sql">CREATE MATERIALIZED VIEW metrics_1min
+WITH (timescaledb.continuous, timescaledb.materialized_only = true) AS
+SELECT
+    time_bucket('1 minute', time)   AS bucket,
+    service, instance, metric_name,
+    AVG(value), MAX(value), MIN(value), SUM(value), STDDEV(value), COUNT(*)
+FROM metrics
+GROUP BY bucket, service, instance, metric_name
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy('metrics_1min',
+    start_offset      => INTERVAL '1 hour',
+    end_offset        => INTERVAL '2 minutes',
+    schedule_interval => INTERVAL '1 minute');
+</code></pre>
+
+<div class="callout warn">
+  <span class="title">P95 is NOT computed here</span>
+  <code>PERCENTILE_CONT</code> is an ordered-set aggregate and is rejected by TimescaleDB CAGGs (the materialized view would fail to create). Dashboards compute P95 on raw <code>metrics</code> over a bounded window — cheap at SmartLoad scale.
+</div>
+
+<!-- ── 7.2 Redis ──────────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="redis">7.2 · Redis</h3>
+  <div class="meta"><span class="badge lang-conf">conf</span> <span class="badge shipped">Live</span></div>
+</div>
+
+<table>
+  <thead><tr><th>Directive</th><th>Value</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><code>save</code></td><td><code>""</code></td><td>No RDB snapshots — control bus, not durable</td></tr>
+    <tr><td><code>appendonly</code></td><td><code>no</code></td><td>No AOF — same reason</td></tr>
+    <tr><td><code>maxmemory</code></td><td>256 mb</td><td>Bound usage on the host</td></tr>
+    <tr><td><code>maxmemory-policy</code></td><td>allkeys-lru</td><td>Evict oldest on pressure</td></tr>
+    <tr><td><code>protected-mode</code></td><td>no</td><td>Only reachable inside Docker network</td></tr>
+  </tbody>
+</table>
+
+<div class="callout muted">
+  <span class="title">Redis dies — what happens?</span>
+  Messages in flight are lost. <strong>Durable state lives in Postgres</strong> (<code>policy_changes</code>, <code>scaling_events</code>, <code>metrics</code>). Subscribers re-sync from there on reconnect.
+</div>
+
+<!-- ── 7.3 Prometheus ─────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="prometheus">7.3 · Prometheus</h3>
+  <div class="meta"><span class="badge lang-yaml">YAML</span> <span class="badge shipped">Live</span></div>
+</div>
+
+<h4>Scrape targets</h4>
+
+<table>
+  <thead><tr><th>Job</th><th>Target</th><th>Path</th><th>Real metrics?</th></tr></thead>
+  <tbody>
+    <tr><td><code>otel-collector</code></td><td>otel-collector:8889</td><td>/metrics</td><td>Yes — everything that flowed through</td></tr>
+    <tr><td><code>telemetry</code></td><td>telemetry:8081</td><td>/health</td><td>No — connectivity check only</td></tr>
+    <tr><td><code>anomaly-detector</code></td><td>anomaly-detector:8082</td><td>/health</td><td>No</td></tr>
+    <tr><td><code>forecasting</code></td><td>forecasting:8083</td><td>/health</td><td>No</td></tr>
+    <tr><td><code>rl-engine</code></td><td>rl-engine:8084</td><td>/health</td><td>No</td></tr>
+    <tr><td><code>autoscaler</code></td><td>autoscaler:8085</td><td>/health</td><td>No</td></tr>
+    <tr><td><code>policy-manager</code></td><td>policy-manager:8086</td><td>/health</td><td>No</td></tr>
+  </tbody>
+</table>
+
+<p>Global <code>scrape_interval</code> = 15 s — matches the OTel batch flush and TimescaleDB CAGG refresh.</p>
+
+<!-- ── 7.4 OTel Collector ─────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="otel-collector">7.4 · OTel Collector pipeline</h3>
+  <div class="meta"><span class="badge lang-yaml">YAML</span> <span class="badge shipped">Live</span></div>
+</div>
+
+<div class="mermaid">
+flowchart LR
+  IN1["OTLP gRPC :4317"] --> REC[otlp receiver]
+  IN2["OTLP HTTP :4318"] --> REC
+  REC --> BAT["batch processor<br/>5s OR 1000 records"]
+  BAT --> EX1["prometheus exporter<br/>:8889"]
+  BAT --> EX2["otlphttp/telemetry<br/>telemetry:8081/v1/metrics<br/>encoding json"]
+  BAT --> EX3["debug exporter<br/>verbosity basic"]
+
+  EX1 --> P[Prometheus scrape]
+  EX2 --> T[telemetry to TimescaleDB]
+  EX3 --> LOG[collector log]
+</div>
+
+<div class="grid-3">
+  <div class="callout tight">
+    <span class="title">prometheus</span>
+    Exposes namespaced <code>smartload_*</code> metrics on :8889 for Prometheus to scrape.
+  </div>
+  <div class="callout tight">
+    <span class="title">otlphttp/telemetry</span>
+    <code>encoding: json</code> · <code>compression: none</code> — telemetry's Flask handler expects plain JSON.
+  </div>
+  <div class="callout tight">
+    <span class="title">debug</span>
+    INFO-level log of received metrics. Disable in production.
+  </div>
+</div>
+
+<!-- ── 7.5 Grafana ────────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="grafana">7.5 · Grafana</h3>
+  <div class="meta"><span class="badge lang-yaml">provisioning</span> <span class="badge lang-conf">JSON</span></div>
+</div>
+
+<h4>Datasource provisioning trick</h4>
+
+<pre><code class="language-yaml">deleteDatasources:
+  - { name: Prometheus,  orgId: 1 }
+  - { name: TimescaleDB, orgId: 1 }
+
+datasources:
+  - name: Prometheus
+    uid: prometheus            # pinned UID — dashboard JSON references this
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+  - name: TimescaleDB
+    uid: timescaledb
+    type: postgres
+    url: timescaledb:5432
+    secureJsonData:
+      password: "${TIMESCALEDB_PASSWORD}"
+</code></pre>
+
+<p><strong><code>deleteDatasources</code></strong> runs before provisioning — required because pinned UIDs collide with prior auto-generated UIDs across restarts. Without it, startup fails with "data source not found".</p>
+
+<h4>Default dashboard — <code>smartload-overview.json</code></h4>
+
+<table>
+  <thead><tr><th>Panel</th><th>Source</th><th>Query shape</th></tr></thead>
+  <tbody>
+    <tr><td>Request rate (req/s)</td><td>TimescaleDB</td><td><code>count(*) / $__interval</code> on <code>metric_name='request_count'</code></td></tr>
+    <tr><td>Request latency — p50 / p95 / max</td><td>TimescaleDB</td><td><code>PERCENTILE_CONT</code> on raw <code>metrics</code></td></tr>
+    <tr><td>Error rate (%)</td><td>TimescaleDB</td><td>ratio of <code>error_rate=1</code> rows</td></tr>
+    <tr><td>Total requests (in window)</td><td>TimescaleDB</td><td>scalar <code>count(*)</code></td></tr>
+    <tr><td>Active backend instances</td><td>TimescaleDB</td><td><code>count(distinct instance)</code></td></tr>
+    <tr><td>Telemetry rows ingested (by metric)</td><td>TimescaleDB</td><td>grouped count per <code>metric_name</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ── 7.6 Helm ───────────────────────────────────────────────────────── -->
+<div class="service-head">
+  <h3 id="helm">7.6 · Helm chart</h3>
+  <div class="meta"><span class="badge lang-yaml">YAML</span> <span class="badge stub">Scaffold #133</span></div>
+</div>
+
+<dl class="kv">
+  <dt>apiVersion</dt><dd>v2</dd>
+  <dt>version</dt><dd>0.1.0</dd>
+  <dt>templates/</dt><dd>empty (.gitkeep)</dd>
+</dl>
+
+<h4>Planned chart shape (per <code>values.yaml</code>)</h4>
+
+<div class="mermaid">
+flowchart TB
+  subgraph CHART["helm install smartload"]
+    direction TB
+    CFG["ConfigMap<br/>policy.yaml"]
+    SEC["Secret<br/>DB pass + API-key signing"]
+    subgraph SVCS["Deployment + Service per SmartLoad service"]
+      D1[policy-manager]
+      D2[autoscaler]
+      D3[telemetry]
+      D4[anomaly-detector]
+      D5[forecasting]
+      D6[rl-engine]
+      D7[operator-ui]
+    end
+    STS["StatefulSet<br/>TimescaleDB + Redis"]
+    HPA["HPA example<br/>test-backend"]
+    ING["Ingress + TLS<br/>opt-in"]
+    SM["ServiceMonitor<br/>opt-in for Prometheus Operator"]
+    SVCS -. "uses" .-> CFG
+    SVCS -. "uses" .-> SEC
+    SVCS -. "reads" .-> STS
+  end
+</div>
+
+<div class="callout danger">
+  <span class="title">Anti-pattern explicitly rejected</span>
+  CRD-based Operator-pattern deployment. <strong>Helm is the only supported mode in v1.</strong> CRDs add operational surface area without adoption gain at this stage.
+</div>
+
+<table>
+  <thead><tr><th>Value</th><th>Default</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>timescaledb.external</code></td><td>false</td><td>Use chart-managed StatefulSet vs cluster-managed DB</td></tr>
+    <tr><td><code>redis.external</code></td><td>false</td><td>Same for Redis</td></tr>
+    <tr><td><code>policy.operating_mode</code></td><td>hybrid</td><td>Initial policy → written to ConfigMap</td></tr>
+    <tr><td><code>ingress.enabled</code></td><td>false</td><td>Opt-in; dev clusters often lack an Ingress controller</td></tr>
+    <tr><td><code>serviceMonitor.enabled</code></td><td>false</td><td>Prometheus Operator integration</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- FOOTER                                                                   -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<hr style="border:0; border-top:1px solid var(--border); margin: 64px 0 32px;" />
+
+<div class="callout muted">
+  <span class="title">Reading order</span>
+  <strong>shared/ → data plane → decision plane → control plane → SDK → infra</strong>. Each layer depends on the previous one. Skip ahead at your own risk.
+</div>
+
+<p><small class="muted">SmartLoad — Project Walkthrough. Diagrams rendered via Mermaid; code via Prism.</small></p>
+
+</main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Mermaid + Prism                                                          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    securityLevel: 'loose',
+    themeVariables: {
+      darkMode: true,
+      background: '#161b22',
+      primaryColor: '#1f6feb',
+      primaryTextColor: '#e6edf3',
+      primaryBorderColor: '#2d333b',
+      lineColor: '#9ba8b6',
+      secondaryColor: '#2d333b',
+      tertiaryColor: '#0d1117',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontSize: '13px'
+    },
+    flowchart: { curve: 'basis', padding: 10 },
+    sequence:  { actorMargin: 60, messageMargin: 35 }
+  });
+</script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+
+</body>
+</html>
