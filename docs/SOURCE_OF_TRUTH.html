@@ -5594,6 +5594,11 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>This release</td>
     </tr>
     <tr>
+      <td><strong>Audit log viewer — backend pass (slice #2, #122)</strong></td>
+      <td>First sub-pass of the second vertical slice. New <code>GET /api/v1/audit/scaling</code> on autoscaler (port 8085) mirrors the policy-manager audit pattern — <code>?limit=N</code> capped at 1000, 400 on bad limit, 503 on DB unreachable, newest first. New <code>SCALING_AUDIT_QUERY</code> in <code>services/shared/queries.py</code>. BFF gains a <code>/api/ui/audit/scaling</code> proxy so the UI hits one origin even though the two audit streams live on different services. SDK gains an <code>AuditClient</code> sub-client (<code>client.audit.policy / scaling / list</code>) plus a top-level <code>client.list_audit(kind, limit)</code> convenience; <code>SmartLoadClient</code> gains an <code>autoscaler_url</code> constructor parameter (env var <code>SMARTLOAD_AUTOSCALER_URL</code>, default <code>localhost:8085</code>) since scaling-audit lives on a different upstream than the policy-manager <code>base_url</code>. OpenAPI extended with the new path and a <code>ScalingAuditRow</code> schema. 8 new SDK unit tests. Feature manifest at <code>docs/features/audit-log.md</code>. Remaining sub-passes for this slice: React Audit page, runnable scenario at <code>examples/scenarios/audit-log/</code>, and e2e suite at <code>tests/e2e/audit-log/</code>; §25.9 catalog row flips to <em>Shipped</em> when those land.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
       <td><strong>RL-engine run loop wired (#138 round 3) — cutover complete</strong></td>
       <td>Third and final service in the engine-wrapper cutover. <code>services/rl-engine/app.py</code> rewritten on the same pattern as the two siblings, with three RL-specific differences. (1) Uses <code>policy_base.select_policy()</code> + <code>policies/</code> instead of <code>engine_base.select_engine()</code> + <code>engines/</code>. (2) Builds <code>list[BackendState]</code> from <code>RL_STATE_QUERY</code> by classifying health locally with the same thresholds the anomaly-detector threshold engine uses (until anomaly-detector starts writing <code>backend_health</code>, RL synthesises the health column from the raw metrics row). (3) The published <code>mode</code> field is composed by <code>effective_mode()</code> from three inputs in order: <code>safe_mode=true</code> forces <code>shadow</code>; <code>RL_MODE != "active"</code> env var forces <code>shadow</code>; only when both <code>RL_MODE=active</code> and the policy itself returns <code>mode="active"</code> does the LB sidecar see <code>active</code> — the kill-switch from §8.7 safety controls. Bootstrap also handles kwarg-mismatch gracefully (random_shadow accepts only <code>seed</code>, not <code>confidence_threshold</code>/<code>exploration_rate</code>); the helper retries without kwargs rather than failing. Off by default behind <code>RL_RUNLOOP_ENABLED=false</code>. 26 new unit tests at <code>tests/unit/rl-engine/test_runloop.py</code> covering the full mode-composition truth table, health classification boundaries, state pivot, and policy bootstrap fallback. Build-services matrix moved rl-engine to the wider <code>./services</code> context.</td>
       <td>This release</td>
@@ -6227,8 +6232,8 @@ flowchart TD
     <tr>
       <td><strong>Audit log viewer</strong> (OUI.4)</td>
       <td>—</td>
-      <td>pending</td>
-      <td><span class="pill pill-next">Next — no blockers (#122)</span></td>
+      <td><code>docs/features/audit-log.md</code></td>
+      <td><span class="pill pill-active">Backend + SDK shipped 2026-05-21; UI sub-pass next (#122)</span></td>
     </tr>
     <tr>
       <td><strong>Anomaly detection</strong></td>

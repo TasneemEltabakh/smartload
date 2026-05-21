@@ -195,7 +195,7 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 | `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) |
 | `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=false` default) |
 | `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=false` default; `RL_MODE=shadow` pin) |
-| `autoscaler` | Python | 8085 | T1.3 shipped |
+| `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2, #122) |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
 | `operator-ui` | Flask + React | 8090 | slice #1 (Home + Policy page) |
 | `webhook-dispatcher` | Python | — | scaffolded; #130 |
