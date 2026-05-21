@@ -5563,6 +5563,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.3 — 2026-05-21 — Phase-2 SaaS scoping, slice machinery, anomaly-detector wired (#138 round 1)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Phase scoping — SaaS deferred</strong></td>
+      <td>Multi-tenancy (#129), tenant API keys + RBAC (#132), and rate limiting + quotas (#135) explicitly bucketed as <strong>Phase 2 — SaaS adaptation</strong>, not present-phase scope. New §25 <em>Phase scope</em> callout; §25.4, §25.3 tenant-integrator row, Figure 12.8, and §22 issue lists all badged accordingly. Present phase is single-tenant middleware — no slice may require <code>tenant_id</code> plumbing, API-key auth, RBAC, rate limiting, or per-tenant Redis namespacing.</td>
+      <td>SOT commit <code>a5da7e6</code></td>
+    </tr>
+    <tr>
+      <td><strong>Slice machinery — checklist + catalog</strong></td>
+      <td>New <code>docs/features/SLICE_CHECKLIST.md</code> — the durable acceptance contract: ten layers a slice must touch, three CI gates, two-commit discipline, the explicit list of work that <em>isn't</em> a slice (foundation passes, bug fixes, refactors). New §25.9 <em>Slice catalog</em> table — 9 slices (1 shipped, 6 next, 2 future) with foundation deps and status pills; second table lists 8 foundation passes (#138, #141, #134, #143, #140, #117, #139, checklist) and what each unblocks. No dates, no per-slice effort estimates — those are sprint-planning, not architecture.</td>
+      <td>SOT commits <code>863d2b1</code>, <code>5688774</code></td>
+    </tr>
+    <tr>
+      <td><strong>Anomaly-detector run loop wired (#138 round 1)</strong></td>
+      <td>First service in the engine-wrapper cutover. <code>services/anomaly-detector/app.py</code> rewritten with a threaded run loop that selects an engine via <code>engine_base.select_engine(ANOMALY_ENGINE)</code>, polls <code>ANOMALY_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, pivots rows into <code>BackendFeatures</code>, scores each backend, publishes <code>AnomalyEvent</code> envelopes to <code>smartload.anomaly</code>, and subscribes to <code>smartload.policy</code> for live parameter reload (rebuilds the engine on each update). Falls back to the threshold baseline automatically if the requested engine fails to load. Off by default behind <code>ANOMALY_RUNLOOP_ENABLED=false</code> per #138's one-service-at-a-time strategy. Pure-Python pieces split into <code>runloop.py</code> for unit-test coverage; 18 new tests live at <code>tests/unit/anomaly-detector/test_runloop.py</code>. Dockerfile switched to wider build context to pull in <code>services/shared/</code>; CI now runs <code>pytest tests/unit/</code> and installs the SDK in editable mode for cross-test imports. Forecasting and rl-engine cutovers tracked for follow-on rounds.</td>
+      <td>SOT commit <code>55860b6</code>; service commits <code>eb6f628</code>, <code>ea8e7df</code></td>
+    </tr>
+    <tr>
+      <td><strong>Project walkthrough — file-by-file tour</strong></td>
+      <td>New <code>docs/PROJECT_WALKTHROUGH.html</code> + <code>.md</code>: every service, shared module, infrastructure component, and SDK file is walked with code excerpts and rationale. Companion to this SOT; together they are the two canonical product docs. Updated section 4.1 (anomaly-detector) reflects the #138 wiring.</td>
+      <td>Commit <code>520b0c4</code></td>
+    </tr>
+    <tr>
+      <td><strong>PR #144 review — forecasting model handoff contract</strong></td>
+      <td>The forecasting ARIMA/ARIMAX PR shipped a full engine + service rewrite + dataset + binaries (17,760 LOC). Review requested changes: the integration boundary is <em>model artifact + offline trainer + inference function</em>, not service code. Sets the precedent for future model handoffs from the ML stream — engine authors deliver the model and a thin <code>forecast(df, exog) -&gt; tuple</code>; the integration layer wires the run loop, Redis publish, env-var selection, policy reload, and own-metrics via the #138 foundation.</td>
+      <td>PR #144 review</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.2 — 2026-05-14 — Middleware framing, plugin layout, Policy Management slice #1</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -6135,7 +6167,7 @@ docker compose logs -f anomaly-detector</code></pre>
 <table>
   <thead><tr><th>Foundation</th><th>Unblocks</th><th>Issue</th></tr></thead>
   <tbody>
-    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;svc&gt;_RUNLOOP_ENABLED</code> flags</td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
+    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;svc&gt;_RUNLOOP_ENABLED</code> flags <span class="pill pill-active">1 of 3 wired — anomaly-detector ✓ (flag off); forecasting + rl-engine next</span></td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
     <tr><td>DB migrations folder + first script — schema deltas land as <code>infrastructure/timescaledb/migrations/&lt;n&gt;_&lt;name&gt;.sql</code>, not <code>init.sql</code> rewrites</td><td>Webhooks (new tables), every future schema-touching slice</td><td>#141</td></tr>
     <tr><td>API versioning + deprecation policy — written contract for v2 + deprecation paths for HTTP, Redis envelopes, SDK, <code>policy.yaml</code></td><td>Webhooks, every future contract change</td><td>#134</td></tr>
     <tr><td>End-to-end correlation ID — single trace ID per request flows through telemetry, anomaly, forecast, scale, policy</td><td>Live Engines (visualisation), every observability story</td><td>#143</td></tr>

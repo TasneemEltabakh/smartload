@@ -314,7 +314,7 @@ sequenceDiagram
     <tr><td><code>load-balancer</code></td><td>Data</td><td><span class="badge lang-conf">NGINX</span></td><td>8080</td><td><span class="badge shipped">Wired</span></td></tr>
     <tr><td><code>lb-otel-shipper</code></td><td>Data</td><td><span class="badge lang-py">Python</span></td><td>sidecar</td><td><span class="badge shipped">T1.2 shipped</span></td></tr>
     <tr><td><code>telemetry</code></td><td>Data</td><td><span class="badge lang-py">Python</span></td><td>8081</td><td><span class="badge shipped">T1.1 shipped</span></td></tr>
-    <tr><td><code>anomaly-detector</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8082</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
+    <tr><td><code>anomaly-detector</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8082</td><td><span class="badge shipped">Phase-1 wired (flag off, #138)</span></td></tr>
     <tr><td><code>forecasting</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8083</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
     <tr><td><code>rl-engine</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8084</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
     <tr><td><code>autoscaler</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8085</td><td><span class="badge shipped">T1.3 shipped</span></td></tr>
@@ -806,8 +806,8 @@ from shared.queries import METRICS_INSERT
 <h2 id="decision-plane">4 · Decision plane</h2>
 
 <div class="callout muted">
-  <span class="title">Phase-0 reality check</span>
-  Three of four decision-plane services (<code>anomaly-detector</code>, <code>forecasting</code>, <code>rl-engine</code>) ship today as <strong>Phase 0 stubs</strong> with <code>/health</code> only. The engine/policy plugin folders + ABCs + factories + baseline implementations exist; <code>app.py</code> does not yet wire them. Only <strong>autoscaler</strong> is fully wired in T1.x.
+  <span class="title">Reality check — #138 cutover in progress</span>
+  The engine/policy plugin folders + ABCs + factories + baseline implementations exist for all four decision-plane services. <strong>autoscaler</strong> is fully wired in T1.x. <strong>anomaly-detector</strong> is now wired through its <code>engine_base</code> ABC and threshold baseline behind <code>ANOMALY_RUNLOOP_ENABLED=false</code> (round 1 of #138) — flip the flag to start the run loop. <strong>forecasting</strong> and <strong>rl-engine</strong> remain Phase-0 stubs with <code>/health</code> only; their cutovers follow the same pattern in subsequent #138 rounds.
 </div>
 
 <h3>Plugin pattern across all four services</h3>
@@ -842,8 +842,28 @@ flowchart LR
 <!-- ── 4.1 anomaly-detector ───────────────────────────────────────────── -->
 <div class="service-head">
   <h3 id="anomaly-detector">4.1 · <code>anomaly-detector</code></h3>
-  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge phase0">Phase 0 + plugins</span></div>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">Phase-1 wired (flag off)</span></div>
 </div>
+
+<h4>Run-loop wiring (#138 round 1)</h4>
+
+<p><code>app.py</code> is no longer a Phase-0 stub. When <code>ANOMALY_RUNLOOP_ENABLED=true</code>, the service runs a threaded loop that:</p>
+<ol>
+  <li>resolves the engine via <code>engine_base.select_engine(ANOMALY_ENGINE)</code> with automatic fallback to <code>threshold</code> if the requested engine fails to load;</li>
+  <li>polls <code>ANOMALY_QUERY</code> against TimescaleDB every <code>POLL_INTERVAL_SECONDS</code> (default 10 s) over a <code>ANOMALY_WINDOW_SECONDS</code> lookback;</li>
+  <li>pivots the rows into one <code>BackendFeatures</code> per backend via <code>runloop.build_features_from_rows</code>;</li>
+  <li>calls <code>engine.score(features)</code> for each backend;</li>
+  <li>publishes <code>AnomalyEvent</code> envelopes to <code>smartload.anomaly</code> through the canonical <code>publish_envelope</code> helper, filtered by a publish gate that respects <code>safe_mode</code> and <code>anomaly_response</code> (<code>auto-isolate</code> vs <code>advisory</code>);</li>
+  <li>subscribes to <code>smartload.policy</code> and rebuilds the engine on each update so policy-derived parameters (currently <code>anomaly_latency_multiplier</code>) take effect within one cycle. Stale publishes (lower <code>policy_version</code>) are dropped.</li>
+</ol>
+
+<p>The pure-Python pieces live in <code>services/anomaly-detector/runloop.py</code> (engine bootstrap with fallback, policy payload parsing, row pivot, publish gate, payload shape) so they can be unit-tested without docker / Redis / DB. 18 unit tests at <code>tests/unit/anomaly-detector/test_runloop.py</code>.</p>
+
+<p>The Phase-0 stub is preserved as the default: <code>ANOMALY_RUNLOOP_ENABLED</code> defaults to <code>false</code> per #138's one-service-at-a-time safety strategy. <code>/health</code> adds three engine fields when the loop is enabled: <code>engine_type</code>, <code>engine_ready</code>, <code>last_inference_age_seconds</code>.</p>
+
+<h4>Model handoff</h4>
+
+<p>The decision-plane integration boundary is now codified: a model author delivers <em>(a)</em> a trained artifact at <code>services/anomaly-detector/models/&lt;name&gt;.pkl</code>, and <em>(b)</em> an <code>engines/&lt;name&gt;/engine.py</code> exporting <code>class &lt;Name&gt;Engine(AnomalyEngine)</code> implementing <code>score(features) -&gt; AnomalyScore</code>. The factory in <code>engine_base.py</code> dispatches by name. The run loop, Redis publishing, policy subscription, and fallback-to-baseline are owned by the integration layer — the model author never touches <code>app.py</code>.</p>
 
 <h4>Engine contract</h4>
 

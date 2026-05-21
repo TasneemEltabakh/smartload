@@ -1058,15 +1058,15 @@ def health():
 
 ## 4. Decision plane
 
-The decision plane reads telemetry from TimescaleDB and emits events on Redis. Three of the four services (`anomaly-detector`, `forecasting`, `rl-engine`) ship today as **Phase 0 stubs** with `/health` only — the engine/policy plugin folders exist with abstract base classes, factories, and a working baseline implementation, but `app.py` does not yet wire the engine into a control loop. The `autoscaler` is the only fully-wired decision-plane service in T1.x.
+The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` is wired through its `engine_base` ABC and threshold baseline behind `ANOMALY_RUNLOOP_ENABLED=false` as of #138 round 1 (2026-05-21) — flip the flag to start the run loop. `forecasting` and `rl-engine` remain Phase-0 stubs with `/health` only; their cutovers follow the same pattern in subsequent #138 rounds.
 
-This is deliberate. The plugin layer (engines/, policies/) was written *first* so that when the wrapping refactor lands per service, the schema, factory, and conformance tests are already in place.
+This staging is deliberate. The plugin layer (engines/, policies/) was written *first* so that when each service's run-loop cutover lands, the schema, factory, and conformance tests are already in place — and so a single service can be smoke-tested in isolation before replicating to siblings.
 
 ### 4.1 `anomaly-detector` (plugin-per-engine)
 
 #### What it is
 
-Classifies each backend as `healthy` / `degraded` / `unhealthy` from latency + error-rate features. Publishes `AnomalyEvent` envelopes to `smartload.anomaly`.
+Classifies each backend as `healthy` / `degraded` / `unhealthy` from latency + error-rate features. Publishes `AnomalyEvent` envelopes to `smartload.anomaly`. As of #138 round 1, the service runs a real inference loop (behind `ANOMALY_RUNLOOP_ENABLED=true`) using the configured engine; the threshold baseline ships today, and the Isolation Forest plugin scaffold awaits the trained model from #101.
 
 #### Files
 
@@ -1074,7 +1074,9 @@ Classifies each backend as `healthy` / `degraded` / `unhealthy` from latency + e
 services/anomaly-detector/
 ├── README.md
 ├── Dockerfile
-├── app.py                  (Phase 0 stub — /health only)
+├── app.py                  (Flask + threaded run loop; flag-gated)
+├── runloop.py              (pure-Python pieces: bootstrap, policy parse,
+│                            row pivot, publish gate — unit-testable)
 ├── engine_base.py          (abstract base + factory)
 ├── requirements.txt
 └── engines/
