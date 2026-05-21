@@ -171,7 +171,8 @@ services:
 
   rl-engine:
     build:
-      context: ./services/rl-engine
+      context: ./services
+      dockerfile: rl-engine/Dockerfile
     ports:
       - "8084:8084"
     environment:
@@ -180,6 +181,12 @@ services:
       TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       RL_MODE: ${RL_MODE:-shadow}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+      # Run loop defaults to off so the Phase-0 stub stays the default
+      # until operators flip the flag explicitly. See SOT §8.7 + issue #138.
+      RL_RUNLOOP_ENABLED: ${RL_RUNLOOP_ENABLED:-false}
+      RL_POLICY: ${RL_POLICY:-random_shadow}
+      RL_WINDOW_SECONDS: ${RL_WINDOW_SECONDS:-30}
     depends_on:
       timescaledb:
         condition: service_healthy

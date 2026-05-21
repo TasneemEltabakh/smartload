@@ -1,22 +1,71 @@
 """
 services/rl-engine/app.py
 ──────────────────────────
-Phase 0 stub — only /health is wired. RL_MODE env var is read but no
-routing recommendations are published. Redis + TimescaleDB connectivity is
-reported.
+RL-engine entry point.
 
-Planned:
-  Phase 1 (N1.3, issue #29): shadow-mode scaffold — random policy publishes
-                              RoutingRecommendation to smartload.routing
-                              every 5 s, mode="shadow".
-  Phase 2 (N2.5): load trained PPO policy.zip, switch to mode="active".
+Phase-0 mode (default):  /health only, no recommendations published.
+Phase-1 mode:            enabled by RL_RUNLOOP_ENABLED=true. The service
+                         polls TimescaleDB on POLL_INTERVAL_SECONDS, runs
+                         the configured policy on the per-backend state,
+                         and publishes RoutingRecommendation envelopes
+                         to smartload.routing. Subscribes to
+                         smartload.policy for live parameter reload.
+
+Policy selection (RL_POLICY env var):
+  - "random_shadow" (default)  — uniform-random scores; always reports
+                                  mode="shadow"; no model artifact needed.
+  - "ppo"                      — trained PPO policy from issue #27.
+                                  Falls back to random_shadow if the
+                                  policy.zip is missing.
+
+Operator mode pin (RL_MODE env var):
+  - "shadow" (default)  — published `mode` field is always "shadow",
+                          regardless of what the policy returned.
+  - "active"            — when paired with a policy that itself returns
+                          mode="active", the LB sidecar will apply the
+                          weights. safe_mode=true in operating policy
+                          forces shadow regardless.
+
+Safety:
+  - The run loop is opt-in via RL_RUNLOOP_ENABLED=false default so the
+    Phase-0 stub stays the default until the cutover is smoke-tested.
+  - If the requested policy can't load, the service runs random_shadow
+    and reports policy_ready=false on /health — never crashes on startup.
+
+Health endpoint adds four engine fields when the run loop is enabled:
+  policy_type, policy_ready, last_inference_age_seconds, rl_mode.
 """
 
+from __future__ import annotations
+
 import os
+import sys
+import threading
+import time
 
 import psycopg2
 import redis as redis_lib
 from flask import Flask, jsonify
+
+# Resolve shared/ across container layout (/app/shared) and dev layout
+# (services/shared/ relative to this file). Same pattern as siblings.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+for _cand in (_HERE, os.path.dirname(_HERE)):
+    if os.path.isdir(os.path.join(_cand, "shared")):
+        sys.path.insert(0, _cand)
+        break
+from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
+from shared.queries import RL_STATE_QUERY                      # noqa: E402
+
+from runloop import (                                          # noqa: E402
+    EnginePolicy,
+    action_to_event_payload,
+    bootstrap_policy,
+    build_state_from_rows,
+    effective_mode,
+    policy_from_payload,
+    should_publish,
+)
 
 app = Flask(__name__)
 
@@ -27,26 +76,184 @@ TIMESCALEDB_URL = os.environ.get(
     "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
 )
 REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
-RL_MODE = os.environ.get("RL_MODE", "shadow")
+
+RUNLOOP_ENABLED       = os.environ.get("RL_RUNLOOP_ENABLED", "false").lower() == "true"
+RL_POLICY             = os.environ.get("RL_POLICY", "random_shadow")
+RL_MODE               = os.environ.get("RL_MODE", "shadow")
+POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+WINDOW_SECONDS        = int(os.environ.get("RL_WINDOW_SECONDS", "30"))
+
+ROUTING_CHANNEL = "smartload.routing"
+POLICY_CHANNEL  = "smartload.policy"
 
 
-def check_redis():
+# ── shared state ──────────────────────────────────────────────────────────────
+
+_state_lock = threading.Lock()
+_policy = None
+_policy_name: str = RL_POLICY
+_policy_requested: str = RL_POLICY
+_policy_ready: bool = False
+_policy_error: str | None = None
+_engine_policy: EnginePolicy = EnginePolicy()
+_last_inference_monotonic: float | None = None
+
+
+def _set_policy_state(bootstrap) -> None:
+    global _policy, _policy_name, _policy_requested, _policy_ready, _policy_error
+    _policy = bootstrap.policy
+    _policy_name = bootstrap.name
+    _policy_requested = bootstrap.requested
+    _policy_ready = bootstrap.ready
+    _policy_error = bootstrap.error
+
+
+# ── connectivity checks ───────────────────────────────────────────────────────
+
+def check_redis() -> tuple[bool, str | None]:
     try:
-        r = redis_lib.from_url(REDIS_URL, socket_connect_timeout=3)
-        r.ping()
+        redis_lib.from_url(REDIS_URL, socket_connect_timeout=3).ping()
         return True, None
-    except Exception as exc:
+    except Exception as exc:                            # noqa: BLE001
         return False, str(exc)
 
 
-def check_timescaledb():
+def check_timescaledb() -> tuple[bool, str | None]:
     try:
-        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
-        conn.close()
+        psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5).close()
         return True, None
-    except Exception as exc:
+    except Exception as exc:                            # noqa: BLE001
         return False, str(exc)
 
+
+# ── inference cycle ───────────────────────────────────────────────────────────
+
+def _query_state(db_conn):
+    """Run RL_STATE_QUERY against the live DB and shape rows into
+    list[BackendState]. The interval is bound as a parameter per SOT §11."""
+    with db_conn.cursor() as cur:
+        cur.execute(RL_STATE_QUERY, (f"{WINDOW_SECONDS} seconds",))
+        rows = cur.fetchall()
+    return build_state_from_rows(rows)
+
+
+def _inference_cycle(db_conn, redis_client) -> int:
+    """One poll cycle. Returns 1 if a recommendation was published, 0 otherwise."""
+    global _last_inference_monotonic
+
+    with _state_lock:
+        pol_instance = _policy
+        eng_policy = _engine_policy
+
+    if pol_instance is None:
+        return 0
+
+    try:
+        state = _query_state(db_conn)
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[{SERVICE_NAME}] DB query failed: {exc}", flush=True)
+        return 0
+
+    if not should_publish(state):
+        _last_inference_monotonic = time.monotonic()
+        return 0
+
+    try:
+        action = pol_instance.act(state)
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[{SERVICE_NAME}] policy.act failed: {exc}", flush=True)
+        return 0
+
+    _last_inference_monotonic = time.monotonic()
+
+    mode = effective_mode(action.mode, RL_MODE, eng_policy)
+    publish_envelope(
+        redis_client,
+        channel=ROUTING_CHANNEL,
+        source=SERVICE_NAME,
+        payload=action_to_event_payload(action, mode, eng_policy.policy_version),
+    )
+    return 1
+
+
+# ── policy subscription ───────────────────────────────────────────────────────
+
+def _handle_policy_message(raw) -> None:
+    """Parse a smartload.policy envelope, swap _engine_policy, and rebuild
+    the RL policy so any constructor-derived params (exploration rate,
+    confidence threshold) take effect immediately."""
+    parsed = parse_envelope(raw, channel=POLICY_CHANNEL)
+    if parsed is None:
+        return
+    payload, _meta = parsed
+
+    with _state_lock:
+        new_policy = policy_from_payload(payload, fallback=_engine_policy)
+        if new_policy.policy_version < _engine_policy.policy_version:
+            print(f"[{SERVICE_NAME}] ignoring policy v{new_policy.policy_version} "
+                  f"(current v{_engine_policy.policy_version}) — stale publish",
+                  flush=True)
+            return
+        _refresh_policy_under_lock(new_policy)
+
+
+def _refresh_policy_under_lock(new_policy: EnginePolicy) -> None:
+    """Replace _engine_policy and _policy atomically with the new values.
+
+    Caller must hold _state_lock. The policy is reconstructed so any
+    policy-derived constructor params take effect immediately; trained
+    policies should keep their loaded artifact cached and re-applying
+    kwargs should be cheap."""
+    global _engine_policy
+    _engine_policy = new_policy
+    boot = bootstrap_policy(_policy_requested, _engine_policy)
+    _set_policy_state(boot)
+    try:
+        boot.policy.reload()
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[{SERVICE_NAME}] policy.reload() raised: {exc}", flush=True)
+
+
+# ── run loop ──────────────────────────────────────────────────────────────────
+
+def _run_loop(stop_event: threading.Event | None = None) -> None:
+    print(f"[{SERVICE_NAME}] run loop starting "
+          f"(policy={_policy_name} ready={_policy_ready} "
+          f"rl_mode={RL_MODE} interval={POLL_INTERVAL_SECONDS}s)", flush=True)
+
+    redis_client = redis_lib.from_url(REDIS_URL)
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe(POLICY_CHANNEL)
+
+    db_conn = psycopg2.connect(TIMESCALEDB_URL)
+    db_conn.autocommit = True
+
+    next_tick = time.monotonic()
+
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+
+        # Drain any policy messages — never block longer than 1 s so we
+        # don't drift the poll cadence.
+        message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+        if message is not None and message.get("type") == "message":
+            channel = message.get("channel")
+            if isinstance(channel, bytes):
+                channel = channel.decode()
+            if channel == POLICY_CHANNEL:
+                _handle_policy_message(message["data"])
+
+        now = time.monotonic()
+        if now >= next_tick:
+            published = _inference_cycle(db_conn, redis_client)
+            if published:
+                print(f"[{SERVICE_NAME}] published routing recommendation "
+                      f"(policy={_policy_name})", flush=True)
+            next_tick = now + POLL_INTERVAL_SECONDS
+
+
+# ── Flask routes ──────────────────────────────────────────────────────────────
 
 @app.route("/health")
 def health():
@@ -54,17 +261,27 @@ def health():
     db_ok, db_err = check_timescaledb()
     errors = [e for e in [redis_err, db_err] if e]
     status = "ok" if (redis_ok and db_ok) else "degraded"
-    code = 200 if status == "ok" else 503  # SOT §11: 503 on degraded, never 207
-    return jsonify(
-        {
-            "status": status,
-            "service": SERVICE_NAME,
-            "redis": redis_ok,
-            "timescaledb": db_ok,
-            "rl_mode": RL_MODE,
-            **({"errors": errors} if errors else {}),
-        }
-    ), code
+    code = 200 if status == "ok" else 503
+
+    body: dict = {
+        "status": status,
+        "service": SERVICE_NAME,
+        "redis": redis_ok,
+        "timescaledb": db_ok,
+        "rl_mode": RL_MODE,
+    }
+    if RUNLOOP_ENABLED:
+        with _state_lock:
+            last = _last_inference_monotonic
+            body["policy_type"]      = _policy_name
+            body["policy_requested"] = _policy_requested
+            body["policy_ready"]     = _policy_ready
+        body["last_inference_age_seconds"] = (
+            None if last is None else round(time.monotonic() - last, 2)
+        )
+    if errors:
+        body["errors"] = errors
+    return jsonify(body), code
 
 
 @app.route("/")
@@ -72,6 +289,25 @@ def index():
     return jsonify({"service": SERVICE_NAME, "status": "running", "rl_mode": RL_MODE})
 
 
+# ── startup ───────────────────────────────────────────────────────────────────
+
+def _start_runloop_thread() -> None:
+    boot = bootstrap_policy(RL_POLICY, _engine_policy)
+    _set_policy_state(boot)
+    if not boot.ready:
+        print(f"[{SERVICE_NAME}] policy {boot.requested!r} unavailable "
+              f"({boot.error}); falling back to {boot.name!r}", flush=True)
+
+    t = threading.Thread(target=_run_loop, daemon=True, name="rl-runloop")
+    t.start()
+
+
 if __name__ == "__main__":
-    print(f"[{SERVICE_NAME}] starting on port {PORT} (mode={RL_MODE})")
+    if RUNLOOP_ENABLED:
+        _start_runloop_thread()
+    else:
+        print(f"[{SERVICE_NAME}] run loop disabled "
+              f"(set RL_RUNLOOP_ENABLED=true to enable)", flush=True)
+
+    print(f"[{SERVICE_NAME}] starting on port {PORT} (mode={RL_MODE})", flush=True)
     app.run(host="0.0.0.0", port=PORT)
