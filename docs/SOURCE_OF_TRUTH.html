@@ -6060,7 +6060,90 @@ docker compose logs -f anomaly-detector</code></pre>
 <p>All three ship in <strong>permissive mode</strong> (warnings, exit 0). Issue #139 flips them to <code>--strict</code> in CI once the team has settled the convention. Without this enforcement, the structural decisions documented here would drift in the same way Istio's <code>architecture/</code> docs drifted from its code — visible failure mode, deliberately avoided.</p>
 
 <h3>25.8 Feature manifest pattern</h3>
-<p>Every shippable feature has a single navigable home at <code>docs/features/&lt;feature&gt;.md</code> with a fixed shape: <em>what the slice delivers</em>, <em>customer surfaces</em>, <em>implementation pointers</em>, <em>status checklist</em>, <em>how to verify</em>, <em>non-goals</em>. The first manifest is <code>policy-management.md</code> (slice #1, 2026-05-14). Every feature follows this template; see <code>docs/features/README.md</code> for the canonical shape.</p>
+<p>Every shippable feature has a single navigable home at <code>docs/features/&lt;feature&gt;.md</code> with a fixed shape: <em>what the slice delivers</em>, <em>customer surfaces</em>, <em>implementation pointers</em>, <em>status checklist</em>, <em>how to verify</em>, <em>non-goals</em>. The first manifest is <code>policy-management.md</code> (slice #1, 2026-05-14). Every feature follows this template; see <code>docs/features/README.md</code> for the canonical shape. The acceptance contract — what must be true for a slice to be called "done" — lives at <code>docs/features/SLICE_CHECKLIST.md</code> and is referenced from every manifest.</p>
+
+<h3>25.9 Slice catalog</h3>
+<p>The set of feature slices SmartLoad delivers as a middleware product. Each row maps to one feature manifest in <code>docs/features/</code> (when shipped) or one open GitHub issue (when next / future). <strong>Foundation passes</strong> are horizontal work that unblocks one or more slices but does not get a manifest; they appear in the second table below. No dates or per-slice effort estimates live here — those are sprint-planning concerns, not architecture. See <code>docs/features/SLICE_CHECKLIST.md</code> for what "shipped" means.</p>
+
+<table>
+  <thead><tr><th>Slice</th><th>Foundation deps</th><th>Manifest</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Policy management</strong></td>
+      <td>—</td>
+      <td><code>docs/features/policy-management.md</code></td>
+      <td><span class="pill pill-done">Shipped 2026-05-14 (slice #1)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Audit log viewer</strong> (OUI.4)</td>
+      <td>—</td>
+      <td>pending</td>
+      <td><span class="pill pill-next">Next — no blockers (#122)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Anomaly detection</strong></td>
+      <td>#138 engine-wrapper, #101 Isolation Forest model</td>
+      <td>pending</td>
+      <td><span class="pill pill-next">Next — after #138 + model handoff</span></td>
+    </tr>
+    <tr>
+      <td><strong>Forecasting + autoscaler loop</strong></td>
+      <td>#138 engine-wrapper, revised forecast-model PR (see PR #144 review)</td>
+      <td>pending</td>
+      <td><span class="pill pill-next">Next — after #138 + model handoff</span></td>
+    </tr>
+    <tr>
+      <td><strong>Webhook delivery</strong></td>
+      <td>#141 migrations, #134 API versioning</td>
+      <td>pending</td>
+      <td><span class="pill pill-next">Next — after foundation pass (#130)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Live Engines page</strong> (OUI.3)</td>
+      <td>#138 engine-wrapper (engines must emit state)</td>
+      <td>pending</td>
+      <td><span class="pill pill-next">Next — after #138 (#121)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Manual actions</strong> (OUI.5)</td>
+      <td>Audit-log slice pattern</td>
+      <td>pending</td>
+      <td><span class="pill pill-next">Next — after Audit slice (#123)</span></td>
+    </tr>
+    <tr>
+      <td><strong>RL routing (shadow → active)</strong></td>
+      <td>#138 engine-wrapper, #27 PPO training (~7-day run)</td>
+      <td>pending</td>
+      <td><span class="pill pill-upcoming">Future — gated on PPO model</span></td>
+    </tr>
+    <tr>
+      <td><strong>Embedded metrics dashboards</strong> (OUI.8)</td>
+      <td>—</td>
+      <td>pending</td>
+      <td><span class="pill pill-upcoming">Future — low-risk follow-up (#131)</span></td>
+    </tr>
+    <tr>
+      <td colspan="4" style="opacity:.7;font-style:italic;">SaaS-track slices — deferred to Phase 2 per §25 <em>Phase scope</em> callout: OUI.7 Auth (#125), multi-tenancy plumbing (#129), tenant API keys + RBAC (#132), rate limiting + quotas (#135).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Foundation passes (not slices)</h4>
+<p>Horizontal work that unblocks one or more slices above. Each pass ships its own commits + SOT update, but does not get a feature manifest in <code>docs/features/</code>.</p>
+
+<table>
+  <thead><tr><th>Foundation</th><th>Unblocks</th><th>Issue</th></tr></thead>
+  <tbody>
+    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;svc&gt;_RUNLOOP_ENABLED</code> flags</td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
+    <tr><td>DB migrations folder + first script — schema deltas land as <code>infrastructure/timescaledb/migrations/&lt;n&gt;_&lt;name&gt;.sql</code>, not <code>init.sql</code> rewrites</td><td>Webhooks (new tables), every future schema-touching slice</td><td>#141</td></tr>
+    <tr><td>API versioning + deprecation policy — written contract for v2 + deprecation paths for HTTP, Redis envelopes, SDK, <code>policy.yaml</code></td><td>Webhooks, every future contract change</td><td>#134</td></tr>
+    <tr><td>End-to-end correlation ID — single trace ID per request flows through telemetry, anomaly, forecast, scale, policy</td><td>Live Engines (visualisation), every observability story</td><td>#143</td></tr>
+    <tr><td>Tests reorg into <code>tests/e2e/&lt;feature&gt;/</code></td><td>Every future slice's e2e suite</td><td>#140</td></tr>
+    <tr><td>Per-task acceptance test pattern + benchmark harness</td><td>Slice "done" gate; performance KPI tracking</td><td>#117</td></tr>
+    <tr><td>Structural-lint flip from permissive to strict</td><td>Prevents slice-pattern drift from this point on</td><td>#139</td></tr>
+    <tr><td>Slice checklist as a written contract — formalised in <code>docs/features/SLICE_CHECKLIST.md</code></td><td>All slices</td><td>—</td></tr>
+  </tbody>
+</table>
 
 </section>
 
