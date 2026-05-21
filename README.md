@@ -193,10 +193,10 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 | `load-balancer` | NGINX | 8080 | wired |
 | `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
 | `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
-| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) |
+| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) + `/api/v1/isolate` (slice #3, #123) |
 | `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=false` default) |
 | `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=false` default; `RL_MODE=shadow` pin) |
-| `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2, #122) |
+| `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2) + `/api/v1/scale` (slice #3, #123) |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
 | `operator-ui` | Flask + React | 8090 | Home + Policy + Audit pages (slices #1, #2) |
 | `webhook-dispatcher` | Python | — | scaffolded; #130 |

@@ -5594,6 +5594,11 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>This release</td>
     </tr>
     <tr>
+      <td><strong>Manual actions — backend pass (slice #3, #123)</strong></td>
+      <td>First sub-pass of the third vertical slice. Two new endpoints on two services: <code>POST /api/v1/scale</code> on autoscaler (port 8085) and <code>POST /api/v1/isolate</code> on anomaly-detector (port 8082). Scale validates the requested <code>target_count</code> against the live policy's <code>min_backends</code>/<code>max_backends</code> via the new pure-Python <code>services/autoscaler/manual.py::plan_manual_scale()</code> (15 unit tests), bypasses cooldown, then actuates the cluster step-by-step and writes <strong>one</strong> <code>scaling_events</code> row + <strong>one</strong> <code>ScalingEvent</code> envelope per operator click (with <code>forecast_event_id=null</code>) — never per intermediate step. Isolate publishes a synthetic <code>AnomalyEvent</code> on <code>smartload.anomaly</code> + writes a <code>backend_health</code> row; status is validated against <code>{healthy, degraded, unhealthy}</code>. Both endpoints prefix the audit reason with <code>manual:&lt;actor&gt;:</code> so operator intent is grep-able in the existing Audit Log Viewer (slice #2). BFF gains <code>/api/ui/scale</code> + <code>/api/ui/isolate</code> proxies. SDK gains an <code>ActionsClient</code> sub-client (<code>client.actions.scale</code> / <code>.isolate</code>) plus top-level <code>client.scale()</code> / <code>client.isolate()</code> convenience; <code>SmartLoadClient</code> gains an <code>anomaly_detector_url</code> constructor parameter (env: <code>SMARTLOAD_ANOMALY_DETECTOR_URL</code>, default <code>localhost:8082</code>). OpenAPI extended with both paths and four schemas (<code>ManualScaleRequest</code>, <code>ManualScaleResponse</code>, <code>ManualIsolateRequest</code>, <code>ManualIsolateResponse</code>). 26 new unit tests (15 plan-logic + 11 SDK actions); 115 unit tests total green. Live-smoked against the running stack: scale 5→4 actuated, isolate emitted envelope, both 400-validations triggered correctly, SDK round-trip confirmed both endpoints and audit-row landing. Remaining sub-passes: React Manual Actions page (confirmation modals), runnable scenario, e2e suite.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
       <td><strong>Audit log viewer — scenario + e2e (slice #2 close — #122 shipped)</strong></td>
       <td>Third and final sub-pass of the audit slice; flips the slice from <em>pill-active</em> to <em>pill-done</em>. New runnable scenario at <code>examples/scenarios/audit-log/audit_walk.py</code> walks both streams via the SDK in seven steps: baseline read → snapshot both streams → toggle <code>safe_mode</code> via the policy surface → confirm the matching policy-audit row arrives within one settle → restore baseline → print the latest rows from both streams → demonstrate the limit cap and the <code>ValidationError</code> on unknown kind. New e2e suite at <code>tests/e2e/audit-log/test_audit_walk.py</code> (11 tests) covers per-kind read shape, SDK <code>list_audit</code> ≡ <code>audit.policy</code> / <code>.scaling</code> equivalence, SDK ≡ direct-upstream parity (smoke that scaling-audit traffic routes to <code>autoscaler_url</code> not <code>base_url</code>), limit cap + default-50, 400 on bad limit, kind-dispatch <code>ValidationError</code>, and the policy-write → audit-row round trip with a 5-second deadline. Scenario passes; e2e 11/11 passes against the live stack; structural lints (<code>lint-structure</code>, <code>lint-openapi</code>, <code>lint-redis-channels</code>) clean for the slice's triangulation (<code>tests/e2e/audit-log/</code> + <code>docs/features/audit-log.md</code> + <code>examples/scenarios/audit-log/</code> all present and aligned).</td>
       <td>This release</td>
@@ -6272,8 +6277,8 @@ flowchart TD
     <tr>
       <td><strong>Manual actions</strong> (OUI.5)</td>
       <td>Audit-log slice pattern</td>
-      <td>pending</td>
-      <td><span class="pill pill-next">Next — after Audit slice (#123)</span></td>
+      <td><code>docs/features/manual-actions.md</code></td>
+      <td><span class="pill pill-active">Backend + SDK shipped 2026-05-21; UI + scenario + e2e pending (#123)</span></td>
     </tr>
     <tr>
       <td><strong>RL routing (shadow → active)</strong></td>
