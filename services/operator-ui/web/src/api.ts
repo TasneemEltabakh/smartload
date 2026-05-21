@@ -35,6 +35,13 @@ export interface AuditRow {
   actor: string;
 }
 
+export interface ScalingAuditRow {
+  time: string;
+  action: "scale_out" | "scale_in";
+  instance_count: number;
+  reason: string | null;
+}
+
 export interface ServiceHealth {
   status: "ok" | "degraded" | "unreachable" | string;
   status_code: number | null;
@@ -84,4 +91,7 @@ export const api = {
 
   auditPolicy: (limit = 50) =>
     _fetchJson<AuditRow[]>(`/api/ui/audit/policy?limit=${limit}`),
+
+  auditScaling: (limit = 50) =>
+    _fetchJson<ScalingAuditRow[]>(`/api/ui/audit/scaling?limit=${limit}`),
 };

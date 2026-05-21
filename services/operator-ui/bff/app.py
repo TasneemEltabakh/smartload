@@ -65,9 +65,14 @@ log = logging.getLogger("operator-ui")
 
 app = Flask(
     __name__,
-    static_folder=WEB_DIST,
-    static_url_path="",
+    static_folder=os.path.join(WEB_DIST, "assets"),
+    static_url_path="/assets",
 )
+# Mount only `/assets/*` as static. Without this scoping, Flask's default
+# `static_url_path=""` puts the auto-static route at `/<filename>`, which
+# intercepts SPA paths like `/policy` and `/audit` with a 404 before the
+# SPA fallback (serve_spa) can return index.html for React Router to
+# resolve client-side.
 
 # Single shared HTTP client for upstream calls.
 _http = httpx.Client(timeout=httpx.Timeout(5.0, connect=2.0))
