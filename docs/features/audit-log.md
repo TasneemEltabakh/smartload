@@ -26,7 +26,7 @@ The two audit streams continue to live in separate hypertables on separate servi
 - BFF proxy: `services/operator-ui/bff/app.py::ui_scaling_audit()` — points at `SERVICE_URLS["autoscaler"]`
 - OpenAPI: `/api/v1/audit/scaling` path + `ScalingAuditRow` schema in `docs/openapi/smartload-v1.yaml`
 - Audit storage: `scaling_events` hypertable (TimescaleDB) — schema unchanged; this slice only adds a read endpoint
-- UI: `services/operator-ui/web/src/pages/Audit.tsx` (pending — UI sub-pass)
+- UI: `services/operator-ui/web/src/pages/Audit.tsx` — shipped 2026-05-21
 
 ## Status
 
@@ -35,7 +35,8 @@ The two audit streams continue to live in separate hypertables on separate servi
 - [x] BFF proxy (`/api/ui/audit/scaling`)
 - [x] SDK methods + unit tests (`client.audit.{policy,scaling,list}`, `client.list_audit`)
 - [x] SDK `autoscaler_url` parameter + env-var override
-- [ ] UI page with filterable tables (sub-pass)
+- [x] UI page `services/operator-ui/web/src/pages/Audit.tsx` — kind / actor / action / limit filters + auto-refresh + manual refresh + scaling-action color badges
+- [x] BFF SPA fallback fix — direct URLs to `/audit` (and `/policy`) now render on hard refresh
 - [ ] Scenario script `examples/scenarios/audit-log/audit_walk.py`
 - [ ] E2E test suite `tests/e2e/audit-log/`
 - [ ] §25.9 slice-catalog row flipped to *Shipped*

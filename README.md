@@ -102,10 +102,11 @@ The full integration patterns matrix (read-only console, synchronous operator, R
 
 ## Operator UI
 
-The web UI at `http://localhost:8090` is the operator-facing transparency + override surface. Slice #1 ships two pages:
+The web UI at `http://localhost:8090` is the operator-facing transparency + override surface. Three pages shipped today:
 
-- **Home** — service-health grid for every SmartLoad service, polled every 10 s
-- **Policy** — read current policy · edit JSON · side-by-side diff preview · commit with audit trail
+- **Home** — service-health grid for every SmartLoad service, polled every 10 s (slice #1)
+- **Policy** — read current policy · edit JSON · side-by-side diff preview · commit with audit trail (slice #1)
+- **Audit** — unified view over both audit streams (policy_changes + scaling_events) with kind / actor / action / limit filters, auto-refresh, colour-coded action badges (slice #2)
 
 For workflow walkthroughs, BFF endpoint reference, configuration, security posture, and the roadmap to OUI.3 through OUI.8 see [SOT §28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui).
 
@@ -197,7 +198,7 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 | `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=false` default; `RL_MODE=shadow` pin) |
 | `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2, #122) |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
-| `operator-ui` | Flask + React | 8090 | slice #1 (Home + Policy page) |
+| `operator-ui` | Flask + React | 8090 | Home + Policy + Audit pages (slices #1, #2) |
 | `webhook-dispatcher` | Python | — | scaffolded; #130 |
 
 Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.

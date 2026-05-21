@@ -5594,6 +5594,11 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>This release</td>
     </tr>
     <tr>
+      <td><strong>Audit log viewer — UI sub-pass + BFF SPA fix (slice #2, #122)</strong></td>
+      <td>Second sub-pass of the audit slice. New <code>services/operator-ui/web/src/pages/Audit.tsx</code> renders both audit streams in one filterable view: <em>kind</em> chips (All / Policy / Scaling) toggle which tables are shown; the policy table has a free-text actor/field filter; the scaling table has action chips (All / scale_out / scale_in); a limit selector drives both fetches (25 / 50 / 100 / 250 / 500); auto-refresh every 10 s plus a manual refresh button. Scaling rows render with colour-coded action badges. Empty-state rows when filters return nothing. Wired into the React Router at <code>/audit</code> with a sidebar nav link next to Policy. Also fixes a pre-existing BFF SPA fallback bug: Flask's <code>static_url_path=""</code> auto-registered a root-level static route that intercepted every SPA path (<code>/policy</code>, <code>/audit</code>, …) with a 404 before <code>serve_spa</code> could run — direct URLs and hard-refresh now work for every page. Verified end-to-end on the live compose stack (rebuilt operator-ui; GET on all SPA paths returns 200). Remaining sub-passes for the slice to flip pill-done: runnable scenario at <code>examples/scenarios/audit-log/</code> and e2e suite at <code>tests/e2e/audit-log/</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
       <td><strong>Audit log viewer — backend pass (slice #2, #122)</strong></td>
       <td>First sub-pass of the second vertical slice. New <code>GET /api/v1/audit/scaling</code> on autoscaler (port 8085) mirrors the policy-manager audit pattern — <code>?limit=N</code> capped at 1000, 400 on bad limit, 503 on DB unreachable, newest first. New <code>SCALING_AUDIT_QUERY</code> in <code>services/shared/queries.py</code>. BFF gains a <code>/api/ui/audit/scaling</code> proxy so the UI hits one origin even though the two audit streams live on different services. SDK gains an <code>AuditClient</code> sub-client (<code>client.audit.policy / scaling / list</code>) plus a top-level <code>client.list_audit(kind, limit)</code> convenience; <code>SmartLoadClient</code> gains an <code>autoscaler_url</code> constructor parameter (env var <code>SMARTLOAD_AUTOSCALER_URL</code>, default <code>localhost:8085</code>) since scaling-audit lives on a different upstream than the policy-manager <code>base_url</code>. OpenAPI extended with the new path and a <code>ScalingAuditRow</code> schema. 8 new SDK unit tests. Feature manifest at <code>docs/features/audit-log.md</code>. Remaining sub-passes for this slice: React Audit page, runnable scenario at <code>examples/scenarios/audit-log/</code>, and e2e suite at <code>tests/e2e/audit-log/</code>; §25.9 catalog row flips to <em>Shipped</em> when those land.</td>
       <td>This release</td>
@@ -6233,7 +6238,7 @@ flowchart TD
       <td><strong>Audit log viewer</strong> (OUI.4)</td>
       <td>—</td>
       <td><code>docs/features/audit-log.md</code></td>
-      <td><span class="pill pill-active">Backend + SDK shipped 2026-05-21; UI sub-pass next (#122)</span></td>
+      <td><span class="pill pill-active">Backend + SDK + UI shipped 2026-05-21; scenario + e2e pending (#122)</span></td>
     </tr>
     <tr>
       <td><strong>Anomaly detection</strong></td>

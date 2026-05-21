@@ -2389,7 +2389,7 @@ Standard SPA fallback: a real file path returns the file, anything else returns 
 
 #### What it is
 
-A React 18 SPA built with Vite + TypeScript. Two pages in slice #1: Home (service health) and Policy (read + diff preview + commit + audit).
+A React 18 SPA built with Vite + TypeScript. Three pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), and Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2).
 
 #### Files
 
@@ -2401,11 +2401,12 @@ services/operator-ui/web/
 ├── vite.config.ts
 └── src/
     ├── main.tsx        # React entry
-    ├── App.tsx         # Router + layout
-    ├── api.ts          # Typed BFF client
+    ├── App.tsx         # Router + layout (nav: Home / Policy / Audit)
+    ├── api.ts          # Typed BFF client (Policy + ScalingAuditRow)
     └── pages/
         ├── Home.tsx
-        └── Policy.tsx
+        ├── Policy.tsx
+        └── Audit.tsx
 ```
 
 #### `package.json`
