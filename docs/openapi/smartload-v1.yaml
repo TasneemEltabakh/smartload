@@ -130,6 +130,48 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/audit/scaling:
+    get:
+      summary: Recent autoscaler-action audit rows
+      description: |
+        One row per scaling action taken by the autoscaler (scale-out or
+        scale-in), newest first. Read-only — the autoscaler writes
+        scaling_events when it actuates; this endpoint replays them for
+        operators and integrators.
+
+        Lives on the autoscaler service (default port 8085), not on
+        policy-manager.
+      tags: [autoscaler, audit]
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+      responses:
+        '200':
+          description: Recent scaling-event rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ScalingAuditRow'
+        '400':
+          description: Invalid limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Audit datastore unreachable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/metrics:
     get:
       summary: Read recent metric rows
@@ -280,6 +322,23 @@ components:
           description: New value (JSON-decoded).
         actor:
           type: string
+
+    ScalingAuditRow:
+      type: object
+      required: [time, action, instance_count]
+      properties:
+        time:           { type: string, format: date-time }
+        action:
+          type: string
+          enum: [scale_out, scale_in]
+          description: Direction of the scaling action.
+        instance_count:
+          type: integer
+          description: Resulting backend count after the action.
+        reason:
+          type: string
+          nullable: true
+          description: Human-readable justification (e.g. "forecast predicted 450 rps").
 
     MetricRow:
       type: object

@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 import psycopg2
 import redis as redis_lib
 import yaml
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 # Resolve the canonical shared/ module across two layouts:
 #   container: /app/shared       (sibling of app.py — Dockerfile copies it)
@@ -55,6 +55,7 @@ from shared.contracts import (  # noqa: E402
 )
 from shared.queries import (  # noqa: E402
     OBSERVED_RPS_QUERY,
+    SCALING_AUDIT_QUERY,
     SCALING_EVENT_INSERT,
 )
 
@@ -429,6 +430,56 @@ def health():
 @app.route("/")
 def index():
     return jsonify({"service": SERVICE_NAME, "status": "running"})
+
+
+# ── audit read API (slice #2, issue #122) ─────────────────────────────────────
+
+_AUDIT_LIMIT_DEFAULT = 50
+_AUDIT_LIMIT_MAX     = 1000
+
+
+@app.route("/api/v1/audit/scaling", methods=["GET"])
+def get_audit_scaling():
+    """Return recent scaling_events rows, newest first.
+
+    Read-only. Mirrors the audit/policy endpoint on policy-manager so the
+    SDK + UI can treat both audit streams uniformly.
+
+      ?limit=N  — bounded by _AUDIT_LIMIT_MAX (1000). Defaults to 50.
+
+    Response shape (per row):
+      {time, action, instance_count, reason}
+    """
+    try:
+        limit = int(request.args.get("limit", _AUDIT_LIMIT_DEFAULT))
+    except (TypeError, ValueError):
+        return jsonify({"error": "limit must be an integer", "field": "limit"}), 400
+    if limit <= 0:
+        return jsonify({"error": "limit must be > 0", "field": "limit"}), 400
+    limit = min(limit, _AUDIT_LIMIT_MAX)
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+    except Exception as exc:                            # noqa: BLE001
+        log.exception("audit DB connection failed")
+        return jsonify({"error": f"audit unavailable: {exc}"}), 503
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(SCALING_AUDIT_QUERY, (limit,))
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return jsonify([
+        {
+            "time":           ts.isoformat() if ts is not None else None,
+            "action":         action,
+            "instance_count": instance_count,
+            "reason":         reason,
+        }
+        for (ts, action, instance_count, reason) in rows
+    ])
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────

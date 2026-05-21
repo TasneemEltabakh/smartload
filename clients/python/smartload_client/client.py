@@ -7,6 +7,7 @@ from typing import Optional
 
 import httpx
 
+from .audit import AuditClient, AuditKind
 from .events import EventsClient
 from .metrics import MetricsClient
 from .policy import PolicyClient
@@ -38,6 +39,7 @@ class SmartLoadClient:
     def __init__(
         self,
         base_url: str = "http://localhost:8086",
+        autoscaler_url: Optional[str] = None,
         redis_url: Optional[str] = None,
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -46,6 +48,14 @@ class SmartLoadClient:
         connect_timeout: float = 3.0,
     ):
         self.base_url = base_url.rstrip("/")
+        # The scaling audit stream lives on the autoscaler (port 8085), which
+        # is a different upstream than the policy-manager that base_url points
+        # at. Defaults to localhost:8085 for dev; override in production.
+        self.autoscaler_url = (
+            autoscaler_url
+            or os.environ.get("SMARTLOAD_AUTOSCALER_URL", "http://localhost:8085")
+        ).rstrip("/")
+        self.timeout = timeout
         self.redis_url = redis_url or os.environ.get(
             "REDIS_URL", "redis://localhost:6379"
         )
@@ -72,6 +82,7 @@ class SmartLoadClient:
         self.policy = PolicyClient(self)
         self.metrics = MetricsClient(self)
         self.events = EventsClient(self)
+        self.audit = AuditClient(self)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -118,6 +129,14 @@ class SmartLoadClient:
 
     def audit_policy(self, limit: int = 50) -> list[dict]:
         return self.policy.audit(limit=limit)
+
+    def list_audit(self, kind: AuditKind, limit: int = 50) -> list[dict]:
+        """Audit-log convenience: dispatch by kind across the two streams.
+
+        kind="policy"  → policy_changes (policy-manager)
+        kind="scaling" → scaling_events (autoscaler)
+        """
+        return self.audit.list(kind, limit=limit)
 
     def subscribe_policy(self, callback):
         return self.events.subscribe_policy(callback)

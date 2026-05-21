@@ -178,3 +178,99 @@ class TestParseEnvelope:
     def test_unparseable_timestamp_on_ttl_channel_returns_none(self):
         raw = _envelope({"backend_id": "b1"}, timestamp="not-a-date")
         assert parse_envelope(raw, channel=CHANNEL_ANOMALY) is None
+
+
+# ── AuditClient (slice #2, #122) ──────────────────────────────────────────────
+
+from smartload_client.audit import AuditClient  # noqa: E402
+from smartload_client.client import SmartLoadClient  # noqa: E402
+
+
+class TestListAuditDispatch:
+    """The list(kind) method routes to the right per-kind helper.
+
+    The actual HTTP calls are mocked — these tests cover dispatch logic +
+    bad-kind validation, not the wire protocol (e2e covers that)."""
+
+    def test_unknown_kind_raises_validation_error(self):
+        client = MagicMock()
+        ac = AuditClient(client)
+        with pytest.raises(ValidationError) as exc:
+            ac.list("not-a-kind")     # type: ignore[arg-type]
+        assert exc.value.field == "kind"
+
+    def test_policy_kind_calls_policy_helper(self):
+        client = MagicMock()
+        client._http.get.return_value = _fake_response(200, json_body=[{"time": "t1"}])
+        ac = AuditClient(client)
+        rows = ac.list("policy", limit=10)
+        assert rows == [{"time": "t1"}]
+        client._http.get.assert_called_once_with(
+            "/api/v1/audit/policy", params={"limit": 10},
+        )
+
+    def test_scaling_kind_targets_autoscaler_url(self, monkeypatch):
+        """Scaling audit lives on a different upstream than policy audit —
+        must call autoscaler_url, not the policy-manager base_url."""
+        client = MagicMock()
+        client.autoscaler_url = "http://my-autoscaler:8085"
+        client.timeout = 5.0
+        captured = {}
+
+        def fake_get(url, params=None, timeout=None):
+            captured["url"] = url
+            captured["params"] = params
+            captured["timeout"] = timeout
+            return _fake_response(200, json_body=[{"action": "scale_out"}])
+
+        monkeypatch.setattr("smartload_client.audit.httpx.get", fake_get)
+        ac = AuditClient(client)
+        rows = ac.list("scaling", limit=25)
+        assert rows == [{"action": "scale_out"}]
+        assert captured["url"] == "http://my-autoscaler:8085/api/v1/audit/scaling"
+        assert captured["params"] == {"limit": 25}
+        assert captured["timeout"] == 5.0
+
+
+class TestSmartLoadClientWiring:
+    """The top-level client correctly exposes the audit sub-client +
+    accepts the new autoscaler_url parameter."""
+
+    def test_audit_subclient_is_attached(self):
+        c = SmartLoadClient(base_url="http://example:8086")
+        assert isinstance(c.audit, AuditClient)
+        c.close()
+
+    def test_autoscaler_url_defaults_to_localhost(self):
+        c = SmartLoadClient(base_url="http://example:8086")
+        assert c.autoscaler_url == "http://localhost:8085"
+        c.close()
+
+    def test_autoscaler_url_strips_trailing_slash(self):
+        c = SmartLoadClient(
+            base_url="http://example:8086",
+            autoscaler_url="http://my-autoscaler:8085/",
+        )
+        assert c.autoscaler_url == "http://my-autoscaler:8085"
+        c.close()
+
+    def test_autoscaler_url_picks_up_env_var(self, monkeypatch):
+        monkeypatch.setenv("SMARTLOAD_AUTOSCALER_URL", "http://env-autoscaler:9999")
+        c = SmartLoadClient(base_url="http://example:8086")
+        assert c.autoscaler_url == "http://env-autoscaler:9999"
+        c.close()
+
+    def test_list_audit_delegates_to_audit_subclient(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        captured = {}
+
+        def fake_list(kind, limit=50):
+            captured["kind"] = kind
+            captured["limit"] = limit
+            return [{"ok": True}]
+
+        monkeypatch.setattr(c.audit, "list", fake_list)
+        rows = c.list_audit("scaling", limit=7)
+        assert rows == [{"ok": True}]
+        assert captured == {"kind": "scaling", "limit": 7}
+        c.close()

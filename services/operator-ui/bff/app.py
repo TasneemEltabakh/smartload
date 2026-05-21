@@ -177,6 +177,23 @@ def ui_policy_audit():
     return (r.text, r.status_code, {"Content-Type": "application/json"})
 
 
+@app.route("/api/ui/audit/scaling", methods=["GET"])
+def ui_scaling_audit():
+    """Proxy to autoscaler's GET /api/v1/audit/scaling — slice #2 (#122).
+
+    The scaling audit stream is owned by the autoscaler service (it's the
+    writer of scaling_events), so this proxy points at a different upstream
+    than ui_policy_audit. The frontend treats both as one Audit page; the
+    BFF is what normalises the two origins into one URL space."""
+    upstream = SERVICE_URLS["autoscaler"]
+    limit = request.args.get("limit", "50")
+    try:
+        r = _http.get(f"{upstream}/api/v1/audit/scaling", params={"limit": limit})
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
 # ── BFF own health ────────────────────────────────────────────────────────────
 
 @app.route("/health")

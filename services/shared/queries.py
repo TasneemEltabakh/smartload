@@ -141,6 +141,19 @@ INSERT INTO policy_changes (time, policy_version, field, old_value, new_value, a
 VALUES (%s, %s, %s, %s, %s, %s);
 """
 
+# ── autoscaler audit read ─────────────────────────────────────────────────────
+# Recent rows from scaling_events for the audit-log slice (#122). Newest first;
+# bounded by an integer limit parameter. Used by GET /api/v1/audit/scaling.
+#
+# Parameters:
+#   $1 limit  — int, capped at the route layer to avoid unbounded reads.
+SCALING_AUDIT_QUERY = """
+SELECT time, action, instance_count, reason
+FROM scaling_events
+ORDER BY time DESC
+LIMIT %s;
+"""
+
 # ── autoscaler reactive fallback ──────────────────────────────────────────────
 # Single-number request rate for the autoscaler when the forecast stream goes
 # stale. Window is 60 s — large enough to smooth bursty single-second counts,
