@@ -48,6 +48,9 @@ jobs:
       - name: Install test dependencies
         run: pip install -r tests/integration/requirements.txt
 
+      - name: Install SDK in editable mode (for tests/unit/test_smartload_client.py)
+        run: pip install -e clients/python
+
       - name: Run pure-Python tests
         run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py tests/integration/test_lb_otel_shipper.py -v
 
