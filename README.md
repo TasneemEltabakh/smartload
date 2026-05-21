@@ -194,7 +194,7 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 | `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
 | `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) |
 | `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=false` default) |
-| `rl-engine` | Python | 8084 | policies/ scaffolded; #138 round 3 next |
+| `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=false` default; `RL_MODE=shadow` pin) |
 | `autoscaler` | Python | 8085 | T1.3 shipped |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
 | `operator-ui` | Flask + React | 8090 | slice #1 (Home + Policy page) |
@@ -202,13 +202,19 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 
 Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
 
-### Engine-wrapper foundation (#138)
+### Engine-wrapper foundation (#138 — cutover complete)
 
-The three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine via `select_engine()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each cutover round ships one service behind a `<SVC>_RUNLOOP_ENABLED=false` flag, validated on the live compose stack before flipping the next.
+All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine/policy via `select_engine()` / `select_policy()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each service ships behind a `<SVC>_RUNLOOP_ENABLED=false` flag so the Phase-0 stub stays the safe default until operators opt in.
 
-Diagrams (engine bootstrap, run-loop cycle, cutover progress): [SOT §25.6](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) and [PROJECT_WALKTHROUGH §4](docs/PROJECT_WALKTHROUGH.html#decision-plane).
+- **anomaly-detector** — `ANOMALY_RUNLOOP_ENABLED` + `ANOMALY_ENGINE` (threshold | isolation_forest)
+- **forecasting** — `FORECAST_RUNLOOP_ENABLED` + `FORECAST_ENGINE` (moving_average | arima)
+- **rl-engine** — `RL_RUNLOOP_ENABLED` + `RL_POLICY` (random_shadow | ppo) + `RL_MODE` (shadow | active operator pin)
 
-To swap in a trained model: drop `services/<svc>/models/<name>.pkl`, implement `engines/<name>/engine.py` subclassing the service ABC, register the name in `engine_base.select_engine()`, and set `<SVC>_ENGINE=<name>`. No service-shell changes. Falls back to baseline automatically if the artifact is missing.
+Total 63 unit tests across the three services (18 + 19 + 26) cover bootstrap fallback, policy parsing, row pivot, publish gate, mode composition, health classification.
+
+Diagrams (engine bootstrap, run-loop cycle, RL mode composition, cutover progress): [SOT §25.6](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) and [PROJECT_WALKTHROUGH §4](docs/PROJECT_WALKTHROUGH.html#decision-plane).
+
+**Model handoff is now stable for all three:** drop `services/<svc>/models/<name>.pkl` (or `policy.zip` for RL), implement `engines/<name>/engine.py` (or `policies/<name>/policy.py`) subclassing the service ABC, register the name in the factory, and set `<SVC>_ENGINE=<name>` (or `RL_POLICY`). No service-shell changes. Falls back to baseline automatically if the artifact is missing.
 
 ---
 

@@ -2144,10 +2144,10 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">Phase 1A N1.3</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">N1.3 + #138</span></div>
     <h4>Reinforcement Learning Engine</h4>
-    <div class="role">Decision · Port 8084 · Nada</div>
-    <p class="small">Phase 1A: shadow-mode random policy (validates pipeline). Phase 2 (N2.3–N2.5): custom OpenAI Gym env + PPO via Stable-Baselines3.</p>
+    <div class="role">Decision · Port 8084 · Nada (model) · Tasneem (wiring)</div>
+    <p class="small">Run loop wired via <code>policy_base</code> ABC + plugin folders. Random-shadow baseline ships; PPO plugin drops in when the trained <code>policy.zip</code> arrives (#27). Off by default — flip <code>RL_RUNLOOP_ENABLED=true</code>. <code>RL_MODE</code> separately pins the published <code>mode</code> field to shadow until operators opt into active routing.</p>
     <div class="deeplink"><a href="#mod-rl">→ Deep dive</a></div>
   </article>
 
@@ -2931,7 +2931,7 @@ cur.execute(ANOMALY_QUERY,
 
 <!-- ====== 8.7 RL ====== -->
 <article id="mod-rl">
-<h2>8.7 Reinforcement Learning Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">N1.3 shadow active</span></h2>
+<h2>8.7 Reinforcement Learning Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">#138 + N1.3</span></h2>
 <h4>Purpose</h4>
 <p>The headline AI component. Learns adaptive routing policies that outperform static algorithms by optimizing long-term latency and load distribution.</p>
 <h4>Phase staging</h4>
@@ -2981,14 +2981,18 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient. Inference is bounded by model size, not by request rate.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle: chosen action (mode, top-N rankings), reward proxy (next-cycle latency vs RL prediction), exploration rate. Reward curve in Grafana during training/eval.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Action space pre-filtered through anomaly. <code>safe_mode</code> kill-switch. No online learning in production prototype. Trained model is read-only at runtime.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">N1.3 shadow active: random policy publishes scaffold messages every 5 s. Validates the pipeline before any model exists.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">PPO trained offline (~7 days) on <code>SmartLoadEnv</code>. Switches to <code>active</code> in <code>hybrid</code> operating mode. T2.1 Sidecar consumes weighted recommendations.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>policy_base</code> ABC and <code>select_policy()</code> factory (#138 round 3 — closes the engine-wrapper cutover). Subscribes to <code>smartload.policy</code> and rebuilds the policy on each update so policy-derived params (<code>rl_exploration_rate</code>, <code>rl_confidence_threshold</code>) take effect within one cycle (kwargs are ignored gracefully by baselines that don't accept them). Queries <code>RL_STATE_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, builds <code>list[BackendState]</code> via <code>runloop.build_state_from_rows</code> with locally-classified health (matching the threshold engine's thresholds), calls <code>policy.act()</code>, and publishes a <code>RoutingRecommendation</code> envelope. The published <code>mode</code> field is composed by <code>effective_mode()</code>: <code>safe_mode=true</code> forces shadow; <code>RL_MODE != "active"</code> forces shadow; only when both <code>RL_MODE=active</code> and the policy itself returns active is the LB allowed to apply weights. Falls back to <code>random_shadow</code> automatically if the requested policy fails to load (raising <code>policy_ready=false</code> on <code>/health</code>). Off by default — <code>RL_RUNLOOP_ENABLED=false</code> keeps the Phase-0 stub the default. Unit tests live at <code>tests/unit/rl-engine/test_runloop.py</code> (26 tests covering the mode-composition truth table, health classification, state pivot, and policy bootstrap fallback).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">PPO trained offline (~7 days) on <code>SmartLoadEnv</code> (#27, #29). The trained <code>policy.zip</code> drops into <code>services/rl-engine/models/</code>, <code>policies/ppo/policy.py</code> implements the <code>RoutingPolicy</code> contract, and operators flip <code>RL_POLICY=ppo</code> + <code>RL_MODE=active</code>. T2.1 sidecar consumes the weighted recommendations.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
         <li>N2.3: <code>SmartLoadEnv</code> Gym wrapper.</li>
-        <li>N2.4: PPO offline training run + reward-curve evidence.</li>
-        <li>N2.5: switch to <code>active</code> mode integration.</li>
-        <li>Decide DQN fallback trigger if PPO diverges.</li>
+        <li>N2.4: PPO offline training run + reward-curve evidence (#27, ~7-day budget).</li>
+        <li>PPO <code>policy.py</code> + trained <code>policy.zip</code> drop-in (#27 model handoff).</li>
+        <li>N2.5: flip <code>RL_MODE=active</code> + verify LB sidecar consumes the weights (T2.1).</li>
+        <li>Anomaly-exclusion of UNHEALTHY backends from the RL action space — runloop currently builds state for every backend; PPO should filter on <code>state.health</code> before ranking.</li>
+        <li>Own-metrics emission (counters + latency histogram) + <code>/metrics</code> Prometheus endpoint.</li>
+        <li>Flip <code>RL_RUNLOOP_ENABLED</code> default to <code>true</code> after dev-stack smoke.</li>
+        <li>DQN fallback trigger if PPO diverges (risk-register entry).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -5250,7 +5254,7 @@ flowchart LR
     <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
     <tr><td>Anomaly detector</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/anomaly-detector/app.py</code> + <code>runloop.py</code></td><td>Isolation Forest plugin drop-in (#101); auto-recovery; own-metrics; flip <code>ANOMALY_RUNLOOP_ENABLED</code> default</td></tr>
     <tr><td>Forecasting service</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/forecasting/app.py</code> + <code>runloop.py</code></td><td>ARIMA plugin drop-in (#102, post-PR-#144-review); own-metrics; flip <code>FORECAST_RUNLOOP_ENABLED</code> default</td></tr>
-    <tr><td>RL engine</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.3)</span></td><td><code>services/rl-engine/app.py</code></td><td>Shadow-mode random policy</td></tr>
+    <tr><td>RL engine</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/rl-engine/app.py</code> + <code>runloop.py</code></td><td>PPO plugin drop-in (#27); anomaly-aware action-space filtering; flip <code>RL_RUNLOOP_ENABLED</code> default; <code>RL_MODE=active</code> when sidecar T2.1 lands</td></tr>
     <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
     <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-done">T1.4 wired</span></td><td><code>services/policy-manager/{app,validation}.py</code></td><td>GET/POST + validation + atomic YAML + <code>policy_changes</code> audit + envelope publish + idempotent no-op; 38 unit + 4 integration tests</td></tr>
     <tr><td>Redis message contracts</td><td>Nada</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/shared/contracts.py</code></td><td>—</td></tr>
@@ -5587,6 +5591,11 @@ docker compose logs -f anomaly-detector</code></pre>
     <tr>
       <td><strong>Forecasting run loop wired (#138 round 2)</strong></td>
       <td>Second service in the cutover. <code>services/forecasting/app.py</code> rewritten on the same pattern as anomaly-detector: threaded run loop reads <code>FORECAST_ENGINE</code>, calls <code>engine_base.select_engine()</code> with auto-fallback to the <code>moving_average</code> baseline, queries <code>FORECAST_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, converts rows into a <code>HistoryWindow</code> via <code>runloop.build_history_from_rows</code>, calls <code>engine.forecast()</code>, and publishes <code>ForecastResult</code> envelopes to <code>smartload.forecast</code>. Subscribes to <code>smartload.policy</code>; the <code>safe_mode</code> field gates publishing. Off by default behind <code>FORECAST_RUNLOOP_ENABLED=false</code>. 19 new unit tests at <code>tests/unit/forecasting/test_runloop.py</code>. CI's <code>unit-tests</code> job now invokes per-directory pytest runs to avoid sibling-service <code>sys.modules</code> collisions (each service's <code>engine_base</code> / <code>runloop</code> / <code>engines</code> package shares names). Build-services matrix moved forecasting to the wider <code>./services</code> context so shared/ is pulled in.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>RL-engine run loop wired (#138 round 3) — cutover complete</strong></td>
+      <td>Third and final service in the engine-wrapper cutover. <code>services/rl-engine/app.py</code> rewritten on the same pattern as the two siblings, with three RL-specific differences. (1) Uses <code>policy_base.select_policy()</code> + <code>policies/</code> instead of <code>engine_base.select_engine()</code> + <code>engines/</code>. (2) Builds <code>list[BackendState]</code> from <code>RL_STATE_QUERY</code> by classifying health locally with the same thresholds the anomaly-detector threshold engine uses (until anomaly-detector starts writing <code>backend_health</code>, RL synthesises the health column from the raw metrics row). (3) The published <code>mode</code> field is composed by <code>effective_mode()</code> from three inputs in order: <code>safe_mode=true</code> forces <code>shadow</code>; <code>RL_MODE != "active"</code> env var forces <code>shadow</code>; only when both <code>RL_MODE=active</code> and the policy itself returns <code>mode="active"</code> does the LB sidecar see <code>active</code> — the kill-switch from §8.7 safety controls. Bootstrap also handles kwarg-mismatch gracefully (random_shadow accepts only <code>seed</code>, not <code>confidence_threshold</code>/<code>exploration_rate</code>); the helper retries without kwargs rather than failing. Off by default behind <code>RL_RUNLOOP_ENABLED=false</code>. 26 new unit tests at <code>tests/unit/rl-engine/test_runloop.py</code> covering the full mode-composition truth table, health classification boundaries, state pivot, and policy bootstrap fallback. Build-services matrix moved rl-engine to the wider <code>./services</code> context.</td>
       <td>This release</td>
     </tr>
     <tr>
@@ -6157,6 +6166,38 @@ sequenceDiagram
 
 <p>The diagrams above are the integration layer's contract. A model author owns only the boxed step — the engine class with its <code>score()</code> / <code>forecast()</code> / <code>act()</code> method, plus the trained artifact at <code>services/&lt;svc&gt;/models/&lt;name&gt;.pkl</code>. The Redis publish, the DB query, the policy reload, the fallback path, the health reporting, the unit-test scaffold — all owned by the integration layer. This is the boundary the PR #144 review codified.</p>
 
+<p>As of 2026-05-21, <strong>all three AI services run the diagrams above</strong>: anomaly-detector (#138 round 1, threshold baseline), forecasting (round 2, moving-average baseline), and rl-engine (round 3, random-shadow baseline). The three <code>RUNLOOP_ENABLED</code> flags default to <code>false</code> on <code>main</code>; flipping them to <code>true</code> in the deployment env starts the run loops without code changes. Model handoffs (<code>isolation_forest.pkl</code> #101, <code>arima.pkl</code> #102, <code>policy.zip</code> #27) now have a stable integration target — drop the artifact + a thin <code>engines/&lt;name&gt;/engine.py</code> or <code>policies/&lt;name&gt;/policy.py</code> implementing the ABC, register the name in the factory, set <code>&lt;SVC&gt;_ENGINE</code> / <code>RL_POLICY</code>, done.</p>
+
+<h4>RL-specific extension: mode composition</h4>
+
+<p>The rl-engine adds one piece beyond the shared pattern: the published <code>mode</code> field on <code>RoutingRecommendation</code> is not the policy's own output. It's composed by <code>runloop.effective_mode()</code> from three inputs to keep RL output observable while denying it routing authority unless every gate agrees:</p>
+
+<figure>
+<pre class="mermaid">
+flowchart TD
+  START["policy.act() returns<br/>action.mode = 'shadow' | 'active'"]
+  Q1{"operating policy<br/>safe_mode == true ?"}
+  Q2{"RL_MODE env<br/>== 'active' ?"}
+  Q3{"action.mode<br/>== 'active' ?"}
+  PUB_S["publish mode='shadow'"]
+  PUB_A["publish mode='active'<br/>LB sidecar applies weights"]
+
+  START --> Q1
+  Q1 -- "yes (kill switch)" --> PUB_S
+  Q1 -- "no" --> Q2
+  Q2 -- "no (operator pin)" --> PUB_S
+  Q2 -- "yes" --> Q3
+  Q3 -- "no (policy declined)" --> PUB_S
+  Q3 -- "yes (all three agree)" --> PUB_A
+
+  classDef safe fill:#3fb95033,stroke:#3fb950,color:#fff;
+  classDef active fill:#1f6feb33,stroke:#58a6ff,color:#fff;
+  class PUB_S safe;
+  class PUB_A active;
+</pre>
+<figcaption><strong>Figure 25.6.3 — RL mode composition.</strong> Three independent gates must all agree before any routing recommendation reaches the load balancer with <code>mode=active</code>. Default-shadow is the safe state; the policy alone cannot escalate.</figcaption>
+</figure>
+
 <h3>25.7 CI structural lints — the discipline that keeps the surfaces honest</h3>
 <table>
   <thead><tr><th>Script</th><th>Invariant</th></tr></thead>
@@ -6243,7 +6284,7 @@ sequenceDiagram
 <table>
   <thead><tr><th>Foundation</th><th>Unblocks</th><th>Issue</th></tr></thead>
   <tbody>
-    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;svc&gt;_RUNLOOP_ENABLED</code> flags <span class="pill pill-active">2 of 3 wired — anomaly-detector ✓ + forecasting ✓ (both flag off); rl-engine next</span></td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
+    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;SVC&gt;_RUNLOOP_ENABLED</code> flags <span class="pill pill-done">3 of 3 wired — anomaly-detector ✓ + forecasting ✓ + rl-engine ✓ (all flag off; flip after dev smoke)</span></td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
     <tr><td>DB migrations folder + first script — schema deltas land as <code>infrastructure/timescaledb/migrations/&lt;n&gt;_&lt;name&gt;.sql</code>, not <code>init.sql</code> rewrites</td><td>Webhooks (new tables), every future schema-touching slice</td><td>#141</td></tr>
     <tr><td>API versioning + deprecation policy — written contract for v2 + deprecation paths for HTTP, Redis envelopes, SDK, <code>policy.yaml</code></td><td>Webhooks, every future contract change</td><td>#134</td></tr>
     <tr><td>End-to-end correlation ID — single trace ID per request flows through telemetry, anomaly, forecast, scale, policy</td><td>Live Engines (visualisation), every observability story</td><td>#143</td></tr>

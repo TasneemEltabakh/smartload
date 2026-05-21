@@ -1058,7 +1058,7 @@ def health():
 
 ## 4. Decision plane
 
-The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1) and `forecasting` (round 2) are now wired through their `engine_base` ABCs and baseline engines behind `<SVC>_RUNLOOP_ENABLED=false` — flip the flag to start each run loop. Only `rl-engine` remains a Phase-0 stub with `/health` only; its cutover (round 3) follows the same pattern via `policy_base` instead of `engine_base`.
+The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1), `forecasting` (round 2), and `rl-engine` (round 3) are now all wired through their `engine_base` / `policy_base` ABCs and baseline engines behind `<SVC>_RUNLOOP_ENABLED=false` — flip the flag on each to start its run loop. **The #138 engine-wrapper cutover is complete.**
 
 This staging is deliberate. The plugin layer (engines/, policies/) was written *first* so that when each service's run-loop cutover lands, the schema, factory, and conformance tests are already in place — and so a single service can be smoke-tested in isolation before replicating to siblings.
 
@@ -1072,13 +1072,13 @@ flowchart TB
     S3["select_engine() / select_policy() factory"]
   end
 
-  subgraph CUTOVER["#138 — engine-wrapper cutover"]
+  subgraph CUTOVER["#138 — engine-wrapper cutover (complete)"]
     C1["anomaly-detector<br/>round 1 ✓"]
     C2["forecasting<br/>round 2 ✓"]
-    C3["rl-engine<br/>round 3 — next"]
+    C3["rl-engine<br/>round 3 ✓"]
   end
 
-  subgraph MODELS["Model handoffs (unblocked by cutover)"]
+  subgraph MODELS["Model handoffs (all unblocked)"]
     M1["isolation_forest.pkl<br/>#101"]
     M2["arima.pkl<br/>#102 / PR #144"]
     M3["ppo policy.zip<br/>#27"]
@@ -1090,10 +1090,8 @@ flowchart TB
   C3 -.unblocks.-> M3
 
   classDef done fill:#3fb95033,stroke:#3fb950,color:#fff
-  classDef next fill:#1f6feb33,stroke:#58a6ff,color:#fff
   classDef pending fill:#d2992233,stroke:#d29922,color:#fff
-  class S1,S2,S3,C1,C2 done
-  class C3 next
+  class S1,S2,S3,C1,C2,C3 done
   class M1,M2,M3 pending
 ```
 
@@ -1424,7 +1422,7 @@ The tests cover:
 
 #### What it is
 
-Reinforcement-learning routing engine. Publishes `RoutingRecommendation` to `smartload.routing` with `mode="shadow"` (logged only) or `mode="active"` (load balancer applies the weights).
+Reinforcement-learning routing engine. Publishes `RoutingRecommendation` to `smartload.routing` with `mode="shadow"` (logged only) or `mode="active"` (load balancer applies the weights). As of #138 round 3, the service runs a real inference loop (behind `RL_RUNLOOP_ENABLED=true`) using the configured policy; the random-shadow baseline ships today, and the PPO plugin scaffold awaits the trained `policy.zip` from #27.
 
 #### Why "policies/" instead of "engines/"
 
@@ -1436,7 +1434,9 @@ In ML usage, "policy" is the RL term for "the function that maps state to action
 services/rl-engine/
 ├── README.md
 ├── Dockerfile
-├── app.py                  (Phase 0 stub — /health + RL_MODE echo)
+├── app.py                  (Flask + threaded run loop; flag-gated)
+├── runloop.py              (pure-Python pieces: bootstrap, policy parse,
+│                            state pivot, mode composition, publish gate)
 ├── policy_base.py
 ├── requirements.txt
 └── policies/
@@ -1449,6 +1449,35 @@ services/rl-engine/
         ├── __init__.py
         └── README.md       (stub — planned per issue #27)
 ```
+
+#### Mode composition — three gates must agree before "active"
+
+The published `mode` on `RoutingRecommendation` is **not** the policy's own output. It's composed by `effective_mode()` so that no single component can escalate routing past `shadow` unilaterally. This is the §8.7 "safety controls" rule, encoded as a function:
+
+```mermaid
+flowchart TD
+  START["policy.act() returns<br/>action.mode = 'shadow' | 'active'"]
+  Q1{"operating policy<br/>safe_mode == true ?"}
+  Q2{"RL_MODE env<br/>== 'active' ?"}
+  Q3{"action.mode<br/>== 'active' ?"}
+  PUB_S["publish mode='shadow'"]
+  PUB_A["publish mode='active'<br/>LB sidecar applies weights"]
+
+  START --> Q1
+  Q1 -- "yes (kill switch)" --> PUB_S
+  Q1 -- "no" --> Q2
+  Q2 -- "no (operator pin)" --> PUB_S
+  Q2 -- "yes" --> Q3
+  Q3 -- "no (policy declined)" --> PUB_S
+  Q3 -- "yes (all three agree)" --> PUB_A
+
+  classDef safe fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef active fill:#1f6feb33,stroke:#58a6ff,color:#fff
+  class PUB_S safe
+  class PUB_A active
+```
+
+Default-shadow is the safe state; the trained policy alone cannot escalate. 26 unit tests at `tests/unit/rl-engine/test_runloop.py` cover every cell of this truth table.
 
 #### `policy_base.py`
 
