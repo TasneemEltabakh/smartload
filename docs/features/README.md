@@ -57,7 +57,20 @@ Commands a reader can run to see the feature work end-to-end.
 
 ## Current manifests
 - [policy-management](policy-management.md) — read / write / audit the operating policy
-- anomaly-routing — *not yet manifested*
-- forecast-autoscale — *not yet manifested*
-- scaling-actions — *not yet manifested*
-- routing-decisions — *not yet manifested*
+
+## Planned slices
+
+The full slice catalog (with foundation dependencies and status) lives in SOT §25.9. Slices on deck:
+
+- **audit-log** — browse `policy_changes` + `scaling_events` history (#122)
+- **anomaly-detection** — real-time anomaly events on UI + SDK + webhooks (depends on #138 + #101)
+- **forecasting** — workload forecast drives the autoscaler; UI chart + CI band (depends on #138 + revised model PR)
+- **webhook-delivery** — HMAC-signed outbound HTTP for integrators who can't talk to Redis (#130; depends on #141 + #134)
+- **live-engines** — real-time engine state stream in operator UI (#121; depends on #138)
+- **manual-actions** — operator can scale / isolate from UI (#123; depends on audit-log slice pattern)
+- **rl-routing** — RL shadow → active routing recommendations (depends on #138 + #27 PPO training)
+- **embedded-metrics** — Grafana panels embedded in operator UI (#131)
+
+## Slice acceptance contract
+
+What it means for a slice to be "done" is defined in [SLICE_CHECKLIST.md](SLICE_CHECKLIST.md). Every manifest references it and must satisfy every layer listed there.
