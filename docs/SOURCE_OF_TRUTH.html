@@ -4161,7 +4161,7 @@ cursor.execute(ANOMALY_QUERY, ('60 seconds', 'load-balancer', ['request_latency_
     <tr><td><strong>12.5 Request Sequence</strong></td><td><a href="#diag-sequence">§12 below</a></td><td><code>SequenceDiagram.png</code></td></tr>
     <tr><td><strong>12.6 Deployment</strong></td><td><a href="#diag-deployment">§12 below</a></td><td><code>DeploymentDiagram.png</code></td></tr>
     <tr><td><strong>12.7 Canonical Schema (3-table)</strong></td><td><a href="#diag-schema">§12 below</a></td><td>(no legacy)</td></tr>
-    <tr><td><strong>12.8 Multi-tenancy isolation</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-multitenant">§12 below</a></td><td>(no legacy)</td></tr>
+    <tr><td><strong>12.8 Multi-tenancy isolation</strong> <span class="badge badge-planned">Phase 2 — SaaS (deferred)</span></td><td><a href="#diag-multitenant">§12 below</a></td><td>(no legacy)</td></tr>
     <tr><td><strong>12.9 Webhook delivery pipeline</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-webhooks">§12 below</a></td><td>(no legacy)</td></tr>
     <tr><td><strong>12.10 Helm / K8s topology</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-helm">§12 below</a></td><td>(no legacy; supersedes §12.6 for K8s)</td></tr>
     <tr><td><strong>12.11 LB adapter pattern</strong> <span class="badge badge-target">New 2026-05-14</span></td><td><a href="#diag-lbadapter">§12 below</a></td><td>(no legacy)</td></tr>
@@ -4570,7 +4570,8 @@ flowchart LR
 </article>
 
 <article id="diag-multitenant">
-<h3>Multi-tenancy isolation <span class="badge badge-target">Target — issue #129</span></h3>
+<h3>Multi-tenancy isolation <span class="badge badge-planned">Phase 2 — SaaS adaptation (deferred)</span></h3>
+<p class="small muted"><strong>Forward-looking diagram.</strong> The present middleware build is single-tenant and does not implement any of the components below (auth middleware, <code>api_keys</code> table, <code>tenant_id</code> columns, per-tenant Redis channel suffixes). This figure documents the target shape for when the SaaS adaptation track (#129, #132) lands, so the migration is mechanical. See §25 <em>Phase scope</em> callout.</p>
 <figure>
 <pre class="mermaid">
 flowchart TB
@@ -5596,9 +5597,14 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>Issues #119, #120; slice #1</td>
     </tr>
     <tr>
-      <td><strong>New product-surface issues (filed, not yet implemented)</strong></td>
-      <td>#129 multi-tenancy, #130 webhook delivery, #131 embedded charts, #132 tenant API keys + RBAC, #133 Helm chart, #134 versioning + deprecation policy, #135 rate limiting + quotas, #136 LB adapter, #137 SDK middleware-integration example, #138 engine-wrapper integration, #139 lint-flip-to-strict, #140 e2e test migration.</td>
-      <td>Issues #129–#140</td>
+      <td><strong>New product-surface issues (filed, present-phase middleware)</strong></td>
+      <td>#130 webhook delivery, #131 embedded charts, #133 Helm chart, #134 versioning + deprecation policy, #136 LB adapter, #137 SDK middleware-integration example, #138 engine-wrapper integration, #139 lint-flip-to-strict, #140 e2e test migration.</td>
+      <td>Issues #130–#140 (excl. SaaS-track items below)</td>
+    </tr>
+    <tr>
+      <td><strong>SaaS adaptation track (deferred to Phase 2)</strong></td>
+      <td>#129 multi-tenancy, #132 tenant API keys + RBAC, #135 rate limiting + quotas. Explicitly out of current-phase scope; see §25 <em>Phase scope</em> callout. SOT sections 25.4 and Figure 12.8 describe target state, not present state.</td>
+      <td>Issues #129, #132, #135</td>
     </tr>
     <tr>
       <td><strong>CI structural lints (permissive)</strong></td>
@@ -5928,6 +5934,10 @@ docker compose logs -f anomaly-detector</code></pre>
   This section is the single canonical statement of <strong>how SmartLoad is delivered, how customers integrate, and where the operator-vs-tenant trust boundary sits</strong>. Added 2026-05-14 after the product was explicitly reframed from a thesis-bounded artefact to <strong>middleware + candidate SaaS</strong>. Everything else in this SOT remains accurate for the engineering view; §25 is the product view that the README and presentations route into.
 </p>
 
+<div class="callout warn">
+  <strong>Phase scope.</strong> SmartLoad ships today as <strong>single-tenant middleware</strong>. <strong>SaaS adaptation</strong> — multi-tenancy (#129), tenant API keys + RBAC (#132), rate limiting and per-token quotas (#135), per-tenant Redis namespacing, and the managed-SaaS delivery shape — is a <strong>separate, deferred Phase 2 track</strong>. Sections 25.1's <em>Managed SaaS</em> row, 25.3's <em>Tenant integrator</em> row, 25.4 in its entirety, and Figure 12.8 describe that future track. <strong>Nothing in current-phase scope should assume <code>tenant_id</code> plumbing, API-key auth, or per-tenant channel suffixes exist.</strong> The present build serves one integrating customer.
+</div>
+
 <h3>25.1 Three delivery shapes</h3>
 <table>
   <thead><tr><th>Shape</th><th>Who runs it</th><th>How it ships</th><th>Status</th></tr></thead>
@@ -6004,18 +6014,18 @@ docker compose logs -f anomaly-detector</code></pre>
       <td><code>policy_changes</code>, <code>scaling_events</code></td>
     </tr>
     <tr>
-      <td><strong>Tenant integrator</strong></td>
+      <td><strong>Tenant integrator</strong> <span class="badge badge-planned">Phase 2 — SaaS (deferred)</span></td>
       <td>Service principal (machine-to-machine)</td>
       <td>Scoped subset: read policy + metrics, manage own webhooks, receive own events</td>
-      <td>API key (#132) with role scopes: <code>policy:read</code>, <code>policy:write</code>, <code>metrics:read</code>, <code>webhook:manage</code>, <code>scale:write</code>, <code>isolate:write</code>, <code>admin</code></td>
-      <td>Per-tenant API-key issue/revoke log (planned)</td>
+      <td>API key (#132) with role scopes: <code>policy:read</code>, <code>policy:write</code>, <code>metrics:read</code>, <code>webhook:manage</code>, <code>scale:write</code>, <code>isolate:write</code>, <code>admin</code>. Authentication is not enforced in the present middleware build — the SDK and HTTP API ship without auth until #132 lands as part of the SaaS adaptation track.</td>
+      <td>Per-tenant API-key issue/revoke log (Phase 2)</td>
     </tr>
   </tbody>
 </table>
 <p>The operator UI is <strong>not</strong> a tenant-facing surface. Tenants integrate via the SDK + webhooks + OpenAPI, not the UI. Per the SOT lock (commit <code>6f89a13</code>) the UI is a <em>transparency + override layer</em>, not an admin panel.</p>
 
-<h3>25.4 Multi-tenancy namespacing pattern</h3>
-<p>Single-tenant deployments map to <code>tenant_id = "default"</code>. Multi-tenant rollout (issue #129) plumbs <code>tenant_id</code> through every isolatable surface from day one — retrofitting later means breaking every SDK consumer.</p>
+<h3>25.4 Multi-tenancy namespacing pattern <span class="badge badge-planned">Phase 2 — SaaS adaptation (deferred)</span></h3>
+<p><strong>This is forward-looking design, not present-phase scope.</strong> The current build is single-tenant. The table below documents how <code>tenant_id</code> would be plumbed when the SaaS adaptation track (#129) lands, so the eventual migration can be mechanical. Until that work begins, services must not require <code>tenant_id</code>, the Redis channels remain unsuffixed (<code>smartload.&lt;topic&gt;</code>), policy storage stays at <code>config/policy.yaml</code>, and no API surface requires an API key.</p>
 <table>
   <thead><tr><th>Surface</th><th>Namespacing rule</th></tr></thead>
   <tbody>
