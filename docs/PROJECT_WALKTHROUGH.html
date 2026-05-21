@@ -315,7 +315,7 @@ sequenceDiagram
     <tr><td><code>lb-otel-shipper</code></td><td>Data</td><td><span class="badge lang-py">Python</span></td><td>sidecar</td><td><span class="badge shipped">T1.2 shipped</span></td></tr>
     <tr><td><code>telemetry</code></td><td>Data</td><td><span class="badge lang-py">Python</span></td><td>8081</td><td><span class="badge shipped">T1.1 shipped</span></td></tr>
     <tr><td><code>anomaly-detector</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8082</td><td><span class="badge shipped">Phase-1 wired (flag off, #138)</span></td></tr>
-    <tr><td><code>forecasting</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8083</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
+    <tr><td><code>forecasting</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8083</td><td><span class="badge shipped">Phase-1 wired (flag off, #138)</span></td></tr>
     <tr><td><code>rl-engine</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8084</td><td><span class="badge phase0">Phase 0 stub</span></td></tr>
     <tr><td><code>autoscaler</code></td><td>Decision</td><td><span class="badge lang-py">Python</span></td><td>8085</td><td><span class="badge shipped">T1.3 shipped</span></td></tr>
     <tr><td><code>policy-manager</code></td><td>Control</td><td><span class="badge lang-py">Python</span></td><td>8086</td><td><span class="badge shipped">T1.4 shipped</span></td></tr>
@@ -807,7 +807,7 @@ from shared.queries import METRICS_INSERT
 
 <div class="callout muted">
   <span class="title">Reality check — #138 cutover in progress</span>
-  The engine/policy plugin folders + ABCs + factories + baseline implementations exist for all four decision-plane services. <strong>autoscaler</strong> is fully wired in T1.x. <strong>anomaly-detector</strong> is now wired through its <code>engine_base</code> ABC and threshold baseline behind <code>ANOMALY_RUNLOOP_ENABLED=false</code> (round 1 of #138) — flip the flag to start the run loop. <strong>forecasting</strong> and <strong>rl-engine</strong> remain Phase-0 stubs with <code>/health</code> only; their cutovers follow the same pattern in subsequent #138 rounds.
+  The engine/policy plugin folders + ABCs + factories + baseline implementations exist for all four decision-plane services. <strong>autoscaler</strong> is fully wired in T1.x. <strong>anomaly-detector</strong> (round 1) and <strong>forecasting</strong> (round 2) are now wired through their <code>engine_base</code> ABCs and baseline engines behind <code>&lt;SVC&gt;_RUNLOOP_ENABLED=false</code> — flip the flag to start each run loop. Only <strong>rl-engine</strong> remains a Phase-0 stub with <code>/health</code> only; its cutover (round 3) follows the same pattern via <code>policy_base</code> instead of <code>engine_base</code>.
 </div>
 
 <h3>Plugin pattern across all four services</h3>
@@ -955,8 +955,28 @@ stateDiagram-v2
 <!-- ── 4.2 forecasting ────────────────────────────────────────────────── -->
 <div class="service-head">
   <h3 id="forecasting">4.2 · <code>forecasting</code></h3>
-  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge phase0">Phase 0 + plugins</span></div>
+  <div class="meta"><span class="badge lang-py">Python</span> <span class="badge shipped">Phase-1 wired (flag off)</span></div>
 </div>
+
+<h4>Run-loop wiring (#138 round 2)</h4>
+
+<p><code>app.py</code> is no longer a Phase-0 stub. When <code>FORECAST_RUNLOOP_ENABLED=true</code>, the service runs a threaded loop that:</p>
+<ol>
+  <li>resolves the engine via <code>engine_base.select_engine(FORECAST_ENGINE)</code> with automatic fallback to <code>moving_average</code> if the requested engine fails to load;</li>
+  <li>polls <code>FORECAST_QUERY</code> against TimescaleDB every <code>POLL_INTERVAL_SECONDS</code> (default 60 s) over a <code>FORECAST_WINDOW_MINUTES</code> lookback;</li>
+  <li>converts the rows into a <code>HistoryWindow</code> (ISO timestamps + numeric rates) via <code>runloop.build_history_from_rows</code>;</li>
+  <li>calls <code>engine.forecast(history)</code> once per cycle (forecasting produces a single signal, not a per-backend signal);</li>
+  <li>publishes a <code>ForecastResult</code> envelope to <code>smartload.forecast</code> through <code>publish_envelope</code>. The publish gate respects <code>safe_mode</code> — when the operator has paused decision flow, the forecast is computed but not published;</li>
+  <li>subscribes to <code>smartload.policy</code> and rebuilds the engine on each update. <code>PolicyUpdate</code> has no forecast-specific fields today, so policy changes today only affect the <code>safe_mode</code> gate and stale-publish protection.</li>
+</ol>
+
+<p>The pure-Python pieces live in <code>services/forecasting/runloop.py</code> (engine bootstrap with fallback, policy parsing, row → HistoryWindow conversion, publish gate, payload shape) — unit-testable without docker / Redis / DB. 19 unit tests at <code>tests/unit/forecasting/test_runloop.py</code>.</p>
+
+<p>The Phase-0 stub is preserved as the default: <code>FORECAST_RUNLOOP_ENABLED</code> defaults to <code>false</code>. <code>/health</code> adds three engine fields when the loop is enabled: <code>engine_type</code>, <code>engine_ready</code>, <code>last_inference_age_seconds</code>. The autoscaler — already subscribed to <code>smartload.forecast</code> in T1.x — picks up the published envelopes automatically once the flag flips.</p>
+
+<h4>Model handoff</h4>
+
+<p>To swap in a real ARIMA / Prophet model: drop the trained artifact at <code>services/forecasting/models/&lt;name&gt;.pkl</code>, implement <code>engines/&lt;name&gt;/engine.py</code> with <code>class &lt;Name&gt;Engine(ForecastEngine)</code> exposing <code>forecast(history) -&gt; Forecast</code>, register the name in <code>engine_base.select_engine()</code>, and set <code>FORECAST_ENGINE=&lt;name&gt;</code> in the deployment env. No <code>app.py</code> changes. The fallback-to-baseline path is automatic if the artifact is missing or malformed — see PR #144 review for the canonical model-author boundary.</p>
 
 <div class="mermaid">
 classDiagram

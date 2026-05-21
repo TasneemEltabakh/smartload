@@ -2136,10 +2136,10 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">Phase 1A N1.2</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">N1.2 + #138</span></div>
     <h4>Forecasting Engine</h4>
-    <div class="role">Decision · Port 8083 · Nada</div>
-    <p class="small">Phase 1A: moving average. Phase 2 (N2.2): ARIMA / Prophet on Borg traces. Publishes <code>ForecastResult</code> every ~60 s.</p>
+    <div class="role">Decision · Port 8083 · Nada (model) · Tasneem (wiring)</div>
+    <p class="small">Run loop wired via <code>engine_base</code> ABC + plugin folders. Moving-average baseline ships; ARIMA plugin drops in when the revised model handoff arrives (#102, see PR #144 review). Off by default — flip <code>FORECAST_RUNLOOP_ENABLED=true</code>.</p>
     <div class="deeplink"><a href="#mod-forecasting">→ Deep dive</a></div>
   </article>
 
@@ -2867,7 +2867,7 @@ cur.execute(ANOMALY_QUERY,
 
 <!-- ====== 8.6 FORECASTING ====== -->
 <article id="mod-forecasting">
-<h2>8.6 Forecasting Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">N1.2 active</span></h2>
+<h2>8.6 Forecasting Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">#138 + N1.2</span></h2>
 <h4>Purpose</h4>
 <p>Anticipates near-future load so the autoscaler can act <em>before</em> demand peaks — moving SmartLoad from reactive to proactive scaling.</p>
 <h4>Two-tier delivery</h4>
@@ -2906,13 +2906,15 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica. Inference is constant-time after model load.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle: predicted vs actual (lag join 5 min later). MAPE rolling. Cycle duration. <code>/health</code>.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">No client-controlled inputs. KPI: MAPE &lt; 20% on 5 min horizon.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">N1.2 active: moving-average rolling mean every 60 s.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">ARIMA or Prophet trained on Borg traces; 5 min horizon for fast scale-out, 1 h horizon for capacity planning. Held-out evaluation reports MAE / MAPE.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138 round 2). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update (the <code>safe_mode</code> field gates publishing). Moving-average baseline ships and is wired to <code>FORECAST_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop converts rows into a <code>HistoryWindow</code>, runs <code>engine.forecast()</code>, and publishes a <code>ForecastResult</code> envelope. Falls back to moving-average automatically if the requested engine raises on load. Off by default — <code>FORECAST_RUNLOOP_ENABLED=false</code> keeps the Phase-0 stub the default. Unit tests live at <code>tests/unit/forecasting/test_runloop.py</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">ARIMA plugin (#102) implemented at <code>engines/arima/engine.py</code> with trained <code>.pkl</code> at <code>services/forecasting/models/</code>. 5 min horizon for fast scale-out, 1 h horizon for capacity planning. Held-out evaluation reports MAE / MAPE &lt; 20%. Own-metrics scraped by Prometheus.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>N2.2: ARIMA/Prophet training pipeline + offline evaluation.</li>
+        <li>ARIMA <code>engine.py</code> + trained <code>.pkl</code> drop-in (#102 — revised model handoff from Nada per PR #144 review).</li>
         <li>Wire confidence intervals through to Autoscaler heuristic.</li>
         <li>Forecast-vs-actual dashboard panel in Grafana.</li>
+        <li>Own-metrics emission (counters + latency histogram) + <code>/metrics</code> Prometheus endpoint.</li>
+        <li>Flip <code>FORECAST_RUNLOOP_ENABLED</code> default to <code>true</code> after dev-stack smoke.</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -5247,7 +5249,7 @@ flowchart LR
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
     <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
     <tr><td>Anomaly detector</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/anomaly-detector/app.py</code> + <code>runloop.py</code></td><td>Isolation Forest plugin drop-in (#101); auto-recovery; own-metrics; flip <code>ANOMALY_RUNLOOP_ENABLED</code> default</td></tr>
-    <tr><td>Forecasting service</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.2)</span></td><td><code>services/forecasting/app.py</code></td><td>Moving-avg + Redis publish</td></tr>
+    <tr><td>Forecasting service</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/forecasting/app.py</code> + <code>runloop.py</code></td><td>ARIMA plugin drop-in (#102, post-PR-#144-review); own-metrics; flip <code>FORECAST_RUNLOOP_ENABLED</code> default</td></tr>
     <tr><td>RL engine</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.3)</span></td><td><code>services/rl-engine/app.py</code></td><td>Shadow-mode random policy</td></tr>
     <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
     <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-done">T1.4 wired</span></td><td><code>services/policy-manager/{app,validation}.py</code></td><td>GET/POST + validation + atomic YAML + <code>policy_changes</code> audit + envelope publish + idempotent no-op; 38 unit + 4 integration tests</td></tr>
@@ -5581,6 +5583,11 @@ docker compose logs -f anomaly-detector</code></pre>
       <td><strong>Anomaly-detector run loop wired (#138 round 1)</strong></td>
       <td>First service in the engine-wrapper cutover. <code>services/anomaly-detector/app.py</code> rewritten with a threaded run loop that selects an engine via <code>engine_base.select_engine(ANOMALY_ENGINE)</code>, polls <code>ANOMALY_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, pivots rows into <code>BackendFeatures</code>, scores each backend, publishes <code>AnomalyEvent</code> envelopes to <code>smartload.anomaly</code>, and subscribes to <code>smartload.policy</code> for live parameter reload (rebuilds the engine on each update). Falls back to the threshold baseline automatically if the requested engine fails to load. Off by default behind <code>ANOMALY_RUNLOOP_ENABLED=false</code> per #138's one-service-at-a-time strategy. Pure-Python pieces split into <code>runloop.py</code> for unit-test coverage; 18 new tests live at <code>tests/unit/anomaly-detector/test_runloop.py</code>. Dockerfile switched to wider build context to pull in <code>services/shared/</code>; CI now runs <code>pytest tests/unit/</code> and installs the SDK in editable mode for cross-test imports. Forecasting and rl-engine cutovers tracked for follow-on rounds.</td>
       <td>SOT commit <code>55860b6</code>; service commits <code>eb6f628</code>, <code>ea8e7df</code></td>
+    </tr>
+    <tr>
+      <td><strong>Forecasting run loop wired (#138 round 2)</strong></td>
+      <td>Second service in the cutover. <code>services/forecasting/app.py</code> rewritten on the same pattern as anomaly-detector: threaded run loop reads <code>FORECAST_ENGINE</code>, calls <code>engine_base.select_engine()</code> with auto-fallback to the <code>moving_average</code> baseline, queries <code>FORECAST_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, converts rows into a <code>HistoryWindow</code> via <code>runloop.build_history_from_rows</code>, calls <code>engine.forecast()</code>, and publishes <code>ForecastResult</code> envelopes to <code>smartload.forecast</code>. Subscribes to <code>smartload.policy</code>; the <code>safe_mode</code> field gates publishing. Off by default behind <code>FORECAST_RUNLOOP_ENABLED=false</code>. 19 new unit tests at <code>tests/unit/forecasting/test_runloop.py</code>. CI's <code>unit-tests</code> job now invokes per-directory pytest runs to avoid sibling-service <code>sys.modules</code> collisions (each service's <code>engine_base</code> / <code>runloop</code> / <code>engines</code> package shares names). Build-services matrix moved forecasting to the wider <code>./services</code> context so shared/ is pulled in.</td>
+      <td>This release</td>
     </tr>
     <tr>
       <td><strong>Project walkthrough — file-by-file tour</strong></td>
@@ -6167,7 +6174,7 @@ docker compose logs -f anomaly-detector</code></pre>
 <table>
   <thead><tr><th>Foundation</th><th>Unblocks</th><th>Issue</th></tr></thead>
   <tbody>
-    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;svc&gt;_RUNLOOP_ENABLED</code> flags <span class="pill pill-active">1 of 3 wired — anomaly-detector ✓ (flag off); forecasting + rl-engine next</span></td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
+    <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;svc&gt;_RUNLOOP_ENABLED</code> flags <span class="pill pill-active">2 of 3 wired — anomaly-detector ✓ + forecasting ✓ (both flag off); rl-engine next</span></td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
     <tr><td>DB migrations folder + first script — schema deltas land as <code>infrastructure/timescaledb/migrations/&lt;n&gt;_&lt;name&gt;.sql</code>, not <code>init.sql</code> rewrites</td><td>Webhooks (new tables), every future schema-touching slice</td><td>#141</td></tr>
     <tr><td>API versioning + deprecation policy — written contract for v2 + deprecation paths for HTTP, Redis envelopes, SDK, <code>policy.yaml</code></td><td>Webhooks, every future contract change</td><td>#134</td></tr>
     <tr><td>End-to-end correlation ID — single trace ID per request flows through telemetry, anomaly, forecast, scale, policy</td><td>Live Engines (visualisation), every observability story</td><td>#143</td></tr>

@@ -1231,7 +1231,7 @@ A `_features` builder is the only fixture — every test constructs the input it
 
 #### What it is
 
-Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publishes `ForecastResult` envelopes to `smartload.forecast`.
+Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publishes `ForecastResult` envelopes to `smartload.forecast`. As of #138 round 2, the service runs a real inference loop (behind `FORECAST_RUNLOOP_ENABLED=true`) using the configured engine; the moving-average baseline ships today, and the ARIMA plugin scaffold awaits the revised model handoff from #102 (see PR #144 review).
 
 #### Files
 
@@ -1239,7 +1239,9 @@ Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publ
 services/forecasting/
 ├── README.md
 ├── Dockerfile
-├── app.py                  (Phase 0 stub — /health only)
+├── app.py                  (Flask + threaded run loop; flag-gated)
+├── runloop.py              (pure-Python pieces: bootstrap, policy parse,
+│                            row → HistoryWindow, publish gate)
 ├── engine_base.py
 ├── requirements.txt
 └── engines/
@@ -1253,7 +1255,7 @@ services/forecasting/
         └── README.md       (stub — planned per issue #102)
 ```
 
-The shape mirrors `anomaly-detector`: ABC + factory, one baseline implementation, one stub. The two service shapes were designed to be parallel so reading one teaches you the other.
+The shape mirrors `anomaly-detector`: same `app.py` + `runloop.py` split, same engine-bootstrap-with-fallback pattern, same `<SVC>_RUNLOOP_ENABLED` opt-in flag. Reading one teaches you the other.
 
 #### `engine_base.py`
 
