@@ -1,6 +1,6 @@
 # Audit Log Viewer
 
-> **Vertical Slice #2 — backend pass shipped 2026-05-21.** Builds on the policy-management slice to give operators a unified investigation surface across both audit streams. UI page lands in the follow-up.
+> **Vertical Slice #2 — shipped 2026-05-21.** Builds on the policy-management slice to give operators a unified investigation surface across both audit streams. Backend + SDK + UI + scenario + e2e all green.
 
 ## What this slice delivers
 
@@ -37,9 +37,9 @@ The two audit streams continue to live in separate hypertables on separate servi
 - [x] SDK `autoscaler_url` parameter + env-var override
 - [x] UI page `services/operator-ui/web/src/pages/Audit.tsx` — kind / actor / action / limit filters + auto-refresh + manual refresh + scaling-action color badges
 - [x] BFF SPA fallback fix — direct URLs to `/audit` (and `/policy`) now render on hard refresh
-- [ ] Scenario script `examples/scenarios/audit-log/audit_walk.py`
-- [ ] E2E test suite `tests/e2e/audit-log/`
-- [ ] §25.9 slice-catalog row flipped to *Shipped*
+- [x] Scenario script `examples/scenarios/audit-log/audit_walk.py` — 7-step walk: baseline read → both streams via SDK → toggle policy → confirm audit row → restore → print rows → demonstrate kind validation
+- [x] E2E test suite `tests/e2e/audit-log/test_audit_walk.py` (11 tests) — per-kind reads, limit caps, 400-on-bad-limit, kind dispatch + ValidationError, write→audit round-trip within 5 s, SDK-vs-direct-upstream parity
+- [x] §25.9 slice-catalog row flipped to *Shipped*
 
 Open follow-ups (out of scope for this slice):
 - Time-range filter (`?since=`, `?until=`) on both endpoints
