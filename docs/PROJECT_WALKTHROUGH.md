@@ -1058,9 +1058,104 @@ def health():
 
 ## 4. Decision plane
 
-The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` is wired through its `engine_base` ABC and threshold baseline behind `ANOMALY_RUNLOOP_ENABLED=false` as of #138 round 1 (2026-05-21) — flip the flag to start the run loop. `forecasting` and `rl-engine` remain Phase-0 stubs with `/health` only; their cutovers follow the same pattern in subsequent #138 rounds.
+The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1) and `forecasting` (round 2) are now wired through their `engine_base` ABCs and baseline engines behind `<SVC>_RUNLOOP_ENABLED=false` — flip the flag to start each run loop. Only `rl-engine` remains a Phase-0 stub with `/health` only; its cutover (round 3) follows the same pattern via `policy_base` instead of `engine_base`.
 
 This staging is deliberate. The plugin layer (engines/, policies/) was written *first* so that when each service's run-loop cutover lands, the schema, factory, and conformance tests are already in place — and so a single service can be smoke-tested in isolation before replicating to siblings.
+
+### #138 cutover progress
+
+```mermaid
+flowchart TB
+  subgraph SCAFFOLD["Phase-0 scaffolding (done before #138)"]
+    S1["engine_base.py / policy_base.py — ABC"]
+    S2["plugin folders<br/>baseline + stub"]
+    S3["select_engine() / select_policy() factory"]
+  end
+
+  subgraph CUTOVER["#138 — engine-wrapper cutover"]
+    C1["anomaly-detector<br/>round 1 ✓"]
+    C2["forecasting<br/>round 2 ✓"]
+    C3["rl-engine<br/>round 3 — next"]
+  end
+
+  subgraph MODELS["Model handoffs (unblocked by cutover)"]
+    M1["isolation_forest.pkl<br/>#101"]
+    M2["arima.pkl<br/>#102 / PR #144"]
+    M3["ppo policy.zip<br/>#27"]
+  end
+
+  SCAFFOLD --> CUTOVER
+  C1 -.unblocks.-> M1
+  C2 -.unblocks.-> M2
+  C3 -.unblocks.-> M3
+
+  classDef done fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef next fill:#1f6feb33,stroke:#58a6ff,color:#fff
+  classDef pending fill:#d2992233,stroke:#d29922,color:#fff
+  class S1,S2,S3,C1,C2 done
+  class C3 next
+  class M1,M2,M3 pending
+```
+
+### Engine bootstrap (per service, identical shape)
+
+At startup, the run loop resolves the engine via a strict bootstrap with fallback. If the requested engine fails to load — missing artifact, bad name, exception in `__init__` — the service falls back to its named baseline and reports `engine_ready=false` on `/health`. The baseline is the safety net; if even *it* fails, startup raises (deployment bug, don't swallow).
+
+```mermaid
+flowchart LR
+  ENV["<SVC>_ENGINE<br/>env var"] --> SELECT{"select_engine(name)"}
+  SELECT -- "loads OK" --> READY["engine_ready=true<br/>engine_type=name"]
+  SELECT -- "raises" --> FB{"name == baseline?"}
+  FB -- "yes" --> CRASH["startup raises<br/>(deployment bug)"]
+  FB -- "no" --> BASE["fallback to baseline<br/>engine_ready=false<br/>engine_type=baseline<br/>engine_requested=name"]
+  BASE --> READY2["service runs<br/>on baseline"]
+  READY --> HEALTH["/health surfaces:<br/>engine_type<br/>engine_requested<br/>engine_ready<br/>last_inference_age_seconds"]
+  READY2 --> HEALTH
+
+  classDef ok fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef warn fill:#d2992233,stroke:#d29922,color:#fff
+  classDef bad fill:#f8514933,stroke:#f85149,color:#fff
+  class READY,READY2 ok
+  class BASE warn
+  class CRASH bad
+```
+
+### Run-loop cycle (per service, identical shape)
+
+Once bootstrapped, each AI service runs a single thread that interleaves Redis pub/sub message handling and tick-based inference. The pubsub `get_message` uses a 1-second timeout so policy updates land within one second; between messages, the loop runs an inference cycle every `POLL_INTERVAL_SECONDS`.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant App as app.py thread
+  participant DB as TimescaleDB
+  participant Eng as engine (loaded)
+  participant Bus as Redis bus
+
+  Note over App,Bus: Steady state — every POLL_INTERVAL_SECONDS
+  App->>Bus: pubsub.get_message(smartload.policy, timeout=1s)
+  alt policy publish arrived
+    Bus-->>App: PolicyUpdate envelope
+    App->>App: parse_envelope() + policy_from_payload(fallback)
+    App->>App: bootstrap_engine(requested, new_policy)
+    App->>Eng: engine.reload() — re-read .pkl if trained
+  end
+
+  App->>DB: SVC_QUERY (ANOMALY / FORECAST / RL_STATE)
+  DB-->>App: rows
+  App->>App: build features / history / state from rows
+
+  App->>Eng: score() / forecast() / act()
+  Eng-->>App: AnomalyScore / Forecast / RoutingAction
+
+  alt should_publish() gate passes
+    App->>Bus: publish_envelope(smartload.anomaly / .forecast / .routing)
+  else gate blocks (safe_mode, healthy-noise)
+    App->>App: drop, increment counter
+  end
+```
+
+Same shape across services; only the query name, output dataclass, and channel differ. Implemented today in `services/anomaly-detector/app.py` + `runloop.py` and `services/forecasting/app.py` + `runloop.py`; rl-engine follows next via `policy_base`.
 
 ### 4.1 `anomaly-detector` (plugin-per-engine)
 

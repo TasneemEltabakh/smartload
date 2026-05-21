@@ -839,6 +839,103 @@ flowchart LR
   </tbody>
 </table>
 
+<h3>#138 cutover progress</h3>
+
+<p>Phase-0 scaffolding (the plugin folders + ABCs + factories above) was always in place. What was missing — and what #138 fills — is the wiring inside each service's <code>app.py</code> that actually selects an engine and runs a control loop. Cutover is round-based: one service at a time, each behind a <code>&lt;SVC&gt;_RUNLOOP_ENABLED</code> flag, validated on the live compose stack before flipping the next one.</p>
+
+<div class="mermaid">
+flowchart TB
+  subgraph SCAFFOLD["Phase-0 scaffolding (done before #138)"]
+    S1["engine_base.py / policy_base.py — ABC"]
+    S2["plugin folders<br/>baseline + stub"]
+    S3["select_engine() / select_policy() factory"]
+  end
+
+  subgraph CUTOVER["#138 — engine-wrapper cutover"]
+    C1["anomaly-detector<br/>round 1 ✓"]
+    C2["forecasting<br/>round 2 ✓"]
+    C3["rl-engine<br/>round 3 — next"]
+  end
+
+  subgraph MODELS["Model handoffs (unblocked by cutover)"]
+    M1["isolation_forest.pkl<br/>#101"]
+    M2["arima.pkl<br/>#102 / PR #144"]
+    M3["ppo policy.zip<br/>#27"]
+  end
+
+  SCAFFOLD --> CUTOVER
+  C1 -.unblocks.-> M1
+  C2 -.unblocks.-> M2
+  C3 -.unblocks.-> M3
+
+  classDef done fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef next fill:#1f6feb33,stroke:#58a6ff,color:#fff
+  classDef pending fill:#d2992233,stroke:#d29922,color:#fff
+  class S1,S2,S3,C1,C2 done
+  class C3 next
+  class M1,M2,M3 pending
+</div>
+
+<h3>Engine bootstrap (per service, identical shape)</h3>
+
+<p>At startup, the run loop resolves the engine via a strict bootstrap with fallback. If the requested engine fails to load — missing artifact, bad name, exception in <code>__init__</code> — the service falls back to its named baseline and reports <code>engine_ready=false</code> on <code>/health</code>. The baseline is the safety net; if even <em>it</em> fails, startup raises (deployment bug, don't swallow).</p>
+
+<div class="mermaid">
+flowchart LR
+  ENV["&lt;SVC&gt;_ENGINE<br/>env var"] --> SELECT{"select_engine(name)"}
+  SELECT -- "loads OK" --> READY["engine_ready=true<br/>engine_type=name"]
+  SELECT -- "raises" --> FB{"name == baseline?"}
+  FB -- "yes" --> CRASH["startup raises<br/>(deployment bug)"]
+  FB -- "no" --> BASE["fallback to baseline<br/>engine_ready=false<br/>engine_type=baseline<br/>engine_requested=name"]
+  BASE --> READY2["service runs<br/>on baseline"]
+  READY --> HEALTH["/health surfaces:<br/>engine_type<br/>engine_requested<br/>engine_ready<br/>last_inference_age_seconds"]
+  READY2 --> HEALTH
+
+  classDef ok fill:#3fb95033,stroke:#3fb950,color:#fff
+  classDef warn fill:#d2992233,stroke:#d29922,color:#fff
+  classDef bad fill:#f8514933,stroke:#f85149,color:#fff
+  class READY,READY2 ok
+  class BASE warn
+  class CRASH bad
+</div>
+
+<h3>Run-loop cycle (per service, identical shape)</h3>
+
+<p>Once bootstrapped, each AI service runs a single thread that interleaves Redis pub/sub message handling and tick-based inference. The pubsub <code>get_message</code> uses a 1-second timeout so policy updates land within one second; between messages, the loop runs an inference cycle every <code>POLL_INTERVAL_SECONDS</code>. Engine reconstruction on policy change keeps trained-model loading cheap (cached artifact) while honouring policy-derived constructor kwargs.</p>
+
+<div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant App as app.py thread
+  participant DB as TimescaleDB
+  participant Eng as engine (loaded)
+  participant Bus as Redis bus
+
+  Note over App,Bus: Steady state — every POLL_INTERVAL_SECONDS
+  App-&gt;&gt;Bus: pubsub.get_message(smartload.policy, timeout=1s)
+  alt policy publish arrived
+    Bus--&gt;&gt;App: PolicyUpdate envelope
+    App-&gt;&gt;App: parse_envelope() + policy_from_payload(fallback)
+    App-&gt;&gt;App: bootstrap_engine(requested, new_policy)
+    App-&gt;&gt;Eng: engine.reload() — re-read .pkl if trained
+  end
+
+  App-&gt;&gt;DB: SVC_QUERY (ANOMALY / FORECAST / RL_STATE)
+  DB--&gt;&gt;App: rows
+  App-&gt;&gt;App: build features / history / state from rows
+
+  App-&gt;&gt;Eng: score() / forecast() / act()
+  Eng--&gt;&gt;App: AnomalyScore / Forecast / RoutingAction
+
+  alt should_publish() gate passes
+    App-&gt;&gt;Bus: publish_envelope(smartload.anomaly / .forecast / .routing)
+  else gate blocks (safe_mode, healthy-noise)
+    App-&gt;&gt;App: drop, increment counter
+  end
+</div>
+
+<p class="muted small">Same shape across services; only the query name, output dataclass, and channel differ. Implemented today in <code>services/anomaly-detector/app.py</code> + <code>runloop.py</code> and <code>services/forecasting/app.py</code> + <code>runloop.py</code>; rl-engine follows next via <code>policy_base</code>.</p>
+
 <!-- ── 4.1 anomaly-detector ───────────────────────────────────────────── -->
 <div class="service-head">
   <h3 id="anomaly-detector">4.1 · <code>anomaly-detector</code></h3>

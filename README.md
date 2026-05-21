@@ -192,15 +192,23 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 | `load-balancer` | NGINX | 8080 | wired |
 | `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
 | `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
-| `anomaly-detector` | Python | 8082 | engines/ scaffolded (#138 wires app.py) |
-| `forecasting` | Python | 8083 | engines/ scaffolded (#138 wires app.py) |
-| `rl-engine` | Python | 8084 | policies/ scaffolded (#138 wires app.py) |
+| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) |
+| `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=false` default) |
+| `rl-engine` | Python | 8084 | policies/ scaffolded; #138 round 3 next |
 | `autoscaler` | Python | 8085 | T1.3 shipped |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
 | `operator-ui` | Flask + React | 8090 | slice #1 (Home + Policy page) |
 | `webhook-dispatcher` | Python | — | scaffolded; #130 |
 
 Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
+
+### Engine-wrapper foundation (#138)
+
+The three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine via `select_engine()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each cutover round ships one service behind a `<SVC>_RUNLOOP_ENABLED=false` flag, validated on the live compose stack before flipping the next.
+
+Diagrams (engine bootstrap, run-loop cycle, cutover progress): [SOT §25.6](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) and [PROJECT_WALKTHROUGH §4](docs/PROJECT_WALKTHROUGH.html#decision-plane).
+
+To swap in a trained model: drop `services/<svc>/models/<name>.pkl`, implement `engines/<name>/engine.py` subclassing the service ABC, register the name in `engine_base.select_engine()`, and set `<SVC>_ENGINE=<name>`. No service-shell changes. Falls back to baseline automatically if the artifact is missing.
 
 ---
 

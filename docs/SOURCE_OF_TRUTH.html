@@ -6086,7 +6086,76 @@ docker compose logs -f anomaly-detector</code></pre>
   <li><code>services/forecasting/engines/moving_average/</code>, <code>engines/arima/</code></li>
   <li><code>services/rl-engine/policies/random_shadow/</code>, <code>policies/ppo/</code></li>
 </ul>
-<p>Each plugin folder is self-contained: <code>engine.py</code> implementation, <code>README.md</code> describing rationale + fallback, and per-plugin <code>test_engine.py</code>. The factory in <code>engine_base.py</code> / <code>policy_base.py</code> selects the plugin from an env var; missing model files fall back to the baseline plugin without service restart. This is the design that lets Nada drop an <code>isolation_forest.pkl</code> into <code>models/</code> and have the service swap engines with no code change in the service shell. Issue #138 wires the engine factory into the service run loop.</p>
+<p>Each plugin folder is self-contained: <code>engine.py</code> implementation, <code>README.md</code> describing rationale + fallback, and per-plugin <code>test_engine.py</code>. The factory in <code>engine_base.py</code> / <code>policy_base.py</code> selects the plugin from an env var; missing model files fall back to the baseline plugin without service restart. This is the design that lets a model author drop an <code>isolation_forest.pkl</code> into <code>models/</code> and have the service swap engines with no code change in the service shell. Issue #138 wires the engine factory into the service run loop.</p>
+
+<h4>Engine bootstrap with safety-net fallback</h4>
+
+<p>At service startup, the run loop resolves the engine through a strict bootstrap sequence. If the requested engine fails to load — missing artifact, bad name, exception in <code>__init__</code> — the service falls back to the named baseline (<code>threshold</code> / <code>moving_average</code> / <code>random_shadow</code>) and reports <code>engine_ready=false</code> on <code>/health</code>. The baseline itself is the safety net: if even <em>it</em> fails, startup raises, because that's a deployment bug and silence would mask it.</p>
+
+<figure>
+<pre class="mermaid">
+flowchart LR
+    ENV["&lt;SVC&gt;_ENGINE<br/>env var"] --> SELECT{"select_engine(name)"}
+    SELECT -- "loads OK" --> READY["engine_ready=true<br/>engine_type=name"]
+    SELECT -- "raises<br/>(missing .pkl,<br/>bad name,<br/>__init__ failure)" --> FB{"name == baseline?"}
+    FB -- "yes" --> CRASH["startup raises<br/>(deployment bug —<br/>do not swallow)"]
+    FB -- "no" --> BASE["fallback to baseline<br/>engine_ready=false<br/>engine_type=baseline<br/>engine_requested=name"]
+    BASE --> READY2["service runs<br/>on baseline"]
+    READY --> HEALTH["/health surfaces:<br/>engine_type<br/>engine_requested<br/>engine_ready<br/>last_inference_age_seconds"]
+    READY2 --> HEALTH
+
+    classDef ok fill:#3fb95033,stroke:#3fb950,color:#fff;
+    classDef warn fill:#d2992233,stroke:#d29922,color:#fff;
+    classDef bad fill:#f8514933,stroke:#f85149,color:#fff;
+    class READY,READY2 ok;
+    class BASE warn;
+    class CRASH bad;
+</pre>
+<figcaption><strong>Figure 25.6.1 — Engine bootstrap.</strong> Implemented in <code>runloop.bootstrap_engine()</code> per service (<code>services/anomaly-detector/runloop.py</code>, <code>services/forecasting/runloop.py</code>). Same shape across services; only the baseline name differs.</figcaption>
+</figure>
+
+<h4>Run-loop cycle (per service, identical shape)</h4>
+
+<p>Once bootstrapped, each AI service runs a single thread that interleaves Redis pub/sub message handling and tick-based inference. The pubsub <code>get_message</code> uses a 1-second timeout so policy updates land within one second; between messages, the loop runs an inference cycle every <code>POLL_INTERVAL_SECONDS</code>. Engine reconstruction on policy change keeps trained-model loading cheap (cached artifact) while honouring policy-derived constructor kwargs.</p>
+
+<figure>
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant App as app.py thread
+    participant DB as TimescaleDB
+    participant Eng as engine (loaded)
+    participant Bus as Redis bus
+
+    Note over App,Bus: Steady state — every POLL_INTERVAL_SECONDS
+    App-&gt;&gt;Bus: pubsub.get_message(smartload.policy, timeout=1s)
+    alt policy publish arrived
+        Bus--&gt;&gt;App: PolicyUpdate envelope
+        App-&gt;&gt;App: parse_envelope() + policy_from_payload(fallback)
+        App-&gt;&gt;App: bootstrap_engine(requested, new_policy)
+        App-&gt;&gt;Eng: engine.reload() (re-read .pkl if trained)
+    end
+
+    App-&gt;&gt;DB: SVC_QUERY (ANOMALY / FORECAST / RL_STATE)
+    DB--&gt;&gt;App: rows
+    App-&gt;&gt;App: build features / history / state from rows
+
+    App-&gt;&gt;Eng: score() / forecast() / act()
+    Eng--&gt;&gt;App: AnomalyScore / Forecast / RoutingAction
+
+    alt should_publish() gate passes
+        App-&gt;&gt;Bus: publish_envelope(smartload.anomaly / .forecast / .routing)
+        Note right of Bus: subscribers: load-balancer sidecar,<br/>autoscaler, policy-manager, operator UI
+    else gate blocks (safe_mode, healthy-noise)
+        App-&gt;&gt;App: drop, increment counter
+    end
+</pre>
+<figcaption><strong>Figure 25.6.2 — Run-loop cycle.</strong> Implemented identically in <code>services/anomaly-detector/app.py</code> and <code>services/forecasting/app.py</code> (rl-engine round 3 next). Tick interval and query differ per service; control flow is shared.</figcaption>
+</figure>
+
+<h4>Model author handoff boundary</h4>
+
+<p>The diagrams above are the integration layer's contract. A model author owns only the boxed step — the engine class with its <code>score()</code> / <code>forecast()</code> / <code>act()</code> method, plus the trained artifact at <code>services/&lt;svc&gt;/models/&lt;name&gt;.pkl</code>. The Redis publish, the DB query, the policy reload, the fallback path, the health reporting, the unit-test scaffold — all owned by the integration layer. This is the boundary the PR #144 review codified.</p>
 
 <h3>25.7 CI structural lints — the discipline that keeps the surfaces honest</h3>
 <table>
