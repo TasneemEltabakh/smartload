@@ -59,15 +59,19 @@ jobs:
         # Each service test directory runs in its OWN pytest invocation so the
         # services' top-level modules (engine_base, runloop, engines, policies)
         # don't collide in sys.modules across siblings. Loose test files at the
-        # tests/unit/ root run once at the end.
+        # tests/unit/ root run once at the end. Empty test dirs (placeholders
+        # for services that don't have a unit suite yet) are skipped — only
+        # dirs containing test_*.py files are invoked.
         run: |
           set -e
           for dir in tests/unit/*/; do
             [ -d "$dir" ] || continue
+            ls "$dir"test_*.py >/dev/null 2>&1 || continue
             pytest "$dir" -v
           done
           for f in tests/unit/test_*.py; do
-            [ -f "$f" ] && pytest "$f" -v
+            [ -f "$f" ] || continue
+            pytest "$f" -v
           done
 
 
