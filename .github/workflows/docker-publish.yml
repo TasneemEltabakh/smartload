@@ -51,6 +51,12 @@ jobs:
       - name: Run pure-Python tests
         run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py tests/integration/test_lb_otel_shipper.py -v
 
+      - name: Run per-service unit tests
+        # Pure-Python tests under tests/unit/ — no Docker, no Redis, no DB.
+        # Per the slice checklist, every service with non-trivial logic carries
+        # its unit suite here. Picks up additional dirs as more services land.
+        run: pytest tests/unit/ -v
+
 
   build-services:
     runs-on: ubuntu-latest
@@ -72,14 +78,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build service image (default context)
-        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler' && matrix.service != 'policy-manager'
+        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler' && matrix.service != 'policy-manager' && matrix.service != 'anomaly-detector'
         run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
 
       - name: Build image with wider context (services that import shared/)
-        # Telemetry, autoscaler, and policy-manager import services/shared/*, so
-        # their build context is ./services and the Dockerfile pulls in shared/
-        # alongside app.py + any service-local modules (decisions.py / validation.py).
-        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler' || matrix.service == 'policy-manager'
+        # Telemetry, autoscaler, policy-manager, and anomaly-detector import
+        # services/shared/*, so their build context is ./services and the
+        # Dockerfile pulls in shared/ alongside app.py + any service-local
+        # modules (decisions.py / validation.py / runloop.py).
+        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler' || matrix.service == 'policy-manager' || matrix.service == 'anomaly-detector'
         run: docker build -t smartload-${{ matrix.service }} -f services/${{ matrix.service }}/Dockerfile ./services
 
       - name: Run container

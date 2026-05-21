@@ -118,7 +118,8 @@ services:
 
   anomaly-detector:
     build:
-      context: ./services/anomaly-detector
+      context: ./services
+      dockerfile: anomaly-detector/Dockerfile
     ports:
       - "8082:8082"
     environment:
@@ -126,7 +127,12 @@ services:
       SERVICE_NAME: anomaly-detector
       TIMESCALEDB_URL: ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-10}
+      # Run loop defaults to off so the Phase-0 stub stays the default until
+      # operators flip the flag explicitly. See SOT §8.5 + issue #138.
+      ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-false}
+      ANOMALY_ENGINE: ${ANOMALY_ENGINE:-threshold}
+      ANOMALY_WINDOW_SECONDS: ${ANOMALY_WINDOW_SECONDS:-60}
     depends_on:
       timescaledb:
         condition: service_healthy
