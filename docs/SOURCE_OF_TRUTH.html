@@ -2128,10 +2128,10 @@ flowchart TB
   </article>
 
   <article class="service-card">
-    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">Phase 1A N1.1</span></div>
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">N1.1 + #138</span></div>
     <h4>Anomaly Detector</h4>
-    <div class="role">Decision · Port 8082 · Nada</div>
-    <p class="small">Phase 1A: rolling-mean + threshold. Phase 2 (N2.1): Isolation Forest on NAB + Yahoo SMD. Publishes <code>AnomalyEvent</code> every ~5 s.</p>
+    <div class="role">Decision · Port 8082 · Nada (model) · Tasneem (wiring)</div>
+    <p class="small">Run loop wired via <code>engine_base</code> ABC + plugin folders. Threshold baseline ships; Isolation Forest plugin drops in when the trained <code>.pkl</code> arrives (#101). Off by default — flip <code>ANOMALY_RUNLOOP_ENABLED=true</code>.</p>
     <div class="deeplink"><a href="#mod-anomaly">→ Deep dive</a></div>
   </article>
 
@@ -2786,7 +2786,7 @@ cur.execute(ANOMALY_QUERY,
 
 <!-- ====== 8.5 ANOMALY ====== -->
 <article id="mod-anomaly">
-<h2>8.5 Anomaly Detection Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired stub</span> <span class="badge badge-active">N1.1 active</span></h2>
+<h2>8.5 Anomaly Detection Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">#138 + N1.1</span></h2>
 <h4>Purpose</h4>
 <p>Self-protection layer. Detects unhealthy or degraded backends in real time and signals the LB to remove them from the upstream pool.</p>
 <h4>Two-tier delivery</h4>
@@ -2840,14 +2840,15 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient for prototype scale. Replication strategy if needed: sticky-by-backend partitioning (each replica owns a slice of backends).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle metrics: cycle duration, count of DEGRADED, count of UNHEALTHY, model F1 (offline measurement). <code>/health</code> verifies DB + Redis.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Detection latency target ≤ 2 monitoring intervals (~10 s). KPI: F1 &gt; 0.80 on test split.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">N1.1 active: threshold rule on rolling latency / error_rate. Stub publishes JSON every 5 s.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Isolation Forest trained on NAB + Yahoo SMD; threshold rule retained as fallback. Auto-recovery cool-down before clearing UNHEALTHY status.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update so policy-derived params (e.g. <code>anomaly_latency_multiplier</code>) take effect within one cycle. Threshold baseline ships and is wired to <code>ANOMALY_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop pivots rows into <code>BackendFeatures</code>, scores each backend, and publishes an <code>AnomalyEvent</code> envelope. Falls back to threshold automatically if the requested engine raises on load. Off by default — <code>ANOMALY_RUNLOOP_ENABLED=false</code> keeps the Phase-0 stub the default. Unit tests live at <code>tests/unit/anomaly-detector/test_runloop.py</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Isolation Forest plugin (#101) implemented at <code>engines/isolation_forest/engine.py</code> with trained <code>.pkl</code> at <code>services/anomaly-detector/models/</code>. Auto-recovery cool-down before clearing UNHEALTHY status. Own-metrics scraped by Prometheus (<code>anomaly_detector_inferences_total</code>, <code>_inference_errors_total</code>, <code>_inference_latency_seconds</code>, <code>_engine_loaded</code>).</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>N1.1: real threshold detector + DB writes + Redis publishes.</li>
-        <li>N2.1: Isolation Forest training pipeline + model file load on startup.</li>
-        <li>Auto-recovery logic with cool-down.</li>
-        <li>F1 measurement harness for test split.</li>
+        <li>Isolation Forest <code>engine.py</code> + trained <code>.pkl</code> drop-in (#101 — model handoff from Nada).</li>
+        <li>Auto-recovery logic with cool-down before clearing UNHEALTHY.</li>
+        <li>Own-metrics emission (counters + latency histogram) + <code>/metrics</code> Prometheus endpoint.</li>
+        <li>Flip <code>ANOMALY_RUNLOOP_ENABLED</code> default to <code>true</code> after dev-stack smoke.</li>
+        <li>F1 measurement harness for the test split (Phase 2 evaluation gate).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Review checklist</div><div class="val">
@@ -5245,7 +5246,7 @@ flowchart LR
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
     <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
-    <tr><td>Anomaly detector</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.1)</span></td><td><code>services/anomaly-detector/app.py</code></td><td>Threshold logic + Redis publish</td></tr>
+    <tr><td>Anomaly detector</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/anomaly-detector/app.py</code> + <code>runloop.py</code></td><td>Isolation Forest plugin drop-in (#101); auto-recovery; own-metrics; flip <code>ANOMALY_RUNLOOP_ENABLED</code> default</td></tr>
     <tr><td>Forecasting service</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.2)</span></td><td><code>services/forecasting/app.py</code></td><td>Moving-avg + Redis publish</td></tr>
     <tr><td>RL engine</td><td>Nada</td><td><span class="pill pill-active">Phase 1A active (N1.3)</span></td><td><code>services/rl-engine/app.py</code></td><td>Shadow-mode random policy</td></tr>
     <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
