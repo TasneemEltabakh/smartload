@@ -172,6 +172,95 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/scale:
+    post:
+      summary: Manually scale the backend pool
+      description: |
+        Operator override on the autoscaler (port 8085). Bypasses the
+        forecast subscription and the cooldown timer. Validates the
+        requested `target_count` against the live policy's
+        `min_backends` / `max_backends` and rejects 400 when out of
+        bounds. On success, scales the cluster step-by-step, writes one
+        `scaling_events` row with `reason = "manual:<actor>: <reason>"`,
+        and publishes one `ScalingEvent` envelope on `smartload.scale`
+        (with `forecast_event_id = null` because there is no forecast
+        origin).
+      tags: [autoscaler]
+      parameters:
+        - in: header
+          name: X-Actor
+          required: false
+          schema: { type: string }
+          description: |
+            Logical actor persisted in the audit row reason. If unset,
+            the request body `actor` field is used; if both are unset,
+            defaults to `"operator"`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualScaleRequest'
+      responses:
+        '200':
+          description: Scale applied (or no-op if target equals current)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualScaleResponse'
+        '400':
+          description: Target out of bounds or non-integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Cluster query or audit write failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/isolate:
+    post:
+      summary: Manually publish an AnomalyEvent for a backend
+      description: |
+        Operator override on the anomaly-detector (port 8082). Publishes
+        a synthetic `AnomalyEvent` envelope on `smartload.anomaly` and
+        writes one `backend_health` row. Useful for demoing
+        anomaly-driven routing without inducing real backend failures.
+      tags: [anomaly-detector]
+      parameters:
+        - in: header
+          name: X-Actor
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualIsolateRequest'
+      responses:
+        '200':
+          description: AnomalyEvent published + backend_health written
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualIsolateResponse'
+        '400':
+          description: Missing backend_id or invalid status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Envelope publish or backend_health write failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/metrics:
     get:
       summary: Read recent metric rows
@@ -339,6 +428,71 @@ components:
           type: string
           nullable: true
           description: Human-readable justification (e.g. "forecast predicted 450 rps").
+
+    ManualScaleRequest:
+      type: object
+      required: [target_count]
+      properties:
+        target_count:
+          type: integer
+          description: |
+            Desired backend count after the action. Must be in
+            `[policy.min_backends, policy.max_backends]`.
+        actor:
+          type: string
+          description: |
+            Logical actor name. Falls back to the `X-Actor` header, then
+            to `"operator"`.
+        reason:
+          type: string
+          description: |
+            Free-text justification. Prefixed with `manual:<actor>:` in
+            the audited row.
+
+    ManualScaleResponse:
+      type: object
+      required: [status, action, target_count, previous_count, final_count, steps_actuated, steps_requested, reason, event_id]
+      properties:
+        status:
+          type: string
+          enum: [applied, noop]
+        action:
+          type: string
+          enum: [scale_out, scale_in, noop]
+        target_count:    { type: integer }
+        previous_count:  { type: integer }
+        final_count:     { type: integer }
+        steps_actuated:  { type: integer }
+        steps_requested: { type: integer }
+        reason:          { type: string }
+        event_id:        { type: string, format: uuid }
+
+    ManualIsolateRequest:
+      type: object
+      required: [backend_id, status]
+      properties:
+        backend_id:
+          type: string
+          description: |
+            Backend instance identifier — matches the value the engine
+            would publish (e.g. `"backend_1"` or `"172.18.0.5:8080"`).
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        actor:  { type: string }
+        reason: { type: string }
+
+    ManualIsolateResponse:
+      type: object
+      required: [status, backend_id, anomaly_status, score, actor, reason, event_id]
+      properties:
+        status:         { type: string, enum: [applied] }
+        backend_id:     { type: string }
+        anomaly_status: { type: string, enum: [healthy, degraded, unhealthy] }
+        score:          { type: number }
+        actor:          { type: string }
+        reason:         { type: string }
+        event_id:       { type: string, format: uuid }
 
     MetricRow:
       type: object

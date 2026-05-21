@@ -69,6 +69,7 @@ from decisions import (  # noqa: E402
     decide,
     policy_from_payload,
 )
+from manual import ManualScaleError, plan_manual_scale  # noqa: E402
 
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -480,6 +481,143 @@ def get_audit_scaling():
         }
         for (ts, action, instance_count, reason) in rows
     ])
+
+
+# ── manual actions: POST /api/v1/scale (slice #3, #123) ───────────────────────
+
+
+@app.route("/api/v1/scale", methods=["POST"])
+def post_manual_scale():
+    """Manual scale to a specific target count, bypassing forecast + cooldown.
+
+    Body:
+      {
+        "target_count": <int, in [min_backends, max_backends]>,
+        "actor":        <string, default "operator">,
+        "reason":       <string, default "manual override">
+      }
+
+    Bounds-validates the target against the live policy (rejecting outside
+    [min, max] with 400). On success, scales the cluster step-by-step, writes
+    a single `scaling_events` row with `reason = "manual:<actor>: <reason>"`,
+    publishes one `ScalingEvent` envelope on `smartload.scale`, and bumps the
+    cooldown clock so the next auto-decide tick honours the operator's
+    intent.
+    """
+    raw = request.get_json(force=True, silent=True)
+    if not isinstance(raw, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+
+    actor = (raw.get("actor") or request.headers.get("X-Actor") or "operator")
+    reason = raw.get("reason")
+
+    with _state_lock:
+        policy = _policy
+
+    cluster = DockerClusterClient()
+    try:
+        current_count = cluster.get_backend_count()
+    except Exception as exc:                            # noqa: BLE001
+        log.exception("could not read backend count")
+        return jsonify({"error": f"cluster query failed: {exc}"}), 503
+
+    try:
+        plan = plan_manual_scale(
+            target_count=raw.get("target_count"),
+            current_count=current_count,
+            policy=policy,
+            actor=actor,
+            user_reason=reason,
+        )
+    except ManualScaleError as exc:
+        return jsonify({"error": exc.message, "field": exc.field}), 400
+
+    # Actuate — best-effort step-by-step. If any step fails to actuate (no
+    # container to start / stop), stop early and record the partial result so
+    # the audit row matches what actually happened.
+    actuated_steps = 0
+    last_name: str | None = None
+    for _ in range(plan.steps):
+        if plan.action == ACTION_SCALE_OUT:
+            name = cluster.scale_out()
+        elif plan.action == ACTION_SCALE_IN:
+            name = cluster.scale_in()
+        else:
+            name = None
+            break
+        if name is None:
+            log.warning(
+                "manual %s reached cluster limit after %d/%d steps",
+                plan.action, actuated_steps, plan.steps,
+            )
+            break
+        actuated_steps += 1
+        last_name = name
+
+    final_count = current_count + actuated_steps if plan.action == ACTION_SCALE_OUT \
+        else current_count - actuated_steps if plan.action == ACTION_SCALE_IN \
+        else current_count
+
+    # Effective action — if no steps actuated (target == current OR cluster
+    # rejected all steps), record as noop. Otherwise the plan's own action.
+    effective_action = plan.action if actuated_steps > 0 else ACTION_NOOP
+
+    log.info(
+        "manual %s actor=%s steps=%d/%d final_count=%d reason=%r container=%s",
+        effective_action, actor, actuated_steps, plan.steps, final_count,
+        plan.reason, last_name,
+    )
+
+    # scaling_events: one row per operator click, regardless of step count.
+    try:
+        db_conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+    except Exception as exc:                            # noqa: BLE001
+        log.exception("scaling_events write — DB connection failed")
+        return jsonify({"error": f"audit write failed: {exc}"}), 503
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute(
+                SCALING_EVENT_INSERT,
+                (
+                    datetime.now(timezone.utc),
+                    effective_action,
+                    final_count,
+                    plan.reason,
+                ),
+            )
+        db_conn.commit()
+    finally:
+        db_conn.close()
+
+    # smartload.scale: one envelope per operator click. forecast_event_id is
+    # null per the issue spec — manual actions don't have a forecast origin.
+    redis_client = redis_lib.from_url(REDIS_URL)
+    event = ScalingEvent(
+        action=effective_action,
+        instance_count=final_count,
+        reason=plan.reason,
+        forecast_event_id=None,
+    )
+    envelope = make_envelope(source=SERVICE_NAME, payload=event)
+    redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))
+
+    # Bump cooldown clock so the next forecast tick doesn't immediately undo.
+    with _state_lock:
+        global _last_action_monotonic
+        _last_action_monotonic = time.monotonic()
+    _bump_action(effective_action)
+
+    return jsonify({
+        "status":          "applied" if actuated_steps > 0 else "noop",
+        "action":          effective_action,
+        "target_count":    plan.target_count,
+        "previous_count":  current_count,
+        "final_count":     final_count,
+        "steps_actuated":  actuated_steps,
+        "steps_requested": plan.steps,
+        "reason":          plan.reason,
+        "event_id":        envelope.event_id,
+    })
 
 
 # ── entrypoint ────────────────────────────────────────────────────────────────

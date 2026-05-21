@@ -34,7 +34,9 @@ import time
 
 import psycopg2
 import redis as redis_lib
-from flask import Flask, jsonify
+from datetime import datetime, timezone
+
+from flask import Flask, jsonify, request
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
 # (services/shared/ relative to this file). Same pattern as telemetry/app.py.
@@ -48,6 +50,7 @@ from shared.queries import (                                   # noqa: E402
     ANOMALY_QUERY,
     ANOMALY_DEFAULT_SERVICE,
     ANOMALY_METRIC_NAMES,
+    BACKEND_HEALTH_INSERT,
 )
 
 from runloop import (                                          # noqa: E402
@@ -278,6 +281,105 @@ def health():
 @app.route("/")
 def index():
     return jsonify({"service": SERVICE_NAME, "status": "running"})
+
+
+# ── manual actions: POST /api/v1/isolate (slice #3, #123) ─────────────────────
+
+_VALID_ISOLATE_STATUSES = ("healthy", "degraded", "unhealthy")
+
+
+@app.route("/api/v1/isolate", methods=["POST"])
+def post_manual_isolate():
+    """Manually publish an AnomalyEvent for a specific backend.
+
+    Body:
+      {
+        "backend_id": "<host:port or instance label>",
+        "status":     "healthy" | "degraded" | "unhealthy",
+        "actor":      <string, default "operator">,
+        "reason":     <string, default "manual">
+      }
+
+    Side effects:
+      - Publishes a synthetic AnomalyEvent envelope on smartload.anomaly so
+        the load-balancer sidecar (T2.1, when wired) reacts as if the engine
+        had produced it.
+      - Writes a backend_health row (the anomaly-detector is the only writer
+        of backend_health per SOT §8.5 design contract).
+
+    Bypasses the engine's run loop and the publish gate entirely — the
+    operator's intent is the signal. score is fixed at 1.0 for unhealthy /
+    degraded and 0.0 for healthy.
+    """
+    raw = request.get_json(force=True, silent=True)
+    if not isinstance(raw, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+
+    backend_id = raw.get("backend_id")
+    if not isinstance(backend_id, str) or not backend_id.strip():
+        return jsonify({
+            "error": "backend_id must be a non-empty string",
+            "field": "backend_id",
+        }), 400
+    backend_id = backend_id.strip()
+
+    status = raw.get("status")
+    if status not in _VALID_ISOLATE_STATUSES:
+        return jsonify({
+            "error": f"status must be one of {list(_VALID_ISOLATE_STATUSES)}",
+            "field": "status",
+        }), 400
+
+    actor = (raw.get("actor") or request.headers.get("X-Actor") or "operator")
+    user_reason = (raw.get("reason") or "manual").strip() or "manual"
+    audited_reason = f"manual:{actor}: {user_reason}"
+    score = 0.0 if status == "healthy" else 1.0
+
+    payload = {
+        "backend_id":    backend_id,
+        "status":        status,
+        "score":         score,
+        "model_version": f"manual:{actor}",
+        "features":      {"reason": audited_reason},
+    }
+
+    redis_client = redis_lib.from_url(REDIS_URL)
+    try:
+        event_id = publish_envelope(
+            redis_client,
+            channel=ANOMALY_CHANNEL,
+            source=SERVICE_NAME,
+            payload=payload,
+        )
+    except Exception as exc:                            # noqa: BLE001
+        return jsonify({"error": f"envelope publish failed: {exc}"}), 503
+
+    try:
+        db_conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+    except Exception as exc:                            # noqa: BLE001
+        return jsonify({"error": f"backend_health write failed: {exc}"}), 503
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute(
+                BACKEND_HEALTH_INSERT,
+                (datetime.now(timezone.utc), backend_id, status, score),
+            )
+        db_conn.commit()
+    finally:
+        db_conn.close()
+
+    print(f"[{SERVICE_NAME}] manual isolate actor={actor} backend_id={backend_id} "
+          f"status={status} reason={user_reason!r}", flush=True)
+
+    return jsonify({
+        "status":     "applied",
+        "backend_id": backend_id,
+        "anomaly_status": status,
+        "score":      score,
+        "actor":      actor,
+        "reason":     audited_reason,
+        "event_id":   event_id,
+    })
 
 
 # ── startup ───────────────────────────────────────────────────────────────────

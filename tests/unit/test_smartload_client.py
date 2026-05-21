@@ -274,3 +274,168 @@ class TestSmartLoadClientWiring:
         assert rows == [{"ok": True}]
         assert captured == {"kind": "scaling", "limit": 7}
         c.close()
+
+
+# ── ActionsClient (slice #3, #123) ────────────────────────────────────────────
+
+from smartload_client.actions import ActionsClient  # noqa: E402
+
+
+class TestActionsScale:
+
+    def test_scale_targets_autoscaler_url(self, monkeypatch):
+        client = MagicMock()
+        client.autoscaler_url = "http://my-autoscaler:8085"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _fake_response(200, json_body={"status": "applied"})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        result = ac.scale(3, actor="alice", reason="failover drill")
+        assert result == {"status": "applied"}
+        assert captured["url"] == "http://my-autoscaler:8085/api/v1/scale"
+        assert captured["json"] == {
+            "target_count": 3,
+            "actor": "alice",
+            "reason": "failover drill",
+        }
+
+    def test_scale_defaults_actor_to_client_default(self, monkeypatch):
+        client = MagicMock()
+        client.autoscaler_url = "http://x:8085"
+        client.timeout = 5.0
+        client.default_actor = "my-tool"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["json"] = json
+            return _fake_response(200, json_body={"status": "applied"})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        ac.scale(2)
+        assert captured["json"]["actor"] == "my-tool"
+        assert "reason" not in captured["json"]   # opt-in field
+
+    def test_scale_400_raises_validation_error(self, monkeypatch):
+        client = MagicMock()
+        client.autoscaler_url = "http://x:8085"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+
+        def fake_post(url, json=None, timeout=None):
+            return _fake_response(
+                400,
+                json_body={
+                    "error": "target_count 9 above policy.max_backends (5)",
+                    "field": "target_count",
+                },
+            )
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        with pytest.raises(ValidationError) as exc:
+            ac.scale(9)
+        assert exc.value.field == "target_count"
+
+
+class TestActionsIsolate:
+
+    def test_isolate_targets_anomaly_detector_url(self, monkeypatch):
+        client = MagicMock()
+        client.anomaly_detector_url = "http://my-anomaly:8082"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _fake_response(200, json_body={"status": "applied"})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        result = ac.isolate("backend_1", "unhealthy", actor="bob", reason="manual")
+        assert result == {"status": "applied"}
+        assert captured["url"] == "http://my-anomaly:8082/api/v1/isolate"
+        assert captured["json"] == {
+            "backend_id": "backend_1",
+            "status": "unhealthy",
+            "actor": "bob",
+            "reason": "manual",
+        }
+
+    def test_isolate_default_status_is_unhealthy(self, monkeypatch):
+        client = MagicMock()
+        client.anomaly_detector_url = "http://x:8082"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["json"] = json
+            return _fake_response(200, json_body={"status": "applied"})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        ac.isolate("backend_1")
+        assert captured["json"]["status"] == "unhealthy"
+
+
+class TestSmartLoadClientActionsWiring:
+
+    def test_actions_subclient_is_attached(self):
+        c = SmartLoadClient(base_url="http://example:8086")
+        assert isinstance(c.actions, ActionsClient)
+        c.close()
+
+    def test_anomaly_detector_url_defaults_to_localhost(self):
+        c = SmartLoadClient(base_url="http://example:8086")
+        assert c.anomaly_detector_url == "http://localhost:8082"
+        c.close()
+
+    def test_anomaly_detector_url_picks_up_env_var(self, monkeypatch):
+        monkeypatch.setenv("SMARTLOAD_ANOMALY_DETECTOR_URL", "http://env-anom:9090")
+        c = SmartLoadClient(base_url="http://example:8086")
+        assert c.anomaly_detector_url == "http://env-anom:9090"
+        c.close()
+
+    def test_anomaly_detector_url_strips_trailing_slash(self):
+        c = SmartLoadClient(
+            base_url="http://example:8086",
+            anomaly_detector_url="http://my-anom:8082/",
+        )
+        assert c.anomaly_detector_url == "http://my-anom:8082"
+        c.close()
+
+    def test_top_level_scale_delegates(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        captured = {}
+
+        def fake_scale(target_count, *, actor=None, reason=None):
+            captured["call"] = (target_count, actor, reason)
+            return {"status": "applied"}
+
+        monkeypatch.setattr(c.actions, "scale", fake_scale)
+        c.scale(4, actor="alice", reason="drill")
+        assert captured["call"] == (4, "alice", "drill")
+        c.close()
+
+    def test_top_level_isolate_delegates(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        captured = {}
+
+        def fake_isolate(backend_id, status, *, actor=None, reason=None):
+            captured["call"] = (backend_id, status, actor, reason)
+            return {"status": "applied"}
+
+        monkeypatch.setattr(c.actions, "isolate", fake_isolate)
+        c.isolate("backend_2", "degraded", actor="bob")
+        assert captured["call"] == ("backend_2", "degraded", "bob", None)
+        c.close()

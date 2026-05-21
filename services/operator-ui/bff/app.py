@@ -199,6 +199,38 @@ def ui_scaling_audit():
     return (r.text, r.status_code, {"Content-Type": "application/json"})
 
 
+# ── manual actions (slice #3, #123) ───────────────────────────────────────────
+
+@app.route("/api/ui/scale", methods=["POST"])
+def ui_manual_scale():
+    """Proxy to autoscaler's POST /api/v1/scale — slice #3 manual actions."""
+    upstream = SERVICE_URLS["autoscaler"]
+    body = request.get_data(as_text=True) or "{}"
+    headers = {"Content-Type": "application/json"}
+    actor = request.headers.get("X-Actor") or "operator-ui"
+    headers["X-Actor"] = actor
+    try:
+        r = _http.post(f"{upstream}/api/v1/scale", content=body, headers=headers)
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+@app.route("/api/ui/isolate", methods=["POST"])
+def ui_manual_isolate():
+    """Proxy to anomaly-detector's POST /api/v1/isolate — slice #3 manual actions."""
+    upstream = SERVICE_URLS["anomaly-detector"]
+    body = request.get_data(as_text=True) or "{}"
+    headers = {"Content-Type": "application/json"}
+    actor = request.headers.get("X-Actor") or "operator-ui"
+    headers["X-Actor"] = actor
+    try:
+        r = _http.post(f"{upstream}/api/v1/isolate", content=body, headers=headers)
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
 # ── BFF own health ────────────────────────────────────────────────────────────
 
 @app.route("/health")

@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY autoscaler/app.py            /app/app.py
 COPY autoscaler/cluster_client.py /app/cluster_client.py
 COPY autoscaler/decisions.py      /app/decisions.py
+COPY autoscaler/manual.py         /app/manual.py
 COPY shared                       /app/shared
 
 ENV PORT=8085

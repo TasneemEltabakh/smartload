@@ -7,6 +7,7 @@ from typing import Optional
 
 import httpx
 
+from .actions import ActionsClient, IsolateStatus
 from .audit import AuditClient, AuditKind
 from .events import EventsClient
 from .metrics import MetricsClient
@@ -40,6 +41,7 @@ class SmartLoadClient:
         self,
         base_url: str = "http://localhost:8086",
         autoscaler_url: Optional[str] = None,
+        anomaly_detector_url: Optional[str] = None,
         redis_url: Optional[str] = None,
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -54,6 +56,15 @@ class SmartLoadClient:
         self.autoscaler_url = (
             autoscaler_url
             or os.environ.get("SMARTLOAD_AUTOSCALER_URL", "http://localhost:8085")
+        ).rstrip("/")
+        # The manual-isolate endpoint lives on anomaly-detector (port 8082);
+        # same per-service-upstream pattern as autoscaler_url. Override in
+        # production deployments where services are behind a gateway.
+        self.anomaly_detector_url = (
+            anomaly_detector_url
+            or os.environ.get(
+                "SMARTLOAD_ANOMALY_DETECTOR_URL", "http://localhost:8082",
+            )
         ).rstrip("/")
         self.timeout = timeout
         self.redis_url = redis_url or os.environ.get(
@@ -83,6 +94,7 @@ class SmartLoadClient:
         self.metrics = MetricsClient(self)
         self.events = EventsClient(self)
         self.audit = AuditClient(self)
+        self.actions = ActionsClient(self)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -137,6 +149,31 @@ class SmartLoadClient:
         kind="scaling" → scaling_events (autoscaler)
         """
         return self.audit.list(kind, limit=limit)
+
+    # ── manual actions (slice #3, #123) ────────────────────────────────────
+
+    def scale(
+        self,
+        target_count: int,
+        *,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Manually scale the backend pool. Convenience wrapper around
+        client.actions.scale()."""
+        return self.actions.scale(target_count, actor=actor, reason=reason)
+
+    def isolate(
+        self,
+        backend_id: str,
+        status: IsolateStatus = "unhealthy",
+        *,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Manually publish an AnomalyEvent. Convenience wrapper around
+        client.actions.isolate()."""
+        return self.actions.isolate(backend_id, status, actor=actor, reason=reason)
 
     def subscribe_policy(self, callback):
         return self.events.subscribe_policy(callback)
