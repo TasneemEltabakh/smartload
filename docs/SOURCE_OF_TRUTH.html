@@ -5594,6 +5594,11 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>This release</td>
     </tr>
     <tr>
+      <td><strong>Audit log viewer — scenario + e2e (slice #2 close — #122 shipped)</strong></td>
+      <td>Third and final sub-pass of the audit slice; flips the slice from <em>pill-active</em> to <em>pill-done</em>. New runnable scenario at <code>examples/scenarios/audit-log/audit_walk.py</code> walks both streams via the SDK in seven steps: baseline read → snapshot both streams → toggle <code>safe_mode</code> via the policy surface → confirm the matching policy-audit row arrives within one settle → restore baseline → print the latest rows from both streams → demonstrate the limit cap and the <code>ValidationError</code> on unknown kind. New e2e suite at <code>tests/e2e/audit-log/test_audit_walk.py</code> (11 tests) covers per-kind read shape, SDK <code>list_audit</code> ≡ <code>audit.policy</code> / <code>.scaling</code> equivalence, SDK ≡ direct-upstream parity (smoke that scaling-audit traffic routes to <code>autoscaler_url</code> not <code>base_url</code>), limit cap + default-50, 400 on bad limit, kind-dispatch <code>ValidationError</code>, and the policy-write → audit-row round trip with a 5-second deadline. Scenario passes; e2e 11/11 passes against the live stack; structural lints (<code>lint-structure</code>, <code>lint-openapi</code>, <code>lint-redis-channels</code>) clean for the slice's triangulation (<code>tests/e2e/audit-log/</code> + <code>docs/features/audit-log.md</code> + <code>examples/scenarios/audit-log/</code> all present and aligned).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
       <td><strong>Audit log viewer — UI sub-pass + BFF SPA fix (slice #2, #122)</strong></td>
       <td>Second sub-pass of the audit slice. New <code>services/operator-ui/web/src/pages/Audit.tsx</code> renders both audit streams in one filterable view: <em>kind</em> chips (All / Policy / Scaling) toggle which tables are shown; the policy table has a free-text actor/field filter; the scaling table has action chips (All / scale_out / scale_in); a limit selector drives both fetches (25 / 50 / 100 / 250 / 500); auto-refresh every 10 s plus a manual refresh button. Scaling rows render with colour-coded action badges. Empty-state rows when filters return nothing. Wired into the React Router at <code>/audit</code> with a sidebar nav link next to Policy. Also fixes a pre-existing BFF SPA fallback bug: Flask's <code>static_url_path=""</code> auto-registered a root-level static route that intercepted every SPA path (<code>/policy</code>, <code>/audit</code>, …) with a 404 before <code>serve_spa</code> could run — direct URLs and hard-refresh now work for every page. Verified end-to-end on the live compose stack (rebuilt operator-ui; GET on all SPA paths returns 200). Remaining sub-passes for the slice to flip pill-done: runnable scenario at <code>examples/scenarios/audit-log/</code> and e2e suite at <code>tests/e2e/audit-log/</code>.</td>
       <td>This release</td>
@@ -6238,7 +6243,7 @@ flowchart TD
       <td><strong>Audit log viewer</strong> (OUI.4)</td>
       <td>—</td>
       <td><code>docs/features/audit-log.md</code></td>
-      <td><span class="pill pill-active">Backend + SDK + UI shipped 2026-05-21; scenario + e2e pending (#122)</span></td>
+      <td><span class="pill pill-done">Shipped 2026-05-21 (slice #2; #122)</span></td>
     </tr>
     <tr>
       <td><strong>Anomaly detection</strong></td>

@@ -226,6 +226,7 @@ Runnable Python scripts that exercise each shipped feature end-to-end. New featu
 | Feature | Scenario script | Status |
 |---|---|---|
 | Policy management | [`examples/scenarios/policy-management/policy_walk.py`](examples/scenarios/policy-management/policy_walk.py) | shipped |
+| Audit log viewer | [`examples/scenarios/audit-log/audit_walk.py`](examples/scenarios/audit-log/audit_walk.py) | shipped |
 | Forecast burst → scale-out | `examples/scenarios/forecast-autoscale/` | planned |
 | Anomaly → reroute | `examples/scenarios/anomaly-routing/` | planned (depends on T2.1) |
 
