@@ -6,8 +6,8 @@ max_backends: 5
 min_backends: 1
 operating_mode: hybrid
 per_instance_capacity_rps: 100
-policy_version: 14
+policy_version: 19
 rl_confidence_threshold: 0.6
 rl_exploration_rate: 0
-safe_mode: true
+safe_mode: false
 slo_p95_latency_ms: 200
