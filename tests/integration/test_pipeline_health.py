@@ -56,11 +56,22 @@ class TestLoadBalancer:
         )
 
     def test_load_balancer_health_endpoint(self, stack_ready):
-        """GET /health must return a healthy response from a backend."""
+        """GET /health must return NGINX's own canonical health response.
+
+        Pre-fix this test asserted `status == "healthy"` — which was the
+        Express convention used by the test-backends. That assertion was a
+        symptom of the bug fixed in `nginx.conf` (no static /health
+        location, so the probe was being proxied through to a random
+        backend instead of reporting NGINX itself).
+
+        Post-fix NGINX has `location = /health` returning the canonical
+        SmartLoad shape `{"status":"ok","service":"load-balancer"}`.
+        """
         resp = requests.get(SERVICE_URLS["load-balancer"] + "/health", timeout=10)
         assert resp.status_code == 200
         data = resp.json()
-        assert data.get("status") == "healthy"
+        assert data.get("status") == "ok"
+        assert data.get("service") == "load-balancer"
 
 
 # ── Layer 2: Service Reachability ─────────────────────────────────────────────
