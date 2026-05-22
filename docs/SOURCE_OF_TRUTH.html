@@ -6332,6 +6332,52 @@ flowchart TD
   </tbody>
 </table>
 
+<h4>Integration adoptions (planned)</h4>
+<p>Stakeholder-driven additions to the roadmap, captured here so the slice catalog reflects everything on deck — not just what was scoped at design time. Each row maps to one open issue. Categories indicate whether the item lands as a manifest-bearing slice (a new file in <code>docs/features/</code>), a foundation pass (no manifest — see the table above for the pattern), or a delivery artefact (experiment / write-up, lives under <code>experiments/</code>).</p>
+
+<table>
+  <thead><tr><th>Adoption</th><th>Category</th><th>Tracking</th><th>Acceptance shape</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Single <code>smartload.yml</code> client config</strong> — bootstraps metrics provider, LB type, orchestrator, service, SLO, strategy, backends from one file</td>
+      <td>Foundation pass — touches every service's config loader</td>
+      <td>#145</td>
+      <td>New client edits one file + <code>docker compose up -d</code>; no other file edits required. Existing <code>policy.yaml</code> + <code>.env</code> path keeps working during transition.</td>
+    </tr>
+    <tr>
+      <td><strong>Dry-run simulate endpoint</strong> — <code>POST /api/v1/actions/simulate</code> on autoscaler + anomaly-detector</td>
+      <td>Slice — extends <code>manual-actions.md</code> manifest with new HTTP + SDK + (optional) UI confirmation-preview surface</td>
+      <td>#146</td>
+      <td>Simulate path reuses the same validation as the real path; on success returns the Decision / envelope that <em>would</em> be applied without writing audit rows or publishing. SDK property test: failed simulate ⇔ failed real action with same <code>field</code> error.</td>
+    </tr>
+    <tr>
+      <td><strong>HAProxy adapter</strong> — implements <code>LoadBalancerAdapter</code> ABC for the existing stub folder</td>
+      <td>Foundation pass — drops the third plugin into the lb_adapters layer (NGINX shipped; Envoy / ALB remain stubs)</td>
+      <td>#147</td>
+      <td><code>LB_ADAPTER=haproxy docker compose up</code> works end-to-end; <code>tests/conformance/lb_adapter/</code> suite passes against HAProxy with the same assertions as NGINX.</td>
+    </tr>
+    <tr>
+      <td><strong>Baseline-LB vs SmartLoad benchmark</strong> — quantified comparison harness</td>
+      <td>Delivery artefact — experiment under <code>experiments/baseline-vs-smartload/</code>; not a feature slice</td>
+      <td>#148 (blocked on #82 — LB-reads-Redis sidecar)</td>
+      <td>Two compose profiles (baseline NGINX RR vs full SmartLoad) + Locust load profile with steady ramp / anomaly injection / sustained tail; CSV results + plots committed; visible delta on p95, error rate during anomaly, time-to-recover after isolation.</td>
+    </tr>
+    <tr>
+      <td><strong>Consolidated <code>GET /api/v1/status</code></strong> — single-call aggregator on the BFF</td>
+      <td>Slice — new public endpoint promoted from <code>/api/ui/health</code>; SDK + OpenAPI + UI Home page consumption</td>
+      <td>#149</td>
+      <td>Single read returns every service's <code>/health</code> + active policy + last audit row per stream. 200 always with per-service status; <code>overall ∈ {ok, degraded, down}</code> derived; fan-out completes under 3s even when one service hangs.</td>
+    </tr>
+    <tr>
+      <td><strong>Named-strategy aliases</strong> — industry-vocabulary switch over the existing <code>operating_mode</code> primitives</td>
+      <td>Slice — extends <code>policy-management.md</code> manifest with <code>POST /api/v1/policy/strategy</code> + derived <code>strategy_name</code> on GET</td>
+      <td>#150</td>
+      <td>Documented mapping table covers <code>round-robin · least-connections · latency-aware · forecast-aware · anomaly-aware · ai-hybrid · safe-fallback</code>. Roundtrip property test: set strategy → get policy returns the same name; non-matching primitive combinations return <code>"custom"</code>.</td>
+    </tr>
+  </tbody>
+</table>
+<p>None of these rework existing architecture. Four are net-new endpoints / files; the HAProxy adapter slots into the <code>LoadBalancerAdapter</code> ABC already in place; the <code>smartload.yml</code> bootstrap is read-once + additive over the existing config files (which continue to work as the canonical runtime store). Architectural choices held: microservices decomposition over single <code>main.py</code> (per §25.6 figures, for failure isolation); TimescaleDB feature store over direct Prometheus reads in engines (for explainable ML reproducibility, see §14.x); per-engine <code>RUNLOOP_ENABLED</code> flag composition over a global control switch (for finer-grained operator pause / resume).</p>
+
 </section>
 
 <!-- ========================================================================== -->

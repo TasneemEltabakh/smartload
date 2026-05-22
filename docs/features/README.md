@@ -56,20 +56,28 @@ Commands a reader can run to see the feature work end-to-end.
 ```
 
 ## Current manifests
-- [policy-management](policy-management.md) — read / write / audit the operating policy
+- [policy-management](policy-management.md) — read / write / audit the operating policy (slice #1, shipped 2026-05-14)
+- [audit-log](audit-log.md) — browse `policy_changes` + `scaling_events` history (slice #2, shipped 2026-05-21, #122)
+- [manual-actions](manual-actions.md) — operator overrides for scale + isolate, surfaced with `manual:<actor>:` audit prefix (slice #3, shipped 2026-05-22, #123)
 
 ## Planned slices
 
 The full slice catalog (with foundation dependencies and status) lives in SOT §25.9. Slices on deck:
 
-- **audit-log** — browse `policy_changes` + `scaling_events` history (#122)
 - **anomaly-detection** — real-time anomaly events on UI + SDK + webhooks (depends on #138 + #101)
 - **forecasting** — workload forecast drives the autoscaler; UI chart + CI band (depends on #138 + revised model PR)
 - **webhook-delivery** — HMAC-signed outbound HTTP for integrators who can't talk to Redis (#130; depends on #141 + #134)
 - **live-engines** — real-time engine state stream in operator UI (#121; depends on #138)
-- **manual-actions** — operator can scale / isolate from UI (#123; depends on audit-log slice pattern)
 - **rl-routing** — RL shadow → active routing recommendations (depends on #138 + #27 PPO training)
 - **embedded-metrics** — Grafana panels embedded in operator UI (#131)
+- **named-strategies** — `POST /api/v1/policy/strategy` alias endpoint over `operating_mode` primitives (#150; extends `policy-management.md`)
+- **simulate-actions** — `POST /api/v1/actions/simulate` dry-run endpoints (#146; extends `manual-actions.md`)
+- **status-aggregator** — consolidated `GET /api/v1/status` on the BFF (#149)
+
+Adjacent foundation passes and delivery artefacts also on deck — see SOT §25.9 *Integration adoptions* table:
+- `smartload.yml` consolidation (#145) — foundation pass, single client-config file
+- HAProxy adapter (#147) — foundation pass, implements the existing `LoadBalancerAdapter` ABC
+- Baseline-LB vs SmartLoad benchmark (#148) — delivery artefact under `experiments/`, blocked on #82
 
 ## Slice acceptance contract
 
