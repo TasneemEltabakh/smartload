@@ -640,12 +640,23 @@ upstream backend_pool {
 
 server {
     listen 80;
+
+    # Static health response — NGINX itself is up if this returns.
+    # Exact-match `=` so only `/health` is intercepted.
+    location = /health {
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"ok","service":"load-balancer"}';
+    }
+
     location / {
         proxy_pass http://backend_pool;
         proxy_next_upstream error timeout http_502 http_503 http_504;
     }
 }
 </code></pre>
+
+<p>The static <code>location = /health</code> was added 2026-05-22 to fix a Home-page bug: without it, the BFF's health probe at <code>/health</code> fell through to the proxy, hit a test-backend, and returned the Express convention <code>{"status":"healthy"}</code> instead of SmartLoad's canonical <code>{"status":"ok"}</code> — making the load-balancer pill red. The static location reports on NGINX itself; backend-pool health is a separate concern on <code>smartload.anomaly</code>.</p>
 
 <div class="grid-2">
   <div class="callout">
@@ -932,7 +943,7 @@ sequenceDiagram
   end
 </div>
 
-<p class="muted small">Same shape across services; only the query name, output dataclass, and channel differ. Implemented today in <code>services/anomaly-detector/app.py</code> + <code>runloop.py</code> and <code>services/forecasting/app.py</code> + <code>runloop.py</code>; rl-engine follows next via <code>policy_base</code>.</p>
+<p class="muted small">Same shape across services; only the query name, output dataclass, and channel differ. Implemented in all three: <code>services/anomaly-detector/app.py</code> + <code>runloop.py</code>, <code>services/forecasting/app.py</code> + <code>runloop.py</code>, <code>services/rl-engine/app.py</code> + <code>runloop.py</code>. The #138 cutover is complete.</p>
 
 <!-- ── 4.1 anomaly-detector ───────────────────────────────────────────── -->
 <div class="service-head">
@@ -955,6 +966,10 @@ sequenceDiagram
 <p>The pure-Python pieces live in <code>services/anomaly-detector/runloop.py</code> (engine bootstrap with fallback, policy payload parsing, row pivot, publish gate, payload shape) so they can be unit-tested without docker / Redis / DB. 18 unit tests at <code>tests/unit/anomaly-detector/test_runloop.py</code>.</p>
 
 <p>The Phase-0 stub is preserved as the default: <code>ANOMALY_RUNLOOP_ENABLED</code> defaults to <code>false</code> per #138's one-service-at-a-time safety strategy. <code>/health</code> adds three engine fields when the loop is enabled: <code>engine_type</code>, <code>engine_ready</code>, <code>last_inference_age_seconds</code>.</p>
+
+<h4>Manual isolate endpoint (slice #3, #123)</h4>
+
+<p>Also serves <code>POST /api/v1/isolate</code> for operator-driven overrides. The endpoint bypasses the engine + run loop entirely: validates <code>backend_id</code> + <code>status</code> (healthy / degraded / unhealthy), publishes a synthetic <code>AnomalyEvent</code> envelope tagged <code>model_version="manual:&lt;actor&gt;"</code> so subscribers can distinguish operator overrides from engine output, and writes a <code>backend_health</code> row directly. Useful for demoing anomaly-driven routing without inducing real backend failure.</p>
 
 <h4>Model handoff</h4>
 
@@ -1590,14 +1605,18 @@ flowchart LR
 <h4>Routes</h4>
 
 <table>
-  <thead><tr><th>Path</th><th>Behavior</th></tr></thead>
+  <thead><tr><th>Path</th><th>Behavior · slice</th></tr></thead>
   <tbody>
-    <tr><td><code>GET /api/ui/health</code></td><td>Fan out <code>/health</code> to 7 services in parallel; aggregate</td></tr>
-    <tr><td><code>GET /api/ui/policy</code></td><td>Proxy to policy-manager (verbatim body + status)</td></tr>
-    <tr><td><code>POST /api/ui/policy</code></td><td>Proxy + insert <code>X-Actor</code> if missing</td></tr>
-    <tr><td><code>GET /api/ui/audit/policy</code></td><td>Proxy with <code>limit</code> query param</td></tr>
+    <tr><td><code>GET /api/ui/health</code></td><td>Fan out <code>/health</code> to 7 services in parallel; aggregate. <span class="badge shipped">Slice #1</span></td></tr>
+    <tr><td><code>GET /api/ui/policy</code></td><td>Proxy to <code>policy-manager:8086/api/v1/policy</code> (verbatim body + status). <span class="badge shipped">Slice #1</span></td></tr>
+    <tr><td><code>POST /api/ui/policy</code></td><td>Proxy + insert <code>X-Actor: operator-ui</code> if absent. <span class="badge shipped">Slice #1</span></td></tr>
+    <tr><td><code>GET /api/ui/audit/policy</code></td><td>Proxy to <code>policy-manager</code> with <code>?limit</code>. <span class="badge shipped">Slice #1</span></td></tr>
+    <tr><td><code>GET /api/ui/audit/scaling</code></td><td>Proxy to <code>autoscaler:8085/api/v1/audit/scaling</code> with <code>?limit</code>. Different upstream than policy audit; the BFF normalises the two origins so the Audit page hits one URL space. <span class="badge shipped">Slice #2 (#122)</span></td></tr>
+    <tr><td><code>POST /api/ui/scale</code></td><td>Proxy to <code>autoscaler:8085/api/v1/scale</code>; injects <code>X-Actor</code>. <span class="badge shipped">Slice #3 (#123)</span></td></tr>
+    <tr><td><code>POST /api/ui/isolate</code></td><td>Proxy to <code>anomaly-detector:8082/api/v1/isolate</code>; injects <code>X-Actor</code>. <span class="badge shipped">Slice #3 (#123)</span></td></tr>
     <tr><td><code>GET /api/docs/</code></td><td>Swagger UI (blueprint)</td></tr>
     <tr><td><code>GET /api/openapi.yaml</code></td><td>Serves bind-mounted OpenAPI spec</td></tr>
+    <tr><td><code>GET /assets/*</code></td><td>Static Vite-built bundle. Flask's static handler is scoped to <code>/assets</code> (not <code>""</code>) so the SPA fallback below catches every other path. <strong>Without this scoping, direct URLs to <code>/policy</code>, <code>/audit</code>, <code>/actions</code> would 404 on hard refresh.</strong></td></tr>
     <tr><td><code>GET /*</code> (catch-all)</td><td>SPA fallback to <code>index.html</code></td></tr>
   </tbody>
 </table>

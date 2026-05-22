@@ -616,6 +616,17 @@ The autoscaler toggles backends 1..5 between running/stopped at runtime. NGINX k
 ```nginx
 server {
     listen 80;
+
+    # Static health response — NGINX itself is up if this returns.
+    # Backend-pool health is reported separately by anomaly-detector.
+    # Exact-match `=` so only `/health` is intercepted; `/healthz` and
+    # every other path still proxies.
+    location = /health {
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"ok","service":"load-balancer"}';
+    }
+
     location / {
         proxy_pass http://backend_pool;
         proxy_next_upstream error timeout http_502 http_503 http_504;
@@ -626,6 +637,8 @@ server {
 ```
 
 `proxy_next_upstream` is the *graceful failure*: if the chosen backend returns a 5xx or times out, NGINX retries the next backend instead of returning the error to the client. Without this, autoscaler-induced stops would surface as 502s.
+
+The static `location = /health` was added 2026-05-22 to fix a long-standing operator-UI bug: without it, the BFF's health probe at `/health` fell through to the proxy, got round-robin'd to a test-backend, and returned the Express convention `{"status":"healthy"}` instead of SmartLoad's canonical `{"status":"ok"}`. The Home page rendered the load-balancer pill red as a result. The static location reports on NGINX itself; backend-pool health is a separate concern carried by `smartload.anomaly`. `access_log off;` keeps the BFF's 10-s poll from flooding the JSON log + shipper sidecar's OTLP stream.
 
 ### 3.2 `lb-otel-shipper` — log tail → OTLP
 
@@ -1153,13 +1166,15 @@ sequenceDiagram
   end
 ```
 
-Same shape across services; only the query name, output dataclass, and channel differ. Implemented today in `services/anomaly-detector/app.py` + `runloop.py` and `services/forecasting/app.py` + `runloop.py`; rl-engine follows next via `policy_base`.
+Same shape across services; only the query name, output dataclass, and channel differ. All three services run this pattern today: `services/anomaly-detector/app.py` + `runloop.py`, `services/forecasting/app.py` + `runloop.py`, and `services/rl-engine/app.py` + `runloop.py`. The #138 engine-wrapper cutover is complete.
 
 ### 4.1 `anomaly-detector` (plugin-per-engine)
 
 #### What it is
 
 Classifies each backend as `healthy` / `degraded` / `unhealthy` from latency + error-rate features. Publishes `AnomalyEvent` envelopes to `smartload.anomaly`. As of #138 round 1, the service runs a real inference loop (behind `ANOMALY_RUNLOOP_ENABLED=true`) using the configured engine; the threshold baseline ships today, and the Isolation Forest plugin scaffold awaits the trained model from #101.
+
+Also serves `POST /api/v1/isolate` (slice #3, #123 — manual operator override). The endpoint bypasses the run loop, publishes a synthetic `AnomalyEvent` envelope tagged `model_version="manual:<actor>"`, and writes a `backend_health` row directly. Useful for demoing anomaly-driven routing without inducing real failure.
 
 #### Files
 
@@ -1543,7 +1558,7 @@ The README spells out the mode transition: "When the policy is loaded and `opera
 
 #### What it is
 
-The only fully-wired decision-plane service. Subscribes to `smartload.forecast` and `smartload.policy`, makes scale decisions, calls Docker SDK to start/stop test-backend containers, writes audit rows to `scaling_events`, publishes `ScalingEvent` to `smartload.scale`. Also serves `GET /api/v1/audit/scaling` for the audit-log slice (#122).
+The only fully-wired decision-plane service. Subscribes to `smartload.forecast` and `smartload.policy`, makes scale decisions, calls Docker SDK to start/stop test-backend containers, writes audit rows to `scaling_events`, publishes `ScalingEvent` to `smartload.scale`. Also serves `GET /api/v1/audit/scaling` (slice #2, #122) and `POST /api/v1/scale` (slice #3, #123 — manual operator override that bypasses cooldown and writes one `scaling_events` row prefixed `manual:<actor>:`).
 
 #### Files
 
@@ -2213,9 +2228,11 @@ The README spells out the dependency chain: depends on #129 (multi-tenancy), #13
 
 A Flask "backend-for-frontend" that:
 - aggregates `/health` from every service for the Home page,
-- proxies `/api/ui/policy` and `/api/ui/audit/policy` to policy-manager,
-- serves Swagger UI at `/api/docs`,
-- serves the React build at `/` in production.
+- proxies `/api/ui/policy` + `/api/ui/audit/policy` to policy-manager (slice #1),
+- proxies `/api/ui/audit/scaling` to autoscaler (slice #2),
+- proxies `/api/ui/scale` to autoscaler and `/api/ui/isolate` to anomaly-detector (slice #3),
+- serves Swagger UI at `/api/docs` against the canonical OpenAPI spec,
+- serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/policy`, `/audit`, `/actions` 404 on hard refresh).
 
 #### Files
 
