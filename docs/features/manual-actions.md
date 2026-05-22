@@ -1,6 +1,6 @@
 # Manual Actions
 
-> **Vertical Slice #3 — backend pass shipped 2026-05-21.** Operator-driven override surface: scale-to-target and synthetic-anomaly. Reuses the audit pattern from slice #2 so every manual action lands in the same `/audit` page. UI page lands in the follow-up.
+> **Vertical Slice #3 — shipped 2026-05-22.** Operator-driven override surface: scale-to-target and synthetic-anomaly. Reuses the audit pattern from slice #2 so every manual action lands in the same `/audit` page. Backend + UI + scenario + e2e all green.
 
 ## What this slice delivers
 
@@ -30,7 +30,7 @@ Both actions write into the existing audit streams; the Audit page (slice #2) sh
 - `SmartLoadClient` gains an `anomaly_detector_url` constructor parameter (env: `SMARTLOAD_ANOMALY_DETECTOR_URL`, default `http://localhost:8082`) for isolate-call routing
 - OpenAPI: `/api/v1/scale` + `/api/v1/isolate` paths and four new schemas (`ManualScaleRequest`, `ManualScaleResponse`, `ManualIsolateRequest`, `ManualIsolateResponse`)
 - Audit storage: existing `scaling_events` + `backend_health` hypertables (no schema change)
-- UI: `services/operator-ui/web/src/pages/Actions.tsx` (pending — UI sub-pass)
+- UI: `services/operator-ui/web/src/pages/Actions.tsx` — two forms (scale + isolate) plus a disabled-placeholder "Force route weights" form (depends on T2.1); confirmation modal per action with state-change preview; results feed of the last 10 actions; live policy bounds shown in the header
 
 ## Status
 
@@ -42,10 +42,10 @@ Both actions write into the existing audit streams; the Audit page (slice #2) sh
 - [x] `SmartLoadClient.anomaly_detector_url` parameter + env-var override
 - [x] 15 unit tests for `plan_manual_scale` (validation, direction, reason composition)
 - [x] 11 unit tests for the SDK actions surface
-- [ ] UI page `services/operator-ui/web/src/pages/Actions.tsx` with confirmation modals (sub-pass)
-- [ ] Scenario script `examples/scenarios/manual-actions/manual_actions_walk.py`
-- [ ] E2E test suite `tests/e2e/manual-actions/`
-- [ ] §25.9 slice-catalog row flipped to *Shipped*
+- [x] UI page `services/operator-ui/web/src/pages/Actions.tsx` — scale + isolate forms with confirmation modals, results feed, live policy bounds; "Force route weights" placeholder form disabled with T2.1 tooltip
+- [x] Scenario script `examples/scenarios/manual-actions/manual_actions_walk.py` — 8-step walk: read policy bounds → pick in-band target → scale → confirm audit row → reject out-of-band → isolate → reject bad status → restore baseline
+- [x] E2E test suite `tests/e2e/manual-actions/test_manual_actions.py` (11 tests) — scale bounds + noop + audit round-trip, isolate happy/bad-status/empty-backend-id, BFF proxy parity for both endpoints
+- [x] §25.9 slice-catalog row flipped to *Shipped*
 
 Open follow-ups (out of scope for this slice):
 - "Force route weights" form — depends on T2.1 sidecar (#82)

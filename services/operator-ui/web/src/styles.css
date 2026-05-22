@@ -230,6 +230,40 @@ table td.empty {
   border-color: var(--accent);
 }
 
+.small { font-size: 11px; }
+
+/* Confirmation modal (Manual Actions page) */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  width: min(520px, 90vw);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.modal h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.modal p.meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 8px;
+  line-height: 1.6;
+}
+
 /* Scaling-action badges */
 .badge-action {
   display: inline-block;

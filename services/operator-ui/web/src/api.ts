@@ -42,6 +42,30 @@ export interface ScalingAuditRow {
   reason: string | null;
 }
 
+export interface ManualScaleResponse {
+  status: "applied" | "noop";
+  action: "scale_out" | "scale_in" | "noop";
+  target_count: number;
+  previous_count: number;
+  final_count: number;
+  steps_actuated: number;
+  steps_requested: number;
+  reason: string;
+  event_id: string;
+}
+
+export type IsolateStatus = "healthy" | "degraded" | "unhealthy";
+
+export interface ManualIsolateResponse {
+  status: "applied";
+  backend_id: string;
+  anomaly_status: IsolateStatus;
+  score: number;
+  actor: string;
+  reason: string;
+  event_id: string;
+}
+
 export interface ServiceHealth {
   status: "ok" | "degraded" | "unreachable" | string;
   status_code: number | null;
@@ -94,4 +118,28 @@ export const api = {
 
   auditScaling: (limit = 50) =>
     _fetchJson<ScalingAuditRow[]>(`/api/ui/audit/scaling?limit=${limit}`),
+
+  scale: (target_count: number, actor: string, reason?: string) =>
+    _fetchJson<ManualScaleResponse>("/api/ui/scale", {
+      method: "POST",
+      headers: { "X-Actor": actor },
+      body: JSON.stringify({ target_count, actor, ...(reason ? { reason } : {}) }),
+    }),
+
+  isolate: (
+    backend_id: string,
+    status: IsolateStatus,
+    actor: string,
+    reason?: string,
+  ) =>
+    _fetchJson<ManualIsolateResponse>("/api/ui/isolate", {
+      method: "POST",
+      headers: { "X-Actor": actor },
+      body: JSON.stringify({
+        backend_id,
+        status,
+        actor,
+        ...(reason ? { reason } : {}),
+      }),
+    }),
 };
