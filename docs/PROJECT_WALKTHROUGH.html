@@ -1197,7 +1197,7 @@ flowchart TD
 
 <h4>Model handoff</h4>
 
-<p><code>PPOPolicy</code> is implemented at <code>policies/ppo/policy.py</code> and registered in <code>policy_base.select_policy()</code>. Operator activation sequence: (1) run <code>python training/train_ppo.py</code> to produce <code>services/rl-engine/models/policy.zip</code> + <code>artifact_meta.json</code> (~7-day budget; a 50k-step canary gate runs first); (2) set <code>RL_POLICY=ppo RL_RUNLOOP_ENABLED=true</code> and restart the container; (3) verify shadow envelopes on <code>smartload.routing</code> before setting <code>policy.yaml: operating_mode: hybrid</code> to go active. No <code>app.py</code> changes required. The fallback-to-baseline path is automatic if <code>policy.zip</code> is absent (<code>policy_ready=false</code> on <code>/health</code>).</p>
+<p><code>PPOPolicy</code> is implemented at <code>policies/ppo/policy.py</code> and registered in <code>policy_base.select_policy()</code>. <strong>Training is complete</strong> — <code>services/rl-engine/models/policy.zip</code> (156 KB, 2M steps, ~75 min CPU) and <code>artifact_meta.json</code> (<code>latency_scale=100.0</code>) are committed. Eval on 20 held-out episodes: PPO mean_reward&nbsp;=&nbsp;-0.0056, ties round_robin (joint best); SLO violation rate 0. Operator activation sequence: (1) set <code>RL_POLICY=ppo RL_RUNLOOP_ENABLED=true</code> and restart the container; (2) verify shadow envelopes on <code>smartload.routing</code> before setting <code>policy.yaml: operating_mode: hybrid</code> to go active. No <code>app.py</code> changes required. The fallback-to-baseline path is automatic if <code>policy.zip</code> is absent (<code>policy_ready=false</code> on <code>/health</code>).</p>
 
 <h4>Policy contract</h4>
 
