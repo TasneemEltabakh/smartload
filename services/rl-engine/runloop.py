@@ -77,12 +77,14 @@ class EnginePolicy:
     Built from a smartload.policy envelope payload or from defaults at
     startup. The RL policy's constructor consumes whichever kwargs match
     its signature — random_shadow ignores all of these; a trained PPO
-    plugin can read rl_exploration_rate / rl_confidence_threshold.
+    plugin can read rl_exploration_rate / rl_confidence_threshold /
+    operating_mode.
     """
     rl_confidence_threshold: float = DEFAULT_RL_CONFIDENCE_THRESHOLD
     rl_exploration_rate:     float = DEFAULT_RL_EXPLORATION_RATE
     safe_mode:               bool  = False
     policy_version:          int   = 0
+    operating_mode:          str   = "shadow"  # "shadow" | "hybrid" | "learning"
 
     def policy_kwargs(self) -> dict:
         """Kwargs passed to select_policy(). Policies that don't take these
@@ -90,6 +92,7 @@ class EnginePolicy:
         return {
             "confidence_threshold": self.rl_confidence_threshold,
             "exploration_rate":     self.rl_exploration_rate,
+            "operating_mode":       self.operating_mode,
         }
 
 
@@ -111,6 +114,16 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         except (TypeError, ValueError):
             return default
 
+    # Map "classical" → "shadow" for backwards-compat with policy.yaml values
+    # that predate the operating_mode field (Amendment B).
+    _raw_mode = payload.get("operating_mode", fallback.operating_mode)
+    if _raw_mode == "classical":
+        _op_mode = "shadow"
+    elif _raw_mode in ("shadow", "hybrid", "learning"):
+        _op_mode = _raw_mode
+    else:
+        _op_mode = fallback.operating_mode
+
     return EnginePolicy(
         rl_confidence_threshold=_float("rl_confidence_threshold",
                                        fallback.rl_confidence_threshold),
@@ -118,6 +131,7 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
                                    fallback.rl_exploration_rate),
         safe_mode=bool(payload.get("safe_mode", fallback.safe_mode)),
         policy_version=_int("policy_version", fallback.policy_version),
+        operating_mode=_op_mode,
     )
 
 

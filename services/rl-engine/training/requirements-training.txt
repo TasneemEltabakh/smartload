@@ -1,0 +1,12 @@
+# Training-only dependencies — NOT installed in the runtime Docker image.
+# Install locally before running train_ppo.py or eval_harness.py:
+#   pip install -r services/rl-engine/training/requirements-training.txt
+
+gymnasium>=0.29.0
+stable-baselines3>=2.3.0
+sb3-contrib>=2.3.0
+pandas>=2.0.0
+numpy>=1.24.0
+# torch is pulled transitively by stable-baselines3.
+# For CPU-only installs use:
+#   pip install torch --extra-index-url https://download.pytorch.org/whl/cpu

@@ -76,15 +76,24 @@ ORDER BY bucket ASC;
 # build the RL state vector.
 #
 # Parameters:
-#   $1 window — text interval, e.g. "30 seconds"
+#   $1 window   — text interval, e.g. "30 seconds"
+#   $2 service  — text, e.g. "load-balancer"  (use RL_DEFAULT_SERVICE)
+#
+# error_rate uses AVG (not MAX): lb-otel-shipper emits 0.0 or 1.0 per request,
+# so MAX would return binary 0/1 and over-classify backends as unhealthy on any
+# single error. AVG yields the true decimal error fraction over the window.
+#
+# service filter matches ANOMALY_QUERY pattern (SOT §11 "Canonical service
+# filter rule") to prevent cross-service instance name collisions.
 RL_STATE_QUERY = """
 SELECT
     instance,
     AVG(CASE WHEN metric_name = 'request_latency_ms' THEN value END) AS latency,
     SUM(CASE WHEN metric_name = 'request_count'      THEN value END) AS request_count,
-    MAX(CASE WHEN metric_name = 'error_rate'         THEN value END) AS error_rate
+    AVG(CASE WHEN metric_name = 'error_rate'         THEN value END) AS error_rate
 FROM metrics
 WHERE time > NOW() - %s::interval
+  AND service = %s
 GROUP BY instance
 ORDER BY instance;
 """
@@ -182,3 +191,8 @@ REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events", "policy_change
 # specific reason to query a different metric set.
 ANOMALY_METRIC_NAMES = ["request_latency_ms", "error_rate"]
 ANOMALY_DEFAULT_SERVICE = "load-balancer"
+
+# ── canonical default for RL_STATE_QUERY callers ──────────────────────────────
+# Pass as the second bind parameter to RL_STATE_QUERY. Matches
+# ANOMALY_DEFAULT_SERVICE so both engines reason about the same service.
+RL_DEFAULT_SERVICE = "load-balancer"

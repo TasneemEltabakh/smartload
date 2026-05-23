@@ -2940,9 +2940,9 @@ cur.execute(ANOMALY_QUERY,
   <thead><tr><th>Phase</th><th>Task</th><th>Behavior</th></tr></thead>
   <tbody>
     <tr><td>1A (S2)</td><td>N1.3 shadow scaffold</td><td>Random policy; publishes <code>RoutingRecommendation{ mode="shadow" }</code>. <em>Validates the full pipeline before any model exists.</em></td></tr>
-    <tr><td>2 (S4)</td><td>N2.3 — Gym env</td><td><code>SmartLoadEnv</code> in <code>services/rl-engine/env.py</code>: state=[latency, queue_depth, health_flag] per backend; action=discrete backend selection; reward = <code>−P95_latency − λ · load_imbalance</code>; episode = workload trace.</td></tr>
-    <tr><td>2 (S4)</td><td>N2.4 — PPO training <span class="badge badge-active">CRITICAL PATH</span></td><td>Stable-Baselines3 PPO; ~7 days; reward curves until convergence; saved to <code>services/rl-engine/models/policy.zip</code>.</td></tr>
-    <tr><td>2 (S4)</td><td>N2.5 — active mode</td><td>Loads <code>policy.zip</code>; switches <code>mode</code> to <code>active</code> when policy operating mode = <code>hybrid</code>; T2.1 sidecar consumes scores.</td></tr>
+    <tr><td>2 (S4)</td><td>N2.3 — Gym env</td><td><code>SmartLoadEnv</code> in <code>services/rl-engine/training/env.py</code> (training-only; excluded from runtime Docker image): state=[latency, queue_depth, health_flag] per backend; action=discrete backend selection; reward = <code>−P95_latency − λ · load_imbalance</code> (reward uses <code>next_state</code> latency for correct credit assignment); episode = workload trace. <code>obs_builder.py</code> at the service root is the shared train/serve conversion layer.</td></tr>
+    <tr><td>2 (S4)</td><td>N2.4 — PPO training <span class="badge badge-active">CRITICAL PATH</span></td><td>Stable-Baselines3 PPO; ~7 days; reward curves until convergence; saved to <code>services/rl-engine/models/policy.zip</code>. Canary check (50k steps) gates the full budget. Acceptance: PPO beats round_robin AND least_connections on p95 latency and SLO violation rate.</td></tr>
+    <tr><td>2 (S4)</td><td>N2.5 — active mode</td><td>Loads <code>policy.zip</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>} — shadow runs full inference non-actuating; hybrid/learning emit <code>mode=active</code>. T2.1 sidecar consumes scores.</td></tr>
   </tbody>
 </table>
 <h4>Inputs / Outputs</h4>
@@ -2970,7 +2970,7 @@ cur.execute(ANOMALY_QUERY,
         <li>Run a 5 s inference cycle.</li>
         <li>Publish <code>RoutingRecommendation</code> on <code>smartload.routing</code>.</li>
         <li>Operate in <code>shadow</code> mode by default; switch to <code>active</code> only when policy permits.</li>
-        <li>Own its model artifact (<code>policy.zip</code>) and Gym env (<code>SmartLoadEnv</code>).</li>
+        <li>Own its model artifact (<code>policy.zip</code>) and Gym env (<code>SmartLoadEnv</code> in <code>services/rl-engine/training/env.py</code> — training-only, excluded from runtime image).</li>
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Non-responsibilities</div><div class="val">Must NOT see UNHEALTHY backends in its action space (anomaly excludes them upstream). Must NOT proxy traffic itself. Must NOT bypass <code>safe_mode</code>. Must NOT do online learning in the prototype.</div></div>
@@ -4833,7 +4833,7 @@ flowchart LR
     <tr><td><strong>AI services runtime</strong></td><td>Python 3.11-slim + Flask 3.0.3</td><td><span class="pill pill-done">Implemented</span></td><td>Per-service Dockerfile; <code>psycopg2-binary 2.9.9</code> + <code>redis 5.0.4</code>.</td></tr>
     <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td>Threshold rule first; LSTM-AE as backup if F1 &lt; 0.80.</td></tr>
     <tr><td><strong>Forecasting model</strong></td><td>Prophet or ARIMA (statsmodels)</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td>Moving average first; LSTM optional.</td></tr>
-    <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-upcoming">Phase 2 (N2.4)</span></td><td>Custom Gym env <code>SmartLoadEnv</code>; DQN as fallback.</td></tr>
+    <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-done">N2.3–N2.5 code complete</span></td><td>Custom Gym env <code>SmartLoadEnv</code> + <code>obs_builder.py</code> (shared train/serve); <code>PPOPolicy</code> serving plugin; <code>MaskablePPO</code> training script with 50k-step canary gate; <code>round_robin</code> + <code>least_connections</code> baselines; reproducible eval harness (<code>eval_seed_bank.json</code>). DQN fallback (<code>train_dqn.py</code>) ready. <strong>Pending:</strong> ~7-day training run to generate <code>policy.zip</code>.</td></tr>
     <tr><td><strong>Metrics DB</strong></td><td>TimescaleDB (PostgreSQL 16)</td><td><span class="pill pill-done">Implemented</span></td><td>Hypertables + continuous aggregates planned in V1 redesign (draft).</td></tr>
     <tr><td><strong>Control bus</strong></td><td>Redis 7-alpine Pub/Sub</td><td><span class="pill pill-done">Implemented</span></td><td>In-memory only; <code>allkeys-lru</code>.</td></tr>
     <tr><td><strong>Telemetry SDK</strong></td><td>OpenTelemetry SDK</td><td><span class="pill pill-done">Implemented</span></td><td>OTel Collector batches OTLP → Prometheus + (Phase 1) TimescaleDB.</td></tr>
@@ -5280,8 +5280,9 @@ flowchart LR
     <tr><td>Data loader utilities <strong>(critical)</strong></td><td>Rghda</td><td><span class="pill pill-next">Phase 1B (R1.4)</span></td><td><code>datasets/loaders.py</code></td><td>By May 23</td></tr>
     <tr><td>Anomaly detection model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td><code>services/anomaly-detector/models/</code></td><td>—</td></tr>
     <tr><td>Forecasting model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td><code>services/forecasting/models/</code></td><td>—</td></tr>
-    <tr><td>RL training environment</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.3)</span></td><td><code>services/rl-engine/env.py</code></td><td>—</td></tr>
-    <tr><td>RL trained policy</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.4)</span></td><td><code>services/rl-engine/models/policy.zip</code></td><td>~7 day training run</td></tr>
+    <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
+    <tr><td>RL training scripts + baselines (N2.4)</td><td>Nada</td><td><span class="pill pill-done">Code complete; training pending</span></td><td><code>train_ppo.py</code> (MaskablePPO, 50k canary gate), <code>train_dqn.py</code> (fallback); <code>round_robin</code> + <code>least_connections</code> policies; <code>eval_harness.py</code> + <code>eval_seed_bank.json</code>. <strong>Pending:</strong> <code>services/rl-engine/models/policy.zip</code> — ~7-day training run on Alibaba dataset.</td><td>~7 day training run</td></tr>
+    <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>}; shadow runs full inference non-actuating; <code>reload()</code> raises <code>NotImplementedError</code> (restart to swap artifact); runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
     <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-upcoming">Phase 2 (T2.1)</span></td><td>—</td><td>Phase 2 build</td></tr>
     <tr><td>Phase 0 integration tests (33)</td><td>Tasneem</td><td><span class="pill pill-done">33/33 passing</span></td><td><code>tests/integration/test_pipeline_health.py</code></td><td>—</td></tr>
     <tr><td>Phase 3A integration tests (3 scenarios)</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (T2.3)</span></td><td>—</td><td>—</td></tr>

@@ -1,0 +1,19 @@
+{
+  "git_sha": "aec62f8",
+  "eval_date": "2026-05-23T05:50:28.477749+00:00",
+  "seed_bank_sha": "5540ac43cde9e04cce8d4b27ed98de64",
+  "dataset_partition_hashes": {
+    "partition_id=-1.csv": "5363275ff8497bee8bf8b0f141d27b89",
+    "partition_id=-10.csv": "008c1890bfd4580448b9270d15ee7792",
+    "partition_id=-100.csv": "dba350ebc258cdfc80984db8555ea167",
+    "partition_id=-101.csv": "b1ac4daced5614357001ce2090e9146c",
+    "partition_id=-102.csv": "5b551227b029391d7f1c7d592d35545f",
+    "partition_id=-103.csv": "19c16aed58835c9476794e76a34e480c",
+    "partition_id=-104.csv": "b41fca4700b4b9a0de1b7e9989da894e",
+    "partition_id=-105.csv": "d1070ed54f4c4b4bc71dbd06001b4b71",
+    "partition_id=-106.csv": "1564979da22a40d7d86d351241d529a0",
+    "partition_id=-107.csv": "501c3b8a6489c476dc79018696fa4b04"
+  },
+  "train_eval_split_idx": 51794,
+  "n_rows": 60
+}

@@ -1,0 +1,171 @@
+{
+  "_comment": "Fixed eval episodes. First 20 used for evaluation; last 5 are reserve.",
+  "train_eval_split_idx": 51794,
+  "split_ts": 34183622,
+  "n_backends": 5,
+  "window_ms": 30000,
+  "partitions": [
+    "partition_id=-1.csv",
+    "partition_id=-10.csv",
+    "partition_id=-100.csv",
+    "partition_id=-101.csv",
+    "partition_id=-102.csv",
+    "partition_id=-103.csv",
+    "partition_id=-104.csv",
+    "partition_id=-105.csv",
+    "partition_id=-106.csv",
+    "partition_id=-107.csv"
+  ],
+  "episodes": [
+    {
+      "episode_id": 0,
+      "dataset_start_idx": 52604,
+      "start_ts": 34756982,
+      "seed": 1631871624
+    },
+    {
+      "episode_id": 1,
+      "dataset_start_idx": 52638,
+      "start_ts": 34793843,
+      "seed": 417983442
+    },
+    {
+      "episode_id": 2,
+      "dataset_start_idx": 52880,
+      "start_ts": 34955793,
+      "seed": 781482251
+    },
+    {
+      "episode_id": 3,
+      "dataset_start_idx": 52911,
+      "start_ts": 34985489,
+      "seed": 1002275723
+    },
+    {
+      "episode_id": 4,
+      "dataset_start_idx": 52931,
+      "start_ts": 35011409,
+      "seed": 1068999196
+    },
+    {
+      "episode_id": 5,
+      "dataset_start_idx": 52942,
+      "start_ts": 35029750,
+      "seed": 94067870
+    },
+    {
+      "episode_id": 6,
+      "dataset_start_idx": 53452,
+      "start_ts": 35334647,
+      "seed": 1173749072
+    },
+    {
+      "episode_id": 7,
+      "dataset_start_idx": 53919,
+      "start_ts": 35668108,
+      "seed": 331334161
+    },
+    {
+      "episode_id": 8,
+      "dataset_start_idx": 54135,
+      "start_ts": 35823723,
+      "seed": 1596387605
+    },
+    {
+      "episode_id": 9,
+      "dataset_start_idx": 54388,
+      "start_ts": 35993707,
+      "seed": 1466836457
+    },
+    {
+      "episode_id": 10,
+      "dataset_start_idx": 54727,
+      "start_ts": 36225228,
+      "seed": 1981113450
+    },
+    {
+      "episode_id": 11,
+      "dataset_start_idx": 55322,
+      "start_ts": 36670145,
+      "seed": 1599364551
+    },
+    {
+      "episode_id": 12,
+      "dataset_start_idx": 56185,
+      "start_ts": 37368829,
+      "seed": 787359109
+    },
+    {
+      "episode_id": 13,
+      "dataset_start_idx": 56402,
+      "start_ts": 37515024,
+      "seed": 2077711329
+    },
+    {
+      "episode_id": 14,
+      "dataset_start_idx": 56805,
+      "start_ts": 37799078,
+      "seed": 882294417
+    },
+    {
+      "episode_id": 15,
+      "dataset_start_idx": 57179,
+      "start_ts": 38074009,
+      "seed": 699704628
+    },
+    {
+      "episode_id": 16,
+      "dataset_start_idx": 57313,
+      "start_ts": 38126686,
+      "seed": 1944623249
+    },
+    {
+      "episode_id": 17,
+      "dataset_start_idx": 57384,
+      "start_ts": 38167437,
+      "seed": 795556160
+    },
+    {
+      "episode_id": 18,
+      "dataset_start_idx": 57408,
+      "start_ts": 38187862,
+      "seed": 163945743
+    },
+    {
+      "episode_id": 19,
+      "dataset_start_idx": 57492,
+      "start_ts": 38230074,
+      "seed": 1008363426
+    },
+    {
+      "episode_id": 20,
+      "dataset_start_idx": 57492,
+      "start_ts": 38230736,
+      "seed": 1708709736
+    },
+    {
+      "episode_id": 21,
+      "dataset_start_idx": 58171,
+      "start_ts": 38678989,
+      "seed": 406886645
+    },
+    {
+      "episode_id": 22,
+      "dataset_start_idx": 58309,
+      "start_ts": 38794660,
+      "seed": 994157307
+    },
+    {
+      "episode_id": 23,
+      "dataset_start_idx": 58580,
+      "start_ts": 38913726,
+      "seed": 279004308
+    },
+    {
+      "episode_id": 24,
+      "dataset_start_idx": 58870,
+      "start_ts": 39083981,
+      "seed": 1474200732
+    }
+  ]
+}

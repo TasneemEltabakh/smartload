@@ -269,6 +269,7 @@ def test_engine_policy_defaults():
     assert p.rl_exploration_rate == DEFAULT_RL_EXPLORATION_RATE
     assert p.safe_mode is False
     assert p.policy_version == 0
+    assert p.operating_mode == "shadow"
 
 
 def test_policy_kwargs_includes_constructor_params():
@@ -276,4 +277,29 @@ def test_policy_kwargs_includes_constructor_params():
     assert p.policy_kwargs() == {
         "confidence_threshold": 0.9,
         "exploration_rate":     0.2,
+        "operating_mode":       "shadow",
     }
+
+
+def test_policy_from_payload_classical_maps_to_shadow():
+    """policy.yaml: operating_mode=classical → internal shadow (Amendment B)."""
+    new = policy_from_payload({"operating_mode": "classical"}, fallback=EnginePolicy())
+    assert new.operating_mode == "shadow"
+
+
+def test_policy_from_payload_operating_mode_passthrough():
+    for mode in ("shadow", "hybrid", "learning"):
+        new = policy_from_payload({"operating_mode": mode}, fallback=EnginePolicy())
+        assert new.operating_mode == mode
+
+
+def test_policy_from_payload_unknown_mode_falls_back():
+    fallback = EnginePolicy(operating_mode="hybrid")
+    new = policy_from_payload({"operating_mode": "nonsense"}, fallback=fallback)
+    assert new.operating_mode == "hybrid"
+
+
+def test_policy_from_payload_missing_mode_uses_fallback():
+    fallback = EnginePolicy(operating_mode="learning")
+    new = policy_from_payload({}, fallback=fallback)
+    assert new.operating_mode == "learning"

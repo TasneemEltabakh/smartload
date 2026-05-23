@@ -1193,11 +1193,11 @@ flowchart TD
   class PUB_A active
 </div>
 
-<p class="muted small">Default-shadow is the safe state; the trained policy alone cannot escalate. 26 unit tests at <code>tests/unit/rl-engine/test_runloop.py</code> cover every cell of this truth table.</p>
+<p class="muted small">Default-shadow is the safe state; the trained policy alone cannot escalate. 30 unit tests at <code>tests/unit/rl-engine/test_runloop.py</code> cover every cell of this truth table including the <code>operating_mode</code> mapping (Amendment B).</p>
 
 <h4>Model handoff</h4>
 
-<p>To swap in a trained PPO policy: drop <code>services/rl-engine/models/policy.zip</code>, implement <code>policies/ppo/policy.py</code> with <code>class PPOPolicy(RoutingPolicy)</code> exposing <code>act(state) -&gt; RoutingAction</code>, register the name in <code>policy_base.select_policy()</code>, set <code>RL_POLICY=ppo</code> in the deployment env. To take recommendations live, also set <code>RL_MODE=active</code> and ensure PPO returns <code>mode="active"</code> — both gates must agree. No <code>app.py</code> changes. The fallback-to-baseline path is automatic if the artifact is missing or malformed.</p>
+<p><code>PPOPolicy</code> is implemented at <code>policies/ppo/policy.py</code> and registered in <code>policy_base.select_policy()</code>. Operator activation sequence: (1) run <code>python training/train_ppo.py</code> to produce <code>services/rl-engine/models/policy.zip</code> + <code>artifact_meta.json</code> (~7-day budget; a 50k-step canary gate runs first); (2) set <code>RL_POLICY=ppo RL_RUNLOOP_ENABLED=true</code> and restart the container; (3) verify shadow envelopes on <code>smartload.routing</code> before setting <code>policy.yaml: operating_mode: hybrid</code> to go active. No <code>app.py</code> changes required. The fallback-to-baseline path is automatic if <code>policy.zip</code> is absent (<code>policy_ready=false</code> on <code>/health</code>).</p>
 
 <h4>Policy contract</h4>
 

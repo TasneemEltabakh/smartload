@@ -47,6 +47,7 @@ from services.shared.queries import (
     BACKEND_HEALTH_QUERY,
     FORECAST_QUERY,
     METRICS_INSERT,
+    RL_DEFAULT_SERVICE,
     RL_STATE_QUERY,
 )
 
@@ -238,6 +239,24 @@ class TestCanonicalSQLParameterization:
 
     def test_rl_state_query_uses_parameterized_interval(self):
         assert "%s::interval" in RL_STATE_QUERY
+        # Service filter must be parameterised to prevent cross-service
+        # instance name collisions (parity with ANOMALY_QUERY).
+        assert "service = %s" in RL_STATE_QUERY
+
+    def test_rl_state_query_error_rate_uses_avg_not_max(self):
+        # lb-otel-shipper emits 0.0 or 1.0 per request; MAX returns binary
+        # 0/1, over-classifying backends as unhealthy on any single error.
+        # AVG yields the true decimal error fraction over the window.
+        lines = RL_STATE_QUERY.splitlines()
+        error_rate_lines = [l for l in lines if "error_rate" in l]
+        assert error_rate_lines, "error_rate column not found in RL_STATE_QUERY"
+        # The aggregation line must use AVG, not MAX
+        agg_line = error_rate_lines[0]
+        assert "AVG" in agg_line, f"expected AVG for error_rate, got: {agg_line.strip()}"
+        assert "MAX" not in agg_line, f"MAX must not aggregate error_rate: {agg_line.strip()}"
+
+    def test_rl_defaults_match_canonical(self):
+        assert RL_DEFAULT_SERVICE == "load-balancer"
 
     def test_backend_health_query_uses_parameterized_interval(self):
         assert "%s::interval" in BACKEND_HEALTH_QUERY

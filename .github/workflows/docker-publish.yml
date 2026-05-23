@@ -199,6 +199,38 @@ jobs:
         run: docker rm -f test-backend
 
 
+  runtime-import-smoke:
+    # Builds the rl-engine runtime image and asserts that serving imports do NOT
+    # pull in any training.* module (Amendment A — training/serving separation).
+    # Runs after the image is confirmed to build but before the full compose test.
+    runs-on: ubuntu-latest
+    needs: build-services
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build rl-engine runtime image
+        run: docker build -t smartload-rl-engine-smoke -f services/rl-engine/Dockerfile ./services
+
+      - name: Assert serving imports don't pull in training code
+        run: |
+          docker run --rm smartload-rl-engine-smoke python -c "
+          import sys
+          import app
+          # PPOPolicy is the main serving consumer of obs_builder + SB3
+          try:
+              import policies.ppo.policy
+          except Exception:
+              pass  # policy.zip absent in CI; import path is what matters
+          training_mods = [m for m in sys.modules if m.startswith('training')]
+          if training_mods:
+              print('FAIL: training modules leaked into runtime image:', training_mods)
+              sys.exit(1)
+          print('PASS: no training.* modules in sys.modules')
+          "
+
+
   compose-test:
     # Brings up the full SmartLoad stack and runs the integration test
     # suites against it: the 33 Phase-0 wiring tests + the S2 baseline
@@ -208,6 +240,7 @@ jobs:
       - unit-tests
       - build-services
       - build-test-backend
+      - runtime-import-smoke
 
     steps:
       - name: Checkout repository

@@ -80,6 +80,7 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
 RUNLOOP_ENABLED       = os.environ.get("RL_RUNLOOP_ENABLED", "false").lower() == "true"
 RL_POLICY             = os.environ.get("RL_POLICY", "random_shadow")
 RL_MODE               = os.environ.get("RL_MODE", "shadow")
+RL_SERVICE            = os.environ.get("RL_SERVICE", "load-balancer")
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 WINDOW_SECONDS        = int(os.environ.get("RL_WINDOW_SECONDS", "30"))
 
@@ -104,8 +105,12 @@ def _set_policy_state(bootstrap) -> None:
     _policy = bootstrap.policy
     _policy_name = bootstrap.name
     _policy_requested = bootstrap.requested
-    _policy_ready = bootstrap.ready
     _policy_error = bootstrap.error
+    # PPOPolicy (and future ML plugins) expose a policy_ready property that
+    # reflects whether the model artifact loaded successfully, independent of
+    # whether __init__ raised.  Use it when available; fall back to bootstrap.ready.
+    plugin_ready = getattr(bootstrap.policy, "policy_ready", None)
+    _policy_ready = plugin_ready if plugin_ready is not None else bootstrap.ready
 
 
 # ── connectivity checks ───────────────────────────────────────────────────────
@@ -130,9 +135,10 @@ def check_timescaledb() -> tuple[bool, str | None]:
 
 def _query_state(db_conn):
     """Run RL_STATE_QUERY against the live DB and shape rows into
-    list[BackendState]. The interval is bound as a parameter per SOT §11."""
+    list[BackendState]. Both the interval and service filter are bound as
+    parameters per SOT §11."""
     with db_conn.cursor() as cur:
-        cur.execute(RL_STATE_QUERY, (f"{WINDOW_SECONDS} seconds",))
+        cur.execute(RL_STATE_QUERY, (f"{WINDOW_SECONDS} seconds", RL_SERVICE))
         rows = cur.fetchall()
     return build_state_from_rows(rows)
 
