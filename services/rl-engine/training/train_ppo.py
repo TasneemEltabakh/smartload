@@ -415,7 +415,7 @@ def main(
         n_epochs=10,
         gamma=0.99,
         seed=42,
-        tensorboard_log=str(out_dir / "tb_logs"),
+        tensorboard_log=None,
     )
 
     print(f"[train] training MaskablePPO for {steps:,} steps...", flush=True)

@@ -154,7 +154,7 @@ def main(
         exploration_fraction=0.2,
         exploration_final_eps=0.05,
         seed=42,
-        tensorboard_log=str(out_dir / "tb_logs_dqn"),
+        tensorboard_log=None,
     )
 
     print(f"[train_dqn] training DQN for {steps:,} steps...", flush=True)
