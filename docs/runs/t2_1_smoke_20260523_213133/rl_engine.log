@@ -1,0 +1,96 @@
+rl-engine-1  | Matplotlib is building the font cache; this may take a moment.
+rl-engine-1  | [rl-engine] run loop starting (policy=ppo ready=True rl_mode=shadow interval=5.0s)
+rl-engine-1  | [rl-engine] starting on port 8084 (mode=shadow)
+rl-engine-1  |  * Serving Flask app 'app'
+rl-engine-1  |  * Debug mode: off
+rl-engine-1  | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+rl-engine-1  |  * Running on all addresses (0.0.0.0)
+rl-engine-1  |  * Running on http://127.0.0.1:8084
+rl-engine-1  |  * Running on http://172.20.0.11:8084
+rl-engine-1  | [33mPress CTRL+C to quit[0m
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:12:59] "[35m[1mGET /health HTTP/1.1[0m" 503 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:13:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:13:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:13:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:13:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:14:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:14:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:14:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:14:54] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:15:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:15:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:15:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:15:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:16:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:16:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:16:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:16:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:17:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:17:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:17:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:17:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:18:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:18:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:18:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:18:54] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:19:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:19:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:19:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:19:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:20:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:20:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:20:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:20:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:21:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:21:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:21:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:21:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:22:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:22:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:22:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:22:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:23:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:23:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:23:39] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:23:52] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:24:09] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:24:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:24:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:24:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:25:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:25:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:25:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:25:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:26:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:26:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:26:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:26:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:27:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:27:30] "[35m[1mGET /health HTTP/1.1[0m" 503 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:27:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:27:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:28:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:28:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:28:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:28:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:29:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:29:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.1 - - [23/May/2026 22:29:25] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.1 - - [23/May/2026 22:29:28] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.1 - - [23/May/2026 22:29:30] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.1 - - [23/May/2026 22:29:30] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:29:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:29:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:30:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:30:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:30:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:30:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:31:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:31:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:31:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:31:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:32:08] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:32:23] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:32:38] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:32:53] "GET /health HTTP/1.1" 200 -
+rl-engine-1  | 172.20.0.6 - - [23/May/2026 22:33:08] "GET /health HTTP/1.1" 200 -

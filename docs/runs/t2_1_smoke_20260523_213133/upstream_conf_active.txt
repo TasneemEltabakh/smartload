@@ -1,0 +1,12 @@
+## upstream.conf — after Step 5 actuation (walk Step 6 restored equal weights)
+## The lb-sidecar log confirmed: "[lb-sidecar] routing applied (5 backends)"
+## During Step 5 poll, /api/v1/lb/state returned backend-1 weight=99 (score=0.99 → round(99))
+## Step 6 then POSTed equal weights, which is the state shown here.
+
+upstream backend_pool {
+    server smartload-test-backend-1:8080 weight=1 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-2:8080 weight=1 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-3:8080 weight=1 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-4:8080 weight=1 max_fails=3 fail_timeout=10s;
+    server smartload-test-backend-5:8080 weight=1 max_fails=3 fail_timeout=10s;
+}

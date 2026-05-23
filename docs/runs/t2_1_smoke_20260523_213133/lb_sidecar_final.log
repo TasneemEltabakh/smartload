@@ -1,0 +1,6 @@
+[lb-sidecar] run loop starting (nginx_container=smartload-load-balancer-1 conf=/nginx-conf/upstream.conf interval=5.0s)
+[lb-sidecar] starting on port 8087
+ * Serving Flask app 'app'
+ * Debug mode: off
+[lb-sidecar] sidecar ready — subscribed to smartload.routing, smartload.anomaly, smartload.policy
+[lb-sidecar] routing applied (5 backends)

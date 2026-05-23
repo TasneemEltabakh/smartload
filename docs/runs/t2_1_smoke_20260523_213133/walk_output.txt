@@ -1,0 +1,28 @@
+## lb_sidecar_walk.py — final passing run (all 6 steps)
+## Command: python examples/scenarios/lb-sidecar/lb_sidecar_walk.py --lb-sidecar-url http://127.0.0.1:8087
+
+Step 1: Check /health
+  OK  sidecar_ready=true, excluded_backends=[]
+
+Step 2: Read /api/v1/lb/state
+  OK  5 upstream backends, 0 excluded
+       smartload-test-backend-1:8080: weight=1
+       smartload-test-backend-2:8080: weight=1
+       smartload-test-backend-3:8080: weight=1
+       smartload-test-backend-4:8080: weight=1
+       smartload-test-backend-5:8080: weight=1
+
+Step 3: POST /api/v1/lb/weights (5 backends)
+  OK  applied_weights: {'smartload-test-backend-1:8080': 80, 'smartload-test-backend-2:8080': 60, 'smartload-test-backend-3:8080': 40, 'smartload-test-backend-4:8080': 40, 'smartload-test-backend-5:8080': 40}
+
+Step 4: Verify state reflects custom weights
+  OK  weights match custom overrides
+
+Step 5: Publish active RoutingRecommendation via Redis -> watch weights update
+  -> envelope published to smartload.routing
+  OK  weight updated: backend-1=99 (from score=0.99)
+
+Step 6: Restore equal weights
+  OK  equal weights restored
+
+OK lb-sidecar scenario complete

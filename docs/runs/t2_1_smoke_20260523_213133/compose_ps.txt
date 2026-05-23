@@ -1,0 +1,22 @@
+NAME                            IMAGE                                         COMMAND                  SERVICE             CREATED             STATUS                       PORTS
+smartload-anomaly-detector-1    smartload-anomaly-detector                    "python app.py"          anomaly-detector    About an hour ago   Up About an hour             0.0.0.0:8082->8082/tcp, [::]:8082->8082/tcp
+smartload-autoscaler-1          smartload-autoscaler                          "python app.py"          autoscaler          About an hour ago   Up About an hour             0.0.0.0:8085->8085/tcp, [::]:8085->8085/tcp
+smartload-forecasting-1         smartload-forecasting                         "python app.py"          forecasting         About an hour ago   Up About an hour             0.0.0.0:8083->8083/tcp, [::]:8083->8083/tcp
+smartload-grafana-1             grafana/grafana:latest                        "/run.sh"                grafana             About an hour ago   Up About an hour             0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+smartload-lb-otel-shipper-1     smartload-lb-otel-shipper                     "python -u app.py"       lb-otel-shipper     About an hour ago   Up 44 minutes                
+smartload-lb-sidecar-1          smartload-lb-sidecar                          "python app.py"          lb-sidecar          About an hour ago   Up 44 minutes                0.0.0.0:8087->8087/tcp, [::]:8087->8087/tcp
+smartload-load-balancer-1       smartload-load-balancer                       "/docker-entrypoint.…"   load-balancer       22 minutes ago      Up 21 minutes                0.0.0.0:8080->80/tcp, [::]:8080->80/tcp
+smartload-operator-ui-1         smartload-operator-ui                         "gunicorn -w 2 -b 0.…"   operator-ui         About an hour ago   Up 43 minutes                0.0.0.0:8090->8090/tcp, [::]:8090->8090/tcp
+smartload-otel-collector-1      otel/opentelemetry-collector-contrib:latest   "/otelcol-contrib --…"   otel-collector      About an hour ago   Up About an hour             0.0.0.0:4317-4318->4317-4318/tcp, [::]:4317-4318->4317-4318/tcp, 0.0.0.0:8889->8889/tcp, [::]:8889->8889/tcp
+smartload-policy-manager-1      smartload-policy-manager                      "python app.py"          policy-manager      About an hour ago   Up About an hour             0.0.0.0:8086->8086/tcp, [::]:8086->8086/tcp
+smartload-prometheus-1          prom/prometheus:latest                        "/bin/prometheus --c…"   prometheus          About an hour ago   Up About an hour             0.0.0.0:9090->9090/tcp, [::]:9090->9090/tcp
+smartload-redis-1               redis:7-alpine                                "docker-entrypoint.s…"   redis               About an hour ago   Up About an hour (healthy)   0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+smartload-rl-engine-1           smartload-rl-engine                           "python app.py"          rl-engine           About an hour ago   Up About an hour             0.0.0.0:8084->8084/tcp, [::]:8084->8084/tcp
+smartload-telemetry-1           smartload-telemetry                           "python app.py"          telemetry           About an hour ago   Up About an hour             0.0.0.0:8081->8081/tcp, [::]:8081->8081/tcp
+smartload-test-backend-1        smartload-test-backend                        "docker-entrypoint.s…"   test-backend        About an hour ago   Up About an hour (healthy)   8080/tcp
+smartload-test-backend-2        smartload-test-backend                        "docker-entrypoint.s…"   test-backend        About an hour ago   Up About an hour (healthy)   8080/tcp
+smartload-test-backend-3        smartload-test-backend                        "docker-entrypoint.s…"   test-backend        About an hour ago   Up About an hour (healthy)   8080/tcp
+smartload-test-backend-4        smartload-test-backend                        "docker-entrypoint.s…"   test-backend        About an hour ago   Up About an hour (healthy)   8080/tcp
+smartload-test-backend-5        smartload-test-backend                        "docker-entrypoint.s…"   test-backend        About an hour ago   Up About an hour (healthy)   8080/tcp
+smartload-timescaledb-1         timescale/timescaledb:latest-pg16             "docker-entrypoint.s…"   timescaledb         28 hours ago        Up 2 hours (healthy)         0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+smartload-traffic-simulator-1   smartload-traffic-simulator                   "locust -f locustfil…"   traffic-simulator   About an hour ago   Up 44 minutes                0.0.0.0:8089->8089/tcp, [::]:8089->8089/tcp

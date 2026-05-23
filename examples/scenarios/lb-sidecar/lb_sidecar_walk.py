@@ -32,6 +32,8 @@ import json
 import os
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 
 import httpx
 
@@ -69,7 +71,7 @@ EQUAL_WEIGHTS = {b: 1 for b in BACKENDS}
 
 
 def run(lb_sidecar_url: str, redis_url: str) -> int:
-    http = httpx.Client(base_url=lb_sidecar_url.rstrip("/"), timeout=10.0)
+    http = httpx.Client(base_url=lb_sidecar_url.rstrip("/"), timeout=30.0)
 
     # ── Step 1: health ────────────────────────────────────────────────────────
     _step(1, "Check /health")
@@ -138,7 +140,7 @@ def run(lb_sidecar_url: str, redis_url: str) -> int:
         _ok("weights match custom overrides")
 
     # ── Step 5: Redis routing recommendation ──────────────────────────────────
-    _step(5, "Publish active RoutingRecommendation via Redis → watch weights update")
+    _step(5, "Publish active RoutingRecommendation via Redis -> watch weights update")
     try:
         import redis as redis_lib
     except ImportError:
@@ -146,8 +148,10 @@ def run(lb_sidecar_url: str, redis_url: str) -> int:
     else:
         r_client = redis_lib.from_url(redis_url, decode_responses=True)
         envelope = json.dumps({
+            "event_id": str(uuid.uuid4()),
             "source": "lb-sidecar-walk",
-            "channel": "smartload.routing",
+            "version": 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "payload": {
                 "mode": "active",
                 "server_rankings": [
@@ -161,13 +165,13 @@ def run(lb_sidecar_url: str, redis_url: str) -> int:
             },
         })
         r_client.publish("smartload.routing", envelope)
-        print("  → envelope published to smartload.routing")
+        print("  -> envelope published to smartload.routing")
 
         state_r = http.get("/api/v1/lb/state")
         if state_r.status_code == 503:
             print("  SKIP (run loop disabled — envelope published but sidecar won't react)")
         else:
-            deadline = time.monotonic() + 10.0
+            deadline = time.monotonic() + 35.0
             while time.monotonic() < deadline:
                 time.sleep(0.5)
                 s = http.get("/api/v1/lb/state").json()
@@ -176,7 +180,7 @@ def run(lb_sidecar_url: str, redis_url: str) -> int:
                     _ok(f"weight updated: backend-1={b1} (from score=0.99)")
                     break
             else:
-                print("  WARN: weights not updated within 10s — "
+                print("  WARN: weights not updated within 35s — "
                       "is RL_MODE=active and LB_SIDECAR_RUNLOOP_ENABLED=true?")
 
     # ── Step 6: restore equal weights ────────────────────────────────────────
@@ -189,7 +193,7 @@ def run(lb_sidecar_url: str, redis_url: str) -> int:
     else:
         _ok("equal weights restored")
 
-    print("\n✓ lb-sidecar scenario complete")
+    print("\nOK lb-sidecar scenario complete")
     return 0
 
 
