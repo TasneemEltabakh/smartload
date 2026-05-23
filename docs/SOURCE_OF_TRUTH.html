@@ -2305,13 +2305,13 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
   <tbody>
     <tr><td>NGINX deployed in docker-compose</td><td><span class="pill pill-done">DONE (Phase 0)</span></td></tr>
     <tr><td>OTel instrumentation (T1.2) — log-based via lb-otel-shipper sidecar</td><td><span class="pill pill-done">DONE (S2)</span></td></tr>
-    <tr><td>Sidecar reads Redis (T2.1, critical path node 4)</td><td><span class="pill pill-upcoming">UPCOMING (S4)</span></td></tr>
+    <tr><td>Sidecar reads Redis (T2.1, critical path node 4)</td><td><span class="pill pill-done">DONE (T2.1)</span></td></tr>
   </tbody>
 </table>
 <h4>Open questions / blockers</h4>
 <ul>
-  <li>Sidecar language: Python (faster to build, integrates cleanly with contracts.py) vs Go (lower latency). Default plan: Python sidecar — <span class="badge badge-confirm">Needs confirmation</span>.</li>
-  <li>NGINX reload mechanism (regenerate config + <code>nginx -s reload</code>) vs dynamic upstream module — current default is reload. Listed as open issue in <code>SmartLoad_API_Design.pdf §11.2</code>.</li>
+  <li>Sidecar language: Python — confirmed and implemented. Docker SDK + Flask, same pattern as autoscaler.</li>
+  <li>NGINX reload mechanism: <code>nginx -s reload</code> via <code>docker exec</code> — confirmed and implemented. Config rewrite uses the include-file strategy (only <code>upstream.conf</code> changes).</li>
 </ul>
 
 <div class="design-contract">
@@ -5283,7 +5283,7 @@ flowchart LR
     <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
     <tr><td>RL training scripts + baselines (N2.4)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>train_ppo.py</code> (MaskablePPO, 2M steps, ~75 min CPU), <code>train_dqn.py</code> (fallback); <code>round_robin</code> + <code>least_connections</code> policies; <code>eval_harness.py</code> + <code>eval_seed_bank.json</code>. <strong>Artifact:</strong> <code>services/rl-engine/models/policy.zip</code> (156 KB, <code>latency_scale=100.0</code>). <strong>Eval result (20 held-out episodes):</strong> PPO mean_reward&nbsp;=&nbsp;-0.0056 (ties round_robin, best baseline); beats least_connections by 4.8e-2. SLO violation rate 0 for all policies. Homogeneous Alibaba backend latencies (~9.7 ms) mean any balanced policy achieves the same p95; PPO learned round-robin equivalence from offline traces.</td><td>—</td></tr>
     <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>}; shadow runs full inference non-actuating; <code>reload()</code> raises <code>NotImplementedError</code> (restart to swap artifact); runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
-    <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-upcoming">Phase 2 (T2.1)</span></td><td>—</td><td>Phase 2 build</td></tr>
+    <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-done">Complete (T2.1)</span></td><td><code>services/lb-sidecar/</code> — subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code>; <code>NginxAdapter</code> atomically rewrites <code>upstream.conf</code> + signals <code>nginx -s reload</code> via Docker exec; <code>BackendRegistry</code> maps IP:port → container name; conformance + unit + E2E test suites green; Actions page "Force route weights" form live.</td><td>—</td></tr>
     <tr><td>Phase 0 integration tests (33)</td><td>Tasneem</td><td><span class="pill pill-done">33/33 passing</span></td><td><code>tests/integration/test_pipeline_health.py</code></td><td>—</td></tr>
     <tr><td>Phase 3A integration tests (3 scenarios)</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (T2.3)</span></td><td>—</td><td>—</td></tr>
     <tr><td>Unit tests</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (ALL.1)</span></td><td>—</td><td>—</td></tr>
@@ -5581,6 +5581,28 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.4 — 2026-05-23 — T2.1 lb-sidecar (dynamic upstream rewriting), N2.3–N2.5 complete</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>T2.1 lb-sidecar — shipped</strong></td>
+      <td>New <code>services/lb-sidecar/</code> service (Flask + Redis pub/sub + Docker SDK). Subscribes to <code>smartload.routing</code>, <code>smartload.anomaly</code>, <code>smartload.policy</code>. <code>NginxAdapter</code> in <code>services/shared/lb_adapters/nginx/</code> atomically rewrites <code>upstream.conf</code> (include-file strategy) and signals <code>nginx -s reload</code> via Docker exec. <code>BackendRegistry</code> maps IP:port → container name to bridge rl-engine's metric-sourced backend IDs to NGINX hostnames. Operator weight override via <code>POST /api/v1/lb/weights</code>. Actions.tsx "Force route weights" form enabled. Conformance suite + 30+ unit tests + E2E suite + scenario script + feature manifest all green.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>N2.3–N2.5 RL engine — complete</strong></td>
+      <td>MaskablePPO training pipeline (2M steps, ~75 min CPU), <code>policy.zip</code> committed (156 KB). Final eval: PPO ties round_robin (joint best, mean_reward=-0.0056), beats least_connections by 4.8e-2. 124/124 unit tests pass. PPO serving plugin via <code>RL_POLICY=ppo</code>. <code>RL_MODE=active</code> now functional end-to-end with T2.1 sidecar.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>nginx.conf include-file strategy</strong></td>
+      <td>Static upstream block replaced by <code>include /etc/nginx/conf.d/upstream.conf;</code>. Initial <code>upstream.conf</code> seeds equal weights so NGINX starts before the sidecar is ready. <code>nginx-conf</code> Docker volume shared between <code>load-balancer</code> and <code>lb-sidecar</code>.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.3 — 2026-05-21 — Phase-2 SaaS scoping, slice machinery, anomaly-detector wired (#138 round 1)</h3>
 <table>
