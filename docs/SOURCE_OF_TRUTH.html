@@ -5283,7 +5283,7 @@ flowchart LR
     <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
     <tr><td>RL training scripts + baselines (N2.4)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>train_ppo.py</code> (MaskablePPO, 2M steps, ~75 min CPU), <code>train_dqn.py</code> (fallback); <code>round_robin</code> + <code>least_connections</code> policies; <code>eval_harness.py</code> + <code>eval_seed_bank.json</code>. <strong>Artifact:</strong> <code>services/rl-engine/models/policy.zip</code> (156 KB, <code>latency_scale=100.0</code>). <strong>Eval result (20 held-out episodes):</strong> PPO mean_reward&nbsp;=&nbsp;-0.0056 (ties round_robin, best baseline); beats least_connections by 4.8e-2. SLO violation rate 0 for all policies. Homogeneous Alibaba backend latencies (~9.7 ms) mean any balanced policy achieves the same p95; PPO learned round-robin equivalence from offline traces.</td><td>—</td></tr>
     <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>}; shadow runs full inference non-actuating; <code>reload()</code> raises <code>NotImplementedError</code> (restart to swap artifact); runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
-    <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-done">Complete (T2.1)</span></td><td><code>services/lb-sidecar/</code> — subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code>; <code>NginxAdapter</code> atomically rewrites <code>upstream.conf</code> + signals <code>nginx -s reload</code> via Docker exec; <code>BackendRegistry</code> maps IP:port → container name; conformance + unit + E2E test suites green; Actions page "Force route weights" form live.</td><td>—</td></tr>
+    <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-done">Complete + smoke PASSED (T2.1)</span></td><td><code>services/lb-sidecar/</code> — subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code>; <code>NginxAdapter</code> atomically rewrites <code>upstream.conf</code> + signals <code>nginx -s reload</code> via Docker exec; <code>BackendRegistry</code> maps IP:port → container name; conformance + unit + E2E test suites green; Actions page "Force route weights" form live. End-to-end smoke run 2026-05-23: shadow gate confirmed (rl-engine publishes <code>mode=shadow</code>, sidecar ignores); manual <code>mode=active</code> envelope applied backend-1 weight=99 (score=0.99 → round(99)); 20/20 curl HTTP 200; zero log errors. Artifacts in <code>docs/runs/t2_1_smoke_20260523_213133/</code>.</td><td>—</td></tr>
     <tr><td>Phase 0 integration tests (33)</td><td>Tasneem</td><td><span class="pill pill-done">33/33 passing</span></td><td><code>tests/integration/test_pipeline_health.py</code></td><td>—</td></tr>
     <tr><td>Phase 3A integration tests (3 scenarios)</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (T2.3)</span></td><td>—</td><td>—</td></tr>
     <tr><td>Unit tests</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (ALL.1)</span></td><td>—</td><td>—</td></tr>
@@ -5581,6 +5581,28 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.5 — 2026-05-24 — T2.1 smoke test PASSED; lb-sidecar walk script + Dockerfile fixes</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>T2.1 end-to-end smoke PASSED</strong></td>
+      <td>Full compose stack smoke run confirming the complete T2.1 pipeline: rl-engine publishes <code>mode=shadow</code> → lb-sidecar receives it but does NOT rewrite <code>upstream.conf</code> (shadow gate); manual <code>mode=active</code> Redis envelope → lb-sidecar applies PPO-derived weights (backend-1 weight=99 from score=0.99); <code>nginx -s reload</code> triggered via docker exec; 20/20 <code>curl localhost:8080/</code> HTTP 200; zero errors in lb-sidecar, rl-engine, load-balancer logs. Artifacts in <code>docs/runs/t2_1_smoke_20260523_213133/</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>lb_sidecar_walk.py fixes</strong></td>
+      <td>Three Windows-specific bugs fixed: (1) walk's manual <code>mode=active</code> envelope was missing <code>event_id</code>/<code>version</code>/<code>timestamp</code> fields — <code>parse_envelope()</code> dropped it as <code>DROP_REASON_NOT_AN_ENVELOPE</code>; added canonical envelope fields; (2) httpx timeout 10s → 30s and Step 5 poll deadline 10s → 35s for Docker Desktop for Windows docker exec latency (15–25s); (3) replaced U+2192 (→) and U+2713 (✓) with ASCII equivalents to avoid CP1252 <code>UnicodeEncodeError</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>load-balancer Dockerfile seed script</strong></td>
+      <td>Added <code>services/load-balancer/nginx/00-seed-upstream.sh</code> (executed by NGINX base image entrypoint via <code>/docker-entrypoint.d/</code>) and baked <code>upstream.conf.default</code> into the image. Fixes NGINX crash on first start when the <code>nginx-conf</code> Docker volume is empty — the seed script copies the default if the volume-mounted path is absent, resolving the chicken-and-egg between NGINX needing <code>upstream.conf</code> to start and lb-sidecar needing NGINX to be up before writing.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.4 — 2026-05-23 — T2.1 lb-sidecar (dynamic upstream rewriting), N2.3–N2.5 complete</h3>
 <table>
@@ -6323,8 +6345,8 @@ flowchart TD
     <tr>
       <td><strong>RL routing (shadow → active)</strong></td>
       <td>#138 engine-wrapper, #27 PPO training (~7-day run)</td>
-      <td>pending</td>
-      <td><span class="pill pill-upcoming">Future — gated on PPO model</span></td>
+      <td><code>docs/features/lb-sidecar.md</code></td>
+      <td><span class="pill pill-done">Shipped 2026-05-23 (T2.1 + N2.3–N2.5; smoke PASSED)</span></td>
     </tr>
     <tr>
       <td><strong>Embedded metrics dashboards</strong> (OUI.8)</td>
