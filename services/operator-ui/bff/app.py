@@ -44,6 +44,7 @@ SERVICE_URLS: dict[str, str] = {
     "anomaly-detector": os.environ.get("ANOMALY_DETECTOR_URL", "http://anomaly-detector:8082"),
     "forecasting":      os.environ.get("FORECASTING_URL",      "http://forecasting:8083"),
     "rl-engine":        os.environ.get("RL_ENGINE_URL",        "http://rl-engine:8084"),
+    "lb-sidecar":       os.environ.get("LB_SIDECAR_URL",       "http://lb-sidecar:8087"),
     "load-balancer":    os.environ.get("LOAD_BALANCER_URL",    "http://load-balancer:80"),
 }
 
@@ -226,6 +227,35 @@ def ui_manual_isolate():
     headers["X-Actor"] = actor
     try:
         r = _http.post(f"{upstream}/api/v1/isolate", content=body, headers=headers)
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+# ── lb-sidecar proxies (T2.1) ────────────────────────────────────────────────
+
+@app.route("/api/ui/lb/state", methods=["GET"])
+def ui_lb_state():
+    """Proxy to lb-sidecar's GET /api/v1/lb/state."""
+    upstream = SERVICE_URLS["lb-sidecar"]
+    try:
+        r = _http.get(f"{upstream}/api/v1/lb/state")
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+@app.route("/api/ui/lb/weights", methods=["POST"])
+def ui_lb_set_weights():
+    """Proxy operator weight override to lb-sidecar's POST /api/v1/lb/weights."""
+    upstream = SERVICE_URLS["lb-sidecar"]
+    body = request.get_data(as_text=True) or "{}"
+    try:
+        r = _http.post(
+            f"{upstream}/api/v1/lb/weights",
+            content=body,
+            headers={"Content-Type": "application/json"},
+        )
     except Exception as exc:
         return jsonify({"error": f"upstream unreachable: {exc}"}), 502
     return (r.text, r.status_code, {"Content-Type": "application/json"})

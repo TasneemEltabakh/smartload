@@ -86,6 +86,7 @@ jobs:
           - autoscaler
           - forecasting
           - lb-otel-shipper
+          - lb-sidecar
           - policy-manager
           - rl-engine
           - telemetry
@@ -95,16 +96,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build service image (default context)
-        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler' && matrix.service != 'policy-manager' && matrix.service != 'anomaly-detector' && matrix.service != 'forecasting' && matrix.service != 'rl-engine'
+        if: matrix.service != 'telemetry' && matrix.service != 'autoscaler' && matrix.service != 'policy-manager' && matrix.service != 'anomaly-detector' && matrix.service != 'forecasting' && matrix.service != 'rl-engine' && matrix.service != 'lb-sidecar'
         run: docker build -t smartload-${{ matrix.service }} ./services/${{ matrix.service }}
 
       - name: Build image with wider context (services that import shared/)
         # Telemetry, autoscaler, policy-manager, anomaly-detector,
-        # forecasting, and rl-engine import services/shared/*, so their
-        # build context is ./services and the Dockerfile pulls in shared/
-        # alongside app.py + any service-local modules
-        # (decisions.py / validation.py / runloop.py).
-        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler' || matrix.service == 'policy-manager' || matrix.service == 'anomaly-detector' || matrix.service == 'forecasting' || matrix.service == 'rl-engine'
+        # forecasting, rl-engine, and lb-sidecar import services/shared/*,
+        # so their build context is ./services and the Dockerfile pulls in
+        # shared/ alongside app.py + any service-local modules.
+        if: matrix.service == 'telemetry' || matrix.service == 'autoscaler' || matrix.service == 'policy-manager' || matrix.service == 'anomaly-detector' || matrix.service == 'forecasting' || matrix.service == 'rl-engine' || matrix.service == 'lb-sidecar'
         run: docker build -t smartload-${{ matrix.service }} -f services/${{ matrix.service }}/Dockerfile ./services
 
       - name: Run container
@@ -310,7 +310,7 @@ jobs:
       - name: Dump service logs on failure
         if: failure()
         run: |
-          for s in load-balancer lb-otel-shipper test-backend telemetry anomaly-detector forecasting rl-engine autoscaler policy-manager otel-collector redis timescaledb; do
+          for s in load-balancer lb-otel-shipper lb-sidecar test-backend telemetry anomaly-detector forecasting rl-engine autoscaler policy-manager otel-collector redis timescaledb; do
             echo "===== $s ====="
             docker compose logs --tail=80 "$s" || true
           done

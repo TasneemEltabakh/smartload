@@ -24,6 +24,8 @@ tags:
     description: Read recent metric rows
   - name: audit
     description: Append-only audit surface for policy changes
+  - name: lb-sidecar
+    description: Dynamic upstream weight management (T2.1)
 
 paths:
   /health:
@@ -256,6 +258,69 @@ paths:
                 $ref: '#/components/schemas/Error'
         '503':
           description: Envelope publish or backend_health write failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/lb/state:
+    get:
+      summary: Current LB adapter state
+      description: |
+        Returns the lb-sidecar's in-memory view of the upstream weight table
+        and the set of currently-excluded backends (port 8087).
+        Returns 503 when the run loop is not enabled or not yet ready.
+      tags: [lb-sidecar]
+      responses:
+        '200':
+          description: Current upstream weights and exclusions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LbState'
+        '503':
+          description: Run loop not enabled or not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/lb/weights:
+    post:
+      summary: Override upstream weights
+      description: |
+        Operator-supplied weight override. Accepts a JSON object mapping
+        backend_id (container_name:port) → integer weight. Rewrites the
+        NGINX upstream block immediately. Excluded backends are not affected.
+        Lives on the lb-sidecar service (port 8087).
+      tags: [lb-sidecar]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LbWeightOverride'
+      responses:
+        '200':
+          description: Weights applied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LbWeightOverrideResponse'
+        '400':
+          description: Empty body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Adapter write or nginx reload failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Run loop not enabled or not ready
           content:
             application/json:
               schema:
@@ -512,6 +577,40 @@ components:
         batches_written:    { type: integer }
         rows_dropped_db:    { type: integer }
         rows_dropped_shape: { type: integer }
+
+    LbState:
+      type: object
+      required: [upstream_weights, excluded_backends]
+      properties:
+        upstream_weights:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Map of backend_id (container:port) → NGINX weight (integer ≥ 1).
+        excluded_backends:
+          type: array
+          items: { type: string }
+          description: Backends currently serving no traffic (NGINX `down` directive).
+
+    LbWeightOverride:
+      type: object
+      additionalProperties:
+        type: integer
+        minimum: 1
+      description: Map of backend_id (container:port) → desired weight.
+      example:
+        "smartload-test-backend-1:8080": 90
+        "smartload-test-backend-2:8080": 50
+
+    LbWeightOverrideResponse:
+      type: object
+      required: [ok, applied_weights]
+      properties:
+        ok:              { type: boolean }
+        applied_weights:
+          type: object
+          additionalProperties:
+            type: integer
 
     Error:
       type: object

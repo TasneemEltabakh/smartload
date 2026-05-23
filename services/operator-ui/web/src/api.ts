@@ -66,6 +66,16 @@ export interface ManualIsolateResponse {
   event_id: string;
 }
 
+export interface LbState {
+  upstream_weights: Record<string, number>;
+  excluded_backends: string[];
+}
+
+export interface LbWeightOverrideResponse {
+  ok: boolean;
+  applied_weights: Record<string, number>;
+}
+
 export interface ServiceHealth {
   status: "ok" | "degraded" | "unreachable" | string;
   status_code: number | null;
@@ -141,5 +151,13 @@ export const api = {
         actor,
         ...(reason ? { reason } : {}),
       }),
+    }),
+
+  getLbState: () => _fetchJson<LbState>("/api/ui/lb/state"),
+
+  setLbWeights: (weights: Record<string, number>) =>
+    _fetchJson<LbWeightOverrideResponse>("/api/ui/lb/weights", {
+      method: "POST",
+      body: JSON.stringify(weights),
     }),
 };

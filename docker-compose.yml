@@ -264,6 +264,10 @@ services:
       # Mounted at /nginx-logs (not /var/log/nginx) to avoid the base image's
       # access.log → /dev/stdout symlink.
       - nginx-logs:/nginx-logs
+      # Shared upstream.conf written by lb-sidecar (T2.1). NGINX reads it via
+      # `include /etc/nginx/conf.d/upstream.conf;`. The initial conf seeds equal
+      # weights so NGINX starts before the sidecar is ready.
+      - nginx-conf:/etc/nginx/conf.d
     depends_on:
       # service_healthy (not service_started) so NGINX boots only after
       # every test-backend replica is reachable. Required because the
@@ -342,6 +346,34 @@ services:
   # Browser-facing control surface. Serves the React frontend at / and proxies
   # /api/ui/* to the upstream SmartLoad services. Mounts the canonical OpenAPI
   # spec read-only so /api/docs renders Swagger UI without rebuilding the image.
+  lb-sidecar:
+    build:
+      context: ./services
+      dockerfile: lb-sidecar/Dockerfile
+    ports:
+      - "8087:8087"
+    environment:
+      PORT: "8087"
+      SERVICE_NAME: lb-sidecar
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      NGINX_CONTAINER: ${NGINX_CONTAINER:-smartload-load-balancer-1}
+      NGINX_CONF_PATH: /nginx-conf/upstream.conf
+      LB_SIDECAR_RUNLOOP_ENABLED: ${LB_SIDECAR_RUNLOOP_ENABLED:-false}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+      ALL_BACKENDS: >-
+        smartload-test-backend-1:8080,smartload-test-backend-2:8080,
+        smartload-test-backend-3:8080,smartload-test-backend-4:8080,
+        smartload-test-backend-5:8080
+    volumes:
+      - nginx-conf:/nginx-conf
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+      - load-balancer
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
   operator-ui:
     build:
       context: ./services/operator-ui
@@ -356,6 +388,7 @@ services:
       ANOMALY_DETECTOR_URL: http://anomaly-detector:8082
       FORECASTING_URL:      http://forecasting:8083
       RL_ENGINE_URL:        http://rl-engine:8084
+      LB_SIDECAR_URL:       http://lb-sidecar:8087
       LOAD_BALANCER_URL:    http://load-balancer:80
     volumes:
       - ./docs/openapi:/app/openapi:ro
@@ -366,6 +399,7 @@ services:
       - anomaly-detector
       - forecasting
       - rl-engine
+      - lb-sidecar
     networks:
       - smartload-net
     restart: unless-stopped
@@ -373,3 +407,4 @@ services:
 volumes:
   timescaledb-data:
   nginx-logs:
+  nginx-conf:

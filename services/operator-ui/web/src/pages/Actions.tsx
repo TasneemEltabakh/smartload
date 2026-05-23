@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   api,
   type IsolateStatus,
+  type LbWeightOverrideResponse,
   type ManualIsolateResponse,
   type ManualScaleResponse,
   type Policy,
@@ -10,11 +11,13 @@ import {
 
 type Pending =
   | { kind: "scale"; target_count: number; reason: string }
-  | { kind: "isolate"; backend_id: string; status: IsolateStatus; reason: string };
+  | { kind: "isolate"; backend_id: string; status: IsolateStatus; reason: string }
+  | { kind: "lb_weights"; weights: Record<string, number> };
 
 type ResultCard =
   | { kind: "scale"; data: ManualScaleResponse }
-  | { kind: "isolate"; data: ManualIsolateResponse };
+  | { kind: "isolate"; data: ManualIsolateResponse }
+  | { kind: "lb_weights"; data: LbWeightOverrideResponse };
 
 const STATUSES: IsolateStatus[] = ["healthy", "degraded", "unhealthy"];
 
@@ -49,6 +52,32 @@ export default function ActionsPage() {
   const [backendId, setBackendId] = useState<string>("");
   const [isolateStatus, setIsolateStatus] = useState<IsolateStatus>("unhealthy");
   const [isolateReason, setIsolateReason] = useState<string>("");
+
+  // ── lb weight override form ─────────────────────────────────────────────
+  // Raw text area: "backend-1:8080=80, backend-2:8080=60"
+  const [lbWeightsRaw, setLbWeightsRaw] = useState<string>("");
+  const parsedLbWeights = useMemo<Record<string, number> | null>(() => {
+    if (!lbWeightsRaw.trim()) return null;
+    const entries = lbWeightsRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    const out: Record<string, number> = {};
+    for (const e of entries) {
+      const eq = e.lastIndexOf("=");
+      if (eq < 1) return null;
+      const key = e.slice(0, eq).trim();
+      const val = parseInt(e.slice(eq + 1).trim(), 10);
+      if (!key || Number.isNaN(val) || val < 1) return null;
+      out[key] = val;
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  }, [lbWeightsRaw]);
+
+  function requestLbWeights() {
+    if (!parsedLbWeights) {
+      flashError("Enter weights as: backend-1:8080=80, backend-2:8080=60");
+      return;
+    }
+    setPending({ kind: "lb_weights", weights: parsedLbWeights });
+  }
 
   // ── confirmation modal + result feed ────────────────────────────────────
   const [pending, setPending] = useState<Pending | null>(null);
@@ -108,11 +137,15 @@ export default function ActionsPage() {
         recordResult({ kind: "scale", data: r });
         setScaleTarget("");
         setScaleReason("");
-      } else {
+      } else if (pending.kind === "isolate") {
         const r = await api.isolate(pending.backend_id, pending.status, actor, pending.reason || undefined);
         recordResult({ kind: "isolate", data: r });
         setBackendId("");
         setIsolateReason("");
+      } else {
+        const r = await api.setLbWeights(pending.weights);
+        recordResult({ kind: "lb_weights", data: r });
+        setLbWeightsRaw("");
       }
       await loadPolicy();        // refresh bounds + version
     } catch (err: any) {
@@ -227,16 +260,24 @@ export default function ActionsPage() {
         </div>
       </div>
 
-      {/* ── force route weights (disabled placeholder) ─────────────────── */}
+      {/* ── force route weights (T2.1) ────────────────────────────────── */}
       <div className="card">
-        <h2>Force route weights <span className="muted small">(disabled)</span></h2>
+        <h2>Force route weights</h2>
         <div className="meta">
-          Requires the LB sidecar (T2.1, <code>#82</code>) before the
-          load-balancer reads operator-supplied weights. Form will light up
-          when that lands.
+          Override NGINX upstream weights via the lb-sidecar (T2.1). Enter a
+          comma-separated list of <code>backend:port=weight</code> pairs. Requires
+          <code> LB_SIDECAR_RUNLOOP_ENABLED=true</code> on the sidecar.
+        </div>
+        <div className="form-grid" style={{ marginTop: 12 }}>
+          <label>weights</label>
+          <input
+            value={lbWeightsRaw}
+            onChange={(e) => setLbWeightsRaw(e.target.value)}
+            placeholder="smartload-test-backend-1:8080=80, smartload-test-backend-2:8080=60"
+          />
         </div>
         <div style={{ marginTop: 12 }}>
-          <button disabled title="Disabled until T2.1 sidecar lands">
+          <button onClick={requestLbWeights} disabled={busy || !parsedLbWeights}>
             Force weights…
           </button>
         </div>
@@ -262,7 +303,7 @@ export default function ActionsPage() {
               {results.map((r, i) => {
                 if (r.kind === "scale") {
                   return (
-                    <tr key={`${r.data.event_id}-${i}`}>
+                    <tr key={`scale-${r.data.event_id}-${i}`}>
                       <td><span className={`badge-action ${r.data.action}`}>{r.data.action}</span></td>
                       <td>
                         <code>{r.data.previous_count} → {r.data.final_count}</code>
@@ -273,8 +314,24 @@ export default function ActionsPage() {
                     </tr>
                   );
                 }
+                if (r.kind === "lb_weights") {
+                  const entries = Object.entries(r.data.applied_weights);
+                  return (
+                    <tr key={`lb-${i}`}>
+                      <td><span className="badge-action scale_out">lb weights</span></td>
+                      <td>
+                        {entries.map(([b, w]) => (
+                          <span key={b} style={{ marginRight: 8 }}>
+                            <code>{b}={w}</code>
+                          </span>
+                        ))}
+                      </td>
+                      <td>—</td>
+                    </tr>
+                  );
+                }
                 return (
-                  <tr key={`${r.data.event_id}-${i}`}>
+                  <tr key={`iso-${r.data.event_id}-${i}`}>
                     <td><span className="badge-action scale_in">isolate</span></td>
                     <td>
                       <code>{r.data.backend_id}</code>{" "}
@@ -298,7 +355,9 @@ export default function ActionsPage() {
             <h3>
               {pending.kind === "scale"
                 ? `Scale to ${pending.target_count} backends?`
-                : `Mark ${pending.backend_id} as ${pending.status}?`}
+                : pending.kind === "lb_weights"
+                  ? `Force route weights (${Object.keys(pending.weights).length} backends)?`
+                  : `Mark ${pending.backend_id} as ${pending.status}?`}
             </h3>
             <p className="meta">
               {pending.kind === "scale" ? (
@@ -307,6 +366,14 @@ export default function ActionsPage() {
                   <code>{pending.target_count}</code> immediately. The
                   cooldown timer is bypassed. An audit row will be written
                   with actor=<code>{actor}</code>.
+                </>
+              ) : pending.kind === "lb_weights" ? (
+                <>
+                  This will rewrite the NGINX upstream block via the lb-sidecar
+                  and trigger <code>nginx -s reload</code> immediately.
+                  Weights: {Object.entries(pending.weights).map(([b, w]) => (
+                    <span key={b} style={{ marginRight: 6 }}><code>{b}={w}</code></span>
+                  ))}
                 </>
               ) : (
                 <>
@@ -317,7 +384,7 @@ export default function ActionsPage() {
                 </>
               )}
             </p>
-            {pending.reason ? (
+            {"reason" in pending && pending.reason ? (
               <p className="meta">
                 Reason: <code>{pending.reason}</code>
               </p>

@@ -32,7 +32,7 @@ Example payload:
 
 ### `smartload.anomaly`
 - **Publisher**: `anomaly-detector`
-- **Subscribers**: future T2.1 LB sidecar, operator-ui (live-engines feed)
+- **Subscribers**: `lb-sidecar` (T2.1 — excludes/includes backends on health change), operator-ui (live-engines feed)
 - **Envelope**: `AnomalyEvent`
 - **Publish frequency**: every `POLL_INTERVAL_SECONDS` per backend (default 5s)
 - **Retention**: pub/sub
@@ -71,7 +71,7 @@ Example payload:
 
 ### `smartload.routing`
 - **Publisher**: `rl-engine`
-- **Subscribers**: future T2.1 LB sidecar
+- **Subscribers**: `lb-sidecar` (T2.1 — rewrites NGINX upstream weights when `mode=active`)
 - **Envelope**: `RoutingRecommendation`
 - **Publish frequency**: every `POLL_INTERVAL_SECONDS` (default 5s)
 - **Retention**: pub/sub
