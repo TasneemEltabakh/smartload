@@ -61,7 +61,7 @@ ORDER BY instance, metric_name;
 FORECAST_QUERY = """
 SELECT
     time_bucket('1 minute', time) AS bucket,
-    SUM(value)                    AS request_rate
+    SUM(value)::float / 60.0      AS request_rate
 FROM metrics
 WHERE
     time > NOW() - %s::interval

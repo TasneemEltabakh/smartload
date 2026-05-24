@@ -236,6 +236,19 @@ class TestCanonicalSQLParameterization:
     def test_forecast_query_uses_parameterized_interval(self):
         assert "%s::interval" in FORECAST_QUERY
 
+    def test_forecast_query_normalises_to_per_second_rate(self):
+        # The bucket width is fixed at one minute. SUM(value) over that bucket
+        # is requests-per-minute, but the column is consumed downstream as a
+        # per-second rate (predicted_rps in ForecastResult, RPS in autoscaler
+        # capacity math). Without normalisation, every forecast is inflated by
+        # the bucket-width factor and the autoscaler unconditionally scales out.
+        assert "time_bucket('1 minute'" in FORECAST_QUERY
+        assert "/ 60" in FORECAST_QUERY, (
+            "FORECAST_QUERY.request_rate is missing per-second normalisation: "
+            "SUM(value) over a 1-minute bucket must be divided by 60 so the "
+            "column matches the per-second units the engine expects."
+        )
+
     def test_rl_state_query_uses_parameterized_interval(self):
         assert "%s::interval" in RL_STATE_QUERY
 
