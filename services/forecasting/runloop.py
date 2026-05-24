@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass
 
 # Make engine_base + plugin folders importable when this file is loaded from
 # /app (container) or from services/forecasting/ (dev).
@@ -184,4 +185,55 @@ def forecast_to_event_payload(forecast: Forecast, model_id: str) -> dict:
         "confidence_lower": forecast.confidence_lower,
         "confidence_upper": forecast.confidence_upper,
         "model_id":         model_id,
+    }
+
+
+# ── /api/v1/engine/state serialisation ───────────────────────────────────────
+
+def serialize_engine_state(
+    *,
+    service: str,
+    channel: str,
+    runloop_enabled: bool,
+    engine_name: str,
+    engine_requested: str,
+    engine_ready: bool,
+    engine_error: str | None,
+    policy: EnginePolicy,
+    ticks_total: int,
+    publishes_total: int,
+    last_tick_at: str | None,
+    last_publish_at: str | None,
+    last_tick_monotonic: float | None,
+    last_output: dict | None,
+) -> dict:
+    """Build the /api/v1/engine/state response dict for the Live Engines page.
+
+    Pure-Python so it can be unit-tested without Flask. The caller (app.py)
+    snapshots all runloop globals under _state_lock and passes them here.
+    """
+    last_tick_age = (
+        None if last_tick_monotonic is None
+        else round(time.monotonic() - last_tick_monotonic, 2)
+    )
+    return {
+        "service": service,
+        "channel": channel,
+        "runloop_enabled": runloop_enabled,
+        "engine": {
+            "kind": "engine",
+            "requested": engine_requested,
+            "loaded": engine_name,
+            "ready": engine_ready,
+            "error": engine_error,
+        },
+        "policy_snapshot": asdict(policy),
+        "stats": {
+            "ticks_total": ticks_total,
+            "publishes_total": publishes_total,
+            "last_tick_at": last_tick_at,
+            "last_publish_at": last_publish_at,
+            "last_tick_age_seconds": last_tick_age,
+        },
+        "last_output": last_output,
     }

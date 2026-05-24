@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import os
 import sys
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass
 
 # Make policy_base + plugin folders importable when this file is loaded
 # from /app (container) or services/rl-engine/ (dev).
@@ -249,4 +250,60 @@ def action_to_event_payload(action: RoutingAction, mode: str,
             for r in action.rankings
         ],
         "policy_version": policy_version,
+    }
+
+
+# ── /api/v1/engine/state serialisation ───────────────────────────────────────
+
+def serialize_engine_state(
+    *,
+    service: str,
+    channel: str,
+    runloop_enabled: bool,
+    policy_name: str,
+    policy_requested: str,
+    policy_ready: bool,
+    policy_error: str | None,
+    engine_policy: EnginePolicy,
+    rl_mode_env: str,
+    ticks_total: int,
+    publishes_total: int,
+    last_tick_at: str | None,
+    last_publish_at: str | None,
+    last_tick_monotonic: float | None,
+    last_output: dict | None,
+) -> dict:
+    """Build the /api/v1/engine/state response dict for the Live Engines page.
+
+    Same outer shape as the anomaly-detector and forecasting serialisers so
+    the BFF and UI can treat all three uniformly. The "engine" object's
+    `kind` field is "policy" here (RL plugins are policies, not engines), and
+    the response carries the env-pinned rl_mode so the UI can show whether
+    routing is shadowed regardless of what the policy returned.
+    """
+    last_tick_age = (
+        None if last_tick_monotonic is None
+        else round(time.monotonic() - last_tick_monotonic, 2)
+    )
+    return {
+        "service": service,
+        "channel": channel,
+        "runloop_enabled": runloop_enabled,
+        "rl_mode_env": rl_mode_env,
+        "engine": {
+            "kind": "policy",
+            "requested": policy_requested,
+            "loaded": policy_name,
+            "ready": policy_ready,
+            "error": policy_error,
+        },
+        "policy_snapshot": asdict(engine_policy),
+        "stats": {
+            "ticks_total": ticks_total,
+            "publishes_total": publishes_total,
+            "last_tick_at": last_tick_at,
+            "last_publish_at": last_publish_at,
+            "last_tick_age_seconds": last_tick_age,
+        },
+        "last_output": last_output,
     }

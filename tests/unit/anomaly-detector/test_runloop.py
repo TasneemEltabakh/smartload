@@ -37,6 +37,7 @@ from runloop import (                                  # noqa: E402
     build_features_from_rows,
     policy_from_payload,
     score_to_event_payload,
+    serialize_engine_state,
     should_publish,
 )
 
@@ -227,3 +228,90 @@ def test_engine_policy_defaults():
     assert p.error_rate_threshold == DEFAULT_ERROR_RATE_THRESHOLD
     assert p.safe_mode is False
     assert p.anomaly_response == "auto-isolate"
+
+
+# ── serialize_engine_state (Live Engines #121) ───────────────────────────────
+
+def _state_kwargs(**overrides):
+    base = dict(
+        service="anomaly-detector",
+        channel="smartload.anomaly",
+        runloop_enabled=True,
+        engine_name="threshold",
+        engine_requested="threshold",
+        engine_ready=True,
+        engine_error=None,
+        policy=EnginePolicy(latency_multiplier=2.5, policy_version=4),
+        ticks_total=10,
+        publishes_total=3,
+        last_tick_at="2026-05-24T19:30:00+00:00",
+        last_publish_at="2026-05-24T19:29:50+00:00",
+        last_tick_monotonic=None,
+        last_output=None,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_state_shape_has_every_top_level_key():
+    body = serialize_engine_state(**_state_kwargs())
+    assert set(body) == {
+        "service", "channel", "runloop_enabled",
+        "engine", "policy_snapshot", "stats", "last_output",
+    }
+
+
+def test_state_engine_kind_is_engine_for_anomaly():
+    body = serialize_engine_state(**_state_kwargs())
+    assert body["engine"]["kind"] == "engine"
+    assert body["engine"]["requested"] == "threshold"
+    assert body["engine"]["loaded"] == "threshold"
+    assert body["engine"]["ready"] is True
+
+
+def test_state_age_is_none_when_no_tick_yet():
+    body = serialize_engine_state(**_state_kwargs(last_tick_monotonic=None))
+    assert body["stats"]["last_tick_age_seconds"] is None
+
+
+def test_state_age_is_computed_when_monotonic_set():
+    import time as _t
+    now = _t.monotonic()
+    body = serialize_engine_state(**_state_kwargs(last_tick_monotonic=now - 2.5))
+    age = body["stats"]["last_tick_age_seconds"]
+    assert age is not None and 2.0 < age < 5.0
+
+
+def test_state_policy_snapshot_is_dict_of_engine_policy():
+    p = EnginePolicy(latency_multiplier=7.5, safe_mode=True, policy_version=12)
+    body = serialize_engine_state(**_state_kwargs(policy=p))
+    snap = body["policy_snapshot"]
+    assert snap["latency_multiplier"] == 7.5
+    assert snap["safe_mode"] is True
+    assert snap["policy_version"] == 12
+
+
+def test_state_carries_last_output_verbatim_for_anomaly_list():
+    outputs = [
+        {"backend_id": "b1", "status": "unhealthy", "score": 0.9,
+         "model_version": "threshold"},
+        {"backend_id": "b2", "status": "healthy", "score": 0.0,
+         "model_version": "threshold"},
+    ]
+    body = serialize_engine_state(**_state_kwargs(last_output=outputs))
+    assert body["last_output"] == outputs
+
+
+def test_state_reports_runloop_disabled_and_error():
+    body = serialize_engine_state(**_state_kwargs(
+        runloop_enabled=False,
+        engine_name="threshold",
+        engine_requested="isolation_forest",
+        engine_ready=False,
+        engine_error="model file missing",
+    ))
+    assert body["runloop_enabled"] is False
+    assert body["engine"]["ready"] is False
+    assert body["engine"]["error"] == "model file missing"
+    assert body["engine"]["requested"] == "isolation_forest"
+    assert body["engine"]["loaded"] == "threshold"

@@ -35,6 +35,7 @@ import time
 
 import psycopg2
 import redis as redis_lib
+from datetime import datetime, timezone
 from flask import Flask, jsonify
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
@@ -53,6 +54,7 @@ from runloop import (                                          # noqa: E402
     build_history_from_rows,
     forecast_to_event_payload,
     policy_from_payload,
+    serialize_engine_state,
     should_publish,
 )
 
@@ -85,6 +87,12 @@ _engine_ready: bool = False
 _engine_error: str | None = None
 _policy: EnginePolicy = EnginePolicy()
 _last_inference_monotonic: float | None = None
+# Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
+_ticks_total: int = 0
+_publishes_total: int = 0
+_last_tick_at_iso: str | None = None
+_last_publish_at_iso: str | None = None
+_last_output_payload: dict | None = None
 
 
 def _set_engine_state(bootstrap) -> None:
@@ -128,7 +136,8 @@ def _query_history(db_conn):
 
 def _inference_cycle(db_conn, redis_client) -> int:
     """One poll cycle. Returns 1 if a forecast was published, 0 otherwise."""
-    global _last_inference_monotonic
+    global _last_inference_monotonic, _ticks_total, _publishes_total
+    global _last_tick_at_iso, _last_publish_at_iso, _last_output_payload
 
     with _state_lock:
         engine = _engine
@@ -150,18 +159,28 @@ def _inference_cycle(db_conn, redis_client) -> int:
         print(f"[{SERVICE_NAME}] engine.forecast failed: {exc}", flush=True)
         return 0
 
-    _last_inference_monotonic = time.monotonic()
+    payload = forecast_to_event_payload(forecast, model_id)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    publish = should_publish(policy)
 
-    if not should_publish(policy):
-        return 0
+    if publish:
+        publish_envelope(
+            redis_client,
+            channel=FORECAST_CHANNEL,
+            source=SERVICE_NAME,
+            payload=payload,
+        )
 
-    publish_envelope(
-        redis_client,
-        channel=FORECAST_CHANNEL,
-        source=SERVICE_NAME,
-        payload=forecast_to_event_payload(forecast, model_id),
-    )
-    return 1
+    with _state_lock:
+        _last_inference_monotonic = time.monotonic()
+        _ticks_total += 1
+        _last_tick_at_iso = now_iso
+        _last_output_payload = payload
+        if publish:
+            _publishes_total += 1
+            _last_publish_at_iso = now_iso
+
+    return 1 if publish else 0
 
 
 # ── policy subscription ───────────────────────────────────────────────────────
@@ -266,6 +285,32 @@ def health():
     if errors:
         body["errors"] = errors
     return jsonify(body), code
+
+
+@app.route("/api/v1/engine/state", methods=["GET"])
+def get_engine_state():
+    """Live Engines (#121) — engine bootstrap, policy snapshot, runloop stats,
+    last cycle output. Read by the operator-ui BFF for per-engine cards on the
+    Live Engines page. Always returns 200; runloop-disabled is a state, not an
+    error."""
+    with _state_lock:
+        body = serialize_engine_state(
+            service=SERVICE_NAME,
+            channel=FORECAST_CHANNEL,
+            runloop_enabled=RUNLOOP_ENABLED,
+            engine_name=_engine_name,
+            engine_requested=_engine_requested,
+            engine_ready=_engine_ready,
+            engine_error=_engine_error,
+            policy=_policy,
+            ticks_total=_ticks_total,
+            publishes_total=_publishes_total,
+            last_tick_at=_last_tick_at_iso,
+            last_publish_at=_last_publish_at_iso,
+            last_tick_monotonic=_last_inference_monotonic,
+            last_output=_last_output_payload,
+        )
+    return jsonify(body)
 
 
 @app.route("/")
