@@ -228,5 +228,9 @@ yarn-error.log*
 dist/
 build/
 
+data/
+*.csv
+
+
 # optional npm cache
 .npm
