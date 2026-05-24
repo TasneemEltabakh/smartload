@@ -638,10 +638,44 @@ envelope = json.dumps({
 })
 ```
 
+**Scope — rl-engine publish path was never affected.** The bug was isolated to the walk
+script. The real rl-engine publisher (`services/rl-engine/app.py:176`) was verified clean
+post-smoke: it calls `publish_envelope()` from `shared/contracts.py`, which calls
+`make_envelope()`, which fills all canonical fields automatically:
+
+```python
+# app.py:176 — the exact publish call
+publish_envelope(
+    redis_client,
+    channel=ROUTING_CHANNEL,                                     # "smartload.routing"
+    source=SERVICE_NAME,                                         # "rl-engine"
+    payload=action_to_event_payload(action, mode, eng_policy.policy_version),
+)
+
+# contracts.py — what publish_envelope serialises to Redis
+{
+    "event_id":  str(uuid.uuid4()),                              # auto-generated
+    "source":    "rl-engine",
+    "version":   1,                                              # ENVELOPE_VERSION constant
+    "timestamp": datetime.now(timezone.utc).isoformat(),         # _now_iso() UTC
+    "payload": {
+        "mode":            "shadow",           # or "active"
+        "server_rankings": [{"backend_id": ..., "score": ...}, ...],
+        "policy_version":  19,
+    }
+}
+```
+
+`action_to_event_payload` (`runloop.py:250`) builds only the `payload` dict; the four
+outer fields are added by `make_envelope`. Every other service that calls `publish_envelope`
+gets the same guarantee. The walk script was the only caller that bypassed this helper.
+
 **Lesson:** Any manual publisher of Redis envelopes must include all four top-level envelope
 fields. `parse_envelope()` does not log the reason for drops at the caller site — the only
 way to detect a DROP_REASON_NOT_AN_ENVELOPE is to add `on_drop` callback instrumentation
-or check the lb-sidecar logs for the absence of a `routing applied` line.
+or check the lb-sidecar logs for the absence of a `routing applied` line. Use
+`publish_envelope()` or `make_envelope()` from `shared/contracts.py`; never hand-craft
+the outer envelope JSON.
 
 ### Bug 2 — httpx timeout too short for Windows docker exec (minor)
 
