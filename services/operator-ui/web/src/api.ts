@@ -80,6 +80,58 @@ export interface HealthSummary {
   services: Record<string, ServiceHealth>;
 }
 
+// ── Live Engines (#121) ──────────────────────────────────────────────────────
+
+export interface EngineDescriptor {
+  kind: "engine" | "policy";
+  requested: string;
+  loaded: string;
+  ready: boolean;
+  error: string | null;
+}
+
+export interface EngineStats {
+  ticks_total: number;
+  publishes_total: number;
+  last_tick_at: string | null;
+  last_publish_at: string | null;
+  last_tick_age_seconds: number | null;
+}
+
+// AI services return this; the BFF wraps it with `reachable: true`.
+// On failure the BFF returns `{reachable: false, error}` only.
+export interface EngineStateBody {
+  reachable: boolean;
+  service?: string;
+  channel?: string;
+  runloop_enabled?: boolean;
+  rl_mode_env?: string;
+  engine?: EngineDescriptor;
+  policy_snapshot?: Record<string, unknown>;
+  stats?: EngineStats;
+  last_output?: unknown;
+  error?: string;
+}
+
+export interface EnvelopeMeta {
+  event_id: string;
+  source: string;
+  version: number;
+  timestamp: string;
+}
+
+export interface EngineStreamEvent {
+  channel: string;
+  envelope: EnvelopeMeta;
+  payload: Record<string, unknown>;
+}
+
+export interface EnginesSnapshot {
+  services: Record<string, EngineStateBody>;
+  channels: Record<string, EngineStreamEvent[]>;
+  recent: EngineStreamEvent[];
+}
+
 async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const r = await fetch(input, {
     ...init,
@@ -142,4 +194,12 @@ export const api = {
         ...(reason ? { reason } : {}),
       }),
     }),
+
+  enginesSnapshot: () =>
+    _fetchJson<EnginesSnapshot>("/api/ui/engines/snapshot"),
 };
+
+// SSE stream URL — opened by the LiveEngines page with new EventSource(...).
+// Kept out of `api` because EventSource has its own lifecycle (open/close,
+// auto-reconnect) and isn't a one-shot fetch.
+export const ENGINES_STREAM_URL = "/api/ui/engines/stream";

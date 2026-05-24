@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import ActionsPage from "./pages/Actions";
 import AuditPage from "./pages/Audit";
 import HomePage from "./pages/Home";
+import LiveEnginesPage from "./pages/LiveEngines";
 import PolicyPage from "./pages/Policy";
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
         <div className="tagline">Operator UI</div>
         <nav className="nav">
           <NavLink to="/" end>Home</NavLink>
+          <NavLink to="/engines">Engines</NavLink>
           <NavLink to="/policy">Policy</NavLink>
           <NavLink to="/audit">Audit</NavLink>
           <NavLink to="/actions">Actions</NavLink>
@@ -22,6 +24,7 @@ export default function App() {
       <main className="content">
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/engines" element={<LiveEnginesPage />} />
           <Route path="/policy" element={<PolicyPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/actions" element={<ActionsPage />} />
