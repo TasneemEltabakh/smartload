@@ -3,29 +3,52 @@ services/operator-ui/bff/app.py
 ────────────────────────────────
 Operator UI backend-for-frontend (BFF).
 
-Responsibilities (slice #1 scope):
+Responsibilities:
   - Aggregate /health from every SmartLoad service for the Home page
-  - Proxy /api/ui/policy and /api/ui/audit/policy to policy-manager
+  - Proxy /api/ui/policy and /api/ui/audit/* to policy-manager / autoscaler
+  - Proxy manual actions (scale, isolate) to autoscaler / anomaly-detector
+  - Live Engines (#121): subscribe to smartload.{anomaly,forecast,routing,scale},
+    expose /api/ui/engines/snapshot (per-engine state) + /api/ui/engines/stream
+    (SSE feed of recent + live envelopes)
   - Serve Swagger UI at /api/docs reading docs/openapi/smartload-v1.yaml
   - Serve the React build at / (production) — Vite dev server handles dev
 
-Out of scope for slice #1 (separate issues):
-  - Live engines event stream (#121)
-  - Manual actions (#123)
-  - Audit log viewer for scaling events (#122)
+Out of scope (separate issues):
   - Operator login (#125)
   - Embedded charts (#131)
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import queue
 import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
-from flask import Flask, jsonify, request, send_from_directory
+import redis as redis_lib
+from flask import Flask, Response, jsonify, request, send_from_directory
+
+# Make sibling modules (engines.py) importable when this file is loaded as
+# `bff.app` by gunicorn (in which case the bff/ folder isn't on sys.path
+# by default). Same dual-mode pattern as the AI services use for shared/.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from engines import (  # noqa: E402
+    ENGINE_SERVICES,
+    HEARTBEAT_INTERVAL_SECONDS,
+    EngineEventBus,
+    RingBuffer,
+    format_sse_event,
+    format_sse_heartbeat,
+    subscriber_loop,
+)
 
 try:
     from flask_swagger_ui import get_swaggerui_blueprint
@@ -35,6 +58,7 @@ except ImportError:  # pragma: no cover
 
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "operator-ui")
 PORT         = int(os.environ.get("PORT", "8090"))
+REDIS_URL    = os.environ.get("REDIS_URL", "redis://redis:6379")
 
 # Service-name → base URL. Defaults match docker-compose service names + ports.
 SERVICE_URLS: dict[str, str] = {
@@ -229,6 +253,116 @@ def ui_manual_isolate():
     except Exception as exc:
         return jsonify({"error": f"upstream unreachable: {exc}"}), 502
     return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+# ── Live Engines (#121): snapshot + SSE stream ────────────────────────────────
+
+_engines_buf = RingBuffer()
+_engines_bus = EngineEventBus()
+_engines_thread_started = False
+_engines_thread_lock = threading.Lock()
+
+
+def _start_engines_subscriber() -> None:
+    """Spawn the Redis subscriber thread exactly once per process. Called on
+    first /api/ui/engines/* request so unit tests that import this module
+    without a live Redis don't pay the connection cost."""
+    global _engines_thread_started
+    with _engines_thread_lock:
+        if _engines_thread_started:
+            return
+        _engines_thread_started = True
+        t = threading.Thread(
+            target=subscriber_loop,
+            kwargs={
+                "redis_client_factory": lambda: redis_lib.from_url(REDIS_URL),
+                "buf": _engines_buf,
+                "bus": _engines_bus,
+                "log": lambda msg: log.info(msg),
+            },
+            daemon=True,
+            name="engines-subscriber",
+        )
+        t.start()
+        log.info("engines: subscriber thread started")
+
+
+def _fetch_engine_state(name: str, base_url: str) -> tuple[str, dict]:
+    """Pull one AI service's /api/v1/engine/state. Same shape as
+    _fetch_health — failures collapse to a status object the UI can render
+    without exploding."""
+    url = f"{base_url.rstrip('/')}/api/v1/engine/state"
+    try:
+        r = _http.get(url)
+        try:
+            body = r.json()
+        except (ValueError, TypeError):
+            return name, {"reachable": False, "error": f"non-json body ({r.status_code})"}
+        return name, {"reachable": True, **body}
+    except Exception as exc:                                # noqa: BLE001
+        return name, {"reachable": False, "error": str(exc)}
+
+
+@app.route("/api/ui/engines/snapshot", methods=["GET"])
+def ui_engines_snapshot():
+    """Fan-out: read /api/v1/engine/state from each AI service in parallel,
+    plus the most recent envelopes from each Redis channel. The UI's per-
+    engine cards consume `services`; the recent-activity panel consumes
+    `recent` (sorted oldest-first)."""
+    _start_engines_subscriber()
+    targets = [
+        (name, os.environ.get(env_key, default))
+        for (name, env_key, default) in ENGINE_SERVICES
+    ]
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        results = list(pool.map(lambda t: _fetch_engine_state(*t), targets))
+    services = dict(results)
+    return jsonify({
+        "services": services,
+        "channels": _engines_buf.snapshot(),
+        "recent":   _engines_buf.recent(limit=50),
+    })
+
+
+@app.route("/api/ui/engines/stream", methods=["GET"])
+def ui_engines_stream():
+    """SSE: replay the ring buffer once, then push every new envelope as it
+    arrives. Sends a heartbeat comment every HEARTBEAT_INTERVAL_SECONDS so
+    intermediate proxies don't kill idle connections.
+
+    Each connection gets its own bounded queue; slow clients drop events
+    rather than back-pressuring the publisher. Disconnects unsubscribe via
+    the generator's finally block."""
+    _start_engines_subscriber()
+    q = _engines_bus.subscribe()
+    replay = _engines_buf.recent()
+
+    def generate():
+        try:
+            # Backfill so a fresh page isn't blank.
+            for entry in replay:
+                yield format_sse_event(entry, json.dumps)
+            # Live.
+            while True:
+                try:
+                    entry = q.get(timeout=HEARTBEAT_INTERVAL_SECONDS)
+                    yield format_sse_event(entry, json.dumps)
+                except queue.Empty:
+                    yield format_sse_heartbeat()
+        except (GeneratorExit, Exception):                  # noqa: BLE001
+            return
+        finally:
+            _engines_bus.unsubscribe(q)
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",       # disable buffering at any nginx in front
+            "Connection":        "keep-alive",
+        },
+    )
 
 
 # ── BFF own health ────────────────────────────────────────────────────────────

@@ -344,12 +344,17 @@ services:
   # spec read-only so /api/docs renders Swagger UI without rebuilding the image.
   operator-ui:
     build:
-      context: ./services/operator-ui
+      # Widened to ./services so the Dockerfile can pull in services/shared/
+      # alongside operator-ui/ (the BFF imports shared.contracts.parse_envelope
+      # for the Live Engines stream — #121).
+      context: ./services
+      dockerfile: operator-ui/Dockerfile
     ports:
       - "8090:8090"
     environment:
       PORT: "8090"
       SERVICE_NAME: operator-ui
+      REDIS_URL:            redis://redis:6379
       POLICY_MANAGER_URL:   http://policy-manager:8086
       AUTOSCALER_URL:       http://autoscaler:8085
       TELEMETRY_URL:        http://telemetry:8081
@@ -360,6 +365,7 @@ services:
     volumes:
       - ./docs/openapi:/app/openapi:ro
     depends_on:
+      - redis
       - policy-manager
       - autoscaler
       - telemetry
