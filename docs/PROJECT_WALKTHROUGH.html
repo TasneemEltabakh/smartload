@@ -6,13 +6,28 @@
 <title>SmartLoad — Project Walkthrough</title>
 
 <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.css" />
+<link id="prism-theme" rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.css" />
+
+<script>
+  // Apply saved theme before paint to avoid flash-of-wrong-theme.
+  (function () {
+    try {
+      var saved = localStorage.getItem('sl-theme');
+      var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  })();
+</script>
 
 <style>
-  :root {
+  :root,
+  :root[data-theme="dark"] {
     --bg: #0e1116;
     --bg-card: #161b22;
     --bg-soft: #1c2129;
+    --bg-code: #0d1117;
     --border: #2d333b;
     --text: #e6edf3;
     --text-dim: #9ba8b6;
@@ -25,20 +40,44 @@
     --purple: #bc8cff;
     --pink: #db61a2;
     --teal: #39c5cf;
+    --inline-code: #ffa657;
+    --row-hover: #1f242c;
+    --toc-bg: #0b0e13;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="light"] {
+    --bg: #ffffff;
+    --bg-card: #f6f8fa;
+    --bg-soft: #eaeef2;
+    --bg-code: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-dim: #57606a;
+    --text-faint: #6e7781;
+    --accent: #0969da;
+    --accent-soft: #0969da1f;
+    --green: #1a7f37;
+    --amber: #9a6700;
+    --red: #cf222e;
+    --purple: #8250df;
+    --pink: #bf3989;
+    --teal: #1b7c83;
+    --inline-code: #953800;
+    --row-hover: #eef2f6;
+    --toc-bg: #f6f8fa;
   }
   * { box-sizing: border-box; }
   html, body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; margin: 0; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code, pre { font-family: var(--mono); font-size: 13px; }
-  pre { background: #0d1117 !important; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px !important; overflow: auto; margin: 12px 0; }
+  pre { background: var(--bg-code) !important; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px !important; overflow: auto; margin: 12px 0; }
   pre code { background: transparent !important; padding: 0 !important; }
-  :not(pre) > code { background: var(--bg-soft); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 90%; color: #ffa657; }
+  :not(pre) > code { background: var(--bg-soft); padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); font-size: 90%; color: var(--inline-code); }
 
   /* ── layout ─────────────────────────────────────────── */
   .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
-  aside.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; border-right: 1px solid var(--border); background: #0b0e13; padding: 24px 18px; }
+  aside.toc { position: sticky; top: 0; height: 100vh; overflow-y: auto; border-right: 1px solid var(--border); background: var(--toc-bg); padding: 24px 18px; }
   aside.toc h1 { font-size: 18px; margin: 0 0 4px; color: var(--text); }
   aside.toc .tagline { font-size: 12px; color: var(--text-faint); margin-bottom: 18px; }
   aside.toc nav { font-size: 13.5px; }
@@ -75,7 +114,7 @@
   th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { background: var(--bg-soft); color: var(--text-dim); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
   tr:last-child td { border-bottom: 0; }
-  tr:hover td { background: #1f242c; }
+  tr:hover td { background: var(--row-hover); }
 
   /* ── badges ─────────────────────────────────────────── */
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
@@ -106,7 +145,7 @@
   .service-head .meta { display: flex; gap: 8px; flex-wrap: wrap; }
 
   /* ── file tree ──────────────────────────────────────── */
-  .filetree { font-family: var(--mono); font-size: 13px; line-height: 1.7; background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; white-space: pre; color: var(--text-dim); }
+  .filetree { font-family: var(--mono); font-size: 13px; line-height: 1.7; background: var(--bg-code); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; overflow-x: auto; white-space: pre; color: var(--text-dim); }
   .filetree .impl { color: var(--green); }
   .filetree .stub { color: var(--amber); }
   .filetree .stable { color: var(--text); }
@@ -136,9 +175,45 @@
 
   /* ── small ──────────────────────────────────────────── */
   small.muted { color: var(--text-faint); font-size: 12px; }
+
+  /* ── theme toggle ───────────────────────────────────── */
+  html, body, aside.toc, .card, .callout, table, .stat, .mermaid, .filetree, pre, :not(pre) > code, .tag, .badge, .service-head {
+    transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  }
+  .theme-toggle {
+    position: fixed; top: 16px; right: 20px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg-card); color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 12px; font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  }
+  .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
+  .theme-toggle .icon { width: 14px; height: 14px; display: inline-block; }
+  :root[data-theme="dark"]  .theme-toggle .icon-sun  { display: inline-block; }
+  :root[data-theme="dark"]  .theme-toggle .icon-moon { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-sun  { display: none; }
+  :root[data-theme="light"] .theme-toggle .icon-moon { display: inline-block; }
+  :root[data-theme="dark"]  .theme-toggle .label::before { content: "Light"; }
+  :root[data-theme="light"] .theme-toggle .label::before { content: "Dark"; }
+
+  /* In light mode, scrollbars and selections look nicer with explicit values */
+  :root[data-theme="light"] ::selection { background: var(--accent-soft); }
 </style>
 </head>
 <body>
+
+<button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle light/dark theme">
+  <svg class="icon icon-sun" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="8" cy="8" r="3"></circle>
+    <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4"></path>
+  </svg>
+  <svg class="icon icon-moon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7z"></path>
+  </svg>
+  <span class="label"></span>
+</button>
 
 <div class="layout">
 
@@ -496,7 +571,7 @@ flowchart TD
   <thead><tr><th>Constant</th><th>Used by</th><th>Returns</th><th>Bind params</th></tr></thead>
   <tbody>
     <tr><td><code>ANOMALY_QUERY</code></td><td>anomaly-detector</td><td>avg/max/stddev/count per (instance, metric)</td><td>window, service, metric_names</td></tr>
-    <tr><td><code>FORECAST_QUERY</code></td><td>forecasting</td><td>1-min buckets of request_rate</td><td>window</td></tr>
+    <tr><td><code>FORECAST_QUERY</code></td><td>forecasting</td><td>1-min buckets of <code>request_rate</code> (per-second, normalised by bucket width)</td><td>window</td></tr>
     <tr><td><code>RL_STATE_QUERY</code></td><td>rl-engine</td><td>latency / count / err_rate per instance (pivoted)</td><td>window</td></tr>
     <tr><td><code>BACKEND_HEALTH_QUERY</code></td><td>rl-engine, LB sidecar</td><td>latest health verdict per backend</td><td>window</td></tr>
     <tr><td><code>OBSERVED_RPS_QUERY</code></td><td>autoscaler (reactive fallback)</td><td>scalar RPS over last 60 s</td><td>—</td></tr>
@@ -540,14 +615,14 @@ ORDER BY backend_id, time DESC;
 classDiagram
   class LoadBalancerAdapter {
     &lt;&lt;abstract&gt;&gt;
-    +set_upstream_weights(dict)
-    +exclude_backend(string)
-    +include_backend(string)
+    +set_upstream_weights(weights) void
+    +exclude_backend(backend_id) void
+    +include_backend(backend_id) void
     +current_state() AdapterState
   }
   class AdapterState {
-    +dict upstream_weights
-    +set excluded_backends
+    +upstream_weights : dict
+    +excluded_backends : set
   }
   class NginxAdapter
   class EnvoyAdapter
@@ -1073,7 +1148,7 @@ stateDiagram-v2
 <p><code>app.py</code> is no longer a Phase-0 stub. When <code>FORECAST_RUNLOOP_ENABLED=true</code>, the service runs a threaded loop that:</p>
 <ol>
   <li>resolves the engine via <code>engine_base.select_engine(FORECAST_ENGINE)</code> with automatic fallback to <code>moving_average</code> if the requested engine fails to load;</li>
-  <li>polls <code>FORECAST_QUERY</code> against TimescaleDB every <code>POLL_INTERVAL_SECONDS</code> (default 60 s) over a <code>FORECAST_WINDOW_MINUTES</code> lookback;</li>
+  <li>polls <code>FORECAST_QUERY</code> against TimescaleDB every <code>POLL_INTERVAL_SECONDS</code> (default 60 s) over a <code>FORECAST_WINDOW_MINUTES</code> lookback. The query's <code>request_rate</code> column is normalised to per-second by dividing the 1-minute <code>SUM(value)</code> by 60 — so the values handed to the engine match the per-second units the autoscaler will later compare against <code>per_instance_capacity_rps</code>;</li>
   <li>converts the rows into a <code>HistoryWindow</code> (ISO timestamps + numeric rates) via <code>runloop.build_history_from_rows</code>;</li>
   <li>calls <code>engine.forecast(history)</code> once per cycle (forecasting produces a single signal, not a per-backend signal);</li>
   <li>publishes a <code>ForecastResult</code> envelope to <code>smartload.forecast</code> through <code>publish_envelope</code>. The publish gate respects <code>safe_mode</code> — when the operator has paused decision flow, the forecast is computed but not published;</li>
@@ -2178,29 +2253,93 @@ flowchart TB
 <!-- Mermaid + Prism                                                          -->
 <!-- ═══════════════════════════════════════════════════════════════════════ -->
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-<script>
-  mermaid.initialize({
-    startOnLoad: true,
-    theme: 'dark',
-    securityLevel: 'loose',
-    themeVariables: {
-      darkMode: true,
-      background: '#161b22',
-      primaryColor: '#1f6feb',
-      primaryTextColor: '#e6edf3',
-      primaryBorderColor: '#2d333b',
-      lineColor: '#9ba8b6',
-      secondaryColor: '#2d333b',
-      tertiaryColor: '#0d1117',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-      fontSize: '13px'
-    },
-    flowchart: { curve: 'basis', padding: 10 },
-    sequence:  { actorMargin: 60, messageMargin: 35 }
-  });
-</script>
 <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-core.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
+<script>
+  // ── Mermaid theme config keyed by data-theme ─────────────────────────────
+  var mermaidConfigs = {
+    dark: {
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#161b22',
+        primaryColor: '#1f6feb',
+        primaryTextColor: '#e6edf3',
+        primaryBorderColor: '#2d333b',
+        lineColor: '#9ba8b6',
+        secondaryColor: '#2d333b',
+        tertiaryColor: '#0d1117',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: '13px'
+      }
+    },
+    light: {
+      theme: 'default',
+      themeVariables: {
+        darkMode: false,
+        background: '#f6f8fa',
+        primaryColor: '#ddf4ff',
+        primaryTextColor: '#1f2328',
+        primaryBorderColor: '#d0d7de',
+        lineColor: '#57606a',
+        secondaryColor: '#eaeef2',
+        tertiaryColor: '#ffffff',
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: '13px'
+      }
+    }
+  };
+
+  function applyMermaid(theme) {
+    var cfg = mermaidConfigs[theme] || mermaidConfigs.dark;
+    mermaid.initialize(Object.assign({
+      startOnLoad: false,
+      securityLevel: 'loose',
+      flowchart: { curve: 'basis', padding: 10 },
+      sequence:  { actorMargin: 60, messageMargin: 35 }
+    }, cfg));
+  }
+
+  function renderMermaid() {
+    // Re-render every .mermaid block from its source (cached on first run).
+    var nodes = document.querySelectorAll('.mermaid');
+    nodes.forEach(function (el, i) {
+      if (!el.dataset.source) el.dataset.source = el.textContent;
+      el.removeAttribute('data-processed');
+      el.innerHTML = el.dataset.source;
+    });
+    if (nodes.length) mermaid.run({ nodes: nodes });
+  }
+
+  // ── Prism theme CSS swap ─────────────────────────────────────────────────
+  var prismThemes = {
+    dark:  'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.css',
+    light: 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.css'
+  };
+  function applyPrism(theme) {
+    var link = document.getElementById('prism-theme');
+    if (link) link.href = prismThemes[theme] || prismThemes.dark;
+  }
+
+  // ── Toggle wiring ────────────────────────────────────────────────────────
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem('sl-theme', theme); } catch (e) {}
+    applyPrism(theme);
+    applyMermaid(theme);
+    renderMermaid();
+  }
+
+  var initial = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyMermaid(initial);
+  applyPrism(initial);
+  renderMermaid();
+
+  document.getElementById('themeToggle').addEventListener('click', function () {
+    var current = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    applyTheme(current === 'light' ? 'dark' : 'light');
+  });
+</script>
 
 </body>
 </html>
