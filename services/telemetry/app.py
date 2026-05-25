@@ -299,6 +299,253 @@ def read_api():
     return jsonify({"service": service, "window": window, "rows": rows}), 200
 
 
+@app.route("/api/v1/metrics/rpm", methods=["GET"])
+def metrics_rpm():
+    """Per-minute request-rate time series for the operator UI throughput card.
+
+    ?window=N — number of 1-minute buckets to return (default 24, cap 240).
+
+    Each bucket sums request_count rows in its minute and normalises to a
+    per-second rate the same way FORECAST_QUERY does (SUM(value) / 60). The
+    `total_requests` field is the raw sum over the window (no /60) so the
+    UI can show "X requests in last Y minutes". On any DB failure we return
+    a zeroed response with HTTP 200 — operator-UI must degrade gracefully
+    rather than render an error state for a chart card.
+    """
+    try:
+        window = int(request.args.get("window", 24))
+    except (TypeError, ValueError):
+        window = 24
+    if window <= 0:
+        window = 24
+    window = min(window, 240)
+    interval = f"{window} minutes"
+
+    empty = {"buckets": [], "current_rpm": 0, "total_requests": 0}
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                # Parameterised interval cast (SOT §11). Same per-second
+                # normalisation as FORECAST_QUERY so the operator-UI's
+                # throughput chart and the forecasting engine see the same
+                # numbers from the same metric.
+                cur.execute(
+                    """
+                    SELECT
+                        time_bucket('1 minute', time) AS bucket,
+                        SUM(value)::float / 60.0      AS request_rate,
+                        SUM(value)::float             AS request_total
+                    FROM metrics
+                    WHERE time > NOW() - %s::interval
+                      AND metric_name = 'request_count'
+                    GROUP BY bucket
+                    ORDER BY bucket ASC
+                    """,
+                    (interval,),
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] rpm query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    if not rows:
+        return jsonify(empty), 200
+
+    all_buckets = [
+        {
+            "time": (bucket.isoformat() if bucket is not None else None),
+            "rpm":  int(round((rate or 0.0) * 60.0)),
+            "_total": int(round(t or 0.0)),
+            "_bucket": bucket,
+        }
+        for (bucket, rate, t) in rows
+    ]
+
+    # The last bucket is partial whenever its start lies inside the current
+    # minute (which is almost always true when we polled mid-minute). Splitting
+    # it off prevents the sparkline from showing a false dip on its right edge
+    # and lets `current_rpm` reflect the most-recent *complete* minute — what
+    # an operator actually wants to read as "current throughput".
+    now = datetime.now(timezone.utc)
+    current_minute_start = now.replace(second=0, microsecond=0)
+    last = all_buckets[-1]
+    partial = None
+    complete = all_buckets
+    if last["_bucket"] is not None and last["_bucket"] >= current_minute_start:
+        elapsed = max(1.0, (now - last["_bucket"]).total_seconds())
+        partial = {
+            "time":               last["time"],
+            "rpm_so_far":         last["rpm"],
+            "rows_so_far":        last["_total"],
+            "elapsed_seconds":    round(elapsed, 1),
+            # Linear projection of the partial bucket to a full-minute rate.
+            # Useful as a "right now" indicator without contaminating the chart.
+            "projected_rpm":      int(round(last["_total"] * 60.0 / elapsed)),
+        }
+        complete = all_buckets[:-1]
+
+    buckets = [{"time": b["time"], "rpm": b["rpm"]} for b in complete]
+    current_rpm    = buckets[-1]["rpm"] if buckets else 0
+    total_requests = int(round(sum(b["_total"] for b in complete)))
+    return jsonify({
+        "buckets":        buckets,
+        "current_rpm":    current_rpm,
+        "total_requests": total_requests,
+        "partial":        partial,
+    }), 200
+
+
+@app.route("/api/v1/metrics/latency", methods=["GET"])
+def metrics_latency():
+    """p50 / p95 / p99 latency over a rolling window in seconds.
+
+    ?window=N — window length in seconds (default 60, cap 3600).
+
+    Uses percentile_cont over the `request_latency_ms` series. If fewer than
+    10 samples sit inside the window the percentiles are reported as null
+    (with the real sample count) so the UI can show "insufficient data"
+    rather than a misleading single-sample p95. DB failures collapse to a
+    zero-sample response with HTTP 200 — same degrade-don't-error rule as
+    the rpm endpoint."""
+    try:
+        window = int(request.args.get("window", 60))
+    except (TypeError, ValueError):
+        window = 60
+    if window <= 0:
+        window = 60
+    window = min(window, 3600)
+    interval = f"{window} seconds"
+
+    empty = {"p50_ms": None, "p95_ms": None, "p99_ms": None, "samples": 0}
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        percentile_cont(0.5)  WITHIN GROUP (ORDER BY value) AS p50,
+                        percentile_cont(0.95) WITHIN GROUP (ORDER BY value) AS p95,
+                        percentile_cont(0.99) WITHIN GROUP (ORDER BY value) AS p99,
+                        COUNT(*)                                            AS samples
+                    FROM metrics
+                    WHERE time > NOW() - %s::interval
+                      AND metric_name = 'request_latency_ms'
+                    """,
+                    (interval,),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] latency query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    if not row:
+        return jsonify(empty), 200
+
+    p50, p95, p99, samples = row
+    samples = int(samples or 0)
+    if samples < 10:
+        return jsonify({
+            "p50_ms":  None,
+            "p95_ms":  None,
+            "p99_ms":  None,
+            "samples": samples,
+        }), 200
+
+    return jsonify({
+        "p50_ms":  int(round(p50)) if p50 is not None else None,
+        "p95_ms":  int(round(p95)) if p95 is not None else None,
+        "p99_ms":  int(round(p99)) if p99 is not None else None,
+        "samples": samples,
+    }), 200
+
+
+@app.route("/api/v1/metrics/slo", methods=["GET"])
+def metrics_slo():
+    """SLO compliance: percent of requests with latency <= slo_p95 over window.
+
+    Query params:
+      ?window=N    — window length in seconds (default 3600, cap 86400).
+      ?slo_p95=N   — latency budget in ms (default 200).
+
+    Computes both the compliant count and the violation count in one pass
+    so the UI can show "99.2% compliant (37 violations / 4621 samples)"
+    without a second round-trip. Empty / failed DB → zero-sample response
+    with HTTP 200 so the SLO card degrades gracefully."""
+    try:
+        window = int(request.args.get("window", 3600))
+    except (TypeError, ValueError):
+        window = 3600
+    if window <= 0:
+        window = 3600
+    window = min(window, 86400)
+
+    try:
+        slo_p95 = int(request.args.get("slo_p95", 200))
+    except (TypeError, ValueError):
+        slo_p95 = 200
+    if slo_p95 <= 0:
+        slo_p95 = 200
+
+    interval = f"{window} seconds"
+
+    empty = {
+        "slo_p95_ms":     slo_p95,
+        "window_seconds": window,
+        "samples":        0,
+        "compliant_pct":  0.0,
+        "violations":     0,
+    }
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                # COUNT(*) FILTER (...) keeps both counts in one scan. SLO
+                # threshold is a bind parameter — never an f-string into SQL.
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*)                                AS samples,
+                        COUNT(*) FILTER (WHERE value <= %s)     AS compliant
+                    FROM metrics
+                    WHERE time > NOW() - %s::interval
+                      AND metric_name = 'request_latency_ms'
+                    """,
+                    (slo_p95, interval),
+                )
+                row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] slo query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    if not row:
+        return jsonify(empty), 200
+
+    samples   = int(row[0] or 0)
+    compliant = int(row[1] or 0)
+    if samples == 0:
+        return jsonify(empty), 200
+    violations    = samples - compliant
+    compliant_pct = round(100.0 * compliant / samples, 2)
+    return jsonify({
+        "slo_p95_ms":     slo_p95,
+        "window_seconds": window,
+        "samples":        samples,
+        "compliant_pct":  compliant_pct,
+        "violations":     violations,
+    }), 200
+
+
 @app.route("/api/v1/stats", methods=["GET"])
 def stats():
     with _stats_lock:

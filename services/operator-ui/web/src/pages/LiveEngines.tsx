@@ -1,4 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CheckCircle2,
+  Cpu,
+  Sparkles,
+  TrendingUp,
+  XCircle,
+} from "lucide-react";
 
 import {
   ENGINES_STREAM_URL,
@@ -175,6 +184,13 @@ function summariseEvent(ev: EngineStreamEvent): string {
 
 // ── engine tile ────────────────────────────────────────────────────────────
 
+function IconFor({ name }: { name: string }) {
+  if (name === "anomaly-detector") return <AlertTriangle size={16} strokeWidth={2} />;
+  if (name === "forecasting") return <TrendingUp size={16} strokeWidth={2} />;
+  if (name === "rl-engine") return <Sparkles size={16} strokeWidth={2} />;
+  return <Cpu size={16} strokeWidth={2} />;
+}
+
 function EngineTile({
   name,
   body,
@@ -190,11 +206,14 @@ function EngineTile({
     return (
       <div className={`engine-tile status-warn`}>
         <div className="tile-head">
-          <div className="tile-name">{name}</div>
+          <div className="tile-title-wrap">
+            <div className="tile-icon"><IconFor name={name} /></div>
+            <div>
+              <div className="tile-name">{name}</div>
+              <div className="tile-sub">awaiting first snapshot…</div>
+            </div>
+          </div>
           <div className="tile-status">loading</div>
-        </div>
-        <div className="headline">
-          <span className="headline-empty">awaiting first snapshot…</span>
         </div>
       </div>
     );
@@ -207,21 +226,35 @@ function EngineTile({
   const fallback = Boolean(eng && eng.requested !== eng.loaded);
   const notReady = Boolean(eng && !eng.ready);
 
+  const lastTickAge = body.stats?.last_tick_age_seconds;
+  const lastTickStr =
+    lastTickAge != null
+      ? `last tick ${lastTickAge < 60 ? `${lastTickAge.toFixed(1)}s` : `${(lastTickAge / 60).toFixed(1)}m`} ago`
+      : null;
+
   return (
     <div className={`engine-tile status-${status}`}>
       <div className="tile-head">
-        <div className="tile-name">{name}</div>
+        <div className="tile-title-wrap">
+          <div className="tile-icon"><IconFor name={name} /></div>
+          <div>
+            <div className="tile-name">{name}</div>
+            <div className="tile-sub">
+              {body.channel ? <code>{body.channel}</code> : null}
+              {lastTickStr ? <> · {lastTickStr}</> : null}
+            </div>
+          </div>
+        </div>
         <div className="tile-status">{status === "ok" ? "healthy" : status === "warn" ? "degraded" : "unreachable"}</div>
       </div>
 
-      <div className="headline">
+      <div>
         <span className="headline-label">{headline.label}</span>
-        {headline.value}
+        <div className="headline">{headline.value}</div>
       </div>
 
       <div className="secondary">
         {eng ? <>{eng.kind === "policy" ? "Policy" : "Engine"}: <code>{eng.loaded}</code></> : null}
-        {body.channel ? <> · channel <code>{body.channel}</code></> : null}
         {body.rl_mode_env ? <> · rl_mode_env <code>{body.rl_mode_env}</code></> : null}
       </div>
 
@@ -230,8 +263,9 @@ function EngineTile({
           {safeMode ? <span className="tile-chip bad">safe_mode</span> : null}
           {fallback ? <span className="tile-chip warn">fallback ← {eng?.requested}</span> : null}
           {notReady && !fallback ? <span className="tile-chip warn">not ready</span> : null}
+          {!body.runloop_enabled ? <span className="tile-chip warn">runloop off</span> : null}
         </div>
-        <button className="tile-details-button" onClick={onOpenDetails}>Details ▸</button>
+        <button className="tile-details-button" onClick={onOpenDetails}>View details <ArrowUpRight size={11} strokeWidth={2} /></button>
       </div>
     </div>
   );
@@ -366,18 +400,53 @@ export default function LiveEnginesPage() {
 
   const drawerBody = drawer ? snapshot?.services[drawer] : null;
 
+  // Engine KPI counts.
+  const engineCount = ENGINE_ORDER.length;
+  const services = snapshot?.services ?? {};
+  const healthyCount  = ENGINE_ORDER.filter((n) => statusOf(services[n]) === "ok").length;
+  const degradedCount = ENGINE_ORDER.filter((n) => statusOf(services[n]) === "warn").length;
+  const unreachable   = ENGINE_ORDER.filter((n) => statusOf(services[n]) === "bad").length;
+
   return (
     <>
-      <div className="engines-page-header">
+      <div className="page-header">
         <div>
-          <h2>Live engines</h2>
-          <p className="meta">
-            Each tile refreshes every {SNAPSHOT_REFRESH_MS / 1000}s · activity feed live via SSE
+          <h2>Live Engines</h2>
+          <div className="subtitle">
+            Real-time view of every active SmartLoad engine
             {snapshotError ? <span style={{ color: "var(--bad)" }}> · snapshot: {snapshotError}</span> : null}
-          </p>
+          </div>
         </div>
-        <div className={`feed-stream-state ${streamState}`}>
-          {streamState === "open" ? "● live" : streamState === "connecting" ? "○ connecting…" : streamState === "error" ? "✕ stream error" : "○ idle"}
+        <div className="header-actions">
+          <span className="refresh-chip">
+            <span className="pulse" /> Auto-refresh {SNAPSHOT_REFRESH_MS / 1000}s
+          </span>
+          <span className={`refresh-chip feed-stream-state ${streamState}`}>
+            {streamState === "open" ? "● SSE live" : streamState === "connecting" ? "○ connecting…" : streamState === "error" ? "✕ stream error" : "○ idle"}
+          </span>
+        </div>
+      </div>
+
+      <div className="kpi-row">
+        <div className="kpi cyan">
+          <div className="kpi-label"><span className="kpi-icon"><Cpu size={14} strokeWidth={2} /></span> Configured engines</div>
+          <div className="kpi-value">{engineCount}</div>
+          <div className="kpi-trend">anomaly · forecast · rl</div>
+        </div>
+        <div className="kpi green">
+          <div className="kpi-label"><span className="kpi-icon"><CheckCircle2 size={14} strokeWidth={2} /></span> Healthy</div>
+          <div className="kpi-value">{healthyCount}</div>
+          <div className="kpi-trend up">reachable &amp; running</div>
+        </div>
+        <div className="kpi amber">
+          <div className="kpi-label"><span className="kpi-icon"><AlertTriangle size={14} strokeWidth={2} /></span> Degraded</div>
+          <div className="kpi-value">{degradedCount}</div>
+          <div className="kpi-trend">fallback or runloop off</div>
+        </div>
+        <div className="kpi bad">
+          <div className="kpi-label"><span className="kpi-icon"><XCircle size={14} strokeWidth={2} /></span> Unreachable</div>
+          <div className="kpi-value">{unreachable}</div>
+          <div className="kpi-trend">requires attention</div>
         </div>
       </div>
 

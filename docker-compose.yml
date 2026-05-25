@@ -362,6 +362,11 @@ services:
       FORECASTING_URL:      http://forecasting:8083
       RL_ENGINE_URL:        http://rl-engine:8084
       LOAD_BALANCER_URL:    http://load-balancer:80
+      # Surfaced by /api/ui/policy/environment so the Policy page can render
+      # the deployment scope without a live upstream. Defaults keep dev /
+      # CI working without an explicit .env entry.
+      SMARTLOAD_ENV:            ${SMARTLOAD_ENV:-production}
+      SMARTLOAD_AVAILABLE_ENVS: ${SMARTLOAD_AVAILABLE_ENVS:-dev,staging,prod}
     volumes:
       - ./docs/openapi:/app/openapi:ro
     depends_on:

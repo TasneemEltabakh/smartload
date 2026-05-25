@@ -257,7 +257,7 @@ def subscribe_envelope(
 class AnomalyEvent:
     """
     Published by anomaly-detector to smartload.anomaly.
-    Consumed by: load-balancer sidecar (T2.1), policy-manager.
+    Consumed by: load-balancer sidecar (T2.1), operator-ui (live-engines feed).
 
     SOT §11 channel-specific payload fields:
       required: backend_id, status, score
@@ -276,7 +276,7 @@ class AnomalyEvent:
 class ForecastResult:
     """
     Published by forecasting to smartload.forecast.
-    Consumed by: autoscaler, policy-manager.
+    Consumed by: autoscaler.
 
     SOT §11 channel-specific payload fields:
       required: horizon_minutes, predicted_rps
@@ -314,7 +314,7 @@ class RoutingRecommendation:
 class ScalingEvent:
     """
     Published by autoscaler to smartload.scale.
-    Consumed by: policy-manager (for audit), load-balancer (to update pool size).
+    Consumed by: operator-ui (live-engines feed + audit), webhook-dispatcher (planned).
 
     SOT §11 channel-specific payload fields:
       required: action, instance_count, reason

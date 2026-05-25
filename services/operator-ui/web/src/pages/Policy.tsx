@@ -1,7 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactDiffViewer from "react-diff-viewer-continued";
+import {
+  Activity,
+  AlertCircle,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  Cpu,
+  GitBranch,
+  Layers,
+  Pencil,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  Sliders,
+  Sparkles,
+  Target,
+  TrendingUp,
+  Undo2,
+  XCircle,
+} from "lucide-react";
 
-import { api, type AuditRow, type Policy } from "../api";
+import {
+  api,
+  type AuditRow,
+  type EnvironmentScope,
+  type Policy,
+  type PolicyPreviewResponse,
+  type RelatedMetrics,
+} from "../api";
 
 const REFRESH_MS = 10_000;
 
@@ -9,19 +37,46 @@ function formatJson(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return `${Math.floor(s)}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
+function fmt(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  return JSON.stringify(v);
+}
+
 export default function PolicyPage() {
   const [current, setCurrent] = useState<Policy | null>(null);
   const [draft, setDraft] = useState<string>("");
   const [audit, setAudit] = useState<AuditRow[]>([]);
+  const [env, setEnv] = useState<EnvironmentScope | null>(null);
+  const [related, setRelated] = useState<RelatedMetrics | null>(null);
+  const [preview, setPreview] = useState<PolicyPreviewResponse | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "bad" } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function loadAll() {
     try {
-      const [p, a] = await Promise.all([api.getPolicy(), api.auditPolicy(20)]);
+      const [p, a, e, r] = await Promise.all([
+        api.getPolicy(),
+        api.auditPolicy(30),
+        api.getEnvironmentScope().catch(() => null),
+        api.getRelatedMetrics().catch(() => null),
+      ]);
       setCurrent(p);
       setAudit(a);
+      setEnv(e);
+      setRelated(r);
       setDraft((prev) => (prev ? prev : formatJson(p)));
       setError(null);
     } catch (err: any) {
@@ -52,6 +107,25 @@ export default function PolicyPage() {
     setTimeout(() => setToast(null), 4_000);
   }
 
+  async function runPreview() {
+    if (!parsedDraft.ok) {
+      flash(`draft is not valid JSON: ${parsedDraft.error}`, "bad");
+      return;
+    }
+    setBusy(true);
+    try {
+      const patch = { ...(parsedDraft.value as Partial<Policy>) } as Record<string, unknown>;
+      delete patch.policy_version;
+      const r = await api.previewPolicy(patch as Partial<Policy>);
+      setPreview(r);
+      setShowDiff(true);
+    } catch (err: any) {
+      flash(`preview failed: ${err.message || err}`, "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function commit() {
     if (!parsedDraft.ok) {
       flash(`draft is not valid JSON: ${parsedDraft.error}`, "bad");
@@ -60,7 +134,7 @@ export default function PolicyPage() {
     setBusy(true);
     try {
       const patch = { ...(parsedDraft.value as Partial<Policy>) } as Record<string, unknown>;
-      delete patch.policy_version; // server bumps it
+      delete patch.policy_version;
       const result = await api.setPolicy(patch, "operator-ui");
       flash(
         result.status === "updated"
@@ -68,6 +142,7 @@ export default function PolicyPage() {
           : "no change committed",
         "ok",
       );
+      setPreview(null);
       await loadAll();
     } catch (err: any) {
       const fieldHint = err.field ? ` [field: ${err.field}]` : "";
@@ -78,86 +153,365 @@ export default function PolicyPage() {
   }
 
   function resetDraft() {
-    if (current) setDraft(formatJson(current));
+    if (current) {
+      setDraft(formatJson(current));
+      setPreview(null);
+      setShowDiff(false);
+    }
   }
+
+  function formatBuffer() {
+    if (parsedDraft.ok) setDraft(formatJson(parsedDraft.value));
+  }
+
+  function copyBuffer() {
+    navigator.clipboard?.writeText(draft).then(
+      () => flash("copied to clipboard", "ok"),
+      () => flash("copy failed", "bad"),
+    );
+  }
+
+  const versions = useMemo(() => {
+    const map = new Map<number, { fields: string[]; time: string; actor: string }>();
+    for (const row of audit) {
+      const v = map.get(row.policy_version);
+      if (v) v.fields.push(row.field);
+      else map.set(row.policy_version, { fields: [row.field], time: row.time, actor: row.actor });
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0] - a[0]).slice(0, 6);
+  }, [audit]);
+
+  const inputs = current ? Object.keys(current).length : 0;
+  const lastApplied = audit[0]?.time ?? null;
 
   return (
     <>
-      <div className="card">
-        <h2>Current policy</h2>
-        <div className="meta">
-          {current
-            ? `policy_version = ${current.policy_version} · operating_mode = ${current.operating_mode} · safe_mode = ${String(current.safe_mode)}`
-            : "loading…"}
-          {error ? ` · last error: ${error}` : null}
+      <div className="page-header">
+        <div>
+          <h2>Policy Management</h2>
+          <div className="subtitle">Author and govern the policy that drives SmartLoad's decisions</div>
         </div>
-        <pre>{current ? formatJson(current) : ""}</pre>
+        <div className="header-actions">
+          <span className="refresh-chip">
+            <span className="pulse" /> Auto-refresh {REFRESH_MS / 1000}s
+          </span>
+        </div>
       </div>
 
-      <div className="card">
-        <h2>Edit (JSON)</h2>
-        <div className="meta">
-          Edit policy fields below. Unknown fields are ignored by the service.
-          policy_version is set server-side.
+      {/* ── KPI row ────────────────────────────────────────────────── */}
+      <div className="kpi-row">
+        <div className="kpi cyan">
+          <div className="kpi-label"><span className="kpi-icon"><Sliders size={14} /></span> Inputs</div>
+          <div className="kpi-value">{inputs || "—"}</div>
+          <div className="kpi-trend">configurable fields</div>
         </div>
-        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} />
-        <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-          <button onClick={commit} disabled={busy || !parsedDraft.ok}>
-            {busy ? "committing…" : "Commit"}
-          </button>
-          <button className="secondary" onClick={resetDraft} disabled={busy}>
-            Reset
-          </button>
-          {!parsedDraft.ok ? (
-            <span style={{ color: "var(--bad)", alignSelf: "center", marginLeft: 8 }}>
-              {parsedDraft.error}
-            </span>
+        <div className="kpi violet">
+          <div className="kpi-label"><span className="kpi-icon"><Cpu size={14} /></span> Operating mode</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>{current?.operating_mode ?? "—"}</div>
+          <div className="kpi-trend">runtime decision layer</div>
+        </div>
+        <div className={`kpi ${current?.safe_mode ? "amber" : "green"}`}>
+          <div className="kpi-label"><span className="kpi-icon"><ShieldAlert size={14} /></span> Safe mode</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>
+            {current ? (current.safe_mode ? "ON / true" : "off / false") : "—"}
+          </div>
+          <div className="kpi-trend">override flag</div>
+        </div>
+        <div className={`kpi ${parsedDraft.ok ? "green" : "bad"}`}>
+          <div className="kpi-label"><span className="kpi-icon">{parsedDraft.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}</span> Schema validation</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>
+            {parsedDraft.ok ? "valid" : "invalid"}
+          </div>
+          <div className="kpi-trend">{parsedDraft.ok ? "draft parses cleanly" : parsedDraft.error}</div>
+        </div>
+        <div className="kpi pink">
+          <div className="kpi-label"><span className="kpi-icon"><Clock size={14} /></span> Last applied</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>{timeAgo(lastApplied)}</div>
+          <div className="kpi-trend">v{current?.policy_version ?? "—"}</div>
+        </div>
+      </div>
+
+      {/* ── Summary cards ─────────────────────────────────────────── */}
+      <div className="card">
+        <div className="card-head">
+          <h2>Current policy summary</h2>
+          <span className="meta">High-level view of the live policy values</span>
+        </div>
+        <div className="policy-summary-grid">
+          <div className="policy-summary-card anomaly">
+            <div className="sc-head">
+              <span className="sc-icon"><AlertTriangle size={14} /></span>
+              <h4>Anomaly detection</h4>
+            </div>
+            <div className="sc-row"><span className="k">latency multiplier</span><span className="v">{current?.anomaly_latency_multiplier ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">recovery window</span><span className="v">{current?.anomaly_recovery_window_seconds != null ? `${current.anomaly_recovery_window_seconds}s` : "—"}</span></div>
+            <div className="sc-row"><span className="k">response</span><span className="v">{current?.anomaly_response ?? "default"}</span></div>
+          </div>
+
+          <div className="policy-summary-card scaling">
+            <div className="sc-head">
+              <span className="sc-icon"><TrendingUp size={14} /></span>
+              <h4>Autoscaling</h4>
+            </div>
+            <div className="sc-row"><span className="k">min backends</span><span className="v">{current?.min_backends ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">max backends</span><span className="v">{current?.max_backends ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">cooldown</span><span className="v">{current?.autoscaler_cooldown_seconds != null ? `${current.autoscaler_cooldown_seconds}s` : "—"}</span></div>
+          </div>
+
+          <div className="policy-summary-card decision">
+            <div className="sc-head">
+              <span className="sc-icon"><Sparkles size={14} /></span>
+              <h4>Decision layer</h4>
+            </div>
+            <div className="sc-row"><span className="k">operating mode</span><span className="v">{current?.operating_mode ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">rl exploration</span><span className="v">{current?.rl_exploration_rate ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">rl confidence</span><span className="v">{current?.rl_confidence_threshold ?? "—"}</span></div>
+          </div>
+
+          <div className="policy-summary-card slo">
+            <div className="sc-head">
+              <span className="sc-icon"><Target size={14} /></span>
+              <h4>Service objective</h4>
+            </div>
+            <div className="sc-row"><span className="k">p95 latency target</span><span className="v">{current?.slo_p95_latency_ms != null ? `${current.slo_p95_latency_ms}ms` : "—"}</span></div>
+            <div className="sc-row"><span className="k">per-instance rps</span><span className="v">{current?.per_instance_capacity_rps ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">policy version</span><span className="v">v{current?.policy_version ?? "—"}</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Editor + validation/impact (60/40) ─────────────────────── */}
+      <div className="grid-2 grid-stretch">
+        <div className="card card-fill">
+          <div className="card-head">
+            <h2>Edit policy (JSON)</h2>
+            <span className="meta">Unknown fields are ignored. policy_version is server-managed.</span>
+          </div>
+          <div className="policy-editor-toolbar">
+            <div className="left">{draft.length.toLocaleString()} chars · {draft.split("\n").length} lines</div>
+            <button onClick={formatBuffer} disabled={!parsedDraft.ok}>Format</button>
+            <button onClick={copyBuffer}>Copy</button>
+          </div>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            style={{ minHeight: 380 }}
+          />
+
+          {showDiff && parsedDraft.ok ? (
+            <div style={{ marginTop: 16 }}>
+              <div className="card-head" style={{ marginBottom: 8 }}>
+                <h3>Diff preview</h3>
+                <span className="meta">left: current · right: draft</span>
+              </div>
+              <ReactDiffViewer
+                oldValue={diffOldStr}
+                newValue={diffNewStr}
+                splitView
+                useDarkTheme
+                hideLineNumbers={false}
+              />
+            </div>
           ) : null}
         </div>
+
+        <div className="stack card-fill">
+          <div className="card">
+            <div className="card-head">
+              <h2>Validation &amp; guardrails</h2>
+            </div>
+            {!parsedDraft.ok ? (
+              <div className="alert-row bad">
+                <span className="icon"><XCircle size={16} /></span>
+                <div>
+                  <div className="title">Draft does not parse as JSON</div>
+                  <div className="meta">{parsedDraft.error}</div>
+                </div>
+              </div>
+            ) : preview ? (
+              <>
+                <div className={`alert-row ${preview.valid ? "ok" : "bad"}`}>
+                  <span className="icon">{preview.valid ? <CheckCircle2 size={16} /> : <XCircle size={16} />}</span>
+                  <div>
+                    <div className="title">
+                      {preview.valid ? "Validation passes" : `${preview.errors.length} validation error(s)`}
+                    </div>
+                    <div className="meta">
+                      {preview.valid
+                        ? `${preview.changed_fields.length} field(s) would change`
+                        : "Fix errors below before committing."}
+                    </div>
+                  </div>
+                </div>
+                {preview.errors.map((e, i) => (
+                  <div key={`e${i}`} className="alert-row bad">
+                    <span className="icon"><AlertCircle size={16} /></span>
+                    <div><div className="title">{e}</div></div>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div className="empty-state">
+                <ShieldCheck size={26} strokeWidth={1.5} />
+                <div>Ready to validate</div>
+                <div className="empty-sub">Click "Validate" below to run the draft through the dry-run preview.</div>
+              </div>
+            )}
+          </div>
+
+          <div className="card stretch">
+            <div className="card-head">
+              <h2>Change impact preview</h2>
+              {preview ? <span className="meta">{preview.diff.length} field(s)</span> : null}
+            </div>
+            {preview && preview.diff.length > 0 ? (
+              <>
+                {preview.diff.slice(0, 10).map((d, i) => (
+                  <div className="svc-row" key={i}>
+                    <div className="svc-name mono">{d.field}</div>
+                    <span className="muted small">{fmt(d.old)}</span>
+                    <span className="muted-2 small">→</span>
+                    <span className="mono small" style={{ color: "var(--cyan)" }}>{fmt(d.new)}</span>
+                  </div>
+                ))}
+                {preview.warnings.length > 0 ? (
+                  <div style={{ marginTop: 8 }}>
+                    {preview.warnings.map((w, i) => (
+                      <div key={i} className="alert-row warn">
+                        <span className="icon"><AlertTriangle size={16} /></span>
+                        <div><div className="title">{w}</div></div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="empty-state">
+                <Activity size={26} strokeWidth={1.5} />
+                <div>No pending changes</div>
+                <div className="empty-sub">Edit the policy on the left and click "Preview diff".</div>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
-      <div className="card">
-        <h2>Diff preview</h2>
-        <div className="meta">Left: current on-disk policy. Right: your draft.</div>
-        <ReactDiffViewer
-          oldValue={diffOldStr}
-          newValue={diffNewStr}
-          splitView
-          useDarkTheme
-          hideLineNumbers={false}
-        />
+      {/* ── Versions + Environment + Related metrics (3-up) ───────── */}
+      <div className="grid-3">
+        <div className="card">
+          <div className="card-head">
+            <h2>Recent versions</h2>
+            <span className="meta">{versions.length} shown</span>
+          </div>
+          {versions.length === 0 ? (
+            <div className="meta">No audited version history yet.</div>
+          ) : (
+            versions.map(([v, info]) => (
+              <div className="version-row" key={v}>
+                <span className="v-tag">v{v}</span>
+                <div>
+                  <div>{info.fields.slice(0, 3).join(", ")}{info.fields.length > 3 ? ` · +${info.fields.length - 3}` : ""}</div>
+                  <div className="v-meta">{info.actor} · {timeAgo(info.time)}</div>
+                </div>
+                <button className="ghost small" title="View this version's diff">
+                  <GitBranch size={12} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <h2>Environment scope</h2>
+          </div>
+          <div className="svc-row">
+            <div className="svc-name">Active environment</div>
+            <span className={`svc-pill ${env?.active === "production" ? "ok" : "degraded"}`}>
+              {env?.active ?? "—"}
+            </span>
+            <span />
+            <span />
+          </div>
+          <div className="svc-row">
+            <div className="svc-name">Available</div>
+            <span className="muted small">{env?.available?.join(" · ") ?? "—"}</span>
+            <span />
+            <span />
+          </div>
+          <div className="svc-row">
+            <div className="svc-name">Source</div>
+            <span className="muted small">env vars</span>
+            <span />
+            <span />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-head">
+            <h2>Related metrics</h2>
+            <span className="meta">live · 60s window</span>
+          </div>
+          <div className="svc-row">
+            <div className="svc-name">SLO compliance (1h)</div>
+            <span className="mono">{related?.slo_compliance_pct != null ? `${related.slo_compliance_pct}%` : "—"}</span>
+            <span />
+            <span />
+          </div>
+          <div className="svc-row">
+            <div className="svc-name">p95 latency</div>
+            <span className="mono">{related?.p95_latency_ms != null ? `${related.p95_latency_ms} ms` : "—"}</span>
+            <span />
+            <span />
+          </div>
+          <div className="svc-row">
+            <div className="svc-name">RPS (1m)</div>
+            <span className="mono">{related?.rps_current != null ? related.rps_current.toFixed(2) : "—"}</span>
+            <span />
+            <span />
+          </div>
+        </div>
       </div>
 
-      <div className="card">
-        <h2>Recent audit ({audit.length})</h2>
-        <div className="meta">Newest first. Each row corresponds to one changed field.</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Version</th>
-              <th>Field</th>
-              <th>Old</th>
-              <th>New</th>
-              <th>Actor</th>
-            </tr>
-          </thead>
-          <tbody>
-            {audit.map((row, idx) => (
-              <tr key={idx}>
-                <td>{row.time}</td>
-                <td>{row.policy_version}</td>
-                <td>{row.field}</td>
-                <td><code>{JSON.stringify(row.old_value)}</code></td>
-                <td><code>{JSON.stringify(row.new_value)}</code></td>
-                <td>{row.actor}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* ── Action bar ────────────────────────────────────────────── */}
+      <div className="policy-action-bar">
+        <button onClick={runPreview} disabled={busy || !parsedDraft.ok}>
+          <CheckCircle2 size={14} /> Validate
+        </button>
+        <button className="secondary" onClick={() => setShowDiff((v) => !v)} disabled={!parsedDraft.ok}>
+          <GitBranch size={14} /> {showDiff ? "Hide diff" : "Preview diff"}
+        </button>
+        <button className="ghost" onClick={resetDraft} disabled={busy}>
+          <RefreshCw size={14} /> Reset
+        </button>
+        <button className="ghost" disabled title="Rollback lands with policy-manager versioned snapshots">
+          <Undo2 size={14} /> Rollback
+        </button>
+        <span className="grow" />
+        {error ? <span style={{ color: "var(--bad)", fontSize: 12 }}>{error}</span> : null}
+        <button onClick={commit} disabled={busy || !parsedDraft.ok}>
+          {busy ? "committing…" : <>Commit changes <ArrowRight size={14} /></>}
+        </button>
+      </div>
+
+      <div className="workflow">
+        <div className="step done"><span className="dot" /><Pencil size={11} /> Edit</div>
+        <span className="arrow"><ArrowRight size={12} /></span>
+        <div className={`step ${preview ? "done" : "active"}`}><span className="dot" /><CheckCircle2 size={11} /> Validate</div>
+        <span className="arrow"><ArrowRight size={12} /></span>
+        <div className={`step ${preview ? "active" : ""}`}><span className="dot" /><Activity size={11} /> Preview impact</div>
+        <span className="arrow"><ArrowRight size={12} /></span>
+        <div className="step"><span className="dot" /><GitBranch size={11} /> Commit</div>
+        <span className="arrow"><ArrowRight size={12} /></span>
+        <div className="step"><span className="dot" /><Sparkles size={11} /> Apply</div>
+        <span className="arrow"><ArrowRight size={12} /></span>
+        <div className="step"><span className="dot" /><Activity size={11} /> Observe</div>
       </div>
 
       {toast ? <div className={`toast ${toast.kind}`}>{toast.msg}</div> : null}
+
+      {/* Silence unused-import warnings for icons reserved for upcoming features. */}
+      <span style={{ display: "none" }}><Layers /></span>
     </>
   );
 }
