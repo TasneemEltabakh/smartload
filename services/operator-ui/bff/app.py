@@ -26,7 +26,6 @@ import os
 import queue
 import sys
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
