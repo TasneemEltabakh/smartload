@@ -14,6 +14,14 @@ _CONF_FOOTER = "}\n"
 _SERVER_FMT = "    server {addr} weight={w} max_fails=3 fail_timeout=10s;\n"
 _SERVER_DOWN_FMT = "    server {addr} down;\n"
 
+# Algorithms NGINX supports natively via upstream directives.
+# "round_robin" is the default and requires no directive.
+SUPPORTED_ALGORITHMS = frozenset({"round_robin", "least_conn", "random"})
+_ALGORITHM_DIRECTIVE: dict[str, str] = {
+    "least_conn": "    least_conn;\n",
+    "random":     "    random;\n",
+}
+
 
 class NginxAdapter(LoadBalancerAdapter):
     """Adapter that manages an NGINX upstream block via an include file.
@@ -37,6 +45,7 @@ class NginxAdapter(LoadBalancerAdapter):
         self._docker = docker_client
         self._weights: dict[str, int] = {}
         self._excluded: set[str] = set()
+        self._algorithm: str = "round_robin"
 
         if all_backends:
             self._weights = {b: 1 for b in all_backends}
@@ -69,10 +78,35 @@ class NginxAdapter(LoadBalancerAdapter):
         self._excluded.discard(backend_id)
         self._render_and_reload()
 
+    def set_algorithm(self, algorithm: str) -> None:
+        """Switch the NGINX upstream load-balancing algorithm.
+
+        Resets all server weights to 1 (equal) so the chosen algorithm
+        operates without RL-applied bias. The change takes effect on the
+        next nginx -s reload triggered by _render_and_reload().
+
+        "round_robin" is the NGINX default and requires no directive.
+        "least_conn" adds the least_conn; directive (NGINX uses the backend
+        with the fewest active connections).
+        "random" adds the random; directive (NGINX picks uniformly at random).
+        """
+        if algorithm not in SUPPORTED_ALGORITHMS:
+            raise ValueError(
+                f"Unsupported algorithm: {algorithm!r}. "
+                f"Supported: {sorted(SUPPORTED_ALGORITHMS)}"
+            )
+        if algorithm == self._algorithm:
+            return
+        self._algorithm = algorithm
+        if self._weights:
+            self._weights = {b: 1 for b in self._weights}
+        self._render_and_reload()
+
     def current_state(self) -> AdapterState:
         return AdapterState(
             upstream_weights=dict(self._weights),
             excluded_backends=set(self._excluded),
+            algorithm=self._algorithm,
         )
 
     # ------------------------------------------------------------------ #
@@ -81,6 +115,9 @@ class NginxAdapter(LoadBalancerAdapter):
 
     def _render_conf(self) -> str:
         lines = [_CONF_HEADER]
+        directive = _ALGORITHM_DIRECTIVE.get(self._algorithm)
+        if directive:
+            lines.append(directive)
         for addr, weight in sorted(self._weights.items()):
             if addr in self._excluded:
                 lines.append(_SERVER_DOWN_FMT.format(addr=addr))
@@ -129,9 +166,15 @@ class NginxAdapter(LoadBalancerAdapter):
         except OSError:
             return
         for line in text.splitlines():
-            line = line.strip()
-            if not line.startswith("server "):
+            stripped = line.strip()
+            # Detect algorithm directive so state survives a process restart.
+            if stripped == "least_conn;":
+                self._algorithm = "least_conn"
+            elif stripped == "random;":
+                self._algorithm = "random"
+            if not stripped.startswith("server "):
                 continue
+            line = stripped
             parts = line.split()
             if len(parts) < 2:
                 continue

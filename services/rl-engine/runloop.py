@@ -184,8 +184,17 @@ def bootstrap_policy(requested: str, policy: EnginePolicy) -> PolicyBootstrap:
 # RL_STATE_QUERY shape: (instance, latency, request_count, error_rate).
 # We convert to one BackendState per backend.
 
-def build_state_from_rows(rows: list[tuple]) -> list[BackendState]:
-    """Convert RL_STATE_QUERY rows into a list[BackendState]."""
+def build_state_from_rows(
+    rows: list[tuple],
+    anomaly_health: dict[str, str] | None = None,
+) -> list[BackendState]:
+    """Convert RL_STATE_QUERY rows into a list[BackendState].
+
+    When anomaly_health is provided the anomaly detector's verdict for each
+    backend_id takes precedence over local classification (SOT §9 health
+    ownership rule). Local classify_health() is the fallback for backends
+    that have not yet appeared on smartload.anomaly.
+    """
     states: list[BackendState] = []
     for row in rows:
         try:
@@ -197,11 +206,16 @@ def build_state_from_rows(rows: list[tuple]) -> list[BackendState]:
         queue_depth = int(request_count) if request_count is not None else 0
         err_rate = float(error_rate) if error_rate is not None else 0.0
 
+        if anomaly_health is not None and instance in anomaly_health:
+            health = anomaly_health[instance]
+        else:
+            health = classify_health(latency_ms, err_rate)
+
         states.append(BackendState(
             backend_id=instance,
             latency_ms=latency_ms,
             queue_depth=queue_depth,
-            health=classify_health(latency_ms, err_rate),
+            health=health,
         ))
     return states
 

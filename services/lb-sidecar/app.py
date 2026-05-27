@@ -231,6 +231,7 @@ def lb_state():
     return jsonify({
         "upstream_weights": state.upstream_weights,
         "excluded_backends": sorted(state.excluded_backends),
+        "algorithm": state.algorithm,
     })
 
 
@@ -253,6 +254,28 @@ def lb_set_weights():
         return jsonify({"ok": True, "applied_weights": weights})
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/v1/lb/algorithm", methods=["POST"])
+def lb_set_algorithm():
+    """Switch the NGINX upstream algorithm (round_robin | least_conn | random).
+
+    Resets all server weights to equal before writing the new directive so
+    the algorithm operates without any prior RL-applied bias.
+    """
+    with _state_lock:
+        adapter = _adapter
+    if adapter is None:
+        return jsonify({"error": "run loop not enabled or not ready"}), 503
+    data = request.get_json(silent=True) or {}
+    algo = data.get("algorithm", "round_robin")
+    try:
+        adapter.set_algorithm(algo)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({"ok": True, "algorithm": algo})
 
 
 @app.route("/")

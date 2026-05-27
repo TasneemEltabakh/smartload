@@ -173,6 +173,10 @@ services:
     build:
       context: ./services
       dockerfile: rl-engine/Dockerfile
+    # init: true runs tini as PID 1 so zombie child processes are reaped.
+    # Required because PPO policy loading forks subprocesses (torch/numpy
+    # workers) that can become zombies if the parent exits abnormally.
+    init: true
     ports:
       - "8084:8084"
     environment:
@@ -304,6 +308,7 @@ services:
       context: ./test-backends
     environment:
       PORT: "8080"
+      DEMO_TOKEN: ${DEMO_TOKEN:-}
     expose:
       - "8080"
     networks:
@@ -390,6 +395,7 @@ services:
       RL_ENGINE_URL:        http://rl-engine:8084
       LB_SIDECAR_URL:       http://lb-sidecar:8087
       LOAD_BALANCER_URL:    http://load-balancer:80
+      REDIS_URL:            ${REDIS_URL:-redis://redis:6379}
     volumes:
       - ./docs/openapi:/app/openapi:ro
     depends_on:
@@ -400,6 +406,45 @@ services:
       - forecasting
       - rl-engine
       - lb-sidecar
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
+  # Developer end-to-end validation harness — separate from the operator-ui.
+  # Scenario injection, chaos, live event stream (SSE).  Port 8091.
+  demo-ui:
+    build:
+      context: ./tests/demo-ui
+    ports:
+      - "8091:8091"
+    environment:
+      PORT: "8091"
+      SERVICE_NAME: demo-ui
+      POLICY_MANAGER_URL:   http://policy-manager:8086
+      ANOMALY_DETECTOR_URL: http://anomaly-detector:8082
+      RL_ENGINE_URL:        http://rl-engine:8084
+      LB_SIDECAR_URL:       http://lb-sidecar:8087
+      REDIS_URL:            ${REDIS_URL:-redis://redis:6379}
+      TIMESCALEDB_URL:      ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
+      TRAFFIC_SIMULATOR_URL: http://traffic-simulator:8089
+      DEMO_TOKEN:           ${DEMO_TOKEN:-}
+      BACKEND_URLS: >-
+        smartload-test-backend-1:8080,smartload-test-backend-2:8080,
+        smartload-test-backend-3:8080,smartload-test-backend-4:8080,
+        smartload-test-backend-5:8080
+    depends_on:
+      policy-manager:
+        condition: service_started
+      anomaly-detector:
+        condition: service_started
+      rl-engine:
+        condition: service_started
+      lb-sidecar:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
     networks:
       - smartload-net
     restart: unless-stopped

@@ -38,10 +38,13 @@ Health endpoint adds four engine fields when the run loop is enabled:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
 import time
+import urllib.request
+from datetime import datetime, timezone
 
 import psycopg2
 import redis as redis_lib
@@ -83,9 +86,11 @@ RL_MODE               = os.environ.get("RL_MODE", "shadow")
 RL_SERVICE            = os.environ.get("RL_SERVICE", "load-balancer")
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 WINDOW_SECONDS        = int(os.environ.get("RL_WINDOW_SECONDS", "30"))
+POLICY_MANAGER_URL    = os.environ.get("POLICY_MANAGER_URL", "http://policy-manager:8086")
 
 ROUTING_CHANNEL = "smartload.routing"
 POLICY_CHANNEL  = "smartload.policy"
+ANOMALY_CHANNEL = "smartload.anomaly"
 
 
 # ── shared state ──────────────────────────────────────────────────────────────
@@ -98,6 +103,19 @@ _policy_ready: bool = False
 _policy_error: str | None = None
 _engine_policy: EnginePolicy = EnginePolicy()
 _last_inference_monotonic: float | None = None
+_last_rankings: list | None = None
+_last_mode: str | None = None
+
+# Health verdicts received from smartload.anomaly (SOT §9 health ownership).
+# backend_id → status ("healthy" | "degraded" | "unhealthy").
+# Updated on every AnomalyEvent; takes precedence over locally-derived health.
+_anomaly_health: dict[str, str] = {}
+
+# Run-loop counters for /api/v1/engine/state (SOT §11).
+_tick_count:      int = 0
+_publish_count:   int = 0
+_last_tick_iso:   str | None = None
+_last_publish_iso: str | None = None
 
 
 def _set_policy_state(bootstrap) -> None:
@@ -133,29 +151,31 @@ def check_timescaledb() -> tuple[bool, str | None]:
 
 # ── inference cycle ───────────────────────────────────────────────────────────
 
-def _query_state(db_conn):
+def _query_state(db_conn, health_snapshot: dict[str, str]) -> list:
     """Run RL_STATE_QUERY against the live DB and shape rows into
     list[BackendState]. Both the interval and service filter are bound as
-    parameters per SOT §11."""
+    parameters per SOT §11. health_snapshot (from smartload.anomaly) takes
+    precedence over local classification per SOT §9 health-ownership rule."""
     with db_conn.cursor() as cur:
         cur.execute(RL_STATE_QUERY, (f"{WINDOW_SECONDS} seconds", RL_SERVICE))
         rows = cur.fetchall()
-    return build_state_from_rows(rows)
+    return build_state_from_rows(rows, anomaly_health=health_snapshot)
 
 
 def _inference_cycle(db_conn, redis_client) -> int:
     """One poll cycle. Returns 1 if a recommendation was published, 0 otherwise."""
-    global _last_inference_monotonic
+    global _last_inference_monotonic, _last_rankings, _last_mode
 
     with _state_lock:
-        pol_instance = _policy
-        eng_policy = _engine_policy
+        pol_instance   = _policy
+        eng_policy     = _engine_policy
+        health_snapshot = dict(_anomaly_health)  # consistent snapshot for this cycle
 
     if pol_instance is None:
         return 0
 
     try:
-        state = _query_state(db_conn)
+        state = _query_state(db_conn, health_snapshot)
     except Exception as exc:                            # noqa: BLE001
         print(f"[{SERVICE_NAME}] DB query failed: {exc}", flush=True)
         return 0
@@ -171,8 +191,14 @@ def _inference_cycle(db_conn, redis_client) -> int:
         return 0
 
     _last_inference_monotonic = time.monotonic()
-
     mode = effective_mode(action.mode, RL_MODE, eng_policy)
+    with _state_lock:
+        _last_rankings = [
+            {"backend_id": r.backend_id, "score": r.score}
+            for r in action.rankings
+        ]
+        _last_mode = mode
+
     publish_envelope(
         redis_client,
         channel=ROUTING_CHANNEL,
@@ -203,6 +229,19 @@ def _handle_policy_message(raw) -> None:
         _refresh_policy_under_lock(new_policy)
 
 
+def _handle_anomaly_message(raw) -> None:
+    """Update _anomaly_health from a smartload.anomaly envelope (SOT §9)."""
+    parsed = parse_envelope(raw, channel=ANOMALY_CHANNEL)
+    if parsed is None:
+        return
+    payload, _meta = parsed
+    backend_id = payload.get("backend_id")
+    status     = payload.get("status")
+    if backend_id and status in ("healthy", "degraded", "unhealthy"):
+        with _state_lock:
+            _anomaly_health[backend_id] = status
+
+
 def _refresh_policy_under_lock(new_policy: EnginePolicy) -> None:
     """Replace _engine_policy and _policy atomically with the new values.
 
@@ -223,6 +262,7 @@ def _refresh_policy_under_lock(new_policy: EnginePolicy) -> None:
 # ── run loop ──────────────────────────────────────────────────────────────────
 
 def _run_loop(stop_event: threading.Event | None = None) -> None:
+    global _tick_count, _publish_count, _last_tick_iso, _last_publish_iso
     print(f"[{SERVICE_NAME}] run loop starting "
           f"(policy={_policy_name} ready={_policy_ready} "
           f"rl_mode={RL_MODE} interval={POLL_INTERVAL_SECONDS}s)", flush=True)
@@ -230,6 +270,7 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
     redis_client = redis_lib.from_url(REDIS_URL)
     pubsub = redis_client.pubsub()
     pubsub.subscribe(POLICY_CHANNEL)
+    pubsub.subscribe(ANOMALY_CHANNEL)
 
     db_conn = psycopg2.connect(TIMESCALEDB_URL)
     db_conn.autocommit = True
@@ -240,7 +281,7 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
         if stop_event is not None and stop_event.is_set():
             break
 
-        # Drain any policy messages — never block longer than 1 s so we
+        # Drain one message per iteration — never block longer than 1 s so we
         # don't drift the poll cadence.
         message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
         if message is not None and message.get("type") == "message":
@@ -249,11 +290,17 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                 channel = channel.decode()
             if channel == POLICY_CHANNEL:
                 _handle_policy_message(message["data"])
+            elif channel == ANOMALY_CHANNEL:
+                _handle_anomaly_message(message["data"])
 
         now = time.monotonic()
         if now >= next_tick:
+            _tick_count += 1
+            _last_tick_iso = datetime.now(timezone.utc).isoformat()
             published = _inference_cycle(db_conn, redis_client)
             if published:
+                _publish_count += 1
+                _last_publish_iso = _last_tick_iso
                 print(f"[{SERVICE_NAME}] published routing recommendation "
                       f"(policy={_policy_name})", flush=True)
             next_tick = now + POLL_INTERVAL_SECONDS
@@ -278,10 +325,12 @@ def health():
     }
     if RUNLOOP_ENABLED:
         with _state_lock:
-            last = _last_inference_monotonic
+            last     = _last_inference_monotonic
+            rankings = _last_rankings
             body["policy_type"]      = _policy_name
             body["policy_requested"] = _policy_requested
             body["policy_ready"]     = _policy_ready
+            body["last_rankings"]    = rankings
         body["last_inference_age_seconds"] = (
             None if last is None else round(time.monotonic() - last, 2)
         )
@@ -290,12 +339,57 @@ def health():
     return jsonify(body), code
 
 
+@app.route("/api/v1/engine/state")
+def engine_state():
+    with _state_lock:
+        body = {
+            "engine": {
+                "kind":      "policy",
+                "requested": _policy_requested,
+                "loaded":    _policy_name,
+                "ready":     _policy_ready,
+                "error":     _policy_error,
+            },
+            "rl_mode_env": RL_MODE,
+            "runloop": {
+                "enabled":          RUNLOOP_ENABLED,
+                "tick_count":       _tick_count,
+                "publish_count":    _publish_count,
+                "last_tick_iso":    _last_tick_iso,
+                "last_publish_iso": _last_publish_iso,
+            },
+            "last_output": {
+                "mode":            _last_mode,
+                "server_rankings": _last_rankings or [],
+            },
+        }
+    return jsonify(body), 200
+
+
 @app.route("/")
 def index():
     return jsonify({"service": SERVICE_NAME, "status": "running", "rl_mode": RL_MODE})
 
 
 # ── startup ───────────────────────────────────────────────────────────────────
+
+def _pull_initial_policy() -> None:
+    """Pull current policy from Policy Manager on startup (SOT §11 — pull on startup)."""
+    url = f"{POLICY_MANAGER_URL}/api/v1/policy"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+        payload = data.get("payload") or data
+        new_policy = policy_from_payload(payload, fallback=_engine_policy)
+        if new_policy.policy_version >= _engine_policy.policy_version:
+            with _state_lock:
+                _refresh_policy_under_lock(new_policy)
+            print(f"[{SERVICE_NAME}] pulled initial policy v{new_policy.policy_version} "
+                  f"from {url}", flush=True)
+    except Exception as exc:                   # noqa: BLE001
+        print(f"[{SERVICE_NAME}] startup policy pull failed ({exc}); "
+              "using defaults", flush=True)
+
 
 def _start_runloop_thread() -> None:
     boot = bootstrap_policy(RL_POLICY, _engine_policy)
@@ -310,6 +404,7 @@ def _start_runloop_thread() -> None:
 
 if __name__ == "__main__":
     if RUNLOOP_ENABLED:
+        _pull_initial_policy()
         _start_runloop_thread()
     else:
         print(f"[{SERVICE_NAME}] run loop disabled "

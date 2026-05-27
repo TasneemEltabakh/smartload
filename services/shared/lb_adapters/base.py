@@ -18,6 +18,7 @@ class AdapterState:
 
     upstream_weights: dict[str, int]
     excluded_backends: set[str]
+    algorithm: str = "round_robin"
 
 
 class LoadBalancerAdapter(ABC):
@@ -50,3 +51,14 @@ class LoadBalancerAdapter(ABC):
     @abstractmethod
     def current_state(self) -> AdapterState:
         """Return the adapter's view of the load balancer's current config."""
+
+    def set_algorithm(self, algorithm: str) -> None:
+        """Switch the upstream load-balancing algorithm.
+
+        The base implementation raises NotImplementedError. Adapters that
+        support native algorithm selection (e.g. NginxAdapter) override this.
+        Adapters that don't support it (e.g. stubs) inherit this default.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support set_algorithm"
+        )
