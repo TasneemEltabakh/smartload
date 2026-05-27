@@ -301,7 +301,7 @@ def run_canary(
         seed=42,
         tensorboard_log=None,
     )
-    print(f"[canary] training...", flush=True)
+    print("[canary] training...", flush=True)
     model.learn(total_timesteps=steps, callback=monitor)
 
     # Gate 1: policy_gradient_loss trending down

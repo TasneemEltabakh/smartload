@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import sys
 from dataclasses import asdict
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -23,14 +22,14 @@ for _cand in (_SERVICE_ROOT, _PARENT):
         sys.path.insert(0, str(_cand))
 
 # ── import app under test ─────────────────────────────────────────────────────
-import app as _app
-from app import (
+import app as _app  # noqa: E402
+from app import (  # noqa: E402
     _handle_anomaly_message,
     _pull_initial_policy,
     _state_lock,
     app as flask_app,
 )
-from shared.contracts import make_envelope, AnomalyEvent
+from shared.contracts import make_envelope, AnomalyEvent  # noqa: E402
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

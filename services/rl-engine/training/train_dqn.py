@@ -41,7 +41,7 @@ _RL_ENGINE = Path(__file__).resolve().parents[1]
 if str(_RL_ENGINE) not in sys.path:
     sys.path.insert(0, str(_RL_ENGINE))
 
-from obs_builder import N_MAX_BACKENDS, NormParams, build_action_mask, all_masked_fallback  # noqa: E402
+from obs_builder import N_MAX_BACKENDS, NormParams, all_masked_fallback  # noqa: E402
 from training.dataset import TraceReplayDataset    # noqa: E402
 from training.env import SmartLoadEnv              # noqa: E402
 from training.simulator import DEFAULT_EPISODE_LENGTH  # noqa: E402

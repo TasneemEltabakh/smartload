@@ -48,7 +48,6 @@ from datetime import datetime, timezone
 
 import psycopg2
 import redis as redis_lib
-from datetime import datetime, timezone
 from flask import Flask, jsonify
 
 # Resolve shared/ across container layout (/app/shared) and dev layout

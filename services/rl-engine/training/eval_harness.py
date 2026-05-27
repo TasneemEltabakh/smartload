@@ -45,7 +45,7 @@ if str(_RL_ENGINE) not in sys.path:
     sys.path.insert(0, str(_RL_ENGINE))
 
 from obs_builder import NormParams                          # noqa: E402
-from policy_base import BackendState, select_policy        # noqa: E402
+from policy_base import select_policy                      # noqa: E402
 from training.dataset import TraceReplayDataset            # noqa: E402
 from training.reward import RewardCalculator               # noqa: E402
 from training.simulator import BackendSimulator            # noqa: E402
@@ -162,7 +162,7 @@ def run_eval(
 def _git_sha(length: int = 8) -> str:
     try:
         out = subprocess.check_output(
-            ["git", "rev-parse", "--short", f"HEAD"],
+            ["git", "rev-parse", "--short", "HEAD"],
             stderr=subprocess.DEVNULL,
         )
         return out.decode().strip()[:length]
