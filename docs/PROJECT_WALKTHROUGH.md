@@ -1168,6 +1168,77 @@ sequenceDiagram
 
 Same shape across services; only the query name, output dataclass, and channel differ. All three services run this pattern today: `services/anomaly-detector/app.py` + `runloop.py`, `services/forecasting/app.py` + `runloop.py`, and `services/rl-engine/app.py` + `runloop.py`. The #138 engine-wrapper cutover is complete.
 
+### Engine-state HTTP surface (per service, #121 session 1)
+
+On top of the cycle above, each AI service now exposes `GET /api/v1/engine/state` for the operator UI's Live Engines page (§5.3 / §5.4). The endpoint returns a uniform JSON shape that the BFF and React consume identically across the three services. To make that work, `_inference_cycle` was extended to record per-cycle telemetry under the same `_state_lock` that already guards engine state:
+
+```python
+# Module-level globals (additions for #121):
+_ticks_total: int               = 0
+_publishes_total: int           = 0
+_last_tick_at_iso:    str | None = None
+_last_publish_at_iso: str | None = None
+_last_output_payload: list[dict] | dict | None = None
+
+# Inside _inference_cycle, after running the engine:
+now_iso = datetime.now(timezone.utc).isoformat()
+with _state_lock:
+    _last_inference_monotonic = time.monotonic()
+    _ticks_total              += 1
+    _last_tick_at_iso          = now_iso
+    if cycle_outputs:                  # always record what the engine produced —
+        _last_output_payload   = cycle_outputs   # even when safe_mode suppresses publish
+    if published:
+        _publishes_total      += published
+        _last_publish_at_iso   = now_iso
+```
+
+`last_output` is written **every cycle**, not just on publish, so the operator can see what the engine *would* emit when `safe_mode` is suppressing publishes. The pure-Python serialiser lives in each `runloop.py` (`serialize_engine_state`) so it's testable without Flask; the Flask handler is a thin snapshot-under-lock:
+
+```python
+@app.route("/api/v1/engine/state", methods=["GET"])
+def get_engine_state():
+    with _state_lock:
+        body = serialize_engine_state(
+            service=SERVICE_NAME, channel=ANOMALY_CHANNEL,
+            runloop_enabled=RUNLOOP_ENABLED,
+            engine_name=_engine_name, engine_requested=_engine_requested,
+            engine_ready=_engine_ready, engine_error=_engine_error,
+            policy=_policy,
+            ticks_total=_ticks_total, publishes_total=_publishes_total,
+            last_tick_at=_last_tick_at_iso, last_publish_at=_last_publish_at_iso,
+            last_tick_monotonic=_last_inference_monotonic,
+            last_output=_last_output_payload,
+        )
+    return jsonify(body)
+```
+
+Response shape (uniform across all three services):
+
+```json
+{
+  "service": "anomaly-detector",
+  "channel": "smartload.anomaly",
+  "runloop_enabled": true,
+  "engine":  { "kind": "engine", "requested": "threshold", "loaded": "threshold",
+               "ready": true, "error": null },
+  "policy_snapshot": { ...asdict(EnginePolicy)... },
+  "stats": { "ticks_total": 137, "publishes_total": 12,
+             "last_tick_at": "2026-05-24T19:32:11.123456+00:00",
+             "last_publish_at": "2026-05-24T19:30:45.000000+00:00",
+             "last_tick_age_seconds": 4.21 },
+  "last_output": [ {"backend_id": "b1", "status": "degraded", "score": 0.92,
+                    "model_version": "threshold"}, ... ]
+}
+```
+
+Per-service divergences:
+- **anomaly-detector** — `last_output` is `list[dict]` (one entry per backend scored in the cycle).
+- **forecasting** — `last_output` is a single dict (one `Forecast` per cycle).
+- **rl-engine** — `engine.kind == "policy"` (its plugins are policies, not engines), and the response carries top-level `rl_mode_env` so the UI can show the operator-pinned mode independently of what the policy returned.
+
+The endpoint always returns 200 — `runloop_enabled=false` is a state the UI surfaces explicitly (the tile renders as "warn"), not an error.
+
 ### 4.1 `anomaly-detector` (plugin-per-engine)
 
 #### What it is
@@ -2231,8 +2302,9 @@ A Flask "backend-for-frontend" that:
 - proxies `/api/ui/policy` + `/api/ui/audit/policy` to policy-manager (slice #1),
 - proxies `/api/ui/audit/scaling` to autoscaler (slice #2),
 - proxies `/api/ui/scale` to autoscaler and `/api/ui/isolate` to anomaly-detector (slice #3),
+- **Live Engines (#121 session 1)** — runs a daemon Redis-subscriber thread that consumes `smartload.{anomaly,forecast,routing,scale}` into an in-process per-channel ring buffer, exposes `GET /api/ui/engines/snapshot` (parallel fan-out to each AI service's `/api/v1/engine/state` + ring contents) and `GET /api/ui/engines/stream` (SSE replay-then-live with 15 s heartbeat comments),
 - serves Swagger UI at `/api/docs` against the canonical OpenAPI spec,
-- serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/policy`, `/audit`, `/actions` 404 on hard refresh).
+- serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/policy`, `/audit`, `/actions`, `/engines` 404 on hard refresh).
 
 #### Files
 
@@ -2242,7 +2314,8 @@ services/operator-ui/
 ├── Dockerfile          (multi-stage: node build → python runtime)
 ├── bff/
 │   ├── README.md
-│   ├── app.py          (209 lines)
+│   ├── app.py          (Flask routes + lazy subscriber bootstrap)
+│   ├── engines.py      (#121 — RingBuffer + EngineEventBus + subscriber_loop + SSE helpers)
 │   └── requirements.txt
 └── web/   (React + Vite — see §5.4)
 ```
@@ -2250,28 +2323,33 @@ services/operator-ui/
 #### Multi-stage `Dockerfile`
 
 ```dockerfile
+# Build context is ./services (widened for #121 so the Dockerfile can pull
+# in services/shared/ alongside operator-ui/). Same layout the AI services use.
+
 # ── stage 1: frontend ──
 FROM node:20-alpine AS web-builder
 WORKDIR /web
-COPY web/package.json web/package-lock.json* ./
+COPY operator-ui/web/package.json operator-ui/web/package-lock.json* ./
 RUN npm install --no-audit --no-fund
-COPY web/ ./
+COPY operator-ui/web/ ./
 RUN npm run build
 
 # ── stage 2: runtime ──
 FROM python:3.11-slim
 WORKDIR /app
-COPY bff/requirements.txt /app/requirements.txt
+COPY operator-ui/bff/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
-COPY bff/ /app/bff/
+COPY operator-ui/bff/ /app/bff/
+COPY shared           /app/shared           # parse_envelope for the engines stream
 COPY --from=web-builder /web/dist /app/web/dist
 RUN mkdir -p /app/openapi
 ENV PORT=8090 WEB_DIST=/app/web/dist OPENAPI_PATH=/app/openapi/smartload-v1.yaml PYTHONUNBUFFERED=1
 EXPOSE 8090
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8090", "bff.app:app"]
+# gthread so a long-lived SSE connection occupies one thread, not one whole worker.
+CMD ["gunicorn", "-k", "gthread", "-w", "2", "--threads", "8", "-b", "0.0.0.0:8090", "bff.app:app"]
 ```
 
-Two stages. Node 20 builds the React app, Python 3.11 runs gunicorn. The final image has no node_modules and no build tools. The OpenAPI spec is *not* baked in — it's mounted at runtime from `./docs/openapi/` so the image doesn't need to rebuild every time the spec changes.
+Two stages. Node 20 builds the React app, Python 3.11 runs gunicorn. The final image has no node_modules and no build tools. The OpenAPI spec is *not* baked in — it's mounted at runtime from `./docs/openapi/` so the image doesn't need to rebuild every time the spec changes. The build context widened to `./services` for #121 so the BFF can `from shared.contracts import parse_envelope` (the engines stream needs the canonical envelope parser).
 
 #### `bff/app.py`
 
@@ -2402,11 +2480,213 @@ def serve_spa(path):
 
 Standard SPA fallback: a real file path returns the file, anything else returns `index.html` so client-side routing works. If the build isn't present (e.g. running the BFF without first running `npm run build`), a JSON message points the operator at the missing directory.
 
+#### Live Engines — `bff/engines.py` (#121 session 1)
+
+The Live Engines page needs sub-second updates as envelopes land on the control bus. Polling is too coarse; the SOT §28 callout names SSE as the transport. All the moving parts live in `bff/engines.py`, which keeps `app.py` lean — it just wires two routes plus a lazy thread-start.
+
+**Module shape:**
+
+```python
+CHANNELS = ("smartload.anomaly", "smartload.forecast",
+            "smartload.routing", "smartload.scale")
+RING_CAPACITY = 100
+QUEUE_CAPACITY = 256
+HEARTBEAT_INTERVAL_SECONDS = 15.0
+```
+
+`shared.contracts.parse_envelope` is imported through the same defensive sibling-path preamble the AI services use — works whether the BFF runs from `/app` (container) or `services/operator-ui/bff/` (dev).
+
+**Ring buffer — per channel, thread-safe.**
+
+```python
+class RingBuffer:
+    def __init__(self, capacity=RING_CAPACITY, channels=CHANNELS):
+        self._buf = {ch: deque(maxlen=capacity) for ch in channels}
+        self._lock = threading.Lock()
+
+    def append(self, channel, entry) -> bool:
+        with self._lock:
+            d = self._buf.get(channel)
+            if d is None:
+                return False        # defensive — never seen this channel
+            d.append(entry)
+            return True
+
+    def snapshot(self):              # independent copies, safe to serialise
+        with self._lock:
+            return {ch: list(d) for ch, d in self._buf.items()}
+
+    def recent(self, limit=None):    # merged across channels, timestamp-sorted
+        ...
+```
+
+The deque's `maxlen` does the eviction — when capacity 100 is hit, the oldest entry falls off the back. `snapshot()` returns *copies*; a caller mutating the returned list can't poison internal state.
+
+**Event bus — fan-out to N SSE subscribers.**
+
+```python
+class EngineEventBus:
+    def subscribe(self, capacity=QUEUE_CAPACITY) -> queue.Queue:
+        q = queue.Queue(maxsize=capacity)
+        with self._lock:
+            self._subs.append(q)
+        return q
+
+    def broadcast(self, entry) -> int:
+        delivered = 0
+        with self._lock:
+            subs = list(self._subs)         # copy under lock, broadcast outside
+        for q in subs:
+            try:
+                q.put_nowait(entry)
+                delivered += 1
+            except queue.Full:
+                pass                         # slow client — drop, never block
+        return delivered
+```
+
+A slow SSE client whose queue is full has events silently dropped *for that client*. The ring buffer still has them, and other subscribers aren't penalised. The publisher (Redis subscriber thread) never blocks.
+
+**Parsing a raw Redis message.**
+
+```python
+def build_entry(channel, raw_message) -> dict | None:
+    parsed = parse_envelope(raw_message, channel=channel)
+    if parsed is None:                       # malformed / stale / wrong shape
+        return None
+    payload, envelope_meta = parsed
+    return {
+        "channel":  channel,
+        "envelope": envelope_meta,            # event_id, source, version, timestamp
+        "payload":  payload,
+    }
+```
+
+Drops are silent — `parse_envelope` already classifies the reason (malformed JSON, naive timestamp, stale per channel TTL). The UI never sees an entry that the canonical parser rejected.
+
+**The subscriber loop.**
+
+```python
+def subscriber_loop(redis_client_factory, buf, bus, *,
+                   channels=CHANNELS, stop_event=None,
+                   reconnect_delay_seconds=2.0, log=None):
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            return
+        try:
+            client = redis_client_factory()
+            pubsub = client.pubsub()
+            pubsub.subscribe(*channels)
+            for msg in pubsub.listen():
+                if stop_event is not None and stop_event.is_set():
+                    return
+                if msg.get("type") != "message":
+                    continue
+                channel = msg.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
+                entry = build_entry(channel, msg.get("data", b""))
+                if entry is None:
+                    continue
+                buf.append(channel, entry)
+                bus.broadcast(entry)
+        except Exception as exc:                 # noqa: BLE001
+            ... log + back off + reconnect
+```
+
+`redis_client_factory` is a no-arg callable returning a `redis.Redis` instance — passed instead of a URL so the unit tests can inject a fake client + a fake `listen()` that blocks on a `threading.Event` (mimicking a real socket that doesn't return). On Redis failure, the loop catches, sleeps the reconnect delay, and rebuilds the subscription. The ring buffer is preserved.
+
+**SSE frame helpers** are pure functions so the unit tests don't need Flask:
+
+```python
+def format_sse_event(entry, encoder):    return f"data: {encoder(entry)}\n\n"
+def format_sse_heartbeat():              return ": heartbeat\n\n"
+```
+
+The heartbeat is a comment-only frame (starts with `:`) — clients silently ignore comments, but the bytes keep idle TCP connections open through intermediate proxies that close them after 30–60 s of silence.
+
+**Bootstrap in `app.py`.**
+
+The subscriber thread is created lazily on the first `/api/ui/engines/*` request so unit tests can import `app` without paying a Redis connection cost. Idempotent — only one thread per process:
+
+```python
+_engines_buf = RingBuffer()
+_engines_bus = EngineEventBus()
+_engines_thread_started = False
+_engines_thread_lock = threading.Lock()
+
+def _start_engines_subscriber():
+    global _engines_thread_started
+    with _engines_thread_lock:
+        if _engines_thread_started:
+            return
+        _engines_thread_started = True
+        t = threading.Thread(
+            target=subscriber_loop,
+            kwargs={"redis_client_factory": lambda: redis_lib.from_url(REDIS_URL),
+                    "buf": _engines_buf, "bus": _engines_bus,
+                    "log": lambda msg: log.info(msg)},
+            daemon=True, name="engines-subscriber",
+        )
+        t.start()
+```
+
+**Snapshot route — parallel fan-out + ring read.**
+
+```python
+@app.route("/api/ui/engines/snapshot")
+def ui_engines_snapshot():
+    _start_engines_subscriber()
+    targets = [(name, os.environ.get(env_key, default))
+               for (name, env_key, default) in ENGINE_SERVICES]
+    with ThreadPoolExecutor(max_workers=len(targets)) as pool:
+        results = list(pool.map(lambda t: _fetch_engine_state(*t), targets))
+    return jsonify({
+        "services": dict(results),               # per-AI-service /engine/state
+        "channels": _engines_buf.snapshot(),     # per-channel ring contents
+        "recent":   _engines_buf.recent(limit=50),
+    })
+```
+
+Same `ThreadPoolExecutor` pattern as `/api/ui/health`. The `_fetch_engine_state` helper collapses failures to `{reachable: False, error}` so a single dead service doesn't take the whole response down.
+
+**Stream route — SSE replay + live.**
+
+```python
+@app.route("/api/ui/engines/stream")
+def ui_engines_stream():
+    _start_engines_subscriber()
+    q = _engines_bus.subscribe()
+    replay = _engines_buf.recent()                # capture before yielding
+
+    def generate():
+        try:
+            for entry in replay:
+                yield format_sse_event(entry, json.dumps)
+            while True:
+                try:
+                    entry = q.get(timeout=HEARTBEAT_INTERVAL_SECONDS)
+                    yield format_sse_event(entry, json.dumps)
+                except queue.Empty:
+                    yield format_sse_heartbeat()
+        finally:
+            _engines_bus.unsubscribe(q)
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache",
+                             "X-Accel-Buffering": "no",
+                             "Connection": "keep-alive"})
+```
+
+Replay first so a freshly-opened page isn't blank. Then block on `q.get(timeout=15s)` — either a new event arrives (data frame) or the timeout fires (heartbeat). The `finally` runs when the generator is GC'd on browser disconnect; unsubscribing keeps the bus's subscriber list tight.
+
+`X-Accel-Buffering: no` disables nginx's default response buffering if there's ever a proxy in front — without it, nginx would hold the response chunked until N bytes accumulated, which makes "live" not live.
+
 ### 5.4 `operator-ui/web` (React + Vite)
 
 #### What it is
 
-A React 18 SPA built with Vite + TypeScript. Four pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), and Actions (manual scale + isolate forms with confirmation modals, slice #3).
+A React 18 SPA built with Vite + TypeScript. Five pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), Actions (manual scale + isolate forms with confirmation modals, slice #3), and Live Engines (per-engine tiles + colour-coded SSE event feed, #121 session 1).
 
 #### Files
 
@@ -2418,14 +2698,50 @@ services/operator-ui/web/
 ├── vite.config.ts
 └── src/
     ├── main.tsx        # React entry
-    ├── App.tsx         # Router + layout (nav: Home / Policy / Audit / Actions)
-    ├── api.ts          # Typed BFF client (Policy + audit + manual actions)
+    ├── App.tsx         # Router + layout (nav: Home / Engines / Policy / Audit / Actions)
+    ├── api.ts          # Typed BFF client (policy + audit + actions + engines)
+    ├── styles.css      # Dark theme; per-channel colour vars used by LiveEngines
     └── pages/
         ├── Home.tsx
         ├── Policy.tsx
         ├── Audit.tsx
-        └── Actions.tsx
+        ├── Actions.tsx
+        └── LiveEngines.tsx
 ```
+
+#### Live Engines page — two-pane layout (#121)
+
+The page leads with **what just happened**, not with counters. Two regions side-by-side:
+
+```
+┌─────────────────────────────────┬───────────────────────┐
+│  Engine tile · anomaly-detector │  Activity             │
+│  ────────────────────────────── │  [all][anomaly][...]  │
+│  Last cycle ⚠ 2 of 4 unhealthy  │  ───────────────────  │
+│  b1 degraded@0.92 · b2 …        │  19:42 anomaly        │
+│  Engine: threshold · runloop on │   b1 degraded 0.92    │
+│             [Details ▸]         │  ───────────────────  │
+├─────────────────────────────────┤  19:41 forecast       │
+│  Engine tile · forecasting      │   180 rps in 5m       │
+│  Last forecast 180 rps in 5m    │  ───────────────────  │
+│             [Details ▸]         │  ... (newest first)   │
+├─────────────────────────────────┤                       │
+│  Engine tile · rl-engine        │                       │
+│  Last recommendation shadow ·   │                       │
+│  top b3@0.71, b1@0.42, b2@0.31  │                       │
+└─────────────────────────────────┴───────────────────────┘
+```
+
+Engine tiles refresh every 5 s from `/api/ui/engines/snapshot`. Each tile's headline is service-specific:
+- **anomaly-detector** — non-healthy backends inline, with score; falls back to "N backend(s) · all healthy" or "no backends in window" when there's nothing to flag.
+- **forecasting** — predicted RPS + horizon + CI band.
+- **rl-engine** — mode + top-3 rankings sorted by score.
+
+Status (ok/warn/bad) drives a left-border colour: unreachable → bad, runloop disabled or engine-not-ready → warn, otherwise ok. Footer chips surface the things an operator must see immediately — `safe_mode` (red), `fallback ← <name>` (warn), `not ready` (warn). Everything else — full counters, ISO timestamps, raw `policy_snapshot`, raw `last_output` — moves behind a `Details ▸` button that opens a right-slide drawer.
+
+The **activity feed** (right column) subscribes via `EventSource(ENGINES_STREAM_URL)`. One entry per envelope, colour-coded by a 3 px left border (anomaly red, forecast blue, routing purple, scale green). Channel filter chips at the top of the panel; client-side cap at `FEED_MAX = 200` so the DOM stays bounded under sustained traffic. Stream-state indicator in the page header (`● live` / `○ connecting…` / `✕ stream error`).
+
+The page deliberately surfaces nothing through tables — the first cut packed every counter into a 6-row table per card and felt like a dashboard from 2010. The redesign (commit `eb8e314`) puts headline content first and pushes forensics to detail-on-demand.
 
 #### `package.json`
 

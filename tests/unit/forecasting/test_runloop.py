@@ -38,6 +38,7 @@ from runloop import (                            # noqa: E402
     build_history_from_rows,
     forecast_to_event_payload,
     policy_from_payload,
+    serialize_engine_state,
     should_publish,
 )
 
@@ -232,3 +233,77 @@ def test_round_trip_baseline_history_to_payload():
     assert payload["predicted_rps"] == 20.0    # mean of [10, 20, 30]
     assert 0.0 <= payload["confidence_lower"] <= 20.0
     assert payload["confidence_upper"] >= 20.0
+
+
+# ── serialize_engine_state (Live Engines #121) ───────────────────────────────
+
+def _state_kwargs(**overrides):
+    base = dict(
+        service="forecasting",
+        channel="smartload.forecast",
+        runloop_enabled=True,
+        engine_name="moving_average",
+        engine_requested="moving_average",
+        engine_ready=True,
+        engine_error=None,
+        policy=EnginePolicy(horizon_minutes=5, window_samples=60, policy_version=4),
+        ticks_total=20,
+        publishes_total=20,
+        last_tick_at="2026-05-24T19:30:00+00:00",
+        last_publish_at="2026-05-24T19:30:00+00:00",
+        last_tick_monotonic=None,
+        last_output=None,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_state_shape_has_every_top_level_key():
+    body = serialize_engine_state(**_state_kwargs())
+    assert set(body) == {
+        "service", "channel", "runloop_enabled",
+        "engine", "policy_snapshot", "stats", "last_output",
+    }
+
+
+def test_state_engine_kind_is_engine_for_forecasting():
+    body = serialize_engine_state(**_state_kwargs())
+    assert body["engine"]["kind"] == "engine"
+    assert body["engine"]["loaded"] == "moving_average"
+
+
+def test_state_age_is_none_when_no_tick_yet():
+    body = serialize_engine_state(**_state_kwargs(last_tick_monotonic=None))
+    assert body["stats"]["last_tick_age_seconds"] is None
+
+
+def test_state_carries_forecast_output_as_dict():
+    out = {
+        "horizon_minutes": 5,
+        "predicted_rps": 42.0,
+        "confidence_lower": 30.0,
+        "confidence_upper": 55.0,
+        "model_id": "moving_average",
+    }
+    body = serialize_engine_state(**_state_kwargs(last_output=out))
+    assert body["last_output"] == out
+
+
+def test_state_reports_safe_mode_via_policy_snapshot():
+    p = EnginePolicy(safe_mode=True, policy_version=9)
+    body = serialize_engine_state(**_state_kwargs(policy=p))
+    assert body["policy_snapshot"]["safe_mode"] is True
+    assert body["policy_snapshot"]["policy_version"] == 9
+
+
+def test_state_publishes_total_can_lag_ticks_total_under_safe_mode():
+    """Forecasting under safe_mode keeps ticking but doesn't publish — the UI
+    needs to see both counters so the divergence is visible."""
+    body = serialize_engine_state(**_state_kwargs(
+        ticks_total=50,
+        publishes_total=0,
+        last_publish_at=None,
+    ))
+    assert body["stats"]["ticks_total"] == 50
+    assert body["stats"]["publishes_total"] == 0
+    assert body["stats"]["last_publish_at"] is None

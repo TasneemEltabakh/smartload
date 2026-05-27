@@ -381,12 +381,17 @@ services:
 
   operator-ui:
     build:
-      context: ./services/operator-ui
+      # Widened to ./services so the Dockerfile can pull in services/shared/
+      # alongside operator-ui/ (the BFF imports shared.contracts.parse_envelope
+      # for the Live Engines stream — #121).
+      context: ./services
+      dockerfile: operator-ui/Dockerfile
     ports:
       - "8090:8090"
     environment:
       PORT: "8090"
       SERVICE_NAME: operator-ui
+      REDIS_URL:            ${REDIS_URL:-redis://redis:6379}
       POLICY_MANAGER_URL:   http://policy-manager:8086
       AUTOSCALER_URL:       http://autoscaler:8085
       TELEMETRY_URL:        http://telemetry:8081
@@ -395,10 +400,15 @@ services:
       RL_ENGINE_URL:        http://rl-engine:8084
       LB_SIDECAR_URL:       http://lb-sidecar:8087
       LOAD_BALANCER_URL:    http://load-balancer:80
-      REDIS_URL:            ${REDIS_URL:-redis://redis:6379}
+      # Surfaced by /api/ui/policy/environment so the Policy page can render
+      # the deployment scope without a live upstream. Defaults keep dev /
+      # CI working without an explicit .env entry.
+      SMARTLOAD_ENV:            ${SMARTLOAD_ENV:-production}
+      SMARTLOAD_AVAILABLE_ENVS: ${SMARTLOAD_AVAILABLE_ENVS:-dev,staging,prod}
     volumes:
       - ./docs/openapi:/app/openapi:ro
     depends_on:
+      - redis
       - policy-manager
       - autoscaler
       - telemetry

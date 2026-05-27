@@ -1,4 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Ban,
+  Minus,
+  Plus,
+  RefreshCw,
+  ScrollText,
+  ShieldAlert,
+  TrendingUp,
+} from "lucide-react";
 
 import {
   api,
@@ -10,14 +22,16 @@ import {
 } from "../api";
 
 type Pending =
-  | { kind: "scale"; target_count: number; reason: string }
-  | { kind: "isolate"; backend_id: string; status: IsolateStatus; reason: string }
-  | { kind: "lb_weights"; weights: Record<string, number> };
+  | { kind: "scale";     target_count: number; reason: string }
+  | { kind: "isolate";   backend_id: string; status: IsolateStatus; reason: string }
+  | { kind: "lb_weights"; weights: Record<string, number> }
+  | { kind: "safe-mode"; enable: boolean; reason: string };
 
 type ResultCard =
   | { kind: "scale"; data: ManualScaleResponse }
   | { kind: "isolate"; data: ManualIsolateResponse }
-  | { kind: "lb_weights"; data: LbWeightOverrideResponse };
+  | { kind: "lb_weights"; data: LbWeightOverrideResponse }
+  | { kind: "safe-mode"; data: { enable: boolean; policy_version: number } };
 
 const STATUSES: IsolateStatus[] = ["healthy", "degraded", "unhealthy"];
 
@@ -26,10 +40,8 @@ function shortId(s: string): string {
 }
 
 export default function ActionsPage() {
-  // ── operator identity (placeholder until OUI.7) ─────────────────────────
   const [actor, setActor] = useState<string>("operator");
 
-  // ── live policy snapshot (drives min/max bounds + current backend count) ─
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [policyError, setPolicyError] = useState<string | null>(null);
 
@@ -44,17 +56,14 @@ export default function ActionsPage() {
   }
   useEffect(() => { loadPolicy(); }, []);
 
-  // ── scale form ──────────────────────────────────────────────────────────
   const [scaleTarget, setScaleTarget] = useState<string>("");
   const [scaleReason, setScaleReason] = useState<string>("");
 
-  // ── isolate form ────────────────────────────────────────────────────────
   const [backendId, setBackendId] = useState<string>("");
   const [isolateStatus, setIsolateStatus] = useState<IsolateStatus>("unhealthy");
   const [isolateReason, setIsolateReason] = useState<string>("");
 
   // ── lb weight override form ─────────────────────────────────────────────
-  // Raw text area: "backend-1:8080=80, backend-2:8080=60"
   const [lbWeightsRaw, setLbWeightsRaw] = useState<string>("");
   const parsedLbWeights = useMemo<Record<string, number> | null>(() => {
     if (!lbWeightsRaw.trim()) return null;
@@ -79,7 +88,7 @@ export default function ActionsPage() {
     setPending({ kind: "lb_weights", weights: parsedLbWeights });
   }
 
-  // ── confirmation modal + result feed ────────────────────────────────────
+
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<ResultCard[]>([]);
@@ -94,7 +103,6 @@ export default function ActionsPage() {
     setTimeout(() => setError(null), 6_000);
   }
 
-  // ── scale handlers ──────────────────────────────────────────────────────
   const parsedTarget = useMemo(() => {
     const n = Number(scaleTarget);
     if (!scaleTarget || Number.isNaN(n)) return null;
@@ -106,14 +114,15 @@ export default function ActionsPage() {
       flashError("target_count must be an integer");
       return;
     }
-    setPending({
-      kind: "scale",
-      target_count: parsedTarget,
-      reason: scaleReason.trim(),
-    });
+    setPending({ kind: "scale", target_count: parsedTarget, reason: scaleReason.trim() });
   }
 
-  // ── isolate handlers ────────────────────────────────────────────────────
+  function quickScale(delta: number) {
+    const cur = policy?.min_backends ?? 1;
+    const target = Math.max(policy?.min_backends ?? 1, Math.min(policy?.max_backends ?? 99, cur + delta));
+    setPending({ kind: "scale", target_count: target, reason: delta > 0 ? "quick scale up" : "quick scale down" });
+  }
+
   function requestIsolate() {
     if (!backendId.trim()) {
       flashError("backend_id is required");
@@ -127,7 +136,11 @@ export default function ActionsPage() {
     });
   }
 
-  // ── modal: confirm / cancel ─────────────────────────────────────────────
+  function requestToggleSafeMode() {
+    if (!policy) return;
+    setPending({ kind: "safe-mode", enable: !policy.safe_mode, reason: "manual toggle from Actions page" });
+  }
+
   async function confirmPending() {
     if (!pending) return;
     setBusy(true);
@@ -142,12 +155,15 @@ export default function ActionsPage() {
         recordResult({ kind: "isolate", data: r });
         setBackendId("");
         setIsolateReason("");
-      } else {
+      } else if (pending.kind === "lb_weights") {
         const r = await api.setLbWeights(pending.weights);
         recordResult({ kind: "lb_weights", data: r });
         setLbWeightsRaw("");
+      } else if (pending.kind === "safe-mode") {
+        const r = await api.setPolicy({ safe_mode: pending.enable }, actor);
+        recordResult({ kind: "safe-mode", data: { enable: pending.enable, policy_version: r.policy_version } });
       }
-      await loadPolicy();        // refresh bounds + version
+      await loadPolicy();
     } catch (err: any) {
       const fieldHint = err?.field ? ` [field: ${err.field}]` : "";
       flashError(`${pending.kind} failed: ${err?.message || err}${fieldHint}`);
@@ -157,27 +173,68 @@ export default function ActionsPage() {
     }
   }
 
-  // ── render ──────────────────────────────────────────────────────────────
   return (
     <>
+      <div className="page-header">
+        <div>
+          <h2>Actions</h2>
+          <div className="subtitle">
+            Execute manual operations and control SmartLoad behaviour in real time
+          </div>
+        </div>
+        <div className="header-actions">
+          <Link to="/audit" className="refresh-chip"><ScrollText size={12} /> Audit log</Link>
+        </div>
+      </div>
+
+      {/* ── Quick actions ─────────────────────────────────────────── */}
       <div className="card">
-        <h2>Manual actions</h2>
-        <div className="meta">
-          Operator overrides. Every action writes an audit row prefixed
-          <code> manual:&lt;actor&gt;: </code> so intent is grep-able on the{" "}
-          <a href="/audit">Audit</a> page.{" "}
-          {policy
-            ? <>
-                Live policy: <code>min_backends={policy.min_backends}</code>{" "}
-                · <code>max_backends={policy.max_backends}</code>{" "}
-                · <code>v{policy.policy_version}</code>
-              </>
-            : policyError
-              ? <span style={{ color: "var(--bad)" }}>(could not load policy: {policyError})</span>
-              : "loading policy…"}
+        <div className="card-head">
+          <h2>Quick actions</h2>
+          <span className="meta">One-tap shortcuts for common operator flows</span>
+        </div>
+        <div className="quick-actions">
+          <button className="qa-tile" onClick={loadPolicy} disabled={busy}>
+            <span className="qa-icon"><RefreshCw size={16} /></span>
+            <span>Refresh state</span>
+            <span className="qa-sub">Reload policy &amp; bounds</span>
+          </button>
+          <button className="qa-tile green" onClick={() => quickScale(+1)} disabled={busy || !policy}>
+            <span className="qa-icon"><Plus size={16} /></span>
+            <span>Scale up</span>
+            <span className="qa-sub">Add one backend</span>
+          </button>
+          <button className="qa-tile amber" onClick={() => quickScale(-1)} disabled={busy || !policy}>
+            <span className="qa-icon"><Minus size={16} /></span>
+            <span>Scale down</span>
+            <span className="qa-sub">Remove one backend</span>
+          </button>
+          <button
+            className={`qa-tile ${policy?.safe_mode ? "violet" : "bad"}`}
+            onClick={requestToggleSafeMode}
+            disabled={busy || !policy}
+          >
+            <span className="qa-icon"><ShieldAlert size={16} /></span>
+            <span>{policy?.safe_mode ? "Disable safe mode" : "Enable safe mode"}</span>
+            <span className="qa-sub">Fail-safe routing override</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Manual actions ─────────────────────────────────────────── */}
+      <div className="card">
+        <div className="card-head">
+          <h2>Manual actions</h2>
+          <span className="meta">
+            {policy
+              ? <>Live policy: <code>min={policy.min_backends}</code> · <code>max={policy.max_backends}</code> · <code>v{policy.policy_version}</code></>
+              : policyError
+                ? <span style={{ color: "var(--bad)" }}>(could not load policy: {policyError})</span>
+                : "loading policy…"}
+          </span>
         </div>
 
-        <div className="form-grid" style={{ marginTop: 16 }}>
+        <div className="form-grid" style={{ marginTop: 4, gridTemplateColumns: "80px 1fr" }}>
           <label>Actor</label>
           <input
             value={actor}
@@ -187,109 +244,109 @@ export default function ActionsPage() {
         </div>
       </div>
 
-      {/* ── scale ─────────────────────────────────────────────────────── */}
-      <div className="card">
-        <h2>Scale to N backends</h2>
-        <div className="meta">
-          Target must satisfy <code>min_backends &le; N &le; max_backends</code>.
-          Bypasses cooldown — the auto-loop's debounce won't immediately undo
-          this action, but it will resume normal forecast-driven behaviour
-          afterwards.
+      {/* Scale */}
+      <div className="manual-action scale">
+        <div className="ma-head">
+          <span className="ma-icon"><TrendingUp size={14} /></span>
+          <div>
+            <h3>Scale to N backends</h3>
+            <div className="ma-sub">Direct backend count override · bypasses cooldown · forecast resumes after</div>
+          </div>
         </div>
-        <div className="form-grid" style={{ marginTop: 12 }}>
-          <label>target_count</label>
-          <input
-            type="number"
-            inputMode="numeric"
-            value={scaleTarget}
-            onChange={(e) => setScaleTarget(e.target.value)}
-            placeholder={policy ? `${policy.min_backends}–${policy.max_backends}` : "—"}
-            min={policy?.min_backends ?? 1}
-            max={policy?.max_backends ?? 99}
-          />
-          <label>reason</label>
-          <input
-            value={scaleReason}
-            onChange={(e) => setScaleReason(e.target.value)}
-            placeholder="e.g. forecast inaccurate, oncall override"
-          />
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button onClick={requestScale} disabled={busy || parsedTarget === null}>
-            Scale…
-          </button>
-        </div>
-      </div>
-
-      {/* ── isolate ───────────────────────────────────────────────────── */}
-      <div className="card">
-        <h2>Isolate backend</h2>
-        <div className="meta">
-          Publishes a synthetic <code>AnomalyEvent</code> and writes a{" "}
-          <code>backend_health</code> row. The load-balancer sidecar (T2.1)
-          will react when it lands; until then, the published envelope is
-          observable on <code>smartload.anomaly</code> for any subscriber.
-        </div>
-        <div className="form-grid" style={{ marginTop: 12 }}>
-          <label>backend_id</label>
-          <input
-            value={backendId}
-            onChange={(e) => setBackendId(e.target.value)}
-            placeholder="e.g. test-backend-3 or 172.18.0.5:8080"
-          />
-          <label>status</label>
-          <select
-            value={isolateStatus}
-            onChange={(e) => setIsolateStatus(e.target.value as IsolateStatus)}
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-          <label>reason</label>
-          <input
-            value={isolateReason}
-            onChange={(e) => setIsolateReason(e.target.value)}
-            placeholder="e.g. demo, failover drill"
-          />
-        </div>
-        <div style={{ marginTop: 12 }}>
-          <button onClick={requestIsolate} disabled={busy || !backendId.trim()}>
-            Isolate…
-          </button>
+        <div className="ma-body">
+          <div className="field">
+            <label>Target count</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              value={scaleTarget}
+              onChange={(e) => setScaleTarget(e.target.value)}
+              placeholder={policy ? `${policy.min_backends}–${policy.max_backends}` : "—"}
+              min={policy?.min_backends ?? 1}
+              max={policy?.max_backends ?? 99}
+            />
+          </div>
+          <div className="field" style={{ flex: 2 }}>
+            <label>Reason (optional)</label>
+            <input
+              value={scaleReason}
+              onChange={(e) => setScaleReason(e.target.value)}
+              placeholder="e.g. traffic spike, oncall override"
+            />
+          </div>
+          <button onClick={requestScale} disabled={busy || parsedTarget === null}>Scale…</button>
         </div>
       </div>
 
-      {/* ── force route weights (T2.1) ────────────────────────────────── */}
-      <div className="card">
-        <h2>Force route weights</h2>
-        <div className="meta">
-          Override NGINX upstream weights via the lb-sidecar (T2.1). Enter a
-          comma-separated list of <code>backend:port=weight</code> pairs. Requires
-          <code> LB_SIDECAR_RUNLOOP_ENABLED=true</code> on the sidecar.
+      {/* Isolate */}
+      <div className="manual-action isolate">
+        <div className="ma-head">
+          <span className="ma-icon"><Ban size={14} /></span>
+          <div>
+            <h3>Isolate backend</h3>
+            <div className="ma-sub">Temporarily remove a backend by publishing a synthetic AnomalyEvent</div>
+          </div>
         </div>
-        <div className="form-grid" style={{ marginTop: 12 }}>
-          <label>weights</label>
-          <input
-            value={lbWeightsRaw}
-            onChange={(e) => setLbWeightsRaw(e.target.value)}
-            placeholder="smartload-test-backend-1:8080=80, smartload-test-backend-2:8080=60"
-          />
+        <div className="ma-body">
+          <div className="field">
+            <label>Backend ID</label>
+            <input
+              value={backendId}
+              onChange={(e) => setBackendId(e.target.value)}
+              placeholder="e.g. test-backend-3 or 172.18.0.5:8080"
+            />
+          </div>
+          <div className="field" style={{ flex: 0.7 }}>
+            <label>Status</label>
+            <select
+              value={isolateStatus}
+              onChange={(e) => setIsolateStatus(e.target.value as IsolateStatus)}
+            >
+              {STATUSES.map((s) => (<option key={s} value={s}>{s}</option>))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Reason (optional)</label>
+            <input
+              value={isolateReason}
+              onChange={(e) => setIsolateReason(e.target.value)}
+              placeholder="e.g. demo, failover drill"
+            />
+          </div>
+          <button className="danger" onClick={requestIsolate} disabled={busy || !backendId.trim()}>Isolate</button>
         </div>
-        <div style={{ marginTop: 12 }}>
+      </div>
+
+      {/* Force route weights (T2.1 — live) */}
+      <div className="manual-action weights">
+        <div className="ma-head">
+          <span className="ma-icon"><ArrowLeftRight size={14} /></span>
+          <div>
+            <h3>Force route weights</h3>
+            <div className="ma-sub">Override NGINX upstream weights via lb-sidecar · comma-separated <code>backend:port=weight</code> pairs</div>
+          </div>
+        </div>
+        <div className="ma-body">
+          <div className="field" style={{ flex: 2 }}>
+            <label>Weights</label>
+            <input
+              value={lbWeightsRaw}
+              onChange={(e) => setLbWeightsRaw(e.target.value)}
+              placeholder="smartload-test-backend-1:8080=80, smartload-test-backend-2:8080=60"
+            />
+          </div>
           <button onClick={requestLbWeights} disabled={busy || !parsedLbWeights}>
             Force weights…
           </button>
         </div>
       </div>
 
-      {/* ── result feed ────────────────────────────────────────────────── */}
+      {/* ── Result feed ───────────────────────────────────────────── */}
       {results.length > 0 ? (
         <div className="card">
-          <h2>Recent actions ({results.length})</h2>
-          <div className="meta">
-            Latest at top. Open the <a href="/audit">Audit</a> page to see
-            them landed in the persistent audit stream.
+          <div className="card-head">
+            <h2>Recent actions ({results.length})</h2>
+            <Link to="/audit" className="link">Open audit log <ArrowRight size={12} /></Link>
           </div>
           <table>
             <thead>
@@ -330,16 +387,28 @@ export default function ActionsPage() {
                     </tr>
                   );
                 }
+                if (r.kind === "isolate") {
+                  return (
+                    <tr key={`${r.data.event_id}-${i}`}>
+                      <td><span className="badge-action isolate">isolate</span></td>
+                      <td>
+                        <code>{r.data.backend_id}</code>{" "}
+                        → <code>{r.data.anomaly_status}</code>{" "}
+                        <span className="muted">score={r.data.score}</span>
+                        <div className="muted small"><code>{r.data.reason}</code></div>
+                      </td>
+                      <td><code>{shortId(r.data.event_id)}</code></td>
+                    </tr>
+                  );
+                }
                 return (
-                  <tr key={`iso-${r.data.event_id}-${i}`}>
-                    <td><span className="badge-action scale_in">isolate</span></td>
+                  <tr key={`safe-${i}`}>
+                    <td><span className="badge-action policy">policy</span></td>
                     <td>
-                      <code>{r.data.backend_id}</code>{" "}
-                      → <code>{r.data.anomaly_status}</code>{" "}
-                      <span className="muted">score={r.data.score}</span>
-                      <div className="muted small"><code>{r.data.reason}</code></div>
+                      safe_mode → <code>{r.data.enable ? "true" : "false"}</code>{" "}
+                      <span className="muted">v{r.data.policy_version}</span>
                     </td>
-                    <td><code>{shortId(r.data.event_id)}</code></td>
+                    <td>—</td>
                   </tr>
                 );
               })}
@@ -348,7 +417,7 @@ export default function ActionsPage() {
         </div>
       ) : null}
 
-      {/* ── confirmation modal ─────────────────────────────────────────── */}
+      {/* ── Confirmation modal ────────────────────────────────────── */}
       {pending ? (
         <div className="modal-backdrop" onClick={() => !busy && setPending(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -357,15 +426,20 @@ export default function ActionsPage() {
                 ? `Scale to ${pending.target_count} backends?`
                 : pending.kind === "lb_weights"
                   ? `Force route weights (${Object.keys(pending.weights).length} backends)?`
-                  : `Mark ${pending.backend_id} as ${pending.status}?`}
+                  : pending.kind === "isolate"
+                    ? `Mark ${pending.backend_id} as ${pending.status}?`
+                    : `${pending.enable ? "Enable" : "Disable"} safe mode?`}
             </h3>
             <p className="meta">
               {pending.kind === "scale" ? (
                 <>
-                  This will adjust the running backend count to{" "}
-                  <code>{pending.target_count}</code> immediately. The
-                  cooldown timer is bypassed. An audit row will be written
-                  with actor=<code>{actor}</code>.
+                  Adjust backend count to <code>{pending.target_count}</code> immediately.
+                  Cooldown is bypassed. Audit row written with actor=<code>{actor}</code>.
+                </>
+              ) : pending.kind === "isolate" ? (
+                <>
+                  Publish a synthetic <code>AnomalyEvent</code> for <code>{pending.backend_id}</code> with status{" "}
+                  <code>{pending.status}</code>. Audit row written with actor=<code>{actor}</code>.
                 </>
               ) : pending.kind === "lb_weights" ? (
                 <>
@@ -377,29 +451,19 @@ export default function ActionsPage() {
                 </>
               ) : (
                 <>
-                  This will publish a synthetic <code>AnomalyEvent</code>{" "}
-                  for <code>{pending.backend_id}</code> with status{" "}
-                  <code>{pending.status}</code>. A <code>backend_health</code>{" "}
-                  row will be written with actor=<code>{actor}</code>.
+                  Setting <code>safe_mode = {String(pending.enable)}</code> on the live policy. The decision layer
+                  will react on the next tick. Audit row written with actor=<code>{actor}</code>.
                 </>
               )}
             </p>
-            {"reason" in pending && pending.reason ? (
-              <p className="meta">
-                Reason: <code>{pending.reason}</code>
-              </p>
+            {("reason" in pending) && pending.reason ? (
+              <p className="meta">Reason: <code>{pending.reason}</code></p>
             ) : null}
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <button onClick={confirmPending} disabled={busy}>
                 {busy ? "applying…" : "Continue"}
               </button>
-              <button
-                className="secondary"
-                onClick={() => setPending(null)}
-                disabled={busy}
-              >
-                Cancel
-              </button>
+              <button className="secondary" onClick={() => setPending(null)} disabled={busy}>Cancel</button>
             </div>
           </div>
         </div>

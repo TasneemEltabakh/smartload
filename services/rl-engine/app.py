@@ -48,6 +48,7 @@ from datetime import datetime, timezone
 
 import psycopg2
 import redis as redis_lib
+from datetime import datetime, timezone
 from flask import Flask, jsonify
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
@@ -67,6 +68,7 @@ from runloop import (                                          # noqa: E402
     build_state_from_rows,
     effective_mode,
     policy_from_payload,
+    serialize_engine_state,
     should_publish,
 )
 
@@ -103,19 +105,16 @@ _policy_ready: bool = False
 _policy_error: str | None = None
 _engine_policy: EnginePolicy = EnginePolicy()
 _last_inference_monotonic: float | None = None
-_last_rankings: list | None = None
-_last_mode: str | None = None
-
 # Health verdicts received from smartload.anomaly (SOT §9 health ownership).
 # backend_id → status ("healthy" | "degraded" | "unhealthy").
-# Updated on every AnomalyEvent; takes precedence over locally-derived health.
 _anomaly_health: dict[str, str] = {}
 
-# Run-loop counters for /api/v1/engine/state (SOT §11).
-_tick_count:      int = 0
-_publish_count:   int = 0
-_last_tick_iso:   str | None = None
-_last_publish_iso: str | None = None
+# Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
+_ticks_total: int = 0
+_publishes_total: int = 0
+_last_tick_at_iso: str | None = None
+_last_publish_at_iso: str | None = None
+_last_output_payload: dict | None = None
 
 
 def _set_policy_state(bootstrap) -> None:
@@ -164,7 +163,8 @@ def _query_state(db_conn, health_snapshot: dict[str, str]) -> list:
 
 def _inference_cycle(db_conn, redis_client) -> int:
     """One poll cycle. Returns 1 if a recommendation was published, 0 otherwise."""
-    global _last_inference_monotonic, _last_rankings, _last_mode
+    global _last_inference_monotonic, _ticks_total, _publishes_total
+    global _last_tick_at_iso, _last_publish_at_iso, _last_output_payload
 
     with _state_lock:
         pol_instance   = _policy
@@ -180,8 +180,13 @@ def _inference_cycle(db_conn, redis_client) -> int:
         print(f"[{SERVICE_NAME}] DB query failed: {exc}", flush=True)
         return 0
 
+    now_iso = datetime.now(timezone.utc).isoformat()
+
     if not should_publish(state):
-        _last_inference_monotonic = time.monotonic()
+        with _state_lock:
+            _last_inference_monotonic = time.monotonic()
+            _ticks_total += 1
+            _last_tick_at_iso = now_iso
         return 0
 
     try:
@@ -190,21 +195,24 @@ def _inference_cycle(db_conn, redis_client) -> int:
         print(f"[{SERVICE_NAME}] policy.act failed: {exc}", flush=True)
         return 0
 
-    _last_inference_monotonic = time.monotonic()
     mode = effective_mode(action.mode, RL_MODE, eng_policy)
-    with _state_lock:
-        _last_rankings = [
-            {"backend_id": r.backend_id, "score": r.score}
-            for r in action.rankings
-        ]
-        _last_mode = mode
+    payload = action_to_event_payload(action, mode, eng_policy.policy_version)
 
     publish_envelope(
         redis_client,
         channel=ROUTING_CHANNEL,
         source=SERVICE_NAME,
-        payload=action_to_event_payload(action, mode, eng_policy.policy_version),
+        payload=payload,
     )
+
+    with _state_lock:
+        _last_inference_monotonic = time.monotonic()
+        _ticks_total += 1
+        _publishes_total += 1
+        _last_tick_at_iso = now_iso
+        _last_publish_at_iso = now_iso
+        _last_output_payload = payload
+
     return 1
 
 
@@ -262,7 +270,6 @@ def _refresh_policy_under_lock(new_policy: EnginePolicy) -> None:
 # ── run loop ──────────────────────────────────────────────────────────────────
 
 def _run_loop(stop_event: threading.Event | None = None) -> None:
-    global _tick_count, _publish_count, _last_tick_iso, _last_publish_iso
     print(f"[{SERVICE_NAME}] run loop starting "
           f"(policy={_policy_name} ready={_policy_ready} "
           f"rl_mode={RL_MODE} interval={POLL_INTERVAL_SECONDS}s)", flush=True)
@@ -295,12 +302,8 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
         now = time.monotonic()
         if now >= next_tick:
-            _tick_count += 1
-            _last_tick_iso = datetime.now(timezone.utc).isoformat()
             published = _inference_cycle(db_conn, redis_client)
             if published:
-                _publish_count += 1
-                _last_publish_iso = _last_tick_iso
                 print(f"[{SERVICE_NAME}] published routing recommendation "
                       f"(policy={_policy_name})", flush=True)
             next_tick = now + POLL_INTERVAL_SECONDS
@@ -325,12 +328,10 @@ def health():
     }
     if RUNLOOP_ENABLED:
         with _state_lock:
-            last     = _last_inference_monotonic
-            rankings = _last_rankings
+            last = _last_inference_monotonic
             body["policy_type"]      = _policy_name
             body["policy_requested"] = _policy_requested
             body["policy_ready"]     = _policy_ready
-            body["last_rankings"]    = rankings
         body["last_inference_age_seconds"] = (
             None if last is None else round(time.monotonic() - last, 2)
         )
@@ -339,31 +340,31 @@ def health():
     return jsonify(body), code
 
 
-@app.route("/api/v1/engine/state")
-def engine_state():
+@app.route("/api/v1/engine/state", methods=["GET"])
+def get_engine_state():
+    """Live Engines (#121) — policy bootstrap, operating-policy snapshot,
+    runloop stats, last cycle output, env-pinned rl_mode. Read by the
+    operator-ui BFF for per-engine cards. Always returns 200; runloop-disabled
+    is a state, not an error."""
     with _state_lock:
-        body = {
-            "engine": {
-                "kind":      "policy",
-                "requested": _policy_requested,
-                "loaded":    _policy_name,
-                "ready":     _policy_ready,
-                "error":     _policy_error,
-            },
-            "rl_mode_env": RL_MODE,
-            "runloop": {
-                "enabled":          RUNLOOP_ENABLED,
-                "tick_count":       _tick_count,
-                "publish_count":    _publish_count,
-                "last_tick_iso":    _last_tick_iso,
-                "last_publish_iso": _last_publish_iso,
-            },
-            "last_output": {
-                "mode":            _last_mode,
-                "server_rankings": _last_rankings or [],
-            },
-        }
-    return jsonify(body), 200
+        body = serialize_engine_state(
+            service=SERVICE_NAME,
+            channel=ROUTING_CHANNEL,
+            runloop_enabled=RUNLOOP_ENABLED,
+            policy_name=_policy_name,
+            policy_requested=_policy_requested,
+            policy_ready=_policy_ready,
+            policy_error=_policy_error,
+            engine_policy=_engine_policy,
+            rl_mode_env=RL_MODE,
+            ticks_total=_ticks_total,
+            publishes_total=_publishes_total,
+            last_tick_at=_last_tick_at_iso,
+            last_publish_at=_last_publish_at_iso,
+            last_tick_monotonic=_last_inference_monotonic,
+            last_output=_last_output_payload,
+        )
+    return jsonify(body)
 
 
 @app.route("/")

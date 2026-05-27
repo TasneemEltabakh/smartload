@@ -46,6 +46,7 @@ from runloop import (                                          # noqa: E402
     classify_health,
     effective_mode,
     policy_from_payload,
+    serialize_engine_state,
     should_publish,
 )
 
@@ -303,3 +304,75 @@ def test_policy_from_payload_missing_mode_uses_fallback():
     fallback = EnginePolicy(operating_mode="learning")
     new = policy_from_payload({}, fallback=fallback)
     assert new.operating_mode == "learning"
+
+
+# ── serialize_engine_state (Live Engines #121) ───────────────────────────────
+
+def _state_kwargs(**overrides):
+    base = dict(
+        service="rl-engine",
+        channel="smartload.routing",
+        runloop_enabled=True,
+        policy_name="random_shadow",
+        policy_requested="random_shadow",
+        policy_ready=True,
+        policy_error=None,
+        engine_policy=EnginePolicy(rl_exploration_rate=0.1, policy_version=4),
+        rl_mode_env="shadow",
+        ticks_total=15,
+        publishes_total=15,
+        last_tick_at="2026-05-24T19:30:00+00:00",
+        last_publish_at="2026-05-24T19:30:00+00:00",
+        last_tick_monotonic=None,
+        last_output=None,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_state_shape_has_every_top_level_key():
+    body = serialize_engine_state(**_state_kwargs())
+    # rl-engine adds rl_mode_env at the top level — unique to this service.
+    assert set(body) == {
+        "service", "channel", "runloop_enabled", "rl_mode_env",
+        "engine", "policy_snapshot", "stats", "last_output",
+    }
+
+
+def test_state_engine_kind_is_policy_for_rl():
+    body = serialize_engine_state(**_state_kwargs())
+    assert body["engine"]["kind"] == "policy"
+    assert body["engine"]["loaded"] == "random_shadow"
+    assert body["engine"]["ready"] is True
+
+
+def test_state_rl_mode_env_reflects_operator_pin():
+    body = serialize_engine_state(**_state_kwargs(rl_mode_env="active"))
+    assert body["rl_mode_env"] == "active"
+
+
+def test_state_carries_routing_action_payload():
+    out = {
+        "mode": "shadow",
+        "server_rankings": [
+            {"backend_id": "b1", "score": 0.7},
+            {"backend_id": "b2", "score": 0.3},
+        ],
+        "policy_version": 4,
+    }
+    body = serialize_engine_state(**_state_kwargs(last_output=out))
+    assert body["last_output"] == out
+    assert body["last_output"]["mode"] == "shadow"
+
+
+def test_state_reports_policy_load_failure():
+    body = serialize_engine_state(**_state_kwargs(
+        policy_name="random_shadow",
+        policy_requested="ppo",
+        policy_ready=False,
+        policy_error="policy.zip missing",
+    ))
+    assert body["engine"]["requested"] == "ppo"
+    assert body["engine"]["loaded"] == "random_shadow"
+    assert body["engine"]["ready"] is False
+    assert body["engine"]["error"] == "policy.zip missing"
