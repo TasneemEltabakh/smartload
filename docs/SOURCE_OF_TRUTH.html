@@ -5585,7 +5585,7 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
-<h3>v1.0.5 — 2026-05-24 — T2.1 smoke test PASSED; lb-sidecar walk script + Dockerfile fixes</h3>
+<h3>v1.0.6 — 2026-05-24 — T2.1 smoke test PASSED; lb-sidecar walk script + Dockerfile fixes</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
   <tbody>
@@ -6443,6 +6443,12 @@ flowchart TD
       <td>Slice — extends <code>policy-management.md</code> manifest with <code>POST /api/v1/policy/strategy</code> + derived <code>strategy_name</code> on GET</td>
       <td>#150</td>
       <td>Documented mapping table covers <code>round-robin · least-connections · latency-aware · forecast-aware · anomaly-aware · ai-hybrid · safe-fallback</code>. Roundtrip property test: set strategy → get policy returns the same name; non-matching primitive combinations return <code>"custom"</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Demo UI</strong> — developer end-to-end validation harness (scenario injection, chaos, live event stream)</td>
+      <td>Delivery artefact — Flask BFF on <code>:8091</code> + Vite/React SPA under <code>tools/demo-ui/</code>; not a feature slice and explicitly separate from <code>operator-ui</code> (which is the operator's day-to-day control surface)</td>
+      <td>PR #151</td>
+      <td>Shipped 2026-05-28 (PR #151). Compose service <code>demo-ui</code> builds <code>./tools/demo-ui</code>; BFF mounts the canonical OpenAPI spec read-only and proxies to anomaly-detector, rl-engine, lb-sidecar, traffic-simulator; React SPA exposes scenario / chaos controls and a SSE-backed live event feed. Used by developers to validate system behaviour end-to-end without going through operator-ui.</td>
     </tr>
   </tbody>
 </table>
