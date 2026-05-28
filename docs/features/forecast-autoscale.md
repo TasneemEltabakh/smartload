@@ -1,6 +1,6 @@
 # Forecast + Autoscale
 
-> **Slice status — partial.** The two services that compose this slice (forecasting + autoscaler) both ship and run end-to-end today: the moving-average baseline forecaster publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, and actuates the test-backend pool via the Docker SDK. The Forecast and Scaling Grafana dashboards visualise the chain (v1.0.7e + v1.0.7f). Remaining work: the trained ARIMA artifact (N2.2), `forecasts` hypertable for continuous predicted-RPS history (Forecast dashboard follow-up), and the SDK / scenario / e2e / webhook layers.
+> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **Trained ARIMA artifact landed v1.0.7i** (25.0% test MAPE; ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI). Remaining work: tighten ARIMA MAPE, `forecasts` hypertable for continuous predicted-RPS history (Forecast dashboard follow-up), SDK `subscribe_forecast`, e2e + scenario, webhook fan-out (#130).
 
 ## What this slice delivers
 
@@ -23,7 +23,7 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 
 - Forecasting service: `services/forecasting/{app,runloop,engine_base}.py` + plugin folders under `engines/`
 - Baseline engine: `services/forecasting/engines/moving_average/engine.py` — wired against `FORECAST_QUERY` (1-minute buckets, last 60 minutes by default)
-- Model handoff target: `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima.pkl` (N2.2, Nada — engine plugin folder + README already exist; blocked on PR #144 review per §17.4)
+- ARIMA engine: `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, 25.0% test MAPE — landed v1.0.7i, closes #102, supersedes stale PR #144). Training pipeline at `tools/forecasting-training/`.
 - Autoscaler: `services/autoscaler/{app,decisions,cluster_client}.py` — Forecast subscriber + Docker SDK + cooldown + reactive fallback when forecast stream goes stale
 - Envelopes: `services/shared/contracts.py::ForecastResult`, `::ScalingEvent`
 - SQL: `services/shared/queries.py::FORECAST_QUERY` (forecaster) + `::SCALING_AUDIT_QUERY` + `::OBSERVED_RPS_QUERY` (autoscaler reactive fallback)
@@ -45,7 +45,7 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 - [x] Grafana Scaling dashboard (v1.0.7e)
 - [x] Grafana Forecast dashboard (v1.0.7f)
 - [x] SDK `client.scale(target_count, actor)` operator method
-- [ ] ARIMA model artifact (`arima.pkl`) — N2.2, blocked on Nada's revised model PR (#102, post-PR-#144-review)
+- [x] ARIMA model artifact (`arima_model.pkl`) — N2.2 shipped v1.0.7i (extracted from PR #144 kernel; 25.0% test MAPE — ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI per §17.4)
 - [ ] Continuous `forecasts` hypertable — forecasting service should persist every publish so the Forecast Grafana dashboard's predicted line is continuous instead of sparse-at-decision-moments. Documented as the v1.0.7f follow-up.
 - [ ] SDK method — `client.subscribe_forecast(callback)`
 - [ ] Webhook fan-out for scaling events (#130)

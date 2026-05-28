@@ -1408,9 +1408,12 @@ A `_features` builder is the only fixture — every test constructs the input it
 
 ### 4.2 `forecasting` (plugin-per-engine)
 
+> **Framing (v1.0.7i amendment, 2026-05-29):** The ARIMA engine is now shipped. `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, test MAPE 25.0% on the Alibaba trace — +22.77% over the moving-average baseline) land via the PR #144 kernel extract documented in SOT §22 v1.0.7i. The training pipeline relocated to `tools/forecasting-training/` (out of the runtime image). The SOT KPI is <20% MAPE — **not yet met** — so the engine ships but is NOT the default; operators activate it via `FORECAST_ENGINE=arima` in `.env`. `moving_average` remains the canonical Phase-1 forecaster until a tuned model crosses the SLO. Verified live: `engine.loaded=arima, ready=true, predicted=30.84 rps, CI=[16.11, 45.57]` (statsmodels `conf_int(alpha=0.05)` produces wider bands than the baseline's stddev band — that's actual model uncertainty). Two Dockerfile / kwargs bugs caught + fixed during the integration check (see SOT v1.0.7i changelog row).
+
+
 #### What it is
 
-Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publishes `ForecastResult` envelopes to `smartload.forecast`. As of #138 round 2, the service runs a real inference loop (behind `FORECAST_RUNLOOP_ENABLED=true`) using the configured engine; the moving-average baseline ships today, and the ARIMA plugin scaffold awaits the revised model handoff from #102 (see PR #144 review).
+Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publishes `ForecastResult` envelopes to `smartload.forecast`. As of #138 round 2 the service runs a real inference loop (now `FORECAST_RUNLOOP_ENABLED=true` by default since v1.0.7g) using the configured engine. Two engines ship today: `moving_average` (baseline, default) and `arima` (trained ARIMA(3,0,1) artifact landed v1.0.7i, 25.0% test MAPE — operator opts in via `FORECAST_ENGINE=arima`). Engine selection + policy-derived kwargs flow through `engine_base.select_engine()` per #138.
 
 #### Files
 
