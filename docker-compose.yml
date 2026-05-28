@@ -130,7 +130,7 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-10}
       # Run loop defaults to off so the Phase-0 stub stays the default until
       # operators flip the flag explicitly. See SOT §8.5 + issue #138.
-      ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-false}
+      ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-true}
       ANOMALY_ENGINE: ${ANOMALY_ENGINE:-threshold}
       ANOMALY_WINDOW_SECONDS: ${ANOMALY_WINDOW_SECONDS:-60}
     depends_on:
@@ -157,7 +157,7 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
       # Run loop defaults to off so the Phase-0 stub stays the default until
       # operators flip the flag explicitly. See SOT §8.6 + issue #138.
-      FORECAST_RUNLOOP_ENABLED: ${FORECAST_RUNLOOP_ENABLED:-false}
+      FORECAST_RUNLOOP_ENABLED: ${FORECAST_RUNLOOP_ENABLED:-true}
       FORECAST_ENGINE: ${FORECAST_ENGINE:-moving_average}
       FORECAST_WINDOW_MINUTES: ${FORECAST_WINDOW_MINUTES:-60}
     depends_on:
@@ -188,7 +188,7 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
       # Run loop defaults to off so the Phase-0 stub stays the default
       # until operators flip the flag explicitly. See SOT §8.7 + issue #138.
-      RL_RUNLOOP_ENABLED: ${RL_RUNLOOP_ENABLED:-false}
+      RL_RUNLOOP_ENABLED: ${RL_RUNLOOP_ENABLED:-true}
       RL_POLICY: ${RL_POLICY:-random_shadow}
       RL_WINDOW_SECONDS: ${RL_WINDOW_SECONDS:-30}
     depends_on:
@@ -363,7 +363,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       NGINX_CONTAINER: ${NGINX_CONTAINER:-smartload-load-balancer-1}
       NGINX_CONF_PATH: /nginx-conf/upstream.conf
-      LB_SIDECAR_RUNLOOP_ENABLED: ${LB_SIDECAR_RUNLOOP_ENABLED:-false}
+      LB_SIDECAR_RUNLOOP_ENABLED: ${LB_SIDECAR_RUNLOOP_ENABLED:-true}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
       ALL_BACKENDS: >-
         smartload-test-backend-1:8080,smartload-test-backend-2:8080,

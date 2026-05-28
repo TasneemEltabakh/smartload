@@ -21,7 +21,7 @@ Selection: `ANOMALY_ENGINE` env var.
 
 ## Env vars
 - `TIMESCALEDB_URL`, `REDIS_URL`
-- `ANOMALY_RUNLOOP_ENABLED` (default `false`) — flip to `true` to start the inference run loop. Off by default so the Phase-0 stub stays the safe default until operators opt in. See SOT §8.5 + issue #138.
+- `ANOMALY_RUNLOOP_ENABLED` (default `true` since v1.0.7g; was `false` before) — set to `false` to revert to the Phase-0 stub (no engine, `/health` only). See SOT §8.5 + issue #138.
 - `ANOMALY_ENGINE` (default `threshold`) — `threshold` | `isolation_forest`. If the requested engine fails to load (e.g. missing `.pkl`), the service falls back to `threshold` and reports `engine_ready=false` on `/health`.
 - `POLL_INTERVAL_SECONDS` (default 10)
 - `ANOMALY_WINDOW_SECONDS` (default 60) — DB lookback window passed to `ANOMALY_QUERY`.

@@ -208,9 +208,9 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 | `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
 | `lb-sidecar` | Python | 8087 | T2.1 shipped — subscribes to `smartload.routing` + `smartload.anomaly` + `smartload.policy`, dynamically rewrites `upstream.conf`, `nginx -s reload` via Docker exec |
 | `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
-| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) + `/api/v1/isolate` (slice #3, #123) |
-| `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=false` default) |
-| `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=false` default; `RL_MODE=shadow` pin); v1.0.7 review fixes (see SOT §22) |
+| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=true` default since v1.0.7g) + `/api/v1/isolate` (slice #3, #123) |
+| `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=true` default since v1.0.7g) |
+| `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=true` default since v1.0.7g; `RL_MODE=shadow` is the safety pin that keeps routing inert until an operator opts in); v1.0.7 review fixes (see SOT §22) |
 | `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2) + `/api/v1/scale` (slice #3, #123) |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
 | `operator-ui` | Flask + React | 8090 | Home + Policy + Audit + Actions pages (slices #1, #2, #3) |
@@ -220,7 +220,7 @@ Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana 
 
 ### Engine-wrapper foundation (#138 — cutover complete)
 
-All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine/policy via `select_engine()` / `select_policy()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each service ships behind a `<SVC>_RUNLOOP_ENABLED=false` flag so the Phase-0 stub stays the safe default until operators opt in.
+All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine/policy via `select_engine()` / `select_policy()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each service is enabled by default since v1.0.7g (`<SVC>_RUNLOOP_ENABLED=true` in `docker-compose.yml`) now that the smoke runs have shipped; an operator can still pin a service back to the Phase-0 stub by setting the flag to `false` in `.env`. The remaining safety is the `RL_MODE=shadow` pin on the rl-engine and the LB sidecar's `mode != "active"` gate — both still default safe, so RL publishes shadow envelopes the sidecar ignores until an operator opts in.
 
 - **anomaly-detector** — `ANOMALY_RUNLOOP_ENABLED` + `ANOMALY_ENGINE` (threshold | isolation_forest)
 - **forecasting** — `FORECAST_RUNLOOP_ENABLED` + `FORECAST_ENGINE` (moving_average | arima)

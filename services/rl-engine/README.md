@@ -35,7 +35,7 @@ The anomaly-detector's verdicts on `smartload.anomaly` take precedence over loca
 
 ## Env vars
 - `TIMESCALEDB_URL`, `REDIS_URL`
-- `RL_RUNLOOP_ENABLED` (default `false`) — flip to `true` to start the inference run loop. Off by default so the Phase-0 stub stays the safe default until operators opt in. See SOT §8.7 + issue #138.
+- `RL_RUNLOOP_ENABLED` (default `true` since v1.0.7g; was `false` before) — set to `false` to revert to the Phase-0 stub (no run loop, `/health` only). The `RL_MODE=shadow` default below is the routing-safety pin: even with the run loop on, the LB sidecar ignores any envelope whose `mode != "active"`. See SOT §8.7 + issue #138.
 - `RL_POLICY` (default `random_shadow`) — `random_shadow` | `ppo`. If the requested policy fails to load (e.g. missing `policy.zip`), the service falls back to `random_shadow` and reports `policy_ready=false` on `/health`.
 - `RL_MODE` (default `shadow`) — `shadow` | `active`. **Operator pin on the published `mode` field.** Even if the loaded policy would emit `mode=active`, the run loop forces `shadow` unless `RL_MODE=active` AND the policy itself agrees AND `safe_mode=false` in the operating policy.
 - `POLL_INTERVAL_SECONDS` (default 5)

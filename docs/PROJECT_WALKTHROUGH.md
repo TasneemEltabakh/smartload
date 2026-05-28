@@ -1071,7 +1071,7 @@ def health():
 
 ## 4. Decision plane
 
-The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1), `forecasting` (round 2), and `rl-engine` (round 3) are now all wired through their `engine_base` / `policy_base` ABCs and baseline engines behind `<SVC>_RUNLOOP_ENABLED=false` — flip the flag on each to start its run loop. **The #138 engine-wrapper cutover is complete.**
+The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1), `forecasting` (round 2), and `rl-engine` (round 3) are now all wired through their `engine_base` / `policy_base` ABCs and baseline engines, **enabled by default in `docker-compose.yml` since v1.0.7g**. To revert any one of them to its Phase-0 stub for debugging, set `<SVC>_RUNLOOP_ENABLED=false` in `.env`. **The #138 engine-wrapper cutover is complete.**
 
 This staging is deliberate. The plugin layer (engines/, policies/) was written *first* so that when each service's run-loop cutover lands, the schema, factory, and conformance tests are already in place — and so a single service can be smoke-tested in isolation before replicating to siblings.
 
@@ -1627,7 +1627,7 @@ Tests confirm:
 
 `PPOPolicy` is implemented at `policies/ppo/policy.py` and registered in `policy_base.select_policy()`. **Training is complete** — `services/rl-engine/models/policy.zip` (156 KB, 2M steps, ~75 min CPU) and `artifact_meta.json` (`latency_scale=100.0`) are committed. Eval on 20 held-out episodes: PPO `mean_reward = -0.0056`, ties `round_robin` (joint best); SLO violation rate 0; beats `least_connections` by 4.8e-2.
 
-Operator activation sequence: (1) set `RL_POLICY=ppo` + `RL_RUNLOOP_ENABLED=true` and restart the container; (2) verify shadow envelopes on `smartload.routing` before setting `policy.yaml: operating_mode: hybrid` to go active. No `app.py` changes required. The fallback-to-baseline path is automatic if `policy.zip` is absent (`policy_ready=false` on `/health`).
+Operator activation sequence (since v1.0.7g `RL_RUNLOOP_ENABLED=true` is the default): (1) set `RL_POLICY=ppo` and restart the container; (2) verify shadow envelopes on `smartload.routing` (the `RL_MODE=shadow` default keeps PPO publishing without actuating); (3) set `RL_MODE=active` AND `policy.yaml: operating_mode: hybrid` to go active end-to-end. No `app.py` changes required. The fallback-to-baseline path is automatic if `policy.zip` is absent (`policy_ready=false` on `/health`).
 
 When the policy is loaded and `operating_mode=hybrid`, the policy reports `mode=active` instead of `mode=shadow` — the LB sidecar (T2.1) starts honouring the rankings. That mode flip is the v1 → v2 contract.
 

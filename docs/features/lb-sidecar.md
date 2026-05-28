@@ -103,7 +103,7 @@ curl http://localhost:8087/api/v1/lb/state  # current weights
 
 | Variable | Default | Note |
 |---|---|---|
-| `LB_SIDECAR_RUNLOOP_ENABLED` | `false` | Must be `true` for dynamic routing |
+| `LB_SIDECAR_RUNLOOP_ENABLED` | `true` (since v1.0.7g) | Set to `false` to revert to the Phase-0 stub. |
 | `NGINX_CONTAINER` | `smartload-load-balancer-1` | Docker container name for reload |
 | `NGINX_CONF_PATH` | `/nginx-conf/upstream.conf` | Shared volume path |
 | `ALL_BACKENDS` | `smartload-test-backend-{1..5}:8080` | Seed backend list |

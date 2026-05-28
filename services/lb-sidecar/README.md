@@ -15,7 +15,7 @@ signals NGINX to reload, all without blocking the data plane.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LB_SIDECAR_RUNLOOP_ENABLED` | `false` | Enable message-drain loop |
+| `LB_SIDECAR_RUNLOOP_ENABLED` | `true` (since v1.0.7g) | Set to `false` to revert to the Phase-0 stub (no subscribers, `/health` only). The sidecar's `mode != "active"` gate still prevents routing changes from shadow envelopes. |
 | `REDIS_URL` | `redis://redis:6379` | Redis connection string |
 | `NGINX_CONTAINER` | `smartload-load-balancer-1` | Docker container name for `nginx -s reload` |
 | `NGINX_CONF_PATH` | `/nginx-conf/upstream.conf` | Path to the include file sidecar writes |
