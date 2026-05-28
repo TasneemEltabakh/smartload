@@ -5265,7 +5265,7 @@ flowchart LR
     <tr><td>OTel Collector config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/otel-collector/otelcol-config.yaml</code></td><td>—</td></tr>
     <tr><td>Redis config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/redis/redis.conf</code></td><td>—</td></tr>
     <tr><td>Prometheus config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/prometheus/prometheus.yml</code></td><td>—</td></tr>
-    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + Overview + RL Routing dashboards</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview + RL Routing shipped (v1.0.7c); 3 remaining (Anomaly / Forecast / Scaling) — T2.2 (S4)</td></tr>
+    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + all 5 dashboards (T2.2 complete)</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview + RL Routing + Anomaly + Scaling + Forecast shipped (v1.0.7c–v1.0.7f, 2026-05-29). T2.2 complete. Forecast follow-up: persist predicted RPS to a <code>forecasts</code> hypertable so the predicted line is continuous instead of sparse-at-decision-moments.</td></tr>
     <tr><td>Operator UI</td><td>Tasneem</td><td><span class="pill pill-done">Home + Policy + Audit + Actions + Live Engines shipped (slices #1, #2, #3; #121 session 1 — backend + UI demoable, acceptance close-out pending)</span></td><td><code>services/operator-ui/{bff,web}/</code> · port 8090</td><td>Flask BFF + React/Vite SPA. Remaining pages: Embedded metrics (#131), Logs (#124, optional). #121 SDK / e2e / scenario / manifest pending session 2. Auth (#125, OUI.7) deferred to Phase 2 SaaS.</td></tr>
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
@@ -5587,6 +5587,23 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7f — 2026-05-29 — T2.2 Grafana Forecast dashboard (4 of 4 — T2.2 COMPLETE)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — Forecast (T2.2 complete)</strong></td>
+      <td>SOT §17.2 line 3288 ("Predicted vs actual request rate (overlay)"). Final T2.2 dashboard. Predicted RPS values are not currently persisted to TimescaleDB — the forecasting service publishes <code>ForecastResult</code> envelopes to <code>smartload.forecast</code> Redis but nothing writes them down. The autoscaler's <code>scaling_events.reason</code> column does encode the predicted RPS at decision time (<code>forecast predicted N rps &lt; shed-capacity ...</code>); the dashboard extracts that value with a PostgreSQL <code>regexp_match</code> so the overlay is real, just sparse (one point per autoscaler decision). Four panels: (1) predicted vs actual overlay — actual as a smooth green line, predicted as purple points at decision moments; (2) actual RPS smoothed for trend context; (3) forecast accuracy table — predicted vs the actual mean over the 5-minute horizon following the decision, gradient-coloured by error; (4) recent forecast-driven scaling decisions audit. Verified live: shows that the baseline moving-average forecaster is mis-predicting under simulator load (predicted=0 → actual=15.9 RPS for today's decisions) — a real finding the dashboard surfaces. <strong>T2.2 is now 5/5 shipped (Overview + RL + Anomaly + Scaling + Forecast).</strong></td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Follow-up: forecast persistence</strong></td>
+      <td>A small change to the forecasting service to write each <code>ForecastResult</code> to a new <code>forecasts</code> hypertable would let the Forecast dashboard show a continuous predicted line instead of sparse-at-decision-moments. ~30 lines of code + a hypertable definition in <code>infrastructure/timescaledb/init.sql</code>. Filed as a follow-up; not blocking T2.2.</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7e — 2026-05-29 — T2.2 Grafana Scaling dashboard (3 of 4 pending)</h3>
 <table>
