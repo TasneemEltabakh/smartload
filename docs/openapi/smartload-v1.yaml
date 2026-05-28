@@ -326,6 +326,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/lb/algorithm:
+    post:
+      summary: Switch NGINX upstream algorithm
+      description: |
+        Switch the NGINX upstream load-balancing algorithm. Resets every
+        server weight to 1 (equal) before writing the new directive so the
+        chosen algorithm operates without any prior RL-applied bias. The
+        change takes effect on the next `nginx -s reload` triggered by
+        the adapter (within the same call).
+        Lives on the lb-sidecar service (port 8087).
+      tags: [lb-sidecar]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LbAlgorithmOverride'
+      responses:
+        '200':
+          description: Algorithm switched
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LbAlgorithmOverrideResponse'
+        '400':
+          description: Unsupported algorithm
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Adapter write or nginx reload failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Run loop not enabled or not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/metrics:
     get:
       summary: Read recent metric rows
@@ -611,6 +654,28 @@ components:
           type: object
           additionalProperties:
             type: integer
+
+    LbAlgorithmOverride:
+      type: object
+      required: [algorithm]
+      properties:
+        algorithm:
+          type: string
+          enum: [round_robin, least_conn, random]
+          description: |
+            NGINX-native upstream algorithm. `round_robin` is the default
+            and requires no directive. `least_conn` adds `least_conn;` to
+            the upstream block (NGINX routes to the backend with the
+            fewest active connections). `random` adds `random;` (uniform).
+      example:
+        algorithm: least_conn
+
+    LbAlgorithmOverrideResponse:
+      type: object
+      required: [ok, algorithm]
+      properties:
+        ok:        { type: boolean }
+        algorithm: { type: string }
 
     Error:
       type: object

@@ -609,7 +609,7 @@ Five backend slots enumerated explicitly. The comment in the file explains why:
 
 > Open-source NGINX doesn't round-robin across A records when `proxy_pass` uses a variable, and doesn't support the Plus-only `server ... resolve` directive for dynamic upstream membership. Enumerate the docker-compose replicas explicitly so the in-block round-robin actually distributes requests across them.
 
-The autoscaler toggles backends 1..5 between running/stopped at runtime. NGINX keeps all 5 hostnames in its block, and `proxy_next_upstream` retries past whichever ones are currently stopped. The T2.1 sidecar will eventually replace this static block with a regenerated one.
+The autoscaler toggles backends 1..5 between running/stopped at runtime. NGINX keeps all 5 hostnames in its block, and `proxy_next_upstream` retries past whichever ones are currently stopped. The T2.1 sidecar (shipped 2026-05-23, refined under v1.0.7b) now overwrites this block with a regenerated one whenever RL or anomaly-detector publishes; the static seed remains as the bootstrap fallback when the sidecar hasn't yet applied a recommendation.
 
 **Server block.**
 
@@ -1593,7 +1593,7 @@ class RoutingPolicy(ABC):
     def reload(self) -> None: ...
 ```
 
-Two named types reflect the RL contract: `state → act → action`. State is a list (one entry per backend), action is a ranking and a mode. The shape is what the planned T2.1 LB sidecar will consume.
+Two named types reflect the RL contract: `state → act → action`. State is a list (one entry per backend), action is a ranking and a mode. The shape is what the T2.1 LB sidecar consumes today (shipped 2026-05-23) — `services/lb-sidecar/runloop.py:handle_routing` parses the rankings into NGINX weights, with `confidence = max(scores)` gated by `rl_confidence_threshold` per SOT §13 (v1.0.7b).
 
 #### `policies/random_shadow/policy.py`
 
