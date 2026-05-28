@@ -51,6 +51,14 @@ jobs:
       - name: Install SDK in editable mode (for tests/unit/test_smartload_client.py)
         run: pip install -e clients/python
 
+      - name: Install rl-engine runtime deps for per-service unit tests
+        # tests/unit/rl-engine/* import numpy / gymnasium / sb3-contrib at
+        # collection time. These ship inside the rl-engine container image
+        # but the unit-tests job runs bare on the runner, so install the
+        # service's requirements.txt explicitly. (sb3 pulls torch — slow but
+        # cached by setup-python's pip wheel cache across runs.)
+        run: pip install -r services/rl-engine/requirements.txt
+
       - name: Run pure-Python tests
         run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py tests/integration/test_lb_otel_shipper.py -v
 
