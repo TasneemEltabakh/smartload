@@ -90,7 +90,13 @@ class ArimaEngine(ForecastEngine):
         self,
         horizon_minutes: int = 5,
         model_path: str | None = None,
+        **engine_kwargs,
     ) -> None:
+        # The run loop's `EnginePolicy.engine_kwargs()` passes a uniform set
+        # of params (e.g. window_samples) to every engine so policy-derived
+        # tuning flows through one call site. ARIMA doesn't use most of
+        # them — accept gracefully so unknown kwargs don't crash construction.
+        del engine_kwargs
         self.horizon_minutes = horizon_minutes
         path = Path(model_path) if model_path else _DEFAULT_MODEL_PATH
         self._result = None
