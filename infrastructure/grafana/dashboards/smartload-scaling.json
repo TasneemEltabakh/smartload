@@ -1,0 +1,298 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "name": "Scaling events",
+        "target": {
+          "rawQuery": true,
+          "rawSql": "SELECT time AS \"time\",\n       action || ' (' || instance_count || ' backends): ' || reason AS text,\n       action AS tags\nFROM scaling_events\nWHERE $__timeFilter(time)\nORDER BY time"
+        }
+      }
+    ]
+  },
+  "description": "Autoscaler view per SOT §17.2 line 3290 ('Scale events overlay on request rate'). The throughput panel renders RPS as a line with scale_out / scale_in events overlaid as dashboard annotations. The instance-count panel shows cluster size over time as a step series (TimescaleDB LAST() per bucket). The decision table is the audit trail straight from scaling_events.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Aggregate request rate with autoscaler decisions overlaid as red annotations. Each annotation carries the action (scale_out / scale_in), the resulting backend count, and the autoscaler's reason — usually a forecast comparison.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "req/s",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "legend": {"calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "title": "Throughput with scale events overlaid",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  SUM(value) / EXTRACT(EPOCH FROM '$__interval'::interval) AS rps\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'\n  AND metric_name = 'request_count'\nGROUP BY 1\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Backend count over time using TimescaleDB's LAST(value, time) aggregate per bucket — the cluster size at the end of each bucket. Step interpolation matches the discrete nature of scaling decisions.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "backends",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 6,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "always",
+            "spanNulls": true,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9},
+      "id": 2,
+      "options": {
+        "legend": {"calcs": ["min", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "title": "Cluster size over time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  'instance_count' AS metric,\n  LAST(instance_count, time) AS value\nFROM scaling_events\nWHERE $__timeFilter(time)\nGROUP BY 1\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Scale-out vs scale-in counts per bucket. When the autoscaler is oscillating you'll see both bars populated repeatedly; healthy steady-state is a flat zero.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "events / bucket",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "scale_in"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "scale_out"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9},
+      "id": 3,
+      "options": {
+        "legend": {"calcs": ["sum"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "title": "Scale events per bucket",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  action AS metric,\n  COUNT(*) AS value\nFROM scaling_events\nWHERE $__timeFilter(time)\nGROUP BY 1, 2\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Current cluster state. Cluster size = instance_count from the most recent scaling decision. Last action + reason show what got us here.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "action"},
+            "properties": [
+              {"id": "mappings", "value": [{"type": "value", "options": {"scale_out": {"color": "orange"}, "scale_in": {"color": "blue"}}}]},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "instance_count"},
+            "properties": [
+              {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+              {"id": "color", "value": {"mode": "continuous-BlPu"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 17},
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": []
+      },
+      "title": "Cluster state — now",
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time, action, instance_count, reason\nFROM scaling_events\nORDER BY time DESC\nLIMIT 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Recent autoscaler decisions, newest first. The reason field encodes the forecast comparison the autoscaler used; until a `forecasts` hypertable lands this is the only on-disk record of what was predicted.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "action"},
+            "properties": [
+              {"id": "mappings", "value": [{"type": "value", "options": {"scale_out": {"color": "orange"}, "scale_in": {"color": "blue"}}}]},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 5, "w": 16, "x": 8, "y": 17},
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "time"}]
+      },
+      "title": "Recent scaling decisions (last 20)",
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time, action, instance_count, reason\nFROM scaling_events\nORDER BY time DESC\nLIMIT 20",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["smartload", "scaling", "autoscaler"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "SmartLoad — Scaling",
+  "uid": "smartload-scaling",
+  "version": 1,
+  "weekStart": ""
+}

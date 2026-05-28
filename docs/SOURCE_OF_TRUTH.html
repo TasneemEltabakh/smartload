@@ -5588,6 +5588,18 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7e — 2026-05-29 — T2.2 Grafana Scaling dashboard (3 of 4 pending)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — Scaling</strong></td>
+      <td>SOT §17.2 line 3290: "Scale events overlay on request rate." New <code>infrastructure/grafana/dashboards/smartload-scaling.json</code> ships the third T2.2 dashboard. The overlay is implemented as a dashboard-level annotation query against <code>scaling_events</code>, so every scale_out / scale_in fires as a red vertical marker on every timeseries panel — including the throughput panel which is the SOT-mandated overlay. Five panels: (1) throughput with scale events overlaid; (2) cluster size over time as a step series using TimescaleDB's <code>LAST(instance_count, time)</code> aggregate per bucket; (3) scale-out vs scale-in counts per bucket (stacked bars with fixed colours — orange for out, blue for in); (4) current cluster state (last row of <code>scaling_events</code> rendered as a table); (5) recent 20 decisions audit table. T2.2 progress flipped from <strong>3/5 shipped</strong> to <strong>4/5 shipped</strong>; one remaining (Forecast — blocked on predicted-rps persistence to TimescaleDB; see §17.2 follow-up).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7d — 2026-05-29 — T2.2 Grafana Anomaly dashboard (2 of 4 pending)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
