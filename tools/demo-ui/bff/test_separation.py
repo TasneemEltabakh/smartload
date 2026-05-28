@@ -9,7 +9,9 @@ Verifies the operator-ui / demo-ui separation is clean:
      /api/ui/demo/* path; demo-ui Flask app returns 404 for operator-only
      paths like /api/ui/policy, /api/ui/scale, /api/ui/audit/*.
   3. Import cleanliness — neither BFF imports the other's code; demo-ui
-     BFF still imports redis (needs it for SSE); operator-ui BFF does not.
+     BFF imports redis for its SSE event stream; operator-ui BFF imports
+     redis for the Live Engines subscriber (#121). Both uses are legitimate
+     and target different channels.
 """
 from __future__ import annotations
 
@@ -158,10 +160,6 @@ class TestImportCleanliness:
     def test_demo_bff_imports_redis(self):
         assert hasattr(_demo_mod, "redis_lib"), \
             "demo-ui BFF must import redis for SSE"
-
-    def test_operator_bff_does_not_import_redis(self):
-        assert not hasattr(_op_mod, "redis_lib"), \
-            "operator-ui BFF should not import redis (SSE moved to demo-ui)"
 
     def test_operator_bff_does_not_import_socket(self):
         assert not hasattr(_op_mod, "socket"), \
