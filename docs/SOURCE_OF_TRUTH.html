@@ -5271,7 +5271,7 @@ flowchart LR
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
     <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
     <tr><td>Anomaly detector</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired + enabled by default (#138, v1.0.7g)</span></td><td><code>services/anomaly-detector/app.py</code> + <code>runloop.py</code></td><td>Isolation Forest plugin drop-in (#101); auto-recovery; own-metrics</td></tr>
-    <tr><td>Forecasting service</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired + enabled by default (#138, v1.0.7g)</span></td><td><code>services/forecasting/app.py</code> + <code>runloop.py</code></td><td>ARIMA plugin drop-in (#102, post-PR-#144-review); own-metrics</td></tr>
+    <tr><td>Forecasting service</td><td>Nada (model) · Tasneem (wiring + handoff)</td><td><span class="pill pill-done">Phase-1 run loop + ARIMA plugin shipped (#138, v1.0.7g/i)</span></td><td><code>services/forecasting/{app,runloop}.py</code> · <code>engines/{moving_average,arima}/engine.py</code> · <code>models/arima_model.pkl</code></td><td>ARIMA artifact at 25.0% MAPE; SOT KPI &lt;20% not yet met — moving_average stays default until tuned. Own-metrics still pending.</td></tr>
     <tr><td>RL engine</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired + enabled by default (#138, v1.0.7g); shadow-pinned via <code>RL_MODE=shadow</code></span></td><td><code>services/rl-engine/app.py</code> + <code>runloop.py</code></td><td>PPO plugin drop-in (#27); anomaly-aware action-space filtering; flip <code>RL_MODE=active</code> in <code>.env</code> for end-to-end routing</td></tr>
     <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
     <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-done">T1.4 wired</span></td><td><code>services/policy-manager/{app,validation}.py</code></td><td>GET/POST + validation + atomic YAML + <code>policy_changes</code> audit + envelope publish + idempotent no-op; 38 unit + 4 integration tests</td></tr>
@@ -5587,6 +5587,41 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7i — 2026-05-29 — N2.2 forecasting ARIMA model handoff (extracts PR #144 kernel)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>ARIMA engine + trained artifact land in main</strong></td>
+      <td>PR #144 (Nada's original Feat/forecasting arima arimax) had been stale 12 days post-CHANGES_REQUESTED review. The Tasneem review's "suggested next move" was <em>close + open a small one, ~400 LOC</em>. Per user direction the kernel got extracted and landed directly:
+        <ul>
+          <li><code>services/forecasting/engines/arima/engine.py</code> — thin <code>ArimaEngine(ForecastEngine)</code> on the #138 ABC contract. Loads the pickled bundle; falls back to mean-of-history if the artifact is missing/malformed/raises. <code>model_loaded</code> property surfaced for <code>/health</code>.</li>
+          <li><code>services/forecasting/models/arima_model.pkl</code> — chosen artifact (ARIMA(3,0,1), 36.9 MB; ARIMA picked over ARIMAX since both score ~25% MAPE and ARIMA has no exog plumbing). Future Git LFS migration filed as follow-up in the engine README.</li>
+          <li><code>services/forecasting/engines/arima/test_engine.py</code> — 8 unit tests covering missing-artifact / malformed-pickle / wrong-shape / empty-history / single-sample / fallback-never-raises plus the runtime-path test that exercises the real statsmodels forecast. All 8 pass locally with statsmodels installed.</li>
+          <li><code>services/forecasting/requirements.txt</code> — adds <code>statsmodels==0.14.2</code> + <code>pandas==2.2.2</code> + <code>numpy==1.26.4</code> to the runtime image (needed to unpickle the result object).</li>
+          <li><code>tools/forecasting-training/</code> — relocated <code>train.py</code> + <code>preprocess.py</code> + <code>training_log.json</code> + training-only <code>requirements.txt</code> (prophet, scikit-learn stay here, not in the runtime). README documents the train → promote workflow and the &lt;20% MAPE SOT KPI gate.</li>
+        </ul>
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>SOT KPI status</strong></td>
+      <td>Test MAPE: 25.0% (baseline moving-average: 34.3%, <strong>+22.77% relative improvement</strong>). SOT KPI (&lt;20% on 5-min horizon) <strong>not yet met</strong> — engine ships but is <em>not</em> the default. Operator activates via <code>FORECAST_ENGINE=arima</code> in <code>.env</code>; moving-average baseline stays the canonical Phase-1 forecaster until a tuned model crosses the SLO. This matches the Tasneem review's "accept that the wrapped engine ships behind a flag" branch.</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>What did NOT land from PR #144 (per review)</strong></td>
+      <td>The other two artifacts (ARIMAX, Prophet — review said pick one); the 16,209-row Alibaba CSV in <code>datasets/</code> (SOT §18 — datasets are fetched, not committed); the <code>services/forecasting/app.py</code> rewrite (already handled by #138 wiring); <code>services/forecasting/forecaster.py</code> ad-hoc class (replaced by the engine_base plugin); the docker-compose operator-ui-block deletion (rebase artifact, would have removed shipped service); the .gitignore CLAUDE.md line (unrelated); the integration-test file (lives in <code>tests/unit/forecasting/</code> per #140).</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>Closes</strong></td>
+      <td>PR #144 (stale-review supersede). Issue #102 N2.2 ARIMA model. The forecast-autoscale slice manifest's "ARIMA model artifact" pending checkbox flips.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7h — 2026-05-29 — Sprint-state correction: S3 → DONE, S4 → ACTIVE, R1.x carried</h3>
 <table>

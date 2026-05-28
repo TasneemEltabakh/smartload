@@ -1,3 +1,10 @@
 flask==3.0.3
 psycopg2-binary==2.9.9
 redis==5.0.4
+# ArimaEngine inference — statsmodels is required at runtime to unpickle the
+# trained model artifact (services/forecasting/models/arima_model.pkl). The
+# training-time dependencies (prophet, scikit-learn) live in tools/
+# forecasting-training/requirements.txt and are NOT in the runtime image.
+numpy==1.26.4
+pandas==2.2.2
+statsmodels==0.14.2
