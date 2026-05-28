@@ -5254,7 +5254,7 @@ flowchart LR
     <tr><td>NGINX load balancer</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/load-balancer/nginx/nginx.conf</code></td><td>Static <code>location = /health</code> returns canonical <code>{"status":"ok"}</code>; other paths proxy to backend_pool with <code>proxy_next_upstream</code> over running test-backends</td></tr>
     <tr><td>lb-otel-shipper (sidecar)</td><td>Tasneem</td><td><span class="pill pill-done">T1.2 wired</span></td><td><code>services/lb-otel-shipper/app.py</code></td><td>Tail-and-emit Python sidecar; OTLP/HTTP-JSON to collector — Approach B (issue #9)</td></tr>
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
-    <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/traffic-simulator/</code></td><td>—</td></tr>
+    <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>tools/traffic-simulator/</code></td><td>—</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
     <tr><td>Repo structure + runbook</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docs/running-the-project.md</code></td><td>Phase 1+ updates</td></tr>
     <tr><td>docker-compose (full stack)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docker-compose.yml</code></td><td>—</td></tr>
