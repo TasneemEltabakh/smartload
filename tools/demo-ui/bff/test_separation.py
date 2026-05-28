@@ -1,5 +1,5 @@
 """
-tests/demo-ui/bff/test_separation.py
+tools/demo-ui/bff/test_separation.py
 ──────────────────────────────────────
 Verifies the operator-ui / demo-ui separation is clean:
 
@@ -21,7 +21,7 @@ import pytest
 # ── path setup ────────────────────────────────────────────────────────────────
 _ROOT = Path(__file__).resolve().parents[3]   # smartload/
 _OP_BFF   = _ROOT / "services" / "operator-ui" / "bff"
-_DEMO_BFF = _ROOT / "tests" / "demo-ui" / "bff"
+_DEMO_BFF = _ROOT / "tools" / "demo-ui" / "bff"
 
 for _p in (_OP_BFF, _DEMO_BFF):
     if str(_p) not in sys.path:

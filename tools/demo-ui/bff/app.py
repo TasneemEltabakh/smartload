@@ -1,5 +1,5 @@
 """
-tests/demo-ui/bff/app.py
+tools/demo-ui/bff/app.py
 ─────────────────────────
 Demo UI backend-for-frontend (BFF).
 
