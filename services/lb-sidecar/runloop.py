@@ -45,7 +45,7 @@ SOT-anchored rules (each call-site cites the originating SOT line):
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 
