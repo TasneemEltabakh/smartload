@@ -1,8 +1,26 @@
 """
-Tests for the 3 features added to services/rl-engine/app.py:
-  1. _handle_anomaly_message  — updates _anomaly_health from smartload.anomaly envelopes
-  2. _pull_initial_policy     — syncs policy from Policy Manager on startup
-  3. GET /api/v1/engine/state — returns SOT §11-compliant engine state shape
+tests/unit/rl-engine/test_app_features.py
+─────────────────────────────────────────
+Pure-Python unit tests for surfaces in services/rl-engine/app.py that are
+*not* covered by test_runloop.py. No Docker, no Redis, no DB — runs in the
+unit-tests CI job.
+
+Coverage boundary with test_runloop.py:
+  test_runloop.py        — pure runloop logic (classify_health, bootstrap,
+                           policy_from_payload, build_state_from_rows,
+                           effective_mode, should_publish, action_to_event_payload,
+                           EnginePolicy, serialize_engine_state).
+  test_app_features.py   — app.py surfaces that go beyond runloop logic:
+                            1. _handle_anomaly_message     (Redis subscriber callback)
+                            2. _pull_initial_policy        (startup Policy Manager sync)
+                            3. GET /api/v1/engine/state    (HTTP wiring around
+                                                            serialize_engine_state)
+
+  Note: the deep schema-of-serialize_engine_state assertions are intentionally
+  not duplicated here — test_runloop.py asserts the full top-level key set,
+  engine.kind/loaded/ready/requested/error, and last_output passthrough at
+  the serializer layer. These endpoint tests only verify the HTTP-layer
+  contract (status code, JSON parsing, request-time defaults).
 """
 from __future__ import annotations
 
@@ -14,10 +32,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ── path setup ────────────────────────────────────────────────────────────────
-_SERVICE_ROOT = Path(__file__).resolve().parent
-_PARENT = _SERVICE_ROOT.parent
-for _cand in (_SERVICE_ROOT, _PARENT):
+# ── path setup — mirror test_runloop.py so app and shared resolve cleanly ─────
+_SERVICE = Path(__file__).resolve().parents[2].parent / "services" / "rl-engine"
+_SERVICES_DIR = _SERVICE.parent  # services/ — needed for `from shared.contracts import …`
+for _cand in (_SERVICE, _SERVICES_DIR):
     if str(_cand) not in sys.path:
         sys.path.insert(0, str(_cand))
 
@@ -120,7 +138,6 @@ def _fake_pm_response(policy_version: int = 5) -> MagicMock:
 
 class TestPullInitialPolicy:
     def setup_method(self):
-        # Reset engine policy to defaults before each test
         with _state_lock:
             _app._engine_policy = _app.EnginePolicy()
 
@@ -131,11 +148,10 @@ class TestPullInitialPolicy:
 
     def test_network_error_leaves_defaults(self):
         with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
-            _pull_initial_policy()   # must not raise
-        assert _app._engine_policy.policy_version == 0   # default unchanged
+            _pull_initial_policy()
+        assert _app._engine_policy.policy_version == 0
 
     def test_stale_version_not_applied(self):
-        # Pre-load a higher version
         with _state_lock:
             _app._engine_policy = _app.EnginePolicy(policy_version=10)
         with patch("urllib.request.urlopen", return_value=_fake_pm_response(3)):
@@ -148,7 +164,7 @@ class TestPullInitialPolicy:
             _app._engine_policy = _app.EnginePolicy(policy_version=5)
         with patch("urllib.request.urlopen", return_value=_fake_pm_response(5)):
             _pull_initial_policy()
-        assert _app._engine_policy.policy_version == 5   # same version, no harm
+        assert _app._engine_policy.policy_version == 5
 
     def test_malformed_response_leaves_defaults(self):
         resp = MagicMock()
@@ -156,11 +172,16 @@ class TestPullInitialPolicy:
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
         with patch("urllib.request.urlopen", return_value=resp):
-            _pull_initial_policy()   # must not raise
+            _pull_initial_policy()
         assert _app._engine_policy.policy_version == 0
 
 
-# ── 3. GET /api/v1/engine/state ───────────────────────────────────────────────
+# ── 3. GET /api/v1/engine/state — HTTP wiring only ────────────────────────────
+#
+# Deep-shape assertions on the serialized body live in test_runloop.py against
+# serialize_engine_state directly. The tests below only verify that the Flask
+# route is wired, returns 200 with parseable JSON, and reflects request-time
+# environment (rl_mode_env) and default runloop state.
 
 @pytest.fixture()
 def client():
@@ -179,17 +200,9 @@ class TestEngineStateEndpoint:
         data = resp.get_json()
         assert data is not None
 
-    def test_engine_block_present(self, client):
-        data = client.get("/api/v1/engine/state").get_json()
-        assert "engine" in data
-        eng = data["engine"]
-        assert eng["kind"] == "policy"
-        assert "requested" in eng
-        assert "loaded" in eng
-        assert "ready" in eng
-        assert "error" in eng
-
     def test_rl_mode_env_present(self, client):
+        """Endpoint must surface the runtime RL_MODE env, not just the
+        serializer's input — verifies HTTP layer reads it correctly."""
         data = client.get("/api/v1/engine/state").get_json()
         assert "rl_mode_env" in data
         assert data["rl_mode_env"] == _app.RL_MODE
@@ -205,6 +218,8 @@ class TestEngineStateEndpoint:
         assert "last_publish_iso" in rl
 
     def test_last_output_block_present(self, client):
+        """Endpoint returns a last_output block even when no inference cycle
+        has run yet — verifies the default-state HTTP contract."""
         data = client.get("/api/v1/engine/state").get_json()
         assert "last_output" in data
         lo = data["last_output"]
@@ -218,6 +233,7 @@ class TestEngineStateEndpoint:
         assert isinstance(data["runloop"]["publish_count"], int)
 
     def test_runloop_disabled_by_default(self, client):
-        # RUNLOOP_ENABLED defaults to False unless env var is set
+        """RUNLOOP_ENABLED defaults to False unless env var is set —
+        verifies the endpoint reads the env at request time."""
         data = client.get("/api/v1/engine/state").get_json()
         assert data["runloop"]["enabled"] is False
