@@ -338,7 +338,7 @@ services:
 
   traffic-simulator:
     build:
-      context: ./tests/performance
+      context: ./tools/traffic-simulator
     ports:
       - "8089:8089"
     depends_on:

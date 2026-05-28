@@ -1,4 +1,4 @@
-# Performance Tests
+# Traffic Simulator
 
 Locust-driven synthetic HTTP traffic against the SmartLoad load balancer. Used to
 verify the telemetry pipeline records load end-to-end and to exercise routing
