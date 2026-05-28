@@ -1563,7 +1563,7 @@ flowchart TD
   class PUB_A active
 ```
 
-Default-shadow is the safe state; the trained policy alone cannot escalate. 26 unit tests at `tests/unit/rl-engine/test_runloop.py` cover every cell of this truth table.
+Default-shadow is the safe state; the trained policy alone cannot escalate. 30 unit tests at `tests/unit/rl-engine/test_runloop.py` cover every cell of this truth table including the `operating_mode` mapping (Amendment B).
 
 #### `policy_base.py`
 
@@ -1621,9 +1621,13 @@ Tests confirm:
 - scores are in [0, 1]
 - seeded runs are reproducible
 
-#### `policies/ppo/` (stub)
+#### `policies/ppo/`
 
-The README spells out the mode transition: "When the policy is loaded and `operating_mode=hybrid`, the policy reports `mode=active` instead of `mode=shadow`. The LB sidecar starts honouring the rankings." That sentence is the v1 → v2 contract.
+`PPOPolicy` is implemented at `policies/ppo/policy.py` and registered in `policy_base.select_policy()`. **Training is complete** — `services/rl-engine/models/policy.zip` (156 KB, 2M steps, ~75 min CPU) and `artifact_meta.json` (`latency_scale=100.0`) are committed. Eval on 20 held-out episodes: PPO `mean_reward = -0.0056`, ties `round_robin` (joint best); SLO violation rate 0; beats `least_connections` by 4.8e-2.
+
+Operator activation sequence: (1) set `RL_POLICY=ppo` + `RL_RUNLOOP_ENABLED=true` and restart the container; (2) verify shadow envelopes on `smartload.routing` before setting `policy.yaml: operating_mode: hybrid` to go active. No `app.py` changes required. The fallback-to-baseline path is automatic if `policy.zip` is absent (`policy_ready=false` on `/health`).
+
+When the policy is loaded and `operating_mode=hybrid`, the policy reports `mode=active` instead of `mode=shadow` — the LB sidecar (T2.1) starts honouring the rankings. That mode flip is the v1 → v2 contract.
 
 ### 4.4 `autoscaler`
 

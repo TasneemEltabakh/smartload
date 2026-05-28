@@ -214,7 +214,7 @@ All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an 
 
 Total 63 unit tests across the three services (18 + 19 + 26) cover bootstrap fallback, policy parsing, row pivot, publish gate, mode composition, health classification.
 
-Diagrams (engine bootstrap, run-loop cycle, RL mode composition, cutover progress): [SOT §25.6](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) and [PROJECT_WALKTHROUGH §4](docs/PROJECT_WALKTHROUGH.html#decision-plane).
+Diagrams (engine bootstrap, run-loop cycle, RL mode composition, cutover progress): [SOT §25.6](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) and [PROJECT_WALKTHROUGH §4](docs/PROJECT_WALKTHROUGH.md#4-decision-plane).
 
 **Model handoff is now stable for all three:** drop `services/<svc>/models/<name>.pkl` (or `policy.zip` for RL), implement `engines/<name>/engine.py` (or `policies/<name>/policy.py`) subclassing the service ABC, register the name in the factory, and set `<SVC>_ENGINE=<name>` (or `RL_POLICY`). No service-shell changes. Falls back to baseline automatically if the artifact is missing.
 
