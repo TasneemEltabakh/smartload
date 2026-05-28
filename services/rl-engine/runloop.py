@@ -39,6 +39,10 @@ if _HERE not in sys.path:
 
 from policy_base import (  # noqa: E402
     BackendState,
+    HEALTH_DEGRADED,
+    HEALTH_HEALTHY,
+    HEALTH_UNHEALTHY,
+    HEALTH_UNKNOWN,
     RoutingAction,
     RoutingPolicy,
     select_policy,
@@ -57,12 +61,18 @@ UNHEALTHY_ERROR_RATE   = 0.05    # matches anomaly-detector default
 
 
 def classify_health(latency_ms: float, error_rate: float) -> str:
-    """Map raw metrics to one of healthy / degraded / unhealthy."""
+    """Map raw metrics to one of healthy / degraded / unhealthy.
+
+    Callers with no telemetry signal (both latency and error_rate absent)
+    must NOT call this — they should assign HEALTH_UNKNOWN directly, since
+    classify_health(0, 0) returns healthy and would mask a silent backend.
+    See build_state_from_rows for the null-handling rule.
+    """
     if error_rate > UNHEALTHY_ERROR_RATE:
-        return "unhealthy"
+        return HEALTH_UNHEALTHY
     if latency_ms > DEGRADED_LATENCY_MS:
-        return "degraded"
-    return "healthy"
+        return HEALTH_DEGRADED
+    return HEALTH_HEALTHY
 
 
 # ── policy-derived constructor kwargs ────────────────────────────────────────
@@ -115,12 +125,17 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         except (TypeError, ValueError):
             return default
 
-    # Map "classical" → "shadow" for backwards-compat with policy.yaml values
-    # that predate the operating_mode field (Amendment B).
+    # Accepted operating modes (canonical, post-#138 round 3):
+    #   "shadow"  — observe-only; policy may rank but RoutingAction.mode is shadow
+    #   "hybrid"  — policy may emit mode=active; effective_mode still gates
+    # Backwards-compat: "classical" (predated #138) → "shadow"; "learning"
+    # (briefly accepted but never carried distinct semantics) → "hybrid".
     _raw_mode = payload.get("operating_mode", fallback.operating_mode)
     if _raw_mode == "classical":
         _op_mode = "shadow"
-    elif _raw_mode in ("shadow", "hybrid", "learning"):
+    elif _raw_mode == "learning":
+        _op_mode = "hybrid"
+    elif _raw_mode in ("shadow", "hybrid"):
         _op_mode = _raw_mode
     else:
         _op_mode = fallback.operating_mode
@@ -203,12 +218,22 @@ def build_state_from_rows(
         except ValueError:
             continue   # malformed row — skip, don't poison the batch
 
-        latency_ms = float(latency) if latency is not None else 0.0
-        queue_depth = int(request_count) if request_count is not None else 0
-        err_rate = float(error_rate) if error_rate is not None else 0.0
+        # Distinguish "metric was zero" from "metric was absent". Both
+        # latency and error_rate are AVG() over CASE WHEN, so they return
+        # NULL when the metric had no rows in the window — that's a silent
+        # backend, not a healthy one. See SOT §9 health-ownership rule.
+        latency_present     = latency is not None
+        error_rate_present  = error_rate is not None
+        latency_ms          = float(latency) if latency_present else 0.0
+        queue_depth         = int(request_count) if request_count is not None else 0
+        err_rate            = float(error_rate) if error_rate_present else 0.0
 
         if anomaly_health is not None and instance in anomaly_health:
             health = anomaly_health[instance]
+        elif not latency_present and not error_rate_present:
+            # No signal at all — refuse to classify. Sidecar/policies
+            # filter on is_eligible(), which excludes UNKNOWN from routing.
+            health = HEALTH_UNKNOWN
         else:
             health = classify_health(latency_ms, err_rate)
 
@@ -245,7 +270,8 @@ def effective_mode(action_mode: str, rl_mode_env: str, policy: EnginePolicy) -> 
         return SHADOW
     if rl_mode_env.lower() != ACTIVE:
         return SHADOW
-    if action_mode == ACTIVE:
+    # Case-insensitive on both env and action.mode — matches RL_MODE handling.
+    if (action_mode or "").lower() == ACTIVE:
         return ACTIVE
     return SHADOW
 

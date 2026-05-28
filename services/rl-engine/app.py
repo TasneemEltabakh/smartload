@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -105,8 +106,16 @@ _policy_error: str | None = None
 _engine_policy: EnginePolicy = EnginePolicy()
 _last_inference_monotonic: float | None = None
 # Health verdicts received from smartload.anomaly (SOT §9 health ownership).
-# backend_id → status ("healthy" | "degraded" | "unhealthy").
-_anomaly_health: dict[str, str] = {}
+# backend_id → (status, monotonic_seen_at). The monotonic timestamp drives
+# eviction in _evict_stale_anomaly_health() so entries for vanished backends
+# (k8s replica churn, autoscaler tear-down) don't accumulate indefinitely.
+_anomaly_health: dict[str, tuple[str, float]] = {}
+
+# How long an anomaly verdict stays authoritative before we re-derive health
+# locally. Multiplier on RL_WINDOW_SECONDS so the eviction horizon scales with
+# the query window rather than being a free parameter.
+ANOMALY_HEALTH_TTL_MULTIPLIER: int = 6     # 6 × 30 s = 3 min by default
+_anomaly_health_ttl_seconds: float = WINDOW_SECONDS * ANOMALY_HEALTH_TTL_MULTIPLIER
 
 # Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
 _ticks_total: int = 0
@@ -114,6 +123,12 @@ _publishes_total: int = 0
 _last_tick_at_iso: str | None = None
 _last_publish_at_iso: str | None = None
 _last_output_payload: dict | None = None
+
+# Graceful shutdown signal — set by SIGTERM/SIGINT handler, observed by the
+# run loop between cycles. Daemon thread + container SIGTERM gives us the
+# basic behaviour for free, but explicit wiring lets the loop drain its
+# current cycle and close the DB / pubsub instead of being yanked.
+_shutdown_event = threading.Event()
 
 
 def _set_policy_state(bootstrap) -> None:
@@ -160,24 +175,64 @@ def _query_state(db_conn, health_snapshot: dict[str, str]) -> list:
     return build_state_from_rows(rows, anomaly_health=health_snapshot)
 
 
-def _inference_cycle(db_conn, redis_client) -> int:
-    """One poll cycle. Returns 1 if a recommendation was published, 0 otherwise."""
+def _evict_stale_anomaly_health(now_monotonic: float) -> None:
+    """Drop anomaly_health entries older than _anomaly_health_ttl_seconds.
+
+    Caller must hold _state_lock. Run at the top of each cycle so the
+    health_snapshot passed into _query_state reflects only verdicts that
+    are still load-bearing — otherwise a backend that disappeared an hour
+    ago would freeze its last status forever.
+    """
+    stale = [
+        bid for bid, (_status, seen_at) in _anomaly_health.items()
+        if now_monotonic - seen_at > _anomaly_health_ttl_seconds
+    ]
+    for bid in stale:
+        del _anomaly_health[bid]
+
+
+def _anomaly_health_status_snapshot() -> dict[str, str]:
+    """Flatten the (status, ts) values to a plain status dict.
+
+    Callers don't need the timestamp — that's an eviction concern.
+    """
+    return {bid: status for bid, (status, _ts) in _anomaly_health.items()}
+
+
+def _inference_cycle(db_conn, redis_client) -> tuple[int, bool]:
+    """One poll cycle.
+
+    Returns (published, db_ok):
+      - published — 1 if a recommendation was published, else 0
+      - db_ok     — False iff the DB query hit a psycopg2.OperationalError
+                    (the caller rebuilds the connection on False; other
+                    failures are transient and don't trigger reconnect).
+    """
     global _last_inference_monotonic, _ticks_total, _publishes_total
     global _last_tick_at_iso, _last_publish_at_iso, _last_output_payload
 
+    now_monotonic = time.monotonic()
+
     with _state_lock:
-        pol_instance   = _policy
-        eng_policy     = _engine_policy
-        health_snapshot = dict(_anomaly_health)  # consistent snapshot for this cycle
+        _evict_stale_anomaly_health(now_monotonic)
+        pol_instance    = _policy
+        eng_policy      = _engine_policy
+        health_snapshot = _anomaly_health_status_snapshot()
 
     if pol_instance is None:
-        return 0
+        return 0, True
 
     try:
         state = _query_state(db_conn, health_snapshot)
+    except psycopg2.OperationalError as exc:
+        # DB went away (restart, network partition). Surface to the loop so
+        # it rebuilds the connection on the next tick — the current cycle
+        # produces nothing.
+        print(f"[{SERVICE_NAME}] DB connection lost: {exc}", flush=True)
+        return 0, False
     except Exception as exc:                            # noqa: BLE001
         print(f"[{SERVICE_NAME}] DB query failed: {exc}", flush=True)
-        return 0
+        return 0, True
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -186,13 +241,13 @@ def _inference_cycle(db_conn, redis_client) -> int:
             _last_inference_monotonic = time.monotonic()
             _ticks_total += 1
             _last_tick_at_iso = now_iso
-        return 0
+        return 0, True
 
     try:
         action = pol_instance.act(state)
     except Exception as exc:                            # noqa: BLE001
         print(f"[{SERVICE_NAME}] policy.act failed: {exc}", flush=True)
-        return 0
+        return 0, True
 
     mode = effective_mode(action.mode, RL_MODE, eng_policy)
     payload = action_to_event_payload(action, mode, eng_policy.policy_version)
@@ -212,7 +267,7 @@ def _inference_cycle(db_conn, redis_client) -> int:
         _last_publish_at_iso = now_iso
         _last_output_payload = payload
 
-    return 1
+    return 1, True
 
 
 # ── policy subscription ───────────────────────────────────────────────────────
@@ -237,7 +292,12 @@ def _handle_policy_message(raw) -> None:
 
 
 def _handle_anomaly_message(raw) -> None:
-    """Update _anomaly_health from a smartload.anomaly envelope (SOT §9)."""
+    """Update _anomaly_health from a smartload.anomaly envelope (SOT §9).
+
+    Each entry carries a monotonic seen-at timestamp so old entries get
+    swept by _evict_stale_anomaly_health on the next cycle. The TTL
+    prevents the dict from growing without bound when backend IDs churn.
+    """
     parsed = parse_envelope(raw, channel=ANOMALY_CHANNEL)
     if parsed is None:
         return
@@ -246,66 +306,110 @@ def _handle_anomaly_message(raw) -> None:
     status     = payload.get("status")
     if backend_id and status in ("healthy", "degraded", "unhealthy"):
         with _state_lock:
-            _anomaly_health[backend_id] = status
+            _anomaly_health[backend_id] = (status, time.monotonic())
 
 
 def _refresh_policy_under_lock(new_policy: EnginePolicy) -> None:
-    """Replace _engine_policy and _policy atomically with the new values.
+    """Apply a new EnginePolicy to the running policy instance.
 
-    Caller must hold _state_lock. The policy is reconstructed so any
-    policy-derived constructor params take effect immediately; trained
-    policies should keep their loaded artifact cached and re-applying
-    kwargs should be cheap."""
+    Caller must hold _state_lock. Cheap path (no disk hit, no torch graph
+    rebuild): if a policy is already loaded, push the new policy_kwargs via
+    reload(**kwargs). Falls through to full bootstrap_policy only on first
+    load or when the cheap path raises. Avoids the previous behaviour of
+    reloading policy.zip on every safe_mode flip / exploration_rate tweak.
+    """
     global _engine_policy
     _engine_policy = new_policy
+    if _policy is not None:
+        try:
+            _policy.reload(**new_policy.policy_kwargs())
+            return
+        except (NotImplementedError, TypeError) as exc:
+            # NotImplementedError → plugin opts out of in-place reload.
+            # TypeError            → kwarg signature mismatch.
+            # Either way, fall through to a full bootstrap.
+            print(f"[{SERVICE_NAME}] policy.reload() bypassed "
+                  f"({exc!r}); reconstructing policy", flush=True)
     boot = bootstrap_policy(_policy_requested, _engine_policy)
     _set_policy_state(boot)
-    try:
-        boot.policy.reload()
-    except Exception as exc:                            # noqa: BLE001
-        print(f"[{SERVICE_NAME}] policy.reload() raised: {exc}", flush=True)
 
 
 # ── run loop ──────────────────────────────────────────────────────────────────
+
+def _open_db_connection():
+    """Build a new TimescaleDB connection. Isolated so the reconnect path
+    in _run_loop can call the same constructor without inlining it."""
+    conn = psycopg2.connect(TIMESCALEDB_URL)
+    conn.autocommit = True
+    return conn
+
 
 def _run_loop(stop_event: threading.Event | None = None) -> None:
     print(f"[{SERVICE_NAME}] run loop starting "
           f"(policy={_policy_name} ready={_policy_ready} "
           f"rl_mode={RL_MODE} interval={POLL_INTERVAL_SECONDS}s)", flush=True)
 
+    # Fall back to the module-level shutdown event when callers don't
+    # supply one (unit tests pass their own to exit deterministically).
+    if stop_event is None:
+        stop_event = _shutdown_event
+
     redis_client = redis_lib.from_url(REDIS_URL)
     pubsub = redis_client.pubsub()
     pubsub.subscribe(POLICY_CHANNEL)
     pubsub.subscribe(ANOMALY_CHANNEL)
 
-    db_conn = psycopg2.connect(TIMESCALEDB_URL)
-    db_conn.autocommit = True
+    db_conn = _open_db_connection()
 
     next_tick = time.monotonic()
 
-    while True:
-        if stop_event is not None and stop_event.is_set():
-            break
+    try:
+        while not stop_event.is_set():
+            # Drain one message per iteration — never block longer than 1 s
+            # so we don't drift the poll cadence.
+            message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message is not None and message.get("type") == "message":
+                channel = message.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
+                if channel == POLICY_CHANNEL:
+                    _handle_policy_message(message["data"])
+                elif channel == ANOMALY_CHANNEL:
+                    _handle_anomaly_message(message["data"])
 
-        # Drain one message per iteration — never block longer than 1 s so we
-        # don't drift the poll cadence.
-        message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-        if message is not None and message.get("type") == "message":
-            channel = message.get("channel")
-            if isinstance(channel, bytes):
-                channel = channel.decode()
-            if channel == POLICY_CHANNEL:
-                _handle_policy_message(message["data"])
-            elif channel == ANOMALY_CHANNEL:
-                _handle_anomaly_message(message["data"])
-
-        now = time.monotonic()
-        if now >= next_tick:
-            published = _inference_cycle(db_conn, redis_client)
-            if published:
-                print(f"[{SERVICE_NAME}] published routing recommendation "
-                      f"(policy={_policy_name})", flush=True)
-            next_tick = now + POLL_INTERVAL_SECONDS
+            now = time.monotonic()
+            if now >= next_tick:
+                published, db_ok = _inference_cycle(db_conn, redis_client)
+                if published:
+                    print(f"[{SERVICE_NAME}] published routing recommendation "
+                          f"(policy={_policy_name})", flush=True)
+                if not db_ok:
+                    # OperationalError on the cycle — drop the dead connection
+                    # and try a fresh one. Skip the next tick to give the DB
+                    # a moment to come back without hot-looping.
+                    try:
+                        db_conn.close()
+                    except Exception:                       # noqa: BLE001
+                        pass
+                    try:
+                        db_conn = _open_db_connection()
+                        print(f"[{SERVICE_NAME}] DB connection rebuilt", flush=True)
+                    except Exception as exc:                # noqa: BLE001
+                        print(f"[{SERVICE_NAME}] DB reconnect failed: {exc}; "
+                              "retrying next tick", flush=True)
+                next_tick = now + POLL_INTERVAL_SECONDS
+    finally:
+        # Best-effort drain on shutdown — we don't propagate errors here
+        # because we're already on the way out.
+        try:
+            pubsub.close()
+        except Exception:                                    # noqa: BLE001
+            pass
+        try:
+            db_conn.close()
+        except Exception:                                    # noqa: BLE001
+            pass
+        print(f"[{SERVICE_NAME}] run loop exited", flush=True)
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
@@ -402,7 +506,31 @@ def _start_runloop_thread() -> None:
     t.start()
 
 
+def _install_signal_handlers() -> None:
+    """Wire SIGTERM/SIGINT to the module-level shutdown event.
+
+    The run loop polls _shutdown_event between cycles and runs its finally:
+    block (close pubsub + db) on its way out. Docker's SIGTERM during
+    `compose down` now produces a clean exit instead of leaving an orphan
+    pubsub subscription on Redis. Signals can only be installed in the main
+    thread; called from __main__ only.
+    """
+    def _handler(_signum, _frame):
+        print(f"[{SERVICE_NAME}] shutdown signal received", flush=True)
+        _shutdown_event.set()
+
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+        signal.signal(signal.SIGINT, _handler)
+    except ValueError:
+        # Raised when not called from the main thread (e.g. in tests
+        # that exercise app.py via a worker). Safe to ignore.
+        pass
+
+
 if __name__ == "__main__":
+    _install_signal_handlers()
+
     if RUNLOOP_ENABLED:
         _pull_initial_policy()
         _start_runloop_thread()

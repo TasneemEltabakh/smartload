@@ -177,11 +177,28 @@ def test_state_multiple_rows_classify_health():
 
 
 def test_state_handles_nulls_from_db():
+    """All-NULL telemetry → health="unknown", not "healthy". Silence is not
+    a positive signal; classifying it as healthy would mask a backend whose
+    metrics stopped flowing (lb-otel-shipper bug, partition, etc.)."""
     rows = [("b1", None, None, None)]
     state = build_state_from_rows(rows)
     assert state[0].latency_ms == 0.0
     assert state[0].queue_depth == 0
+    assert state[0].health == "unknown"
+
+
+def test_state_partial_null_still_classifies():
+    """At least one signal present (latency XOR error_rate) → fall back to
+    classify_health rather than UNKNOWN. UNKNOWN is for total silence."""
+    # Only latency present, error_rate NULL → classify on latency
+    rows = [("b1", 50.0, 10, None)]
+    state = build_state_from_rows(rows)
     assert state[0].health == "healthy"
+
+    # Only error_rate present, latency NULL → classify on error_rate
+    rows = [("b2", None, 0, 0.5)]
+    state = build_state_from_rows(rows)
+    assert state[0].health == "unhealthy"
 
 
 def test_state_skips_malformed_row():
@@ -224,6 +241,17 @@ def test_mode_policy_must_agree_for_active():
 def test_mode_rl_mode_env_is_case_insensitive():
     assert effective_mode(ACTIVE, "ACTIVE", _ep()) == ACTIVE
     assert effective_mode(ACTIVE, "Active", _ep()) == ACTIVE
+
+
+def test_mode_action_mode_is_case_insensitive():
+    """M7: action.mode comparison must match the env-var rule. A policy
+    emitting "Active" or "ACTIVE" should still produce effective_mode=active
+    when the other gates agree."""
+    assert effective_mode("Active", "active", _ep()) == ACTIVE
+    assert effective_mode("ACTIVE", "active", _ep()) == ACTIVE
+    assert effective_mode("active", "active", _ep()) == ACTIVE
+    # Empty / None still resolves to shadow.
+    assert effective_mode("", "active", _ep()) == SHADOW
 
 
 # ── should_publish ───────────────────────────────────────────────────────────
@@ -289,9 +317,16 @@ def test_policy_from_payload_classical_maps_to_shadow():
 
 
 def test_policy_from_payload_operating_mode_passthrough():
-    for mode in ("shadow", "hybrid", "learning"):
+    for mode in ("shadow", "hybrid"):
         new = policy_from_payload({"operating_mode": mode}, fallback=EnginePolicy())
         assert new.operating_mode == mode
+
+
+def test_policy_from_payload_learning_maps_to_hybrid():
+    """Deprecated "learning" value maps to "hybrid" for backwards-compat
+    with older policy.yaml files. See M10 in the RL review."""
+    new = policy_from_payload({"operating_mode": "learning"}, fallback=EnginePolicy())
+    assert new.operating_mode == "hybrid"
 
 
 def test_policy_from_payload_unknown_mode_falls_back():
@@ -301,9 +336,9 @@ def test_policy_from_payload_unknown_mode_falls_back():
 
 
 def test_policy_from_payload_missing_mode_uses_fallback():
-    fallback = EnginePolicy(operating_mode="learning")
+    fallback = EnginePolicy(operating_mode="hybrid")
     new = policy_from_payload({}, fallback=fallback)
-    assert new.operating_mode == "learning"
+    assert new.operating_mode == "hybrid"
 
 
 # ── serialize_engine_state (Live Engines #121) ───────────────────────────────

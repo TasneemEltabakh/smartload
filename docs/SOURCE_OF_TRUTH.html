@@ -2933,6 +2933,9 @@ cur.execute(ANOMALY_QUERY,
 <!-- ====== 8.7 RL ====== -->
 <article id="mod-rl">
 <h2>8.7 Reinforcement Learning Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">#138 + N1.3</span></h2>
+
+<div class="amendment-box" style="border-left: 3px solid #c47; padding: 0.5em 1em; margin: 0.5em 0; background: #faf3f5;">
+<strong>Amendment (v1.0.7 — 2026-05-28):</strong> The trained policy is now framed as a <strong>contextual bandit</strong> (state → chosen backend) optimised with MaskablePPO, not an MDP-trained RL agent — the offline simulator replays trace windows independently of the agent's action. Canonical <code>operating_mode</code> set is now <code>{shadow, hybrid}</code> (<code>learning</code> retained as a backwards-compat alias for <code>hybrid</code>). <code>PPOPolicy.reload(**kwargs)</code> is now a real in-place update hook (no torch reload on policy publishes). Serving uses argmax-dominant weighting (chosen backend gets 0.7, remainder split evenly). New <code>HEALTH_UNKNOWN</code> state for silent backends (excluded from routing). See §22 v1.0.7 row for the full delta and the RL review changelog at <code>G:/smartload-changelogs/</code> for the engineering rationale.</div>
 <h4>Purpose</h4>
 <p>The headline AI component. Learns adaptive routing policies that outperform static algorithms by optimizing long-term latency and load distribution.</p>
 <h4>Phase staging</h4>
@@ -2942,7 +2945,7 @@ cur.execute(ANOMALY_QUERY,
     <tr><td>1A (S2)</td><td>N1.3 shadow scaffold</td><td>Random policy; publishes <code>RoutingRecommendation{ mode="shadow" }</code>. <em>Validates the full pipeline before any model exists.</em></td></tr>
     <tr><td>2 (S4)</td><td>N2.3 — Gym env</td><td><code>SmartLoadEnv</code> in <code>services/rl-engine/training/env.py</code> (training-only; excluded from runtime Docker image): state=[latency, queue_depth, health_flag] per backend; action=discrete backend selection; reward = <code>−P95_latency − λ · load_imbalance</code> (reward uses <code>next_state</code> latency for correct credit assignment); episode = workload trace. <code>obs_builder.py</code> at the service root is the shared train/serve conversion layer.</td></tr>
     <tr><td>2 (S4)</td><td>N2.4 — PPO training <span class="badge badge-active">CRITICAL PATH</span></td><td>Stable-Baselines3 PPO; ~7 days; reward curves until convergence; saved to <code>services/rl-engine/models/policy.zip</code>. Canary check (50k steps) gates the full budget. Acceptance: PPO beats round_robin AND least_connections on p95 latency and SLO violation rate.</td></tr>
-    <tr><td>2 (S4)</td><td>N2.5 — active mode</td><td>Loads <code>policy.zip</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>} — shadow runs full inference non-actuating; hybrid/learning emit <code>mode=active</code>. T2.1 sidecar consumes scores.</td></tr>
+    <tr><td>2 (S4)</td><td>N2.5 — active mode</td><td>Loads <code>policy.zip</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>} (legacy <code>learning</code> alias maps to <code>hybrid</code>) — shadow runs full inference non-actuating; hybrid emits <code>mode=active</code>. T2.1 sidecar consumes scores. v1.0.7 reframe: serving uses argmax-dominant weighting (chosen backend 0.7, remainder split evenly) instead of softmax-of-logits.</td></tr>
   </tbody>
 </table>
 <h4>Inputs / Outputs</h4>
@@ -5254,7 +5257,7 @@ flowchart LR
     <tr><td>NGINX load balancer</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/load-balancer/nginx/nginx.conf</code></td><td>Static <code>location = /health</code> returns canonical <code>{"status":"ok"}</code>; other paths proxy to backend_pool with <code>proxy_next_upstream</code> over running test-backends</td></tr>
     <tr><td>lb-otel-shipper (sidecar)</td><td>Tasneem</td><td><span class="pill pill-done">T1.2 wired</span></td><td><code>services/lb-otel-shipper/app.py</code></td><td>Tail-and-emit Python sidecar; OTLP/HTTP-JSON to collector — Approach B (issue #9)</td></tr>
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
-    <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/traffic-simulator/</code></td><td>—</td></tr>
+    <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>tools/traffic-simulator/</code></td><td>—</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
     <tr><td>Repo structure + runbook</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docs/running-the-project.md</code></td><td>Phase 1+ updates</td></tr>
     <tr><td>docker-compose (full stack)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docker-compose.yml</code></td><td>—</td></tr>
@@ -5285,8 +5288,8 @@ flowchart LR
     <tr><td>Forecasting model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td><code>services/forecasting/models/</code></td><td>—</td></tr>
     <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
     <tr><td>RL training scripts + baselines (N2.4)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>train_ppo.py</code> (MaskablePPO, 2M steps, ~75 min CPU), <code>train_dqn.py</code> (fallback); <code>round_robin</code> + <code>least_connections</code> policies; <code>eval_harness.py</code> + <code>eval_seed_bank.json</code>. <strong>Artifact:</strong> <code>services/rl-engine/models/policy.zip</code> (156 KB, <code>latency_scale=100.0</code>). <strong>Eval result (20 held-out episodes):</strong> PPO mean_reward&nbsp;=&nbsp;-0.0056 (ties round_robin, best baseline); beats least_connections by 4.8e-2. SLO violation rate 0 for all policies. Homogeneous Alibaba backend latencies (~9.7 ms) mean any balanced policy achieves the same p95; PPO learned round-robin equivalence from offline traces.</td><td>—</td></tr>
-    <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>}; shadow runs full inference non-actuating; <code>reload()</code> raises <code>NotImplementedError</code> (restart to swap artifact); runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
-    <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-done">Complete + smoke PASSED (T2.1)</span></td><td><code>services/lb-sidecar/</code> — subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code>; <code>NginxAdapter</code> atomically rewrites <code>upstream.conf</code> + signals <code>nginx -s reload</code> via Docker exec; <code>BackendRegistry</code> maps IP:port → container name; conformance + unit + E2E test suites green; Actions page "Force route weights" form live. End-to-end smoke run 2026-05-23: shadow gate confirmed (rl-engine publishes <code>mode=shadow</code>, sidecar ignores); manual <code>mode=active</code> envelope applied backend-1 weight=99 (score=0.99 → round(99)); 20/20 curl HTTP 200; zero log errors. Artifacts in <code>experiments/lb-sidecar/2026-05-23-smoke/</code>.</td><td>—</td></tr>
+    <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>} (legacy <code>learning</code> → <code>hybrid</code>); shadow runs full inference non-actuating; argmax-dominant weighting (v1.0.7); <code>reload(**kwargs)</code> updates runtime params in place without re-reading <code>policy.zip</code> (v1.0.7 — C4); artifact swap still requires container restart; runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
+    <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-done">Complete + smoke PASSED (T2.1)</span></td><td><code>services/lb-sidecar/</code> — subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code>; <code>NginxAdapter</code> atomically rewrites <code>upstream.conf</code> + signals <code>nginx -s reload</code> via Docker exec; <code>BackendRegistry</code> maps IP:port → container name; conformance + unit + E2E test suites green; Actions page "Force route weights" form live. End-to-end smoke run 2026-05-23: shadow gate confirmed (rl-engine publishes <code>mode=shadow</code>, sidecar ignores); manual <code>mode=active</code> envelope applied backend-1 weight=99 (score=0.99 → round(99)); 20/20 curl HTTP 200; zero log errors. Artifacts in <code>experiments/t2_1_smoke_20260523_213133/</code>.</td><td>—</td></tr>
     <tr><td>Phase 0 integration tests (33)</td><td>Tasneem</td><td><span class="pill pill-done">33/33 passing</span></td><td><code>tests/integration/test_pipeline_health.py</code></td><td>—</td></tr>
     <tr><td>Phase 3A integration tests (3 scenarios)</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (T2.3)</span></td><td>—</td><td>—</td></tr>
     <tr><td>Unit tests</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (ALL.1)</span></td><td>—</td><td>—</td></tr>
@@ -5585,13 +5588,90 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7 — 2026-05-28 — RL review fixes (C1–C5, M1–M10, L4)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Contextual-bandit reframe (C1, M9)</strong></td>
+      <td>The offline simulator (<code>services/rl-engine/training/simulator.py</code>) replays Alibaba trace windows independently of the agent's action — there are no environment dynamics. Module docstrings + READMEs now explicitly frame the trained policy as a <strong>contextual bandit</strong> trained with MaskablePPO on logged production traces, not an MDP-trained RL agent. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX <code>max_fails</code>, anomaly-detector exclusions, autoscaler reactivity). Imbalance term in <code>reward.py</code> is now documented as a regulariser over the trace's historical spread, not a learned consequence of weighting.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Argmax-dominant serving weights (C2)</strong></td>
+      <td><code>PPOPolicy.act</code> previously took a single forward pass for argmax then a second one to extract logits, then softmaxed them into per-backend weights. That distribution was never an optimisation target — Discrete(N) PPO learns argmax, not calibrated mass. Replaced with a single forward pass that produces argmax + ranking together: chosen backend receives <code>_DOMINANT_WEIGHT</code> (0.7); the remaining 0.3 is split evenly across other eligibles. Matches what the policy was trained for and keeps a floor so NGINX health probing of the rest still works.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong><code>mean_eval_reward</code> → <code>mean_training_reward</code> (C3a)</strong></td>
+      <td>The shipped <code>artifact_meta.json</code> field was sourced from <code>model.ep_info_buffer</code> (training rollouts), not from <code>eval_harness</code> against the held-out seed bank — the old name overclaimed. Renamed in <code>train_ppo.py</code> and the committed artifact. To populate a real held-out number, run <code>training/eval_harness.py</code> on <code>policy.zip</code> and store the result alongside.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>PPO reload without disk re-read (C4)</strong></td>
+      <td><code>_refresh_policy_under_lock</code> previously called <code>bootstrap_policy</code> on every <code>smartload.policy</code> publish, which reconstructed <code>PPOPolicy</code> → reloaded <code>policy.zip</code> from disk → rebuilt the torch graph. Now <code>RoutingPolicy.reload(**kwargs)</code> is a real in-place update hook: <code>PPOPolicy.reload</code> overrides it to update <code>_operating_mode</code> / <code>_confidence_threshold</code> / <code>_exploration_rate</code> without touching the artifact. The refresh path falls back to full bootstrap only when reload raises <code>NotImplementedError</code> or <code>TypeError</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Anomaly-health TTL eviction (C5)</strong></td>
+      <td><code>_anomaly_health</code> in <code>app.py</code> previously grew without bound — a backend ID seen once on <code>smartload.anomaly</code> stayed in the dict forever. Each entry now carries a monotonic seen-at timestamp; <code>_evict_stale_anomaly_health</code> runs at the top of every inference cycle and drops entries older than <code>ANOMALY_HEALTH_TTL_MULTIPLIER × RL_WINDOW_SECONDS</code> (default 6 × 30 s = 3 min). Keeps the dict bounded under backend churn.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>"unknown" health state (M1)</strong></td>
+      <td>A backend with NULL <code>latency</code> and NULL <code>error_rate</code> in <code>RL_STATE_QUERY</code> was previously coerced to <code>health=healthy</code> — silence read as a positive signal. Added <code>HEALTH_UNKNOWN</code> constant in <code>policy_base</code>; <code>build_state_from_rows</code> emits <code>unknown</code> when both telemetry signals are absent. <code>is_eligible()</code> excludes both <code>unhealthy</code> and <code>unknown</code> from routing — silent backends are no longer routed to. All policies (<code>round_robin</code>, <code>least_connections</code>, <code>ppo</code>) plus <code>obs_builder.build_action_mask</code> consume the same predicate.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Single forward pass + bounded fallback (M2, M4)</strong></td>
+      <td><code>PPOPolicy.act</code> now does one forward pass (logit extraction; argmax derived from the masked logits). When every live backend is ineligible (unhealthy or unknown), the policy emits <code>RoutingAction(mode=shadow, rankings=[])</code> instead of including the "best" ineligible one — the anomaly detector's existing LB-sidecar exclusions remain in effect rather than being undone by RL.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>DB reconnect (M5)</strong></td>
+      <td>The run loop previously caught any DB exception, logged it, and kept the dead connection — the service stayed "up" but stopped publishing for the lifetime of the container. Now <code>psycopg2.OperationalError</code> is detected specifically; the loop closes the dead connection, opens a fresh one, logs <code>DB connection rebuilt</code>, and continues. Other DB exceptions (query bugs) still skip the cycle without reconnecting.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Case-insensitive action.mode (M7)</strong></td>
+      <td><code>effective_mode</code> previously matched <code>RL_MODE</code> env case-insensitively but action mode case-sensitively. Both now lowercase before comparison.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Stable round-robin rotation (M8)</strong></td>
+      <td><code>RoundRobinPolicy</code> previously kept a modular index <code>_idx % len(eligible)</code>. When the eligible set shrunk (backend going degraded) the rotation reshuffled because the modular wrap-around point moved. Replaced with a backend_id pointer: the rotation advances to the lowest backend_id strictly greater than <code>_last_id</code>. Adding or removing a backend no longer perturbs the cycle.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>"learning" operating_mode (M10)</strong></td>
+      <td>Previously accepted as a distinct value but identical to <code>hybrid</code> in all serving paths. Removed from the canonical set; <code>policy_from_payload</code> and <code>PPOPolicy._normalise_operating_mode</code> both transparently map <code>learning</code> → <code>hybrid</code> so existing <code>policy.yaml</code> files keep working. The canonical set is now <code>{shadow, hybrid}</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Safety-boundary documentation (M3)</strong></td>
+      <td>The same intent (don't actually move traffic) appears in three places: <code>runloop.effective_mode</code>, <code>lb-sidecar.handle_routing</code>, and <code>lb-sidecar.handle_policy</code>. <code>services/rl-engine/README.md</code> now documents that the LB sidecar is the safety boundary; the rl-engine gate is telemetry hygiene. A future contributor "consolidating" the rl-engine gate would no longer remove unsafe-routing protection — the sidecar still refuses anything except <code>mode=active</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Graceful shutdown signal (L4)</strong></td>
+      <td>Module-level <code>_shutdown_event</code> + SIGTERM/SIGINT handlers installed in <code>__main__</code>. The run loop polls the event between cycles; on shutdown it drains the current cycle, closes pubsub + DB, prints <code>run loop exited</code>. Docker's SIGTERM during <code>compose down</code> now produces a clean exit instead of leaving orphan pubsub subscriptions on Redis.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Test coverage</strong></td>
+      <td>Local <code>pytest tests/unit/rl-engine/</code> count: 123 → 131 (gymnasium-dependent tests still skip locally). New tests cover the unknown-health state, learning → hybrid mapping, action.mode case insensitivity, anomaly-health TTL eviction, and the C4 reload-vs-bootstrap path. PPO test fixture-based suite updated for the empty-rankings contract and the argmax-dominant weight shape; runs in CI / sb3-contrib environment.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.6 — 2026-05-24 — T2.1 smoke test PASSED; lb-sidecar walk script + Dockerfile fixes</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
   <tbody>
     <tr>
       <td><strong>T2.1 end-to-end smoke PASSED</strong></td>
-      <td>Full compose stack smoke run confirming the complete T2.1 pipeline: rl-engine publishes <code>mode=shadow</code> → lb-sidecar receives it but does NOT rewrite <code>upstream.conf</code> (shadow gate); manual <code>mode=active</code> Redis envelope → lb-sidecar applies PPO-derived weights (backend-1 weight=99 from score=0.99); <code>nginx -s reload</code> triggered via docker exec; 20/20 <code>curl localhost:8080/</code> HTTP 200; zero errors in lb-sidecar, rl-engine, load-balancer logs. Artifacts in <code>experiments/lb-sidecar/2026-05-23-smoke/</code>.</td>
+      <td>Full compose stack smoke run confirming the complete T2.1 pipeline: rl-engine publishes <code>mode=shadow</code> → lb-sidecar receives it but does NOT rewrite <code>upstream.conf</code> (shadow gate); manual <code>mode=active</code> Redis envelope → lb-sidecar applies PPO-derived weights (backend-1 weight=99 from score=0.99); <code>nginx -s reload</code> triggered via docker exec; 20/20 <code>curl localhost:8080/</code> HTTP 200; zero errors in lb-sidecar, rl-engine, load-balancer logs. Artifacts in <code>experiments/t2_1_smoke_20260523_213133/</code>.</td>
       <td>This release</td>
     </tr>
     <tr>

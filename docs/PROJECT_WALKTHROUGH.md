@@ -1506,9 +1506,11 @@ The tests cover:
 
 ### 4.3 `rl-engine` (plugin-per-policy)
 
+> **Framing (v1.0.7 amendment, 2026-05-28):** The trained policy is a **contextual bandit** optimised with MaskablePPO on logged Alibaba traces — the offline simulator replays trace windows independently of the agent's action, so there are no environment dynamics to learn. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX `max_fails`, anomaly-detector exclusions, autoscaler reactivity). Canonical `operating_mode` set is now `{shadow, hybrid}` (`learning` kept as a backwards-compat alias for `hybrid`). Serving uses argmax-dominant weighting (chosen backend → 0.7, remainder split evenly across other eligibles) instead of softmax of logits. `PPOPolicy.reload(**kwargs)` is a real in-place update hook — policy republishes no longer reload `policy.zip` from disk. New `HEALTH_UNKNOWN` state excludes silent backends (no telemetry in the query window) from routing. Anomaly-health verdicts evict on a TTL so the dict stays bounded under backend churn. Full delta in SOT §22 v1.0.7.
+
 #### What it is
 
-Reinforcement-learning routing engine. Publishes `RoutingRecommendation` to `smartload.routing` with `mode="shadow"` (logged only) or `mode="active"` (load balancer applies the weights). As of #138 round 3, the service runs a real inference loop (behind `RL_RUNLOOP_ENABLED=true`) using the configured policy; the random-shadow baseline ships today, and the PPO plugin scaffold awaits the trained `policy.zip` from #27.
+Routing decision engine. Publishes `RoutingRecommendation` to `smartload.routing` with `mode="shadow"` (logged only) or `mode="active"` (load balancer applies the weights). As of #138 round 3 the service runs a real inference loop behind `RL_RUNLOOP_ENABLED=true` using the configured policy; baseline policies (random_shadow, round_robin, least_connections) plus the trained PPO bandit ship today.
 
 #### Why "policies/" instead of "engines/"
 

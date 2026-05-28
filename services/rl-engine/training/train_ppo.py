@@ -427,8 +427,11 @@ def main(
     model.save(str(model_path))
     print(f"[train] saved {model_path}.zip", flush=True)
 
-    # Mean reward from the training ep_info_buffer (last 100 episodes)
-    mean_eval_reward = (
+    # Mean reward from the training ep_info_buffer (last 100 episodes).
+    # Named mean_training_reward — NOT eval reward. To get a real held-out
+    # number, run training/eval_harness.py against the saved policy.zip on
+    # the seed-bank episodes and record the result alongside this field.
+    mean_training_reward = (
         float(np.mean([e["r"] for e in model.ep_info_buffer]))
         if model.ep_info_buffer
         else 0.0
@@ -441,22 +444,22 @@ def main(
         sb3c_version = "unknown"
 
     meta: dict[str, Any] = {
-        "policy_type":         "ppo",
-        "training_date":       datetime.now(timezone.utc).isoformat(),
-        "n_max_backends":      N_MAX_BACKENDS,
-        "norm_params":         norm.to_dict(),
-        "reward_lambda":       0.1,
-        "episode_length":      episode_length,
-        "training_steps":      steps,
-        "mean_eval_reward":    mean_eval_reward,
-        "sb3_version":         sb3_version,
-        "sb3_contrib_version": sb3c_version,
-        "dataset_partitions":  [p.name for p in partitions],
+        "policy_type":           "ppo",
+        "training_date":         datetime.now(timezone.utc).isoformat(),
+        "n_max_backends":        N_MAX_BACKENDS,
+        "norm_params":           norm.to_dict(),
+        "reward_lambda":         0.1,
+        "episode_length":        episode_length,
+        "training_steps":        steps,
+        "mean_training_reward":  mean_training_reward,
+        "sb3_version":           sb3_version,
+        "sb3_contrib_version":   sb3c_version,
+        "dataset_partitions":    [p.name for p in partitions],
     }
     meta_path = out_dir / "artifact_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
     print(f"[train] wrote {meta_path}", flush=True)
-    print(f"[train] mean_eval_reward (training buffer): {mean_eval_reward:.4f}", flush=True)
+    print(f"[train] mean_training_reward (ep_info_buffer): {mean_training_reward:.4f}", flush=True)
     print("[train] done.", flush=True)
 
 

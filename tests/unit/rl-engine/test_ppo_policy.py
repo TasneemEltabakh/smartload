@@ -138,7 +138,11 @@ def test_unhealthy_absent_all_modes():
 
 # ── 6. all-unhealthy state ────────────────────────────────────────────────────
 
-def test_all_unhealthy_returns_shadow_with_rankings(ppo_shadow):
+def test_all_unhealthy_returns_empty_shadow_rankings(ppo_shadow):
+    """When every live backend is unhealthy, emit empty rankings and
+    mode=shadow. Anomaly detector's existing sidecar exclusions stay in
+    effect; we do NOT manufacture a "best of the bad" pick. See M4 in
+    the RL review."""
     state = [
         _b("backend_1", health="unhealthy"),
         _b("backend_2", health="unhealthy"),
@@ -146,7 +150,18 @@ def test_all_unhealthy_returns_shadow_with_rankings(ppo_shadow):
     action = ppo_shadow.act(state)
     assert isinstance(action, RoutingAction)
     assert action.mode == "shadow"
-    assert len(action.rankings) >= 1  # must not be empty
+    assert action.rankings == []
+
+
+def test_all_unknown_returns_empty_shadow_rankings(ppo_shadow):
+    """Same contract for "unknown" health — silent backends are excluded."""
+    state = [
+        _b("backend_1", health="unknown"),
+        _b("backend_2", health="unknown"),
+    ]
+    action = ppo_shadow.act(state)
+    assert action.mode == "shadow"
+    assert action.rankings == []
 
 
 # ── 7. missing zip — graceful not-ready ───────────────────────────────────────
@@ -186,9 +201,48 @@ def test_nbmax_mismatch_raises(tmp_path):
 
 # ── 9. reload() raises ────────────────────────────────────────────────────────
 
-def test_reload_raises_not_implemented(ppo_shadow):
-    with pytest.raises(NotImplementedError, match="hot-reload deferred"):
-        ppo_shadow.reload()
+def test_reload_updates_runtime_kwargs_in_place(ppo_shadow):
+    """C4: reload() updates operating_mode without reloading policy.zip.
+
+    The PPOPolicy instance is shared at module scope (expensive to load),
+    so this test snapshots and restores the mutated state on teardown.
+    """
+    original_mode = ppo_shadow._operating_mode
+    try:
+        ppo_shadow.reload(operating_mode="hybrid",
+                          confidence_threshold=0.81,
+                          exploration_rate=0.12)
+        assert ppo_shadow._operating_mode == "hybrid"
+        assert ppo_shadow._confidence_threshold == 0.81
+        assert ppo_shadow._exploration_rate == 0.12
+        # The act() path now reflects hybrid even though we never
+        # reconstructed the policy from disk.
+        action = ppo_shadow.act(_MIXED_STATE)
+        assert action.mode == "active"
+    finally:
+        ppo_shadow.reload(operating_mode=original_mode)
+
+
+def test_reload_ignores_unknown_kwargs(ppo_shadow):
+    """Unknown kwargs are silently ignored so the policy plugin can
+    evolve independently of the engine_policy payload shape."""
+    original_mode = ppo_shadow._operating_mode
+    try:
+        ppo_shadow.reload(operating_mode="shadow", future_field="value")
+        assert ppo_shadow._operating_mode == "shadow"
+    finally:
+        ppo_shadow.reload(operating_mode=original_mode)
+
+
+def test_reload_learning_maps_to_hybrid(ppo_shadow):
+    """Deprecated "learning" → "hybrid" inside the policy too, so old
+    policy.yaml configs stay compatible after the M10 cleanup."""
+    original_mode = ppo_shadow._operating_mode
+    try:
+        ppo_shadow.reload(operating_mode="learning")
+        assert ppo_shadow._operating_mode == "hybrid"
+    finally:
+        ppo_shadow.reload(operating_mode=original_mode)
 
 
 # ── 10. score validity ────────────────────────────────────────────────────────
@@ -203,6 +257,33 @@ def test_scores_sum_to_one(ppo_shadow):
     action = ppo_shadow.act(_MIXED_STATE)
     total = sum(r.score for r in action.rankings)
     assert abs(total - 1.0) < 1e-5, f"scores sum to {total}, expected ~1.0"
+
+
+def test_argmax_dominant_weighting_shape(ppo_shadow):
+    """C2: chosen backend gets _DOMINANT_WEIGHT (0.7); the remaining 0.3
+    is split evenly across other eligibles. backend_3 is unhealthy in
+    _MIXED_STATE so 4 eligibles → 0.7 + 3 * 0.1 = 1.0."""
+    from policies.ppo.policy import _DOMINANT_WEIGHT
+    action = ppo_shadow.act(_MIXED_STATE)
+    assert len(action.rankings) == 4   # 5 live - 1 unhealthy
+    assert action.rankings[0].score == pytest.approx(_DOMINANT_WEIGHT)
+    expected_floor = (1.0 - _DOMINANT_WEIGHT) / 3
+    for r in action.rankings[1:]:
+        assert r.score == pytest.approx(expected_floor)
+
+
+def test_argmax_dominant_single_eligible_gets_full_weight(ppo_shadow):
+    """When only one backend is eligible, it receives score=1.0 — there is
+    no "other" mass to distribute."""
+    state = [
+        _b("backend_1", health="healthy"),
+        _b("backend_2", health="unhealthy"),
+        _b("backend_3", health="unhealthy"),
+    ]
+    action = ppo_shadow.act(state)
+    assert len(action.rankings) == 1
+    assert action.rankings[0].backend_id == "backend_1"
+    assert action.rankings[0].score == pytest.approx(1.0)
 
 
 # ── 11. rankings descend ──────────────────────────────────────────────────────

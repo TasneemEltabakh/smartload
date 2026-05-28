@@ -9,7 +9,7 @@
   "reward_lambda": 0.1,
   "episode_length": 200,
   "training_steps": 2000000,
-  "mean_eval_reward": -19.587764980000003,
+  "mean_training_reward": -19.587764980000003,
   "sb3_version": "2.8.0",
   "sb3_contrib_version": "2.8.0",
   "dataset_partitions": [

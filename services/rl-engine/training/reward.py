@@ -14,12 +14,21 @@ where:
   λ                  — imbalance penalty weight (default 0.1).
   ε                  — numerical stability term (default 1.0).
 
-Credit assignment (CRITICAL):
-  latency_ms_chosen is read from next_state (post-action), NOT from state
-  (pre-action).  The agent chose backend `action`; the next observation
-  reflects what that backend's latency became after absorbing the traffic.
-  Reading from state would assign the latency BEFORE the action took effect,
-  breaking the credit-assignment chain.
+Bandit framing (read simulator.py docstring first)
+──────────────────────────────────────────────────
+The simulator replays trace windows independently of the agent's action,
+so latency_ms_chosen is the recorded next-window latency of whichever
+backend the policy picked — NOT a causal consequence of having routed to
+it. The reward signal trains the policy to be a good predictor of which
+backend will have low latency next, given the current state. It is not a
+learned model of how routing decisions perturb the system.
+
+This makes the imbalance term a regulariser on the *trace's* historical
+spread, not a learned consequence of the policy's weighting. We keep it
+because (a) it discourages picks that bias the policy toward backends
+whose contemporaneous load is already an outlier, and (b) it produces a
+smoother reward signal during training. Removing it didn't improve held-out
+metrics during the N2.4 canary.
 
 Hard penalty:
   Choosing an UNHEALTHY backend incurs an additional -10.0 penalty.  This
@@ -70,24 +79,25 @@ class RewardCalculator:
 
     def compute(
         self,
-        state: list[BackendState],      # pre-action (unused for latency — kept for API symmetry)
+        state: list[BackendState],      # pre-decision state (kept for API symmetry)
         action: int,
-        next_state: list[BackendState], # post-action — latency read from HERE
+        next_state: list[BackendState], # next replay window — latency read from HERE
     ) -> float:
         """Return the scalar reward for taking `action` in `state`.
 
         Parameters
         ----------
         state:
-            Pre-action system state.  Not used for the latency term (see module
-            docstring on credit assignment), but available for future extensions
-            (e.g. a delta-latency bonus).
+            Pre-decision system state. Not used for the latency term, but
+            available for future extensions (e.g. delta-from-prior bonuses).
         action:
             Index into the sorted backend list (0-based).  Corresponds to the
             action space index in SmartLoadEnv.
         next_state:
-            Post-action system state.  The latency of the chosen backend is read
-            from here to reflect the consequence of the routing decision.
+            Next replayed window from the dataset. The chosen backend's
+            latency is read from here as an observational signal — this is
+            the bandit framing documented in simulator.py, not a closed-loop
+            consequence of the routing decision.
         """
         if not next_state:
             return 0.0
