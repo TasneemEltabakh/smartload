@@ -5265,7 +5265,7 @@ flowchart LR
     <tr><td>OTel Collector config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/otel-collector/otelcol-config.yaml</code></td><td>—</td></tr>
     <tr><td>Redis config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/redis/redis.conf</code></td><td>—</td></tr>
     <tr><td>Prometheus config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/prometheus/prometheus.yml</code></td><td>—</td></tr>
-    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + Overview dashboard</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview shipped; 4 remaining (Anomaly / Forecast / RL / Scaling) — T2.2 (S4)</td></tr>
+    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + Overview + RL Routing dashboards</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview + RL Routing shipped (v1.0.7c); 3 remaining (Anomaly / Forecast / Scaling) — T2.2 (S4)</td></tr>
     <tr><td>Operator UI</td><td>Tasneem</td><td><span class="pill pill-done">Home + Policy + Audit + Actions + Live Engines shipped (slices #1, #2, #3; #121 session 1 — backend + UI demoable, acceptance close-out pending)</span></td><td><code>services/operator-ui/{bff,web}/</code> · port 8090</td><td>Flask BFF + React/Vite SPA. Remaining pages: Embedded metrics (#131), Logs (#124, optional). #121 SDK / e2e / scenario / manifest pending session 2. Auth (#125, OUI.7) deferred to Phase 2 SaaS.</td></tr>
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
@@ -5587,6 +5587,18 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7c — 2026-05-29 — T2.2 Grafana RL Routing dashboard (1 of 4 pending)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — RL Routing</strong></td>
+      <td>SOT §17.2 lines 3287–3290: T2.2 calls for four dashboards (Anomaly, Forecast, RL, Scaling). New <code>infrastructure/grafana/dashboards/smartload-rl-routing.json</code> ships the RL one. Five panels, all backed by the existing <code>metrics</code> hypertable (no new instrumentation required): (1) per-backend request share over time (stacked area, normalised so total reads 100% per bucket) — directly visualises the v1.0.7 argmax-dominant weighting; (2) per-backend p95 latency with the 200 ms SLO line; (3) per-backend error rate with the 5% UNHEALTHY line; (4) total throughput; (5) backend leaderboard table sorted by last-minute request count with a colour gradient on share. Verified live: backend <code>172.18.0.12:8080</code> shows 68.6% share, the four others 7.84% each — the exact ratio of the NGINX <code>weight=70/8/8/8/8</code> upstream block produced by PPO's argmax-dominant ranking + the lb-sidecar v1.0.7b merge. T2.2 progress flipped from <strong>1/5 shipped</strong> to <strong>2/5 shipped</strong>; three remaining (Anomaly, Forecast, Scaling).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7b — 2026-05-29 — lb-sidecar SOT alignment (G1–G6)</h3>
 <table>
