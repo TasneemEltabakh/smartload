@@ -3,7 +3,7 @@ Smoke-run artifact capture for T2.1.
 Run from the smartload project root after `docker compose up` is healthy.
 
 Usage:
-    python experiments/lb-sidecar/<date>-smoke/capture.py
+    python experiments/t2_1_smoke_<ts>/capture.py
 """
 from __future__ import annotations
 
