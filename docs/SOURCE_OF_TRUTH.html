@@ -5588,6 +5588,18 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7d — 2026-05-29 — T2.2 Grafana Anomaly dashboard (2 of 4 pending)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — Anomaly</strong></td>
+      <td>SOT §17.2 line 3287: "Anomaly events per backend (timeline), DEGRADED/UNHEALTHY durations." New <code>infrastructure/grafana/dashboards/smartload-anomaly.json</code> ships the second of the four T2.2 dashboards. Five panels: (1) per-backend state-timeline derived from the same threshold rules the anomaly-detector's threshold engine ships with (latency &gt; 200 ms → DEGRADED; error_rate &gt; 5% → UNHEALTHY), value-mapped to green/yellow/red; (2) p95 latency per backend with the 200 ms threshold line; (3) error rate per backend with the 5% threshold line; (4) time-in-state table summarising the visible window (healthy / degraded / unhealthy seconds, sorted by unhealthy desc, gradient-coloured by severity); (5) latest 25 rows from the <code>backend_health</code> hypertable — the same data the lb-sidecar startup hydration (v1.0.7b G2) reads, so an empty result here means the anomaly-detector isn't persisting and sidecar restarts would lose state. T2.2 progress flipped from <strong>2/5 shipped</strong> to <strong>3/5 shipped</strong>; two remaining (Forecast, Scaling).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7c — 2026-05-29 — T2.2 Grafana RL Routing dashboard (1 of 4 pending)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
