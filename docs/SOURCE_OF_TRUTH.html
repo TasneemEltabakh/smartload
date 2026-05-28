@@ -5143,9 +5143,9 @@ flowchart LR
   </thead>
   <tbody>
     <tr><td><strong>S1</strong></td><td>Feb 1 – Apr 24</td><td>Phase 0</td><td>Wire all 13 services to Redis + TimescaleDB; full docker-compose up; 33 connectivity tests passing</td><td><span class="pill pill-done">DONE</span></td></tr>
-    <tr><td><strong>S2</strong></td><td>Apr 28 – May 9</td><td>Phase 1A</td><td>Real telemetry flow; threshold AI services; shadow RL; dataset download</td><td><span class="pill pill-active">ACTIVE</span></td></tr>
-    <tr><td><strong>S3</strong></td><td>May 10 – May 23</td><td>Phase 1B</td><td>Autoscaler skeleton; Policy Manager REST API; data loaders; EDA</td><td><span class="pill pill-next">NEXT</span></td></tr>
-    <tr><td><strong>S4</strong></td><td>May 24 – Jun 6</td><td>Phase 2</td><td>Real ML models; LB reads Redis signals; Grafana dashboards</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
+    <tr><td><strong>S2</strong></td><td>Apr 28 – May 9</td><td>Phase 1A</td><td>Real telemetry flow; threshold AI services; shadow RL; dataset download</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td><strong>S3</strong></td><td>May 10 – May 23</td><td>Phase 1B</td><td>Autoscaler skeleton (T1.3 ✓); Policy Manager REST API (T1.4 ✓). Data preprocessors (R1.1, R1.2), loader utilities (R1.4), and EDA carried to S4 — Rghda-owned, no Tasneem dependency to land them in S3.</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td><strong>S4</strong></td><td>May 24 – Jun 6</td><td>Phase 2</td><td>Real ML models; LB reads Redis signals; Grafana dashboards. <strong>Plus:</strong> R1.1 / R1.2 preprocessors + R1.4 data loaders + EDA carried from S3 (Rghda).</td><td><span class="pill pill-active">ACTIVE</span></td></tr>
     <tr><td><strong>S5</strong></td><td>Jun 7 – Jun 20</td><td>Phase 3A</td><td>Integration tests (3 scenarios); unit tests; performance benchmarks</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
     <tr><td><strong>S6</strong></td><td>Jun 21 – Jun 30</td><td>Phase 3B</td><td>Final report results; documentation; presentation polish</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
   </tbody>
@@ -5158,8 +5158,8 @@ flowchart LR
               (lb-otel-shipper sidecar — Approach B)
             └─► N1.1  Threshold anomaly detector    [S2, Nada]
                  └─► T1.3  Autoscaler skeleton      [S3, Tasneem]
-                      └─► R1.4  Data loaders        [S3, Rghda]    ← CRITICAL
-                           └─► N2.3  RL Gym env     [S4, Nada]
+                      └─► R1.4  Data loaders        [S4, Rghda]    ← CRITICAL (carried from S3; N2.3 landed by
+                           └─► N2.3  RL Gym env     [S4, Nada]        using TraceReplayDataset inline)
                                 └─► N2.4  PPO train [S4, Nada]     ← CRITICAL (longest)
                                      └─► N2.5  RL active mode      [S4, Nada]
                                           └─► T2.1  LB reads Redis [S4, Tasneem] ← CRITICAL
@@ -5197,7 +5197,7 @@ flowchart LR
   <thead><tr><th>Risk</th><th>Lik/Imp</th><th>Mitigation</th><th>Owner</th></tr></thead>
   <tbody>
     <tr><td>PPO training diverges or &gt; 7 days</td><td>Med/High</td><td>Reduce state/action space; DQN fallback; pre-check on toy env in N2.3</td><td>Nada</td></tr>
-    <tr><td>R1.4 data loaders not done by May 23 (blocks N2.x)</td><td>Low/Critical</td><td>Rghda starts R1.1–R1.3 on May 10; Nada provides signatures day 1</td><td>Rghda</td></tr>
+    <tr><td><s>R1.4 data loaders not done by May 23 (blocks N2.x)</s> — <strong>retired</strong>: R1.4 carried to S4; N2.x landed without the formal loader by using <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> inline. R1.4 is now a "formalise what already exists at <code>datasets/loaders.py</code>" task.</td><td>—</td><td>—</td><td>Rghda</td></tr>
     <tr><td>Borg gsutil download fails / slow</td><td>Med/Med</td><td>Fall back to PlanetLab CPU traces (HTTP)</td><td>Rghda</td></tr>
     <tr><td>T1.1 delayed (no live metrics for N1.1 testing)</td><td>Low/High</td><td>Seed <code>metrics</code> with synthetic data via S2 day-1 script</td><td>Tasneem</td></tr>
     <tr><td>NGINX upstream reload causes request drops</td><td>Med/Med</td><td>Use <code>nginx -s reload</code> (graceful); test &lt; 1% error rate</td><td>Tasneem</td></tr>
@@ -5282,8 +5282,8 @@ flowchart LR
     <tr><td>Google Borg dataset</td><td>Rghda</td><td><span class="pill pill-active">Phase 1A active (R0.2)</span></td><td><code>datasets/borg/</code></td><td>—</td></tr>
     <tr><td>Alibaba dataset</td><td>Rghda</td><td><span class="pill pill-upcoming">Phase 2 (R2.1)</span></td><td><code>datasets/alibaba/</code></td><td>Manual download steps</td></tr>
     <tr><td>Yahoo SMD dataset</td><td>Rghda</td><td><span class="pill pill-upcoming">Phase 2 (R2.1)</span></td><td><code>datasets/yahoo-smd/</code></td><td>Yahoo registration</td></tr>
-    <tr><td>Data preprocessors</td><td>Rghda</td><td><span class="pill pill-next">Phase 1B (R1.1, R1.2)</span></td><td><code>datasets/&lt;name&gt;/preprocess.py</code></td><td>—</td></tr>
-    <tr><td>Data loader utilities <strong>(critical)</strong></td><td>Rghda</td><td><span class="pill pill-next">Phase 1B (R1.4)</span></td><td><code>datasets/loaders.py</code></td><td>By May 23</td></tr>
+    <tr><td>Data preprocessors</td><td>Rghda</td><td><span class="pill pill-active">S4 (R1.1, R1.2) — carried from S3</span></td><td><code>datasets/&lt;name&gt;/preprocess.py</code></td><td>—</td></tr>
+    <tr><td>Data loader utilities</td><td>Rghda</td><td><span class="pill pill-active">S4 (R1.4) — carried from S3</span></td><td><code>datasets/loaders.py</code> (target) · <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> (informal landing today)</td><td>S4 close-out (Jun 6)</td></tr>
     <tr><td>Anomaly detection model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td><code>services/anomaly-detector/models/</code></td><td>—</td></tr>
     <tr><td>Forecasting model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td><code>services/forecasting/models/</code></td><td>—</td></tr>
     <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
@@ -5587,6 +5587,39 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7h — 2026-05-29 — Sprint-state correction: S3 → DONE, S4 → ACTIVE, R1.x carried</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Sprint table state matches the calendar</strong></td>
+      <td>Today is 2026-05-29. Per §17 the sprint dates are fixed; the status pills were stale. Updates:
+        <ul>
+          <li><strong>S2 (Apr 28 – May 9)</strong>: <code>ACTIVE</code> → <code>DONE</code>.</li>
+          <li><strong>S3 (May 10 – May 23)</strong>: <code>NEXT</code> → <code>DONE</code>. Tasneem-owned items shipped (T1.3 autoscaler, T1.4 policy-manager). Rghda-owned items (R1.1 / R1.2 preprocessors, R1.4 data loaders, EDA) carried to S4 — they have no Tasneem dependency and cannot be landed by Tasneem from this seat.</li>
+          <li><strong>S4 (May 24 – Jun 6)</strong>: <code>UPCOMING</code> → <code>ACTIVE</code>, goal column gains the four carry-over items.</li>
+        </ul>
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Critical path</strong></td>
+      <td>R1.4 node moved from <code>[S3, Rghda]</code> to <code>[S4, Rghda]</code>. The downstream node N2.3 RL Gym env (also S4) already shipped using <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> as an inline loader rather than the planned <code>datasets/loaders.py</code> shim — annotated on the graph.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§12 status grid rows for R1.x</strong></td>
+      <td><code>Data preprocessors</code> and <code>Data loader utilities</code> rows flipped from <code>Phase 1B</code> (S3) to <code>S4 — carried from S3</code>. The data-loader row's "Evidence / files" column now points at both the target path (<code>datasets/loaders.py</code>) and the informal landing (<code>TraceReplayDataset</code>) so Rghda's S4 work is "formalise what's already there" rather than "build from scratch." Deadline column re-anchored to <code>S4 close-out (Jun 6)</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Risk register</strong></td>
+      <td>The "R1.4 not done by May 23 blocks N2.x" risk (line 5200) struck through and annotated <strong>retired</strong>: N2.x landed by using TraceReplayDataset inline; R1.4 is no longer on the critical path for unblocking RL work, it's housekeeping.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7g — 2026-05-29 — Phase-1 runloop defaults flipped to true</h3>
 <table>
