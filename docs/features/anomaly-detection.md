@@ -1,0 +1,76 @@
+# Anomaly Detection
+
+> **Slice status — partial.** The wiring layer (Phase-1 run loop, threshold-engine baseline, Redis publish, lb-sidecar exclude/include, Live Engines UI surfacing, Grafana Anomaly dashboard) all ship today. The remaining work is the trained Isolation Forest model artifact (N2.1) plus the SDK / scenario / e2e / webhook layers. This manifest is the canonical place to track what's done and what's pending.
+
+## What this slice delivers
+
+Customers running SmartLoad in front of a backend pool stop having to write their own per-instance health-check plumbing. The decision plane watches NGINX's per-request latency and error-rate signal continuously, classifies each backend as healthy / degraded / unhealthy, and the load balancer automatically takes unhealthy backends out of the upstream pool — with a published audit trail. Operators see the verdicts live; integrators (once the SDK + webhook layers land) can subscribe to the events.
+
+## Customer surfaces
+
+| Surface | Detail | Status |
+|---|---|---|
+| HTTP | `POST /api/v1/isolate` (anomaly-detector) for operator-driven manual exclusion + include — shipped under slice #3 (manual-actions) | ✓ |
+| Redis | `smartload.anomaly` (anomaly-detector → lb-sidecar, operator-ui BFF) — payload `AnomalyEvent {backend_id, status, score, ...}` | ✓ |
+| UI | Live Engines page (`/engines`) surfaces the latest verdict per backend + the activity feed (#121 session 1) | ✓ |
+| Grafana | Anomaly dashboard `/d/smartload-anomaly/` — state timeline + thresholds + backend_health verdicts table (v1.0.7d, 2026-05-29) | ✓ |
+| SDK | `client.subscribe_anomaly(callback)` Redis subscriber pattern (mirrors `subscribe_policy`) | pending |
+| Webhook | HMAC-signed outbound POST when a backend flips to UNHEALTHY (#130) | pending |
+
+## Implementation pointers
+
+- Service: `services/anomaly-detector/{app,runloop,engine_base}.py` + plugin folders under `engines/`
+- Baseline engine: `services/anomaly-detector/engines/threshold/engine.py` — wired against `ANOMALY_QUERY`; classifies on latency > 200 ms (DEGRADED) and error_rate > 5% (UNHEALTHY)
+- Model handoff target: `services/anomaly-detector/engines/isolation_forest/engine.py` + `services/anomaly-detector/models/isolation_forest.pkl` (N2.1, Nada — engine plugin folder + README already exist)
+- Envelope: `services/shared/contracts.py::AnomalyEvent`
+- SQL: `services/shared/queries.py::ANOMALY_QUERY` (parameterised on `window`, `service`, `metric_names`)
+- Storage: `backend_health` hypertable (TimescaleDB) — written by the anomaly-detector when persistence lands; read by lb-sidecar startup hydration (v1.0.7b G2)
+- LB consume: `services/lb-sidecar/runloop.py::handle_anomaly` — translates IP backend_id → container name via `BackendRegistry`, calls `adapter.exclude_backend()` / `include_backend()`
+- UI: `services/operator-ui/web/src/pages/LiveEngines.tsx` (anomaly tile + activity feed)
+
+## Status
+
+- [x] Service wired (Phase-1 run loop via `engine_base` ABC, #138 round 1)
+- [x] Run loop enabled by default in `docker-compose.yml` (v1.0.7g)
+- [x] Threshold baseline engine ships
+- [x] Envelope contract (`AnomalyEvent`) defined in `shared/contracts.py`
+- [x] Redis channel `smartload.anomaly` registered in `docs/redis-channels.md`
+- [x] LB sidecar consumes — exclude/include + startup hydration from `backend_health` (T2.1 + v1.0.7b)
+- [x] UI surface — Live Engines anomaly tile + activity feed (#121 session 1)
+- [x] Grafana Anomaly dashboard (v1.0.7d)
+- [x] Manual operator override — `POST /api/v1/isolate` (slice #3, #123)
+- [ ] Isolation Forest model artifact (`isolation_forest.pkl`) — N2.1, blocked on model handoff from Nada (#101)
+- [ ] Persistence to `backend_health` — anomaly-detector should write every verdict so lb-sidecar startup hydration has data; currently the table only fills under specific test paths
+- [ ] Auto-recovery cool-down — engine should not flicker between HEALTHY and DEGRADED on a single noisy sample
+- [ ] SDK method — `client.subscribe_anomaly(callback)`
+- [ ] Webhook fan-out (#130)
+- [ ] Scenario script `examples/scenarios/anomaly-detection/anomaly_walk.py`
+- [ ] E2E test suite `tests/e2e/anomaly-detection/`
+- [ ] §25.9 slice-catalog row flipped to *Shipped*
+
+## Non-goals
+
+- Multi-tenant anomaly streams — Phase 2 SaaS (#129)
+- Anomaly explanation / feature attribution surfaces — out of scope for v1
+- Auto-scaling on anomaly alone — that decision belongs to the autoscaler driven by forecast signals, not the anomaly stream
+
+## How to verify (what does ship today)
+
+```bash
+# Stack up with the default v1.0.7g flags
+docker compose up -d
+
+# Watch live anomaly events via the operator UI activity feed
+open http://localhost:8090/engines
+
+# Direct Redis tap (verify the channel is alive)
+docker exec smartload-redis-1 redis-cli SUBSCRIBE smartload.anomaly
+
+# Grafana state timeline + backend_health verdicts
+open http://localhost:3000/d/smartload-anomaly/
+
+# Manually isolate a backend (operator override)
+curl -X POST http://localhost:8082/api/v1/isolate \
+     -H 'Content-Type: application/json' \
+     -d '{"backend_id":"smartload-test-backend-3:8080","action":"exclude","actor":"manual-test"}'
+```

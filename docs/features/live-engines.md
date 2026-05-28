@@ -1,0 +1,73 @@
+# Live Engines
+
+> **Slice status — session 1 backend + UI shipped 2026-05-24 (#121). Session 2 (SDK + scenario + e2e + manifest) closes out this slice.** This manifest tracks both halves.
+
+## What this slice delivers
+
+Operators get a single live view of the three AI engines (anomaly-detector, forecasting, rl-engine) — what they're doing right now, what they decided last cycle, what policy they're reasoning under, and a colour-coded activity stream that updates in real time. Replaces "ssh in and grep container logs" with one always-on page.
+
+## Customer surfaces
+
+| Surface | Detail | Status |
+|---|---|---|
+| HTTP | `GET /api/v1/engine/state` on each of the three AI services (`8082`, `8083`, `8084`) — returns `{ engine, policy_snapshot, stats, last_output, rl_mode_env (rl only) }` | ✓ |
+| BFF | `GET /api/ui/engines/snapshot` — parallel fan-out across the three AI services + ring snapshot + merged recent view | ✓ |
+| BFF | `GET /api/ui/engines/stream` — SSE: replay-then-live, 15 s heartbeat comments | ✓ |
+| Redis | Subscriber on `smartload.{anomaly,forecast,routing,scale}` from inside the BFF, into a per-channel `deque(maxlen=100)` | ✓ |
+| UI | `/engines` — engine tiles with the headline ("what just happened") on the left, colour-coded activity feed on the right with channel-filter chips | ✓ |
+| SDK | `client.subscribe_engines(callback)` SSE consumer + `client.engines_snapshot()` synchronous fetch | pending |
+| Webhook | not in scope — webhooks (#130) target external integrators; Live Engines is an operator-UI surface | n/a |
+
+## Implementation pointers
+
+- AI service endpoint: `services/<svc>/app.py::get_engine_state()` → `services/<svc>/runloop.py::serialize_engine_state()` (pure-Python, unit-testable)
+- BFF aggregator: `services/operator-ui/bff/engines.py` — `EngineEventBus` thread-safe per-SSE-client fan-out; `collections.deque(maxlen=100)` per channel
+- BFF routes: `services/operator-ui/bff/app.py::ui_engines_snapshot()` + `ui_engines_stream()`
+- UI page: `services/operator-ui/web/src/pages/LiveEngines.tsx` — two-pane layout, right-slide Details drawer for per-engine raw last_output
+- Envelope parsing: `services/shared/contracts.py::parse_envelope` (TTL drops surfaced as `dropped` counter, not user-visible noise)
+
+## Status
+
+- [x] Three AI services expose `/api/v1/engine/state` (anomaly, forecasting, rl-engine)
+- [x] Pure-Python `serialize_engine_state` in each `runloop.py` with unit-test coverage
+- [x] BFF `/api/ui/engines/snapshot` (parallel fan-out) + `/api/ui/engines/stream` (SSE) shipped
+- [x] BFF Redis subscriber thread + `EngineEventBus` + bounded queues
+- [x] Gunicorn `gthread` worker config so long-lived SSE doesn't pin a sync worker
+- [x] UI `/engines` page with headline-led tiles + colour-coded activity feed + channel filters
+- [x] BFF SPA fallback fix for direct `/engines` URLs (`static_url_path="/assets"`)
+- [x] BFF Docker build context widened to `./services` so `shared/` is pulled in
+- [x] OpenAPI fragments — `/api/v1/engine/state` per service + `/api/ui/engines/snapshot` + `/api/ui/engines/stream`
+- [x] Unit tests — 100 module-level tests including 19 new BFF tests (#121 session 1)
+- [x] Scenario script `examples/scenarios/live-engines/live_engines_walk.py` (this batch — closes the structural-lint orphan: `tests/e2e/live-engines/` existed without a sibling scenario)
+- [x] Manifest `docs/features/live-engines.md` (this batch — closes the structural-lint orphan: `tests/e2e/live-engines/` existed without a sibling manifest)
+- [ ] SDK methods — `client.subscribe_engines(callback)` SSE consumer + `client.engines_snapshot()`
+- [ ] E2E test suite — `tests/e2e/live-engines/test_live_engines.py` (the directory exists but is empty)
+- [ ] §25.9 slice-catalog row flipped to *Shipped*
+
+## Non-goals
+
+- Authentication on the SSE stream — the operator UI is single-tenant + assumed-trusted in Phase 1; Auth lands with #125 (Phase 2)
+- Multi-tab fan-out optimisation beyond `bounded queue per SSE client` — current 100-element deque per channel is enough for the operator-UI cardinality (~5 channels × ~3 concurrent operators)
+- Time-travel / scrubback — Live Engines is "now"; historical replay lives in the Audit page and Grafana
+
+## How to verify (what ships today)
+
+```bash
+# Stack up with the default v1.0.7g flags
+docker compose up -d
+
+# UI
+open http://localhost:8090/engines
+
+# BFF endpoints direct
+curl http://localhost:8090/api/ui/engines/snapshot | jq
+curl -N http://localhost:8090/api/ui/engines/stream    # SSE — Ctrl+C to stop
+
+# Per-engine raw state
+curl http://localhost:8082/api/v1/engine/state | jq    # anomaly
+curl http://localhost:8083/api/v1/engine/state | jq    # forecast
+curl http://localhost:8084/api/v1/engine/state | jq    # rl
+
+# Scenario walk
+python examples/scenarios/live-engines/live_engines_walk.py
+```
