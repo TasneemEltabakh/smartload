@@ -424,7 +424,7 @@ services:
   # Scenario injection, chaos, live event stream (SSE).  Port 8091.
   demo-ui:
     build:
-      context: ./tests/demo-ui
+      context: ./tools/demo-ui
     ports:
       - "8091:8091"
     environment:

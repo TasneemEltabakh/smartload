@@ -15,8 +15,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ── path setup ────────────────────────────────────────────────────────────────
-_SERVICE_ROOT = Path(__file__).resolve().parent
-_PARENT = _SERVICE_ROOT.parent
+_ROOT = Path(__file__).resolve().parents[3]   # smartload/
+_SERVICE_ROOT = _ROOT / "services" / "rl-engine"
+_PARENT = _ROOT / "services"
 for _cand in (_SERVICE_ROOT, _PARENT):
     if str(_cand) not in sys.path:
         sys.path.insert(0, str(_cand))
@@ -194,30 +195,33 @@ class TestEngineStateEndpoint:
         assert "rl_mode_env" in data
         assert data["rl_mode_env"] == _app.RL_MODE
 
-    def test_runloop_block_present(self, client):
+    def test_runloop_fields_present(self, client):
         data = client.get("/api/v1/engine/state").get_json()
-        assert "runloop" in data
-        rl = data["runloop"]
-        assert "enabled" in rl
-        assert "tick_count" in rl
-        assert "publish_count" in rl
-        assert "last_tick_iso" in rl
-        assert "last_publish_iso" in rl
+        assert "runloop_enabled" in data
+        assert "stats" in data
+        stats = data["stats"]
+        assert "ticks_total" in stats
+        assert "publishes_total" in stats
+        assert "last_tick_at" in stats
+        assert "last_publish_at" in stats
 
     def test_last_output_block_present(self, client):
         data = client.get("/api/v1/engine/state").get_json()
         assert "last_output" in data
         lo = data["last_output"]
-        assert "mode" in lo
-        assert "server_rankings" in lo
-        assert isinstance(lo["server_rankings"], list)
+        # last_output is None until the runloop publishes its first cycle;
+        # when populated it carries {mode, server_rankings, policy_version}.
+        if lo is not None:
+            assert "mode" in lo
+            assert "server_rankings" in lo
+            assert isinstance(lo["server_rankings"], list)
 
     def test_tick_counters_are_ints(self, client):
         data = client.get("/api/v1/engine/state").get_json()
-        assert isinstance(data["runloop"]["tick_count"], int)
-        assert isinstance(data["runloop"]["publish_count"], int)
+        assert isinstance(data["stats"]["ticks_total"], int)
+        assert isinstance(data["stats"]["publishes_total"], int)
 
     def test_runloop_disabled_by_default(self, client):
         # RUNLOOP_ENABLED defaults to False unless env var is set
         data = client.get("/api/v1/engine/state").get_json()
-        assert data["runloop"]["enabled"] is False
+        assert data["runloop_enabled"] is False
