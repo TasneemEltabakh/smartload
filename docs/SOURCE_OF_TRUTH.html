@@ -5588,6 +5588,53 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7b — 2026-05-29 — lb-sidecar SOT alignment (G1–G6)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>G1 — Anomaly exclusion survives partial RL rankings</strong></td>
+      <td>SOT §3.4 line 1756 / §16 line 3699: "Policy <code>safe_mode</code> can short-circuit RL but never bypasses anomaly exclusion." Previously, when RL published weights for only the eligible subset (PPO's <code>is_eligible</code> filter omits unhealthy/unknown backends), the adapter's <code>set_upstream_weights</code> <em>replaced</em> the full weights dict — the previously-excluded backend disappeared entirely from <code>upstream.conf</code> instead of staying as <code>server &hellip; down;</code>. Anomaly exclusion was silently bypassed by every RL publish. <code>handle_routing</code> now merges the RL-supplied weights with the full known-backend pool (starting from a floor weight of 1 for every known backend, then overlaying RL's values) so excluded backends always appear in <code>upstream.conf</code> and the adapter renders them as <code>down;</code> per the existing exclusion set.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G2 — backend_health hydration on startup</strong></td>
+      <td>SOT §30 lines 7635 + 7760: "LB sidecar consumes BACKEND_HEALTH_QUERY." The sidecar previously relied solely on <code>smartload.anomaly</code> pub/sub for exclusion state — a Redis disconnect or container restart wiped the in-memory exclusion set until anomaly-detector republished. <code>_hydrate_excluded_from_db</code> now runs once after adapter init: reads the latest <code>backend_health</code> row per backend within a configurable window (default 5 min), and calls <code>adapter.exclude_backend</code> for every <code>status=unhealthy</code> entry. Failure is non-fatal — a missing DB, empty result set, or connect error degrade gracefully to "no hydration" and the loop continues.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G3 — rl_confidence_threshold gate</strong></td>
+      <td>SOT §13 line 3128: "<code>rl_confidence_threshold: 0.6 # below this, sidecar ignores RL and uses classical</code>." New <code>PolicyState</code> dataclass in <code>runloop.py</code> tracks <code>safe_mode</code> and <code>rl_confidence_threshold</code> across <code>smartload.policy</code> publishes. <code>handle_routing</code> accepts <code>confidence_threshold</code> as a kwarg; treats <code>confidence = max(scores)</code> (matches the argmax-dominant serving shape from v1.0.7); when confidence is below threshold, rejects the recommendation and the previous adapter state stands. Threshold of 0 disables the gate (default before any policy publish). Smoke-verified by raising threshold to 0.9 → sidecar logs <code>routing rejected (confidence=0.700 &lt; threshold=0.900); using previous weights</code> with PPO's 0.7 argmax-dominant confidence.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G4 — Shadow envelopes logged</strong></td>
+      <td>SOT v1.0.6 row line 5703: "shadow envelopes received but not applied." Code previously had <code>pass # shadow mode: log nothing extra</code> — operators had no way to confirm shadow envelopes were being received. The drain loop now emits <code>routing shadow — not applied (N rankings)</code> and surfaces <code>confidence</code> on every <code>RoutingOutcome</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G5 — Graceful shutdown</strong></td>
+      <td>Module-level <code>_shutdown_event</code> + SIGTERM/SIGINT handlers installed from <code>__main__</code>. The run loop polls the event between message reads; on shutdown closes pubsub and prints <code>run loop exited</code>. Docker SIGTERM during <code>compose down</code> now produces a clean exit instead of leaving an orphan pubsub subscription on Redis. Matches the symmetric L4 fix from v1.0.7 in the RL engine.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G6 — Redis reconnect</strong></td>
+      <td>SOT §8.1 line 2299: "If Redis is unreachable or the sidecar dies: NGINX continues serving traffic with the last successfully applied config." NGINX-side guarantee was already correct; the sidecar previously crashed its drain loop on <code>redis.exceptions.ConnectionError</code> and stopped processing forever. The loop now catches it, closes the dead pubsub, sleeps <code>_REDIS_RECONNECT_BACKOFF_SECONDS</code> (default 2 s), and rebuilds the subscription. NGINX keeps serving the last applied weights throughout.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>/health surface — new fields</strong></td>
+      <td><code>policy_safe_mode</code> and <code>rl_confidence_threshold</code> added to the runloop-enabled <code>/health</code> body so operators can confirm the policy snapshot the sidecar is reasoning under without grepping container logs.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Test coverage</strong></td>
+      <td><code>tests/unit/lb-sidecar/test_runloop.py</code> grew from 35 → 45 cases. New: partial-ranking merge with floor weights (G1), confidence-threshold rejection above + below (G3), confidence reporting on shadow envelopes (G4), case-insensitive active mode, PolicyState mutation across publishes including partial-publish and malformed-threshold fallback.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7a — 2026-05-28 — Repo hygiene (post RL review)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

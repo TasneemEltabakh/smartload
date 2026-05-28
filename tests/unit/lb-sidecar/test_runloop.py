@@ -28,7 +28,9 @@ if str(_SERVICE) not in sys.path:
 from runloop import (  # noqa: E402
     BackendRegistry,
     AnomalyOutcome,
+    KNOWN_BACKEND_FLOOR_WEIGHT,
     PolicyOutcome,
+    PolicyState,
     RoutingOutcome,
     handle_anomaly,
     handle_policy,
@@ -161,7 +163,10 @@ def test_handle_routing_active_applies_weights():
     )
     assert outcome.applied is True
     assert outcome.weight_count == 2
+    assert outcome.confidence == 0.8
     adapter.set_upstream_weights.assert_called_once()
+    applied = adapter.set_upstream_weights.call_args[0][0]
+    assert applied == {"b1:8080": 80, "b2:8080": 60}
 
 
 def test_handle_routing_empty_rankings_uses_all_backends():
@@ -174,6 +179,119 @@ def test_handle_routing_empty_rankings_uses_all_backends():
     )
     assert outcome.applied is True
     adapter.set_upstream_weights.assert_called_once_with({"b1:8080": 1, "b2:8080": 1})
+
+
+def test_handle_routing_merges_partial_ranking_with_known_pool():
+    """G1: when RL publishes weights for only the eligible subset (PPO's
+    is_eligible filter omits unhealthy/unknown backends), the omitted
+    backends must still appear in upstream.conf — either as `down;` if
+    excluded, or with a small floor weight. Without this, anomaly exclusion
+    is silently bypassed on every RL publish.
+
+    SOT §3.4 line 1756: "Policy safe_mode can short-circuit RL but never
+    bypasses anomaly exclusion."
+    """
+    adapter = MagicMock()
+    registry = _stub_registry()
+    # RL only ranks 2 of 4 known backends (others were filtered as
+    # unhealthy/unknown upstream).
+    outcome = handle_routing(
+        {"mode": "active", "server_rankings": [
+            {"backend_id": "b1:8080", "score": 0.7},
+            {"backend_id": "b2:8080", "score": 0.075},
+        ]},
+        registry, adapter,
+        ["b1:8080", "b2:8080", "b3:8080", "b4:8080"],
+    )
+    assert outcome.applied is True
+    # All 4 backends present in the applied weights.
+    applied = adapter.set_upstream_weights.call_args[0][0]
+    assert set(applied) == {"b1:8080", "b2:8080", "b3:8080", "b4:8080"}
+    # RL-supplied weights override the floor for ranked backends.
+    assert applied["b1:8080"] == 70
+    assert applied["b2:8080"] == max(1, round(0.075 * 100))
+    # Omitted backends get the floor — kept in the upstream block so
+    # an anomaly-excluded backend stays `down;` (the adapter renders the
+    # exclusion regardless of weight).
+    assert applied["b3:8080"] == KNOWN_BACKEND_FLOOR_WEIGHT
+    assert applied["b4:8080"] == KNOWN_BACKEND_FLOOR_WEIGHT
+
+
+def test_handle_routing_confidence_below_threshold_rejected():
+    """G3 / SOT §13 line 3128: rl_confidence_threshold — below this,
+    sidecar ignores RL and uses classical. confidence = max(scores)."""
+    adapter = MagicMock()
+    registry = _stub_registry()
+    outcome = handle_routing(
+        {"mode": "active", "server_rankings": [
+            {"backend_id": "b:8080", "score": 0.3},
+        ]},
+        registry, adapter, ["b:8080"],
+        confidence_threshold=0.6,
+    )
+    assert outcome.applied is False
+    assert outcome.rejected_below_threshold is True
+    assert outcome.confidence == 0.3
+    adapter.set_upstream_weights.assert_not_called()
+
+
+def test_handle_routing_confidence_above_threshold_applies():
+    adapter = MagicMock()
+    registry = _stub_registry()
+    outcome = handle_routing(
+        {"mode": "active", "server_rankings": [
+            {"backend_id": "b:8080", "score": 0.7},
+        ]},
+        registry, adapter, ["b:8080"],
+        confidence_threshold=0.6,
+    )
+    assert outcome.applied is True
+    assert outcome.rejected_below_threshold is False
+    assert outcome.confidence == 0.7
+    adapter.set_upstream_weights.assert_called_once()
+
+
+def test_handle_routing_threshold_zero_disables_gate():
+    """A threshold of 0 means the gate is off — every active envelope
+    flows through. Default behaviour when no policy has been received."""
+    adapter = MagicMock()
+    registry = _stub_registry()
+    outcome = handle_routing(
+        {"mode": "active", "server_rankings": [
+            {"backend_id": "b:8080", "score": 0.001},
+        ]},
+        registry, adapter, ["b:8080"],
+        confidence_threshold=0.0,
+    )
+    assert outcome.applied is True
+
+
+def test_handle_routing_shadow_reports_confidence():
+    """Shadow envelopes still surface confidence so app.py can log it
+    alongside the no-op decision."""
+    outcome = handle_routing(
+        {"mode": "shadow", "server_rankings": [
+            {"backend_id": "b:8080", "score": 0.42},
+        ]},
+        _stub_registry(), MagicMock(), ["b:8080"],
+    )
+    assert outcome.applied is False
+    assert outcome.mode == "shadow"
+    assert outcome.confidence == 0.42
+
+
+def test_handle_routing_active_case_insensitive():
+    """Active mode comparison is case-insensitive (matches the
+    effective_mode rule in rl-engine/runloop.py — M7 from v1.0.7)."""
+    adapter = MagicMock()
+    registry = _stub_registry()
+    outcome = handle_routing(
+        {"mode": "ACTIVE", "server_rankings": [
+            {"backend_id": "b:8080", "score": 0.9},
+        ]},
+        registry, adapter, ["b:8080"],
+    )
+    assert outcome.applied is True
 
 
 def test_handle_routing_adapter_error_captured():
@@ -272,3 +390,60 @@ def test_handle_policy_error_captured():
     outcome = handle_policy({"safe_mode": True}, adapter, ["b:8080"])
     assert outcome.applied is False
     assert "oops" in outcome.error
+
+
+def test_handle_policy_tracks_rl_confidence_threshold():
+    """G3 / SOT §13 line 3128: PolicyState mutated in place so subsequent
+    handle_routing calls see the new threshold."""
+    state = PolicyState()
+    adapter = MagicMock()
+    outcome = handle_policy(
+        {"safe_mode": False, "rl_confidence_threshold": 0.75},
+        adapter, ["b:8080"],
+        policy_state=state,
+    )
+    assert outcome.applied is False
+    assert outcome.rl_confidence_threshold == 0.75
+    assert state.rl_confidence_threshold == 0.75
+    assert state.safe_mode is False
+
+
+def test_handle_policy_safe_mode_also_updates_threshold():
+    state = PolicyState(rl_confidence_threshold=0.0)
+    adapter = MagicMock()
+    outcome = handle_policy(
+        {"safe_mode": True, "rl_confidence_threshold": 0.6},
+        adapter, ["b:8080"],
+        policy_state=state,
+    )
+    assert outcome.applied is True
+    assert outcome.safe_mode is True
+    assert state.safe_mode is True
+    assert state.rl_confidence_threshold == 0.6
+
+
+def test_handle_policy_partial_publish_preserves_previous_threshold():
+    """A policy publish that omits rl_confidence_threshold must not
+    wipe the previous value to 0 — fall back to PolicyState."""
+    state = PolicyState(rl_confidence_threshold=0.6)
+    adapter = MagicMock()
+    outcome = handle_policy(
+        {"safe_mode": True},     # threshold omitted
+        adapter, ["b:8080"],
+        policy_state=state,
+    )
+    assert outcome.applied is True
+    assert state.rl_confidence_threshold == 0.6
+    assert outcome.rl_confidence_threshold == 0.6
+
+
+def test_handle_policy_malformed_threshold_falls_back():
+    state = PolicyState(rl_confidence_threshold=0.5)
+    adapter = MagicMock()
+    outcome = handle_policy(
+        {"safe_mode": False, "rl_confidence_threshold": "not-a-number"},
+        adapter, ["b:8080"],
+        policy_state=state,
+    )
+    assert state.rl_confidence_threshold == 0.5
+    assert outcome.rl_confidence_threshold == 0.5
