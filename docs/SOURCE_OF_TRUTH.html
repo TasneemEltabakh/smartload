@@ -5588,6 +5588,35 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7a — 2026-05-28 — Repo hygiene (post RL review)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Structural cleanup</strong></td>
+      <td>Aligns the working tree with the canonical structure in <code>README.md</code>:
+        <ul>
+          <li><code>ui_mockups/</code> → <code>docs/ui-mockups/</code> (design artefacts belong under <code>docs/</code>, not at the repo root)</li>
+          <li><code>services/webhook-dispatcher/README.md</code> → <code>docs/planned/webhook-dispatcher.md</code> — the folder was README-only (no Dockerfile, no <code>app.py</code>, not in <code>docker-compose.yml</code>); the placeholder lives in <code>docs/planned/</code> until #130 lands the real implementation, and <code>services/</code> regains the invariant that every directory is a deployable service.</li>
+          <li><code>docs/PROJECT_WALKTHROUGH.html</code> removed — stale untracked mirror left after 613139d consolidated to <code>.md</code>.</li>
+          <li><code>docs/runs/</code> removed — empty directory orphaned by 72e53db (moved smoke runs to <code>experiments/</code>).</li>
+        </ul>
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>tests/ → namespace packages</strong></td>
+      <td>Removed 18 <code>__init__.py</code> files from the <code>tests/</code> tree (root, per-type, per-service). Identical filenames in sibling service test dirs (e.g. <code>tests/unit/anomaly-detector/test_runloop.py</code> vs <code>tests/unit/rl-engine/test_runloop.py</code>) previously collided when collected together because pytest treated them as the same fully-qualified module. PEP 420 namespace packages let them coexist; <code>pytest tests/</code> now runs the full unit suite without collection errors.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>README + tree updates</strong></td>
+      <td>Added <code>lb-sidecar</code> row to the services table; added <code>tools/</code>, <code>experiments/</code>, <code>docs/ui-mockups/</code>, <code>docs/planned/</code> to the canonical tree; flagged <code>tests/</code> as namespace packages; flagged <code>datasets/</code> as gitignored (fetched via script).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7 — 2026-05-28 — RL review fixes (C1–C5, M1–M10, L4)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -7561,7 +7590,7 @@ export function verifySmartLoadSignature(rawBody, header, secret) {
 <table>
   <thead><tr><th>Where</th><th>What</th></tr></thead>
   <tbody>
-    <tr><td><code>services/webhook-dispatcher/</code></td><td>The service itself — subscribes to Redis, signs, POSTs, retries. Scaffolded; implementation pending #130.</td></tr>
+    <tr><td><code>services/webhook-dispatcher/</code></td><td>The service itself — subscribes to Redis, signs, POSTs, retries. <em>Not yet implemented (#130);</em> placeholder doc lives at <code>docs/planned/webhook-dispatcher.md</code> until the service folder is created.</td></tr>
     <tr><td><code>services/policy-manager/app.py</code> (planned)</td><td>Webhook management endpoints — the policy-manager hosts them today; may move to a dedicated <code>webhook-manager</code> service if scope expands.</td></tr>
     <tr><td><code>docs/openapi/smartload-v1.yaml</code> (planned)</td><td>Endpoint specs land here as #130 ships.</td></tr>
     <tr><td><code>tests/e2e/webhook-delivery/</code> (planned)</td><td>End-to-end suite: register URL → publish event → assert customer endpoint received within 5 s with valid signature.</td></tr>
