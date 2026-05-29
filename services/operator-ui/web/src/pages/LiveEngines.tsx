@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowUpRight,
   CheckCircle2,
   Cpu,
+  ExternalLink,
   Sparkles,
   TrendingUp,
   XCircle,
@@ -238,7 +240,10 @@ function EngineTile({
         <div className="tile-title-wrap">
           <div className="tile-icon"><IconFor name={name} /></div>
           <div>
-            <div className="tile-name">{name}</div>
+            <Link to={`/engines/${name}`} className="tile-name-link">
+              <span className="tile-name">{name}</span>
+              <ExternalLink size={11} strokeWidth={2} />
+            </Link>
             <div className="tile-sub">
               {body.channel ? <code>{body.channel}</code> : null}
               {lastTickStr ? <> · {lastTickStr}</> : null}

@@ -5588,6 +5588,33 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7k — 2026-05-29 — Per-engine deep-dive page (#121 OUI.3 close-out, page leg)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New <code>/engines/&lt;service&gt;</code> route</strong></td>
+      <td>New page at <code>services/operator-ui/web/src/pages/EngineDetail.tsx</code> + new route <code>&lt;Route path="/engines/:service" element={&lt;EngineDetailPage /&gt;} /&gt;</code> in <code>App.tsx</code>. Reachable for <code>anomaly-detector</code>, <code>forecasting</code>, <code>rl-engine</code>; any other slug renders a brief "unknown engine" message and bounces to <code>/engines</code> after 1.2 s. Header block carries the engine name + status badge (healthy/degraded/unreachable), the primary publish channel, the loaded engine/policy plus fallback inline (e.g. "fallback from <code>arima</code>"), and two one-click jumps: the matching Grafana dashboard (<code>/grafana/d/smartload-anomaly</code>, <code>…/smartload-forecast</code>, <code>…/smartload-rl-routing</code>) and the raw <code>/api/v1/engine/state</code> endpoint on the service port.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Four-card content grid</strong></td>
+      <td>(1) <em>Run-loop stats</em> — ticks, publishes, last_tick_at with age in seconds, last_publish_at, runloop_enabled flag, and the <code>rl_mode_env</code> pin for the RL engine. (2) <em>Policy snapshot</em> — pretty-printed JSON. (3) <em>Last cycle output</em> — pretty-printed JSON, full-width. (4) <em>Activity on &lt;channel&gt;</em> — last 80 events on the engine's primary channel (anomaly→<code>smartload.anomaly</code>, forecasting→<code>smartload.forecast</code>, rl-engine→<code>smartload.routing</code>) drawn from the BFF snapshot's <code>channels[…]</code> ring. Same 5 s poll cadence as the Live Engines tile page so refresh stays predictable.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tile name made clickable on <code>/engines</code></strong></td>
+      <td>Engine-name title in each tile on <code>services/operator-ui/web/src/pages/LiveEngines.tsx</code> is now a <code>&lt;Link to="/engines/&lt;name&gt;"&gt;</code> with a small external-link glyph (drops the right-slide drawer untouched — drawer remains the quick preview via the existing "View details" button; the new page is the full surface). Styles added under <code>.tile-name-link</code> and a new <code>.engine-detail</code> block (≈200 lines of CSS) in <code>styles.css</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td><code>docker compose build operator-ui</code> green (Vite build 6.88 s, 307.84 kB gzipped 92.69 kB bundle). <code>docker compose up -d operator-ui</code> with the rebuilt image; <code>GET /engines/rl-engine</code>, <code>/engines/forecasting</code>, <code>/engines/anomaly-detector</code> all return <code>200</code> via the SPA fallback. Live snapshot confirms three services reachable with <code>rl-engine</code> loaded <code>ppo</code> and <code>anomaly</code>/<code>forecast</code>/<code>routing</code> channels carrying events, so the page renders real content immediately.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7j — 2026-05-29 — Live Engines SDK (#121 session 2, SDK leg)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

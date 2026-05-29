@@ -2695,7 +2695,7 @@ Replay first so a freshly-opened page isn't blank. Then block on `q.get(timeout=
 
 #### What it is
 
-A React 18 SPA built with Vite + TypeScript. Five pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), Actions (manual scale + isolate forms with confirmation modals, slice #3), and Live Engines (per-engine tiles + colour-coded SSE event feed, #121 session 1).
+A React 18 SPA built with Vite + TypeScript. Six pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), Actions (manual scale + isolate forms with confirmation modals, slice #3), Live Engines (per-engine tiles + colour-coded SSE event feed, #121 session 1), and the per-engine deep-dive page at `/engines/<service>` (#121 OUI.3 close-out, v1.0.7k — engine block, run-loop stats, policy snapshot, full last_output, channel-filtered activity ring, one-click Grafana + raw-state jumps).
 
 #### Files
 
@@ -2715,7 +2715,8 @@ services/operator-ui/web/
         ├── Policy.tsx
         ├── Audit.tsx
         ├── Actions.tsx
-        └── LiveEngines.tsx
+        ├── LiveEngines.tsx
+        └── EngineDetail.tsx   # /engines/<service> deep-dive page (v1.0.7k)
 ```
 
 #### Live Engines page — two-pane layout (#121)
@@ -2751,6 +2752,21 @@ Status (ok/warn/bad) drives a left-border colour: unreachable → bad, runloop d
 The **activity feed** (right column) subscribes via `EventSource(ENGINES_STREAM_URL)`. One entry per envelope, colour-coded by a 3 px left border (anomaly red, forecast blue, routing purple, scale green). Channel filter chips at the top of the panel; client-side cap at `FEED_MAX = 200` so the DOM stays bounded under sustained traffic. Stream-state indicator in the page header (`● live` / `○ connecting…` / `✕ stream error`).
 
 The page deliberately surfaces nothing through tables — the first cut packed every counter into a 6-row table per card and felt like a dashboard from 2010. The redesign (commit `eb8e314`) puts headline content first and pushes forensics to detail-on-demand.
+
+#### Per-engine deep-dive page — `/engines/<service>` (v1.0.7k, #121 OUI.3 close-out)
+
+`EngineDetail.tsx` is the full surface for one engine. The right-slide drawer on `/engines` stays as the quick preview; the new page is what operators reach for when they need the complete state of `anomaly-detector`, `forecasting`, or `rl-engine` in one place. Reached by clicking the engine name in any tile on `/engines`, or directly via the SPA fallback at `/engines/<service>`.
+
+Header carries the engine name + a colour-coded status badge (healthy / degraded / unreachable), the primary publish channel, the loaded engine / policy with fallback inline (e.g. `(fallback from arima)` in warn yellow), and two one-click jumps: the matching Grafana dashboard (`/grafana/d/smartload-anomaly`, `…/smartload-forecast`, `…/smartload-rl-routing`) and the raw `/api/v1/engine/state` on the service port. A small spinner in the meta row indicates an in-flight snapshot fetch.
+
+Four content cards sit in a two-column grid (collapses to one column under 900 px):
+
+- **Run-loop stats** — `ticks_total`, `publishes_total`, `last_tick_at` with age in seconds, `last_publish_at`, the `runloop_enabled` flag (rendered in warn yellow when off), and the `rl_mode_env` pin for the RL engine.
+- **Policy snapshot** — pretty-printed JSON of `body.policy_snapshot`.
+- **Last cycle output** — pretty-printed JSON of `body.last_output`, full-width.
+- **Activity on `<channel>`** — last 80 events on the engine's primary publish channel drawn from the BFF snapshot's `channels[…]` ring (anomaly → `smartload.anomaly`, forecasting → `smartload.forecast`, rl-engine → `smartload.routing`). One row per envelope: timestamp · source · `JSON.stringify(payload)` clipped to one line, full payload visible by widening the column. No separate SSE connection on the page — the BFF already buckets events per channel into the snapshot, so the same 5 s `getEnginesSnapshot()` poll cadence that drives the cards also keeps this ring fresh, and the page stays predictable to reason about.
+
+The page handles unknown slugs gracefully: if the URL points at something other than the three configured engines, it renders a brief "unknown engine" message and bounces to `/engines` after 1.2 s.
 
 #### `package.json`
 
