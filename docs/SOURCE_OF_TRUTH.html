@@ -5588,6 +5588,18 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7m — 2026-05-29 — EngineDetail snapshot-poll method-name hotfix</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Hotfix for v1.0.7k regression</strong></td>
+      <td>End-to-end browser audit via chrome-devtools MCP caught a regression on <code>/engines/&lt;service&gt;</code>: the page header showed "Unreachable" with the banner <code>Snapshot poll: te.getEnginesSnapshot is not a function</code> on every poll, leaving the four data cards empty ("Awaiting first cycle…" / "No policy snapshot yet." / "No output yet." / "No events…"). The Grafana embeds rendered fine because iframes are independent of the JS data path. Root cause: <code>EngineDetail.tsx</code> called <code>api.getEnginesSnapshot()</code> but the real method on <code>services/operator-ui/web/src/api.ts</code> is <code>api.enginesSnapshot()</code>. One-line fix; rebuilt + recreated; verified all three engines (RL: 1405 ticks / 1400 publishes / ppo loaded; Forecasting: 800/800 / arima loaded with <code>predicted_rps=32.69, CI [17.96, 47.42]</code>; Anomaly: 1412/4539 / threshold engine returning the full 9-backend status array). No console errors on any page in the walkthrough (Home, Engines, RL detail, Forecasting detail, Anomaly detail, unknown-engine guard, Policy, Audit, Actions).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7l — 2026-05-29 — Embedded Grafana panels on the engine deep-dive page (#131 Phase 3)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

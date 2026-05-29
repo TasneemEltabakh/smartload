@@ -145,7 +145,7 @@ export default function EngineDetailPage() {
     async function tick() {
       try {
         setRefreshing(true);
-        const snap = await api.getEnginesSnapshot();
+        const snap = await api.enginesSnapshot();
         if (!cancelled) {
           setSnapshot(snap);
           setPollErr(null);
