@@ -1,6 +1,7 @@
 """SmartLoad Python client."""
 
 from .client import SmartLoadClient
+from .engines import EngineChannel, EngineService, EnginesSubscription
 from .events import (
     CHANNEL_ANOMALY,
     CHANNEL_FORECAST,
@@ -19,6 +20,9 @@ from .exceptions import (
 __all__ = [
     "SmartLoadClient",
     "PolicySubscription",
+    "EnginesSubscription",
+    "EngineChannel",
+    "EngineService",
     "SmartLoadError",
     "AuthenticationError",
     "ValidationError",
