@@ -1694,3 +1694,43 @@ table td.empty {
 }
 .tile-name-link svg { opacity: 0.5; }
 .tile-name-link:hover svg { opacity: 1; }
+
+/* ── embedded Grafana panels (v1.0.7l, #131 Phase 3) ──────────────────── */
+.grafana-embeds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.grafana-embed {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunk, #0e1117);
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.grafana-embed figcaption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border, #2a2f3a);
+}
+.grafana-embed figcaption a {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+}
+.grafana-embed figcaption a:hover { color: var(--accent, #4c8aff); }
+.grafana-embed iframe {
+  width: 100%;
+  height: 240px;
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 900px) {
+  .grafana-embeds { grid-template-columns: 1fr; }
+}

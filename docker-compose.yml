@@ -79,6 +79,15 @@ services:
       # the datasource is provisioned with an empty password and every
       # dashboard panel fails with SASL auth error.
       TIMESCALEDB_PASSWORD: ${TIMESCALEDB_PASSWORD:-changeme}
+      # Embedded-panel embedding for the operator UI (v1.0.7l, #131 Phase 3).
+      # ALLOW_EMBEDDING flips X-Frame-Options off so the iframe loads; the
+      # AUTH_ANONYMOUS_* set lets the iframe render without a login prompt
+      # (the operator UI is single-tenant + assumed-trusted in Phase 1 —
+      # auth lands with #125, Phase 2). Viewer role is read-only.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     ports:
       - "3000:3000"
     volumes:

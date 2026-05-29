@@ -5588,6 +5588,45 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7l — 2026-05-29 — Embedded Grafana panels on the engine deep-dive page (#131 Phase 3)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Grafana now embed-ready</strong></td>
+      <td><code>docker-compose.yml</code> grafana service: <code>GF_SECURITY_ALLOW_EMBEDDING=true</code> (drops the default <code>X-Frame-Options: deny</code> header so the iframe loads) + <code>GF_AUTH_ANONYMOUS_ENABLED=true</code> with <code>GF_AUTH_ANONYMOUS_ORG_NAME="Main Org."</code> and <code>GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer</code> (read-only, no login prompt — matches the live-engines manifest's "single-tenant + assumed-trusted in Phase 1" posture; auth lands with #125 Phase 2). Verified: <code>curl -sI http://localhost:3000/d-solo/smartload-rl-routing/&hellip;</code> returns <code>200</code> with <code>X-Frame-Options</code> absent (was <code>deny</code> + <code>302</code> to <code>/login</code> before the env-var flip).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Two embedded panels per engine on <code>/engines/&lt;service&gt;</code></strong></td>
+      <td>New "Live charts" card on <code>services/operator-ui/web/src/pages/EngineDetail.tsx</code> renders two <code>/d-solo/</code> iframes side-by-side per engine, last-30-min window with 10 s refresh, dark theme:
+        <ul>
+          <li><strong>anomaly-detector</strong> → <code>smartload-anomaly</code> panels 1 (Backend health timeline) + 4 (Time-in-state per backend)</li>
+          <li><strong>forecasting</strong> → <code>smartload-forecast</code> panels 1 (Predicted vs actual RPS) + 3 (Forecast accuracy at decision moments)</li>
+          <li><strong>rl-engine</strong> → <code>smartload-rl-routing</code> panels 1 (Request share per backend) + 2 (p95 latency per backend)</li>
+        </ul>
+        Each iframe carries a caption with the panel title + a small external-link glyph that opens the same panel in Grafana's full dashboard view via <code>?viewPanel=&lt;id&gt;</code>. Lazy loaded (<code>loading="lazy"</code>) so they don't block initial paint. Grid collapses to one column under 900 px.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>"Open Grafana dashboard" header link fixed</strong></td>
+      <td>v1.0.7k shipped the link as <code>/grafana&lt;path&gt;</code> assuming a reverse proxy that didn't exist; updated to <code>http://localhost:3000/d/&hellip;</code> directly. Same fix applied to the per-panel "open in Grafana" glyphs. Refactored URL construction into <code>dashUrl()</code> / <code>soloPanelUrl()</code> helpers + a single <code>GRAFANA_ORIGIN</code> constant — when the BFF eventually proxies <code>/grafana/*</code> for same-origin embedding (production TLS path), only the constant changes.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>Rebuilt <code>operator-ui</code> (Vite green, bundle unchanged at ~308 kB / gzip ~93 kB). Recreated <code>grafana</code> + <code>operator-ui</code> containers. <code>GET /d-solo/{smartload-rl-routing,smartload-forecast,smartload-anomaly}/&hellip;?panelId=1</code> all return <code>200</code> with <code>X-Frame-Options</code> stripped. <code>GET /engines/rl-engine</code> on the SPA returns <code>200</code>. Anonymous Viewer confirmed via <code>/api/frontend/settings</code> (<code>anonymousEnabled: True</code>).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Known follow-up</strong></td>
+      <td><code>GRAFANA_ORIGIN</code> is hardcoded to <code>http://localhost:3000</code> for the dev compose stack. Production path is a same-origin BFF reverse proxy at <code>/grafana/*</code> (cleaner cookie story when auth lands in Phase 2 with #125; survives TLS termination at NGINX). Tracked as a follow-up on #131.</td>
+      <td>Follow-up</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7k — 2026-05-29 — Per-engine deep-dive page (#121 OUI.3 close-out, page leg)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

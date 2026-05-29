@@ -2768,6 +2768,8 @@ Four content cards sit in a two-column grid (collapses to one column under 900 p
 
 The page handles unknown slugs gracefully: if the URL points at something other than the three configured engines, it renders a brief "unknown engine" message and bounces to `/engines` after 1.2 s.
 
+**Embedded Grafana panels (v1.0.7l, #131 Phase 3).** Below the activity feed the deep-dive page renders a "Live charts" card with two `/d-solo/<dashUid>/<dashSlug>?panelId=<id>&theme=dark&from=now-30m&to=now&refresh=10s` iframes per engine (anomaly → panels 1 + 4 of `smartload-anomaly`; forecasting → 1 + 3 of `smartload-forecast`; rl → 1 + 2 of `smartload-rl-routing`). Two prerequisites land in the Grafana service in `docker-compose.yml`: `GF_SECURITY_ALLOW_EMBEDDING=true` (drops the default `X-Frame-Options: deny` that otherwise blocks any iframe) and `GF_AUTH_ANONYMOUS_ENABLED=true` with `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer` (read-only, no login prompt — matches the live-engines manifest's "single-tenant + assumed-trusted" Phase 1 posture; real auth lands with #125). The iframe `src` points at `http://localhost:3000` directly for the dev compose stack; a same-origin `/grafana/*` reverse proxy in the BFF is the production path (cleaner cookie story when auth arrives, survives TLS termination at NGINX) and is tracked as a #131 follow-up. URL construction is centralised in `dashUrl()` / `soloPanelUrl()` helpers so the eventual proxy swap only changes a single constant.
+
 #### `package.json`
 
 ```json

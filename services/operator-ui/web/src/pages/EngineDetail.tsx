@@ -26,23 +26,60 @@ import {
 const REFRESH_MS = 5_000;
 const FEED_MAX = 80;
 
-const ENGINE_LABELS: Record<string, { title: string; channel: string; grafana: string }> = {
+// Grafana origin: the dashboard server runs on :3000 alongside the BFF
+// on :8090. Anonymous viewer + ALLOW_EMBEDDING are set in docker-compose
+// so cross-origin iframe loads render without auth (#131 Phase 3, v1.0.7l).
+// In production this'll switch to a same-origin /grafana/* reverse proxy.
+const GRAFANA_ORIGIN = "http://localhost:3000";
+
+type EmbedPanel = { id: number; title: string };
+
+const ENGINE_LABELS: Record<
+  string,
+  { title: string; channel: string; dashUid: string; dashSlug: string; panels: EmbedPanel[] }
+> = {
   "anomaly-detector": {
     title: "Anomaly Detector",
     channel: "smartload.anomaly",
-    grafana: "/d/smartload-anomaly/smartload-anomaly",
+    dashUid: "smartload-anomaly",
+    dashSlug: "smartload-anomaly",
+    panels: [
+      { id: 1, title: "Backend health timeline" },
+      { id: 4, title: "Time-in-state per backend" },
+    ],
   },
   "forecasting": {
     title: "Forecasting",
     channel: "smartload.forecast",
-    grafana: "/d/smartload-forecast/smartload-forecast",
+    dashUid: "smartload-forecast",
+    dashSlug: "smartload-forecast",
+    panels: [
+      { id: 1, title: "Predicted vs actual RPS" },
+      { id: 3, title: "Forecast accuracy at decision moments" },
+    ],
   },
   "rl-engine": {
     title: "RL Engine",
     channel: "smartload.routing",
-    grafana: "/d/smartload-rl-routing/smartload-rl-routing",
+    dashUid: "smartload-rl-routing",
+    dashSlug: "smartload-rl-routing",
+    panels: [
+      { id: 1, title: "Request share per backend" },
+      { id: 2, title: "p95 latency per backend" },
+    ],
   },
 };
+
+function dashUrl(uid: string, slug: string): string {
+  return `${GRAFANA_ORIGIN}/d/${uid}/${slug}?orgId=1&from=now-30m&to=now&refresh=10s`;
+}
+
+function soloPanelUrl(uid: string, slug: string, panelId: number): string {
+  return (
+    `${GRAFANA_ORIGIN}/d-solo/${uid}/${slug}` +
+    `?orgId=1&panelId=${panelId}&theme=dark&from=now-30m&to=now&refresh=10s`
+  );
+}
 
 type Status = "ok" | "warn" | "bad";
 
@@ -179,7 +216,7 @@ export default function EngineDetailPage() {
         </div>
         <div className="engine-detail-actions">
           <a
-            href={`/grafana${meta.grafana}?orgId=1&from=now-30m&to=now&refresh=10s`}
+            href={dashUrl(meta.dashUid, meta.dashSlug)}
             target="_blank"
             rel="noreferrer"
             className="btn-link"
@@ -275,6 +312,40 @@ export default function EngineDetailPage() {
               ))}
             </ul>
           )}
+        </section>
+
+        {/* ── embedded Grafana panels (v1.0.7l, #131 Phase 3) ────── */}
+        <section className="card wide">
+          <h3 className="card-h">
+            Live charts{" "}
+            <span className="dim">
+              · from <code>{meta.dashUid}</code> · last 30 min · refresh 10 s
+            </span>
+          </h3>
+          <div className="grafana-embeds">
+            {meta.panels.map((p) => (
+              <figure key={p.id} className="grafana-embed">
+                <figcaption>
+                  <span>{p.title}</span>
+                  <a
+                    href={`${dashUrl(meta.dashUid, meta.dashSlug)}&viewPanel=${p.id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="dim"
+                    title="Open this panel in Grafana"
+                  >
+                    <ExternalLink size={11} />
+                  </a>
+                </figcaption>
+                <iframe
+                  src={soloPanelUrl(meta.dashUid, meta.dashSlug, p.id)}
+                  title={`${meta.title} — ${p.title}`}
+                  loading="lazy"
+                  frameBorder={0}
+                />
+              </figure>
+            ))}
+          </div>
         </section>
       </div>
     </div>
