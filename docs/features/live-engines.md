@@ -15,7 +15,7 @@ Operators get a single live view of the three AI engines (anomaly-detector, fore
 | BFF | `GET /api/ui/engines/stream` — SSE: replay-then-live, 15 s heartbeat comments | ✓ |
 | Redis | Subscriber on `smartload.{anomaly,forecast,routing,scale}` from inside the BFF, into a per-channel `deque(maxlen=100)` | ✓ |
 | UI | `/engines` — engine tiles with the headline ("what just happened") on the left, colour-coded activity feed on the right with channel-filter chips | ✓ |
-| SDK | `client.subscribe_engines(callback)` SSE consumer + `client.engines_snapshot()` synchronous fetch | pending |
+| SDK | `client.engines.{snapshot, state, subscribe}` + top-level aliases (v1.0.7j) | ✓ |
 | Webhook | not in scope — webhooks (#130) target external integrators; Live Engines is an operator-UI surface | n/a |
 
 ## Implementation pointers
@@ -40,7 +40,7 @@ Operators get a single live view of the three AI engines (anomaly-detector, fore
 - [x] Unit tests — 100 module-level tests including 19 new BFF tests (#121 session 1)
 - [x] Scenario script `examples/scenarios/live-engines/live_engines_walk.py` (this batch — closes the structural-lint orphan: `tests/e2e/live-engines/` existed without a sibling scenario)
 - [x] Manifest `docs/features/live-engines.md` (this batch — closes the structural-lint orphan: `tests/e2e/live-engines/` existed without a sibling manifest)
-- [ ] SDK methods — `client.subscribe_engines(callback)` SSE consumer + `client.engines_snapshot()`
+- [x] SDK methods — `client.engines.snapshot()`, `client.engines.state(service)`, `client.engines.subscribe(callback, channels=...)` + convenience top-level aliases (`engines_snapshot`, `engines_state`, `subscribe_engines`, plus per-channel `subscribe_anomaly/forecast/routing/scale`) — landed v1.0.7j; 15 unit tests at `clients/python/tests/test_engines.py`; live-smoke verified against the running BFF.
 - [ ] E2E test suite — `tests/e2e/live-engines/test_live_engines.py` (the directory exists but is empty)
 - [ ] §25.9 slice-catalog row flipped to *Shipped*
 

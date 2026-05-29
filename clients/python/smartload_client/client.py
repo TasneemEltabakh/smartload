@@ -9,11 +9,21 @@ import httpx
 
 from .actions import ActionsClient, IsolateStatus
 from .audit import AuditClient, AuditKind
+from .engines import EnginesClient, EngineService
 from .events import EventsClient
 from .metrics import MetricsClient
 from .policy import PolicyClient
 
 __all__ = ["SmartLoadClient"]
+
+
+# Default per-service URLs for the EnginesClient.state(service) direct path.
+# Override via the SDK constructor kwargs or the SMARTLOAD_*_URL env vars.
+_DEFAULT_ENGINE_URLS: dict[str, tuple[str, str]] = {
+    "anomaly-detector": ("SMARTLOAD_ANOMALY_DETECTOR_URL", "http://localhost:8082"),
+    "forecasting":      ("SMARTLOAD_FORECASTING_URL",      "http://localhost:8083"),
+    "rl-engine":        ("SMARTLOAD_RL_ENGINE_URL",        "http://localhost:8084"),
+}
 
 
 class SmartLoadClient:
@@ -42,6 +52,9 @@ class SmartLoadClient:
         base_url: str = "http://localhost:8086",
         autoscaler_url: Optional[str] = None,
         anomaly_detector_url: Optional[str] = None,
+        forecasting_url: Optional[str] = None,
+        rl_engine_url: Optional[str] = None,
+        operator_ui_url: Optional[str] = None,
         redis_url: Optional[str] = None,
         api_key: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -65,6 +78,23 @@ class SmartLoadClient:
             or os.environ.get(
                 "SMARTLOAD_ANOMALY_DETECTOR_URL", "http://localhost:8082",
             )
+        ).rstrip("/")
+        # Forecasting + rl-engine for client.engines.state(service) direct
+        # calls. Same per-service-upstream pattern as the others.
+        self.forecasting_url = (
+            forecasting_url
+            or os.environ.get("SMARTLOAD_FORECASTING_URL", "http://localhost:8083")
+        ).rstrip("/")
+        self.rl_engine_url = (
+            rl_engine_url
+            or os.environ.get("SMARTLOAD_RL_ENGINE_URL", "http://localhost:8084")
+        ).rstrip("/")
+        # Operator-UI BFF for engines.snapshot() + engines.subscribe(). The
+        # BFF is the aggregator across the three AI services + holds the
+        # per-channel ring buffers + serves the SSE stream.
+        self.operator_ui_url = (
+            operator_ui_url
+            or os.environ.get("SMARTLOAD_OPERATOR_UI_URL", "http://localhost:8090")
         ).rstrip("/")
         self.timeout = timeout
         self.redis_url = redis_url or os.environ.get(
@@ -95,6 +125,7 @@ class SmartLoadClient:
         self.events = EventsClient(self)
         self.audit = AuditClient(self)
         self.actions = ActionsClient(self)
+        self.engines = EnginesClient(self)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -178,19 +209,53 @@ class SmartLoadClient:
     def subscribe_policy(self, callback):
         return self.events.subscribe_policy(callback)
 
+    # ── live engines (slice #121, session 2) ───────────────────────────────
+
+    def engines_snapshot(self) -> dict:
+        """Aggregated snapshot of all three AI engines + per-channel rings.
+        Convenience wrapper around client.engines.snapshot()."""
+        return self.engines.snapshot()
+
+    def engines_state(self, service: EngineService) -> dict:
+        """Per-engine canonical /api/v1/engine/state body. Convenience
+        wrapper around client.engines.state(service)."""
+        return self.engines.state(service)
+
+    def subscribe_engines(self, callback, *, channels=None):
+        """SSE consumer of /api/ui/engines/stream. Convenience wrapper
+        around client.engines.subscribe()."""
+        return self.engines.subscribe(callback, channels=channels)
+
+    # ── per-service URL resolver (used by EnginesClient.state) ─────────────
+
+    def _engine_url(self, service: str) -> str:
+        """Resolve the canonical URL for a per-engine state call."""
+        if service == "anomaly-detector":
+            return self.anomaly_detector_url
+        if service == "forecasting":
+            return self.forecasting_url
+        if service == "rl-engine":
+            return self.rl_engine_url
+        raise ValueError(f"unknown engine service: {service!r}")
+
     # ── deferred surfaces (slice #1 scope) ─────────────────────────────────
 
     def get_metrics(self, service: str, window: str = "5m"):
         return self.metrics.read(service, window)
 
     def subscribe_anomaly(self, callback):
-        raise NotImplementedError("Deferred; see issue #127 (full SDK)")
+        """Subscribe to only smartload.anomaly via the SSE stream — implemented
+        as a single-channel filter over engines.subscribe()."""
+        return self.engines.subscribe(callback, channels=["smartload.anomaly"])
 
     def subscribe_forecast(self, callback):
-        raise NotImplementedError("Deferred; see issue #127 (full SDK)")
+        """Subscribe to only smartload.forecast via the SSE stream."""
+        return self.engines.subscribe(callback, channels=["smartload.forecast"])
 
     def subscribe_routing(self, callback):
-        raise NotImplementedError("Deferred; see issue #127 (full SDK)")
+        """Subscribe to only smartload.routing via the SSE stream."""
+        return self.engines.subscribe(callback, channels=["smartload.routing"])
 
     def subscribe_scale(self, callback):
-        raise NotImplementedError("Deferred; see issue #127 (full SDK)")
+        """Subscribe to only smartload.scale via the SSE stream."""
+        return self.engines.subscribe(callback, channels=["smartload.scale"])

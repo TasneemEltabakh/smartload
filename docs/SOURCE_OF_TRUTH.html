@@ -5588,6 +5588,40 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7j — 2026-05-29 — Live Engines SDK (#121 session 2, SDK leg)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>SDK Live Engines surface — three methods + four convenience aliases</strong></td>
+      <td>New <code>clients/python/smartload_client/engines.py</code> implements <code>EnginesClient</code>:
+        <ul>
+          <li><code>client.engines.snapshot()</code> — synchronous fan-out via the operator-UI BFF <code>/api/ui/engines/snapshot</code>; returns <code>{services, channels, recent}</code>.</li>
+          <li><code>client.engines.state(service)</code> — per-engine <code>/api/v1/engine/state</code> hit directly against the service port. Validates <code>service ∈ {anomaly-detector, forecasting, rl-engine}</code>.</li>
+          <li><code>client.engines.subscribe(callback, channels=...)</code> — SSE consumer of <code>/api/ui/engines/stream</code> on a daemon thread. Callback signature <code>(channel, payload, envelope_meta)</code>. Optional client-side channel filter. Returns <code>EnginesSubscription</code> (context-manager friendly, <code>.close()</code> stops the thread cleanly).</li>
+        </ul>
+        Top-level convenience aliases on <code>SmartLoadClient</code>: <code>engines_snapshot()</code>, <code>engines_state(service)</code>, <code>subscribe_engines(callback, channels=...)</code>. The four previously-stubbed <code>subscribe_{anomaly,forecast,routing,scale}</code> methods (which raised <code>NotImplementedError</code>) now route through the SSE stream with a single-channel filter — no Redis client needed.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>New constructor kwargs + env vars</strong></td>
+      <td><code>SmartLoadClient(forecasting_url, rl_engine_url, operator_ui_url, ...)</code> + the matching <code>SMARTLOAD_{FORECASTING,RL_ENGINE,OPERATOR_UI}_URL</code> env vars. Same per-service-upstream pattern as the existing <code>autoscaler_url</code> and <code>anomaly_detector_url</code>. Defaults to localhost ports for dev.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tests + live smoke</strong></td>
+      <td>15 new unit tests at <code>clients/python/tests/test_engines.py</code> covering snapshot happy path / error mapping, state per-service URL routing + unknown-service rejection, SSE drain + channel filter + callback-exception swallow + heartbeat skip + malformed-data skip + close() stops thread, plus top-level convenience-method delegation. All green. Live smoke against the running BFF: <code>snapshot()</code>+<code>state(rl-engine)</code>+<code>state(forecasting)</code>+<code>subscribe_engines</code> all worked; 4 SSE events received in 8 s; clean close (no spurious shutdown warnings — the drain loop now suppresses the expected post-close exception when <code>stop_event</code> is set).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Slice manifest checkbox flip</strong></td>
+      <td><code>docs/features/live-engines.md</code> — SDK row in the Customer-surfaces table flipped from "pending" to ✓; the Status checklist line for "SDK methods" flipped from <code>[ ]</code> to <code>[x]</code> with the v1.0.7j citation. The e2e suite at <code>tests/e2e/live-engines/</code> remains the only #121-session-2 outstanding box.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7i — 2026-05-29 — N2.2 forecasting ARIMA model handoff (extracts PR #144 kernel)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
