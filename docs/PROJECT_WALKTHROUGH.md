@@ -26,6 +26,7 @@ A file-by-file tour of every service, every shared module, every infrastructure 
   - [5.2 `webhook-dispatcher`](#52-webhook-dispatcher)
   - [5.3 `operator-ui/bff` (Flask)](#53-operator-uibff-flask)
   - [5.4 `operator-ui/web` (React + Vite)](#54-operator-uiweb-react--vite)
+  - [5.5 `tools/demo-ui/` — developer demo harness](#55-toolsdemo-ui--developer-demo-harness)
 - [6. Python SDK (`clients/python/`)](#6-python-sdk-clientspython)
 - [7. Infrastructure (`infrastructure/`)](#7-infrastructure-infrastructure)
 
@@ -3029,6 +3030,104 @@ Three things to notice:
 Side-by-side diff (`splitView`) between the current policy and the draft. **This is the killer feature** of the Policy page — operators see exactly what they're about to commit before they hit the button.
 
 The audit table is a plain `<table>` rendering the last 20 rows with old/new values as `<code>JSON.stringify(...)</code>` so structured values render as their literal JSON form.
+
+### 5.5 `tools/demo-ui/` — developer demo harness
+
+**Not a production service.** Lives under `tools/` for that reason — `services/` is for runtime components that operators run in production; `tools/` is for development-time affordances. Same multi-stage Flask BFF + Vite/React SPA shape as `operator-ui`, but the purpose is different: a stakeholder-facing surface for *showing* SmartLoad to people (chaos triggers, scenario buttons, live event feed, benchmark plots) rather than for operating it in real life.
+
+Compose service on port `:8091`; `operator-ui` is on `:8090`. Both bind to `smartload_smartload-net` and proxy to the same back-end services.
+
+```
+tools/demo-ui/
+├── Dockerfile                       multi-stage (node build → python runtime)
+├── bff/
+│   ├── app.py                       Flask BFF — 12 routes
+│   └── requirements.txt
+└── web/
+    ├── package.json                 vite + react + recharts + react-router-dom
+    ├── tsconfig.json / vite.config.ts
+    └── src/
+        ├── App.tsx                  router shell (4 routes + fallback redirect)
+        ├── Layout.tsx               sidebar nav + top bar (live mode pill, Start/Stop)
+        ├── main.tsx                 BrowserRouter mount
+        ├── api.ts                   typed BFF wrapper
+        ├── utils.ts                 shared helpers + colour palette
+        ├── state/
+        │   └── DemoStateContext.tsx polling + SSE + toast (hoisted)
+        └── pages/
+            ├── Overview.tsx         decision card + charts + metrics + training table
+            ├── Controls.tsx         algorithm + scenarios + manual ops
+            ├── Feed.tsx             full-page SSE event stream
+            └── Benchmark.tsx        v1.0.7r baseline-vs-smartload run viewer
+```
+
+#### `bff/app.py` — Flask BFF (12 routes)
+
+The BFF aggregates upstream service state, proxies chaos / scenario / traffic actions, and forwards the operator-UI's Redis SSE stream. It also surfaces the v1.0.7r baseline-vs-smartload benchmark run outputs via a path-safe read-only file server.
+
+```
+GET  /api/ui/demo/state             aggregated lb + rl + anomaly + policy state
+POST /api/ui/demo/degrade           mark a backend degraded/unhealthy
+POST /api/ui/demo/recover           restore a backend to healthy
+POST /api/ui/demo/mode              toggle safe_mode on the policy
+POST /api/ui/demo/traffic           start/stop Locust traffic load
+POST /api/ui/demo/chaos             inject latency/failure into a backend
+POST /api/ui/demo/reset             full orchestrated reset to baseline
+POST /api/ui/demo/scenario          run a named multi-step scenario
+POST /api/ui/demo/algorithm         pick the LB routing algorithm
+GET  /api/ui/demo/metrics           last-5m latency snapshot from TimescaleDB
+GET  /api/ui/demo/benchmark/runs                       list baseline-vs-smartload runs
+GET  /api/ui/demo/benchmark/runs/<ts>/manifest         MANIFEST.json for one run
+GET  /api/ui/demo/benchmark/runs/<ts>/summary          SUMMARY.md for one run
+GET  /api/ui/demo/benchmark/runs/<ts>/plot/<name>      one of the six PNG plots
+GET  /api/ui/events                 SSE stream of smartload.routing/anomaly/policy
+GET  /health                        own health check
+```
+
+The benchmark surface reads from `BENCHMARK_RESULTS_DIR` (default `/benchmark-results`), which is a `:ro` bind-mount of `experiments/baseline-vs-smartload/results/` on the host. Path-safety: `_safe_run_dir(timestamp)` rejects any input containing `..`, path separators, or absolute paths, and verifies the resolved path lives strictly under the results root. Every endpoint that takes a `<timestamp>` goes through it.
+
+`SUMMARY.md` is read with `errors="replace"` so files written by older `plot_results.py` runs on Windows hosts (cp1252 default before the v1.0.7t UTF-8 fix) don't 500 the endpoint. New runs are pure UTF-8.
+
+#### `web/src/state/DemoStateContext.tsx` — hoisted polling + SSE + toast
+
+The shared state lives once at the app root. Route changes don't reset:
+
+- `DemoState` polling (2 s interval) — current LB weights, RL rankings, mode, policy
+- `DemoMetrics` polling (5 s interval) — last-5m latency from TimescaleDB
+- SSE subscription to `/api/ui/events` — feeds a capped event ring (`FEED_MAX=20`)
+- Toast notifications (3.5 s auto-dismiss)
+- `action(label, fn)` helper that wraps a BFF call with busy state + toast feedback
+
+Pages consume via `useDemo()`; no page sets up its own subscription. This is the difference from the pre-v1.0.7s monolithic `Demo.tsx`: navigating between Overview and Feed used to reset the event history because both lived inside the same component lifecycle. Hoisting fixes that.
+
+#### The four pages
+
+| Route | Purpose | Key affordances |
+|---|---|---|
+| `/` | **Overview** — read-only watch | Current Active Decision card · Backend Pool Weights (recharts bar) · RL Rankings (recharts bar) · Live Session Metrics from TimescaleDB · Training Evaluation Results table |
+| `/controls` | **Controls** — drive the demo | Routing algorithm picker (Round-Robin / Least Conn / Random / AI-PPO) · Demo scenarios (Backend Failure / Latency Spike / Recovery / High Traffic / AI Disabled) · Manual ops (degrade · recover · safe-mode toggle · traffic presets · chaos · reset-all) |
+| `/feed` | **Live Feed** — observe events | Full-page SSE stream coloured by channel (routing blue / anomaly orange / policy purple) |
+| `/benchmark` | **Benchmark** — v1.0.7r/t harness viewer | Lists historical runs (newest first, with run-type pill + plot completeness) · Selects show manifest + SUMMARY.md + 6 plot images inline |
+
+#### Benchmark page details
+
+Two-column layout. The left column lists every run dir under `BENCHMARK_RESULTS_DIR` (newest first), each entry showing the formatted UTC timestamp, run-type pill (`full` vs `SHORT`), sides completed (`2/2 sides`), and plot completeness (`6/6 plots`). Selecting a run loads its summary + plots into the right column.
+
+The page is **read-only by design** — it surfaces existing benchmark outputs but doesn't trigger new runs. Generating a new run requires `bash experiments/baseline-vs-smartload/scripts/run_experiment.sh` from the repo root. A "trigger from UI" button would need docker-socket access mounted into the demo-ui container (the bash script shells out to `docker compose`), which is enough complexity to be deliberately out of scope. The empty-state on the page shows the exact command operators should run.
+
+Plots are fetched directly as `<img src="/api/ui/demo/benchmark/runs/<ts>/plot/<key>">` URLs — the SPA doesn't load PNG bytes through JS, the browser handles caching, and the path-key (`rps` / `p50_p95_p99` / `error_rate` / `total_requests` / `per_phase_p95` / `recovery_curve`) is stable even if the underlying filename changes.
+
+#### Why this is separate from operator-ui
+
+| | Operator UI (`:8090`) | Demo UI (`:8091`) |
+|---|---|---|
+| **Audience** | Operators running SmartLoad in production | Stakeholders, reviewers, developers showing the system |
+| **Pages** | Home · Policy · Audit · Actions · Live Engines · EngineDetail | Overview · Controls · Live Feed · Benchmark |
+| **Action shape** | Policy diff preview + confirmation modals; audit trail mandatory | One-click chaos / scenario buttons; no audit on demo actions |
+| **Where it lives** | `services/operator-ui/` (production) | `tools/demo-ui/` (development) |
+| **Deployment** | Ships with the Helm chart | Compose-only |
+
+The two surfaces share infrastructure (BFF + SPA shape, Flask + React/Vite, same Redis bus, same upstream services) but the affordances differ. Operator UI prioritises *not breaking things* (diff previews, audit, scoped permissions). Demo UI prioritises *making things visible* (chaos buttons, live SSE feed, benchmark plots). Mixing the two would compromise both.
 
 ---
 
