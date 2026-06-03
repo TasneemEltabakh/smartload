@@ -3291,7 +3291,7 @@ class RoutingRecommendation:
   </tbody>
 </table>
 
-<h4>Operator UI — page status (4 of 6 shipped)</h4>
+<h4>Operator UI — page status (5 of 6 shipped)</h4>
 <table>
   <thead><tr><th>Page</th><th>Purpose</th><th>Status · slice</th></tr></thead>
   <tbody>
@@ -3299,7 +3299,7 @@ class RoutingRecommendation:
     <tr><td>Policy</td><td>Read current policy · edit JSON · side-by-side diff preview · commit with audit trail. Auto-refreshes every 10 s</td><td><span class="pill pill-done">Shipped — slice #1 / OUI.2 (#120)</span></td></tr>
     <tr><td>Audit</td><td>Unified viewer over <code>policy_changes</code> + <code>scaling_events</code> with kind / actor / action / limit filters and auto-refresh. Two upstream services normalised through one BFF origin</td><td><span class="pill pill-done">Shipped — slice #2 / OUI.4 (#122)</span></td></tr>
     <tr><td>Actions</td><td>Scale-to-N (autoscaler) + isolate backend (anomaly-detector) + disabled force-weights placeholder. Confirmation modal per action with state-change preview. Results feed of latest 10 actions</td><td><span class="pill pill-done">Shipped — slice #3 / OUI.5 (#123)</span></td></tr>
-    <tr><td>Live Engines</td><td>Per-engine card + SSE event feed colour-coded by channel; BFF holds an in-process per-channel deque (#121, OUI.3)</td><td><span class="pill pill-active">In progress — session 1 shipped 2026-05-24 (backend + UI demoable); session 2 closes SDK + e2e + scenario + manifest</span></td></tr>
+    <tr><td>Live Engines</td><td>Per-engine card + SSE event feed colour-coded by channel; BFF holds an in-process per-channel deque (#121, OUI.3)</td><td><span class="pill pill-done">Shipped — OUI.3 (#121, v1.0.7n closes e2e)</span></td></tr>
     <tr><td>Logs</td><td>Per-service tail viewer (optional / drop if time tightens)</td><td><span class="pill pill-upcoming">Future — #124 (OUI.6) low</span></td></tr>
     <tr><td>Embedded metrics</td><td>Grafana panels embedded in operator UI (no Grafana context switch)</td><td><span class="pill pill-upcoming">Future — #131 (OUI.8)</span></td></tr>
     <tr><td colspan="3" style="opacity:.7;font-style:italic;">Auth (OUI.7, #125) — deferred to Phase 2 SaaS adaptation per §25 <em>Phase scope</em> callout. Actor identity is currently a free-text input on the Actions page.</td></tr>
@@ -3339,7 +3339,7 @@ class RoutingRecommendation:
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
         <li>Four remaining Grafana dashboards (Anomaly, Forecast, RL, Scaling) — T2.2.</li>
-        <li>Live Engines acceptance close-out — SDK methods (<code>engines.state()</code> + <code>engines.stream()</code>), e2e suite at <code>tests/e2e/live-engines/</code>, scenario at <code>examples/scenarios/live-engines/</code>, feature manifest at <code>docs/features/live-engines.md</code>; #121 OUI.3 (backend + UI shipped 2026-05-24 in commits <code>495c939</code>/<code>aee5839</code>/<code>ecb147f</code>/<code>eb8e314</code>; remaining layers tracked under the original issue).</li>
+        <li><s>Live Engines acceptance close-out — SDK methods (<code>engines.state()</code> + <code>engines.stream()</code>), e2e suite at <code>tests/e2e/live-engines/</code>, scenario at <code>examples/scenarios/live-engines/</code>, feature manifest at <code>docs/features/live-engines.md</code>; #121 OUI.3</s> <strong>— shipped 2026-06-03 in v1.0.7n; e2e suite (17 tests, 56 s) was the final close-out box.</strong></li>
         <li>Embedded metrics dashboards — #131 OUI.8 (standalone follow-up).</li>
         <li>Logs page — #124 OUI.6 (low priority, optional).</li>
         <li>"Force route weights" form on the Actions page — depends on T2.1 sidecar (#82); placeholder disabled today with a tooltip.</li>
@@ -5588,6 +5588,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7n — 2026-06-03 — Live Engines e2e suite (#121 OUI.3 close-out)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New e2e suite at <code>tests/e2e/live-engines/</code></strong></td>
+      <td>17 tests across 6 classes exercising every customer surface the manifest in <code>docs/features/live-engines.md</code> claims, against the live compose stack:
+        <ul>
+          <li><strong>TestEngineState</strong> — <code>client.engines.state(service)</code> for the three AI services + top-level <code>engines_state()</code> alias + unknown-service ValidationError.</li>
+          <li><strong>TestSnapshot</strong> — <code>client.engines.snapshot()</code> covers the three services + all four channel rings; top-level <code>engines_snapshot()</code> alias matches.</li>
+          <li><strong>TestSSEDelivery</strong> — publish a synthetic envelope per channel via <code>publish_envelope</code> with a unique per-test <code>source</code> marker; assert the SDK SSE subscriber observes it inside the 5 s acceptance window.</li>
+          <li><strong>TestSubscribeChannelFilter</strong> — <code>subscribe(..., channels=[...])</code> drops other channels client-side; <code>subscribe_anomaly</code> alias is the single-channel filter operators reach for first.</li>
+          <li><strong>TestSnapshotReflectsPublishes</strong> — a published envelope appears in the BFF's per-channel ring within 5 s of publish (same data plane as the SSE feed).</li>
+          <li><strong>TestSubscriptionLifecycle</strong> — <code>.close()</code> is idempotent; <code>with</code>-block teardown stops the daemon thread cleanly (no leaked callback invocations after exit).</li>
+        </ul>
+        Pattern follows <code>tests/e2e/manual-actions/</code> + <code>tests/e2e/policy-management/</code>: <code>pytestmark = pytest.mark.e2e</code>, per-test SDK fixture, session-scoped readiness gate from <code>tests/e2e/conftest.py</code>. Tests publish via the canonical <code>services.shared.contracts.publish_envelope</code> so the wire shape matches what the AI services emit organically — the <code>source</code> marker is the only filter the test needs to ignore organic traffic on the same channels.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Validation</strong></td>
+      <td><code>pytest tests/e2e/live-engines/ -v</code> against the live compose stack: <strong>17 passed in 56.27 s</strong>. Stack version verified via <code>docker ps</code> (operator-ui, anomaly-detector, forecasting, rl-engine, redis all running on the v1.0.7m image).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Slice manifest checkbox flip</strong></td>
+      <td><code>docs/features/live-engines.md</code> — the last open box in the Status checklist ("E2E test suite — <code>tests/e2e/live-engines/test_live_engines.py</code>") flipped to <code>[x]</code> with the v1.0.7n citation. The <code>§25.9 slice-catalog row flipped to <em>Shipped</em></code> box is flipped <em>in this same release</em>: §25.9 row 5 ("Live Engines page (OUI.3)") moves from <code>pill-active</code> to <code>pill-done</code>, manifest column points to <code>docs/features/live-engines.md</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Closes</strong></td>
+      <td>#121 OUI.3 — the slice is now fully shipped (backend + UI + SDK + scenario + e2e + manifest + deep-dive page + embedded Grafana panels). The slice-checklist contract from <code>docs/features/SLICE_CHECKLIST.md</code> is satisfied for the first non-#1/#2/#3 operator-UI slice.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7m — 2026-05-29 — EngineDetail snapshot-poll method-name hotfix</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -6769,8 +6806,8 @@ flowchart TD
     <tr>
       <td><strong>Live Engines page</strong> (OUI.3)</td>
       <td>#138 engine-wrapper (engines must emit state)</td>
-      <td>pending</td>
-      <td><span class="pill pill-next">Next — after #138 (#121)</span></td>
+      <td><code>docs/features/live-engines.md</code></td>
+      <td><span class="pill pill-done">Shipped 2026-06-03 (#121; v1.0.7n closes the e2e suite)</span></td>
     </tr>
     <tr>
       <td><strong>Manual actions</strong> (OUI.5)</td>
@@ -7624,7 +7661,7 @@ flowchart LR
     <tr><td>OUI.2 Policy editor with diff preview</td><td>#120</td><td><span class="badge badge-implemented">Shipped — slice #1</span></td></tr>
     <tr><td>OUI.4 Audit log viewer (policy_changes + scaling_events)</td><td>#122</td><td><span class="badge badge-implemented">Shipped — slice #2</span></td></tr>
     <tr><td>OUI.5 Manual actions — scale + isolate</td><td>#123</td><td><span class="badge badge-implemented">Shipped — slice #3</span></td></tr>
-    <tr><td>OUI.3 Live Engines + SSE event stream</td><td>#121</td><td><span class="badge badge-implemented">Backend + UI shipped 2026-05-24 (session 1); acceptance close-out pending (SDK, e2e, scenario, manifest)</span></td></tr>
+    <tr><td>OUI.3 Live Engines + SSE event stream</td><td>#121</td><td><span class="badge badge-implemented">Shipped — every layer (backend + UI + SDK + scenario + manifest + e2e) closed by v1.0.7n on 2026-06-03</span></td></tr>
     <tr><td>OUI.6 Service log viewer (optional)</td><td>#124</td><td><span class="badge badge-planned">Future (low priority)</span></td></tr>
     <tr><td>OUI.8 Embedded charts (no Grafana context switch)</td><td>#131</td><td><span class="badge badge-planned">Future</span></td></tr>
     <tr><td>OUI.7 Operator UI authentication</td><td>#125</td><td><span class="badge badge-planned">Phase 2 SaaS (deferred per §25 scope)</span></td></tr>

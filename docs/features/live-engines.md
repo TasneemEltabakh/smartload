@@ -1,6 +1,6 @@
 # Live Engines
 
-> **Slice status — session 1 backend + UI shipped 2026-05-24 (#121). Session 2 (SDK + scenario + e2e + manifest) closes out this slice.** This manifest tracks both halves.
+> **Slice status — fully shipped 2026-06-03 (#121, v1.0.7n).** Backend + UI (session 1, 2026-05-24), SDK + scenario + manifest (session 2 SDK leg, v1.0.7j), per-engine deep-dive page (v1.0.7k–m), embedded Grafana panels (v1.0.7l, #131 Phase 3), and the e2e suite (v1.0.7n) are all in `main`.
 
 ## What this slice delivers
 
@@ -44,8 +44,8 @@ Operators get a single live view of the three AI engines (anomaly-detector, fore
 - [x] SDK methods — `client.engines.snapshot()`, `client.engines.state(service)`, `client.engines.subscribe(callback, channels=...)` + convenience top-level aliases (`engines_snapshot`, `engines_state`, `subscribe_engines`, plus per-channel `subscribe_anomaly/forecast/routing/scale`) — landed v1.0.7j; 15 unit tests at `clients/python/tests/test_engines.py`; live-smoke verified against the running BFF.
 - [x] Per-engine deep-dive page — `/engines/<service>` for `anomaly-detector` / `forecasting` / `rl-engine`. Header (name + status badge + loaded engine/policy + Grafana link + raw-state link) + four cards (run-loop stats, policy snapshot, last cycle output, channel-filtered activity feed). Tile names on `/engines` link to the new page. Landed v1.0.7k.
 - [x] Embedded Grafana panels on the deep-dive page (#131 Phase 3) — `GF_SECURITY_ALLOW_EMBEDDING=true` + anonymous Viewer auth in `docker-compose.yml`; two `/d-solo/` iframes per engine (last 30 min, 10 s refresh, dark theme) on the "Live charts" card. Landed v1.0.7l. Follow-up: production same-origin `/grafana/*` proxy via BFF.
-- [ ] E2E test suite — `tests/e2e/live-engines/test_live_engines.py` (the directory exists but is empty)
-- [ ] §25.9 slice-catalog row flipped to *Shipped*
+- [x] E2E test suite — `tests/e2e/live-engines/test_live_engines.py` (v1.0.7n, 2026-06-03; 17 tests across 6 classes covering state, snapshot, SSE delivery per channel, client-side channel filter, snapshot↔ring parity, subscription lifecycle; 17 passed in 56.27 s against the live compose stack)
+- [x] §25.9 slice-catalog row flipped to *Shipped* (v1.0.7n, 2026-06-03)
 
 ## Non-goals
 
