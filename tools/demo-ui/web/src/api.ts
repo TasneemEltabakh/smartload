@@ -75,6 +75,41 @@ async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+// ── Benchmark surface (v1.0.7r harness consumer) ───────────────────────────
+
+export interface BenchmarkManifestKnobs {
+  RAMP_USERS?: number;
+  RAMP_SECS?: number;
+  ANOMALY_AT_SECS?: number;
+  ANOMALY_HOLD_SECS?: number;
+  SUSTAIN_END_SECS?: number;
+  SHORT?: string;
+}
+
+export interface BenchmarkManifest {
+  timestamp_utc?: string;
+  git_sha?: string;
+  git_state?: string;
+  sides?: string;
+  knobs?: BenchmarkManifestKnobs;
+  parse_error?: boolean;
+}
+
+export interface BenchmarkRun {
+  timestamp: string;
+  manifest: BenchmarkManifest;
+  plots: string[];           // canonical plot keys (rps, p50_p95_p99, ...)
+  has_summary: boolean;
+  sides_present: string[];   // ["baseline", "smartload"] when full
+}
+
+export interface BenchmarkRunListResponse {
+  results_dir: string;
+  runs: BenchmarkRun[];
+  note?: string;
+}
+
+
 export const api = {
   getDemoState: () => _fetchJson<DemoState>("/api/ui/demo/state"),
 
@@ -124,4 +159,20 @@ export const api = {
 
   getDemoMetrics: (window = "5 minutes") =>
     _fetchJson<DemoMetrics>(`/api/ui/demo/metrics?window=${encodeURIComponent(window)}`),
+
+  // Benchmark surface — list runs + fetch SUMMARY.md.
+  // Plot images are fetched via <img src="..."> URLs constructed by the page,
+  // not through this typed wrapper (avoids loading PNGs into JS memory).
+  listBenchmarkRuns: () =>
+    _fetchJson<BenchmarkRunListResponse>("/api/ui/demo/benchmark/runs"),
+
+  getBenchmarkSummary: async (timestamp: string): Promise<string> => {
+    const r = await fetch(`/api/ui/demo/benchmark/runs/${encodeURIComponent(timestamp)}/summary`);
+    if (!r.ok) throw new Error(`summary fetch failed: HTTP ${r.status}`);
+    return r.text();
+  },
 };
+
+export function benchmarkPlotUrl(timestamp: string, plotKey: string): string {
+  return `/api/ui/demo/benchmark/runs/${encodeURIComponent(timestamp)}/plot/${encodeURIComponent(plotKey)}`;
+}

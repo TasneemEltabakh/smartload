@@ -295,7 +295,7 @@ def _summarise(run_dir: Path) -> None:
             f"p99 {sl['p99'] - bl['p99']:+.0f}ms · "
             f"failures {sl['failures'] - bl['failures']:+d}"
         )
-    (run_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n")
+    (run_dir / "SUMMARY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
 
 

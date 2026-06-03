@@ -12,16 +12,22 @@ The operator-ui is for managers controlling a live system; this is a test
 harness for developers validating system behaviour.
 
 Endpoints:
-  GET  /api/ui/demo/state        aggregated lb + rl + anomaly + policy state
-  POST /api/ui/demo/degrade      mark a backend degraded/unhealthy
-  POST /api/ui/demo/recover      restore a backend to healthy
-  POST /api/ui/demo/mode         toggle safe_mode on the policy
-  POST /api/ui/demo/traffic      start/stop Locust traffic load
-  POST /api/ui/demo/chaos        inject latency/failure into a backend
-  POST /api/ui/demo/reset        full orchestrated reset to baseline
-  POST /api/ui/demo/scenario     run a named multi-step scenario
-  GET  /api/ui/events            SSE stream of smartload.routing/anomaly/policy
-  GET  /health                   own health check
+  GET  /api/ui/demo/state         aggregated lb + rl + anomaly + policy state
+  POST /api/ui/demo/degrade       mark a backend degraded/unhealthy
+  POST /api/ui/demo/recover       restore a backend to healthy
+  POST /api/ui/demo/mode          toggle safe_mode on the policy
+  POST /api/ui/demo/traffic       start/stop Locust traffic load
+  POST /api/ui/demo/chaos         inject latency/failure into a backend
+  POST /api/ui/demo/reset         full orchestrated reset to baseline
+  POST /api/ui/demo/scenario      run a named multi-step scenario
+  POST /api/ui/demo/algorithm     pick the LB routing algorithm
+  GET  /api/ui/demo/metrics       last-5m latency snapshot from TimescaleDB
+  GET  /api/ui/demo/benchmark/runs                       list baseline-vs-smartload runs
+  GET  /api/ui/demo/benchmark/runs/<ts>/manifest         MANIFEST.json for one run
+  GET  /api/ui/demo/benchmark/runs/<ts>/summary          SUMMARY.md for one run
+  GET  /api/ui/demo/benchmark/runs/<ts>/plot/<name>      one of the six PNG plots
+  GET  /api/ui/events             SSE stream of smartload.routing/anomaly/policy
+  GET  /health                    own health check
 """
 
 from __future__ import annotations
@@ -54,6 +60,7 @@ TRAFFIC_SIMULATOR_URL = os.environ.get("TRAFFIC_SIMULATOR_URL", "http://traffic-
 BACKEND_URLS          = os.environ.get("BACKEND_URLS",          "")
 DEMO_TOKEN            = os.environ.get("DEMO_TOKEN",            "")
 DEMO_METRICS_WINDOW   = os.environ.get("DEMO_METRICS_WINDOW",   "5 minutes")
+BENCHMARK_RESULTS_DIR = os.environ.get("BENCHMARK_RESULTS_DIR", "/benchmark-results")
 
 # Service URLs — only the ones the demo BFF actually calls.
 SERVICE_URLS: dict[str, str] = {
@@ -551,6 +558,140 @@ def ui_demo_metrics():
     except Exception as exc:
         return jsonify({"error": str(exc)}), 503
     return jsonify(data)
+
+
+# ── Benchmark surface — read-only over experiments/baseline-vs-smartload/ ────
+#
+# Drives the demo-ui Benchmark page (#148 / v1.0.7r harness consumer). The
+# bash script `experiments/baseline-vs-smartload/scripts/run_experiment.sh`
+# is the canonical way to *produce* runs; this BFF only *surfaces* their
+# outputs. The results directory is bind-mounted into the container at
+# BENCHMARK_RESULTS_DIR (default /benchmark-results) read-only.
+
+_BENCHMARK_PLOT_NAMES = {
+    "rps":            "plot_rps.png",
+    "p50_p95_p99":    "plot_p50_p95_p99.png",
+    "error_rate":     "plot_error_rate.png",
+    "total_requests": "plot_total_requests.png",
+    "per_phase_p95":  "plot_per_phase_p95.png",
+    "recovery_curve": "plot_recovery_curve.png",
+}
+
+
+def _safe_run_dir(timestamp: str) -> str | None:
+    """Resolve a results/<timestamp> path safely. Rejects any traversal
+    attempt (`..`, absolute paths, embedded separators) and returns the
+    absolute path on success or None if the timestamp doesn't name a
+    directory under BENCHMARK_RESULTS_DIR."""
+    if not timestamp or "/" in timestamp or "\\" in timestamp or ".." in timestamp:
+        return None
+    root = os.path.abspath(BENCHMARK_RESULTS_DIR)
+    candidate = os.path.abspath(os.path.join(root, timestamp))
+    if not candidate.startswith(root + os.sep):
+        return None
+    if not os.path.isdir(candidate):
+        return None
+    return candidate
+
+
+@app.route("/api/ui/demo/benchmark/runs", methods=["GET"])
+def ui_benchmark_runs():
+    """List historical benchmark runs, newest first. Each entry includes
+    the timestamp, the manifest knobs, and which artefacts are present."""
+    root = os.path.abspath(BENCHMARK_RESULTS_DIR)
+    if not os.path.isdir(root):
+        return jsonify({
+            "results_dir": BENCHMARK_RESULTS_DIR,
+            "runs": [],
+            "note": "benchmark results dir not mounted",
+        })
+    entries: list[dict] = []
+    for name in os.listdir(root):
+        run_dir = os.path.join(root, name)
+        if not os.path.isdir(run_dir) or name.startswith("."):
+            continue
+        manifest: dict = {}
+        manifest_path = os.path.join(run_dir, "MANIFEST.json")
+        if os.path.isfile(manifest_path):
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as fh:
+                    manifest = json.load(fh)
+            except Exception:
+                manifest = {"parse_error": True}
+        plots_present = sorted(
+            k for k, fname in _BENCHMARK_PLOT_NAMES.items()
+            if os.path.isfile(os.path.join(run_dir, fname))
+        )
+        has_summary = os.path.isfile(os.path.join(run_dir, "SUMMARY.md"))
+        sides = sorted(
+            d for d in os.listdir(run_dir)
+            if os.path.isdir(os.path.join(run_dir, d))
+        )
+        entries.append({
+            "timestamp":     name,
+            "manifest":      manifest,
+            "plots":         plots_present,
+            "has_summary":   has_summary,
+            "sides_present": sides,
+        })
+    entries.sort(key=lambda e: e["timestamp"], reverse=True)
+    return jsonify({"results_dir": BENCHMARK_RESULTS_DIR, "runs": entries})
+
+
+@app.route("/api/ui/demo/benchmark/runs/<timestamp>/summary", methods=["GET"])
+def ui_benchmark_summary(timestamp: str):
+    """Return SUMMARY.md as plain text. 404 if the run or file is missing."""
+    run_dir = _safe_run_dir(timestamp)
+    if run_dir is None:
+        return jsonify({"error": "unknown run"}), 404
+    path = os.path.join(run_dir, "SUMMARY.md")
+    if not os.path.isfile(path):
+        return jsonify({"error": "no SUMMARY.md for this run yet"}), 404
+    try:
+        # `errors="replace"` keeps the endpoint robust against files written
+        # by older plot_results.py runs on Windows hosts (cp1252 default
+        # encoding before the UTF-8 fix landed). New runs are pure UTF-8.
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except Exception as exc:
+        return jsonify({"error": f"read failed: {exc}"}), 500
+    return Response(text, mimetype="text/markdown; charset=utf-8")
+
+
+@app.route("/api/ui/demo/benchmark/runs/<timestamp>/plot/<name>", methods=["GET"])
+def ui_benchmark_plot(timestamp: str, name: str):
+    """Serve one of the six PNG plots. `name` is the short key
+    (rps / p50_p95_p99 / error_rate / total_requests / per_phase_p95 /
+    recovery_curve), not the filename — keeps the URL surface stable
+    even if file naming changes."""
+    run_dir = _safe_run_dir(timestamp)
+    if run_dir is None:
+        return jsonify({"error": "unknown run"}), 404
+    filename = _BENCHMARK_PLOT_NAMES.get(name)
+    if filename is None:
+        return jsonify({"error": "unknown plot key"}), 404
+    path = os.path.join(run_dir, filename)
+    if not os.path.isfile(path):
+        return jsonify({"error": "plot not generated for this run"}), 404
+    return send_from_directory(run_dir, filename, mimetype="image/png")
+
+
+@app.route("/api/ui/demo/benchmark/runs/<timestamp>/manifest", methods=["GET"])
+def ui_benchmark_manifest(timestamp: str):
+    """Return MANIFEST.json for a single run as JSON (the listing endpoint
+    already includes this; the per-run endpoint is convenient for direct
+    deep-links)."""
+    run_dir = _safe_run_dir(timestamp)
+    if run_dir is None:
+        return jsonify({"error": "unknown run"}), 404
+    path = os.path.join(run_dir, "MANIFEST.json")
+    if not os.path.isfile(path):
+        return jsonify({"error": "no manifest"}), 404
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return jsonify(json.load(fh))
+    except Exception as exc:
+        return jsonify({"error": f"manifest parse failed: {exc}"}), 500
 
 
 # ── SSE event stream ──────────────────────────────────────────────────────────

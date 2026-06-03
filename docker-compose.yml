@@ -451,6 +451,14 @@ services:
         smartload-test-backend-1:8080,smartload-test-backend-2:8080,
         smartload-test-backend-3:8080,smartload-test-backend-4:8080,
         smartload-test-backend-5:8080
+      # Read-only path inside the container where the demo-ui BFF reads the
+      # baseline-vs-smartload benchmark run outputs (see Benchmark page).
+      # Mapped via the volume mount below from experiments/.../results/ on
+      # the host. Override with BENCHMARK_RESULTS_DIR if you want to serve
+      # a different cohort of runs from the same UI.
+      BENCHMARK_RESULTS_DIR: /benchmark-results
+    volumes:
+      - ./experiments/baseline-vs-smartload/results:/benchmark-results:ro
     depends_on:
       policy-manager:
         condition: service_started
