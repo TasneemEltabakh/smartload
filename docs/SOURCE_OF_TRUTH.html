@@ -5588,6 +5588,47 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7o — 2026-06-03 — PR #154: pr151 repo hygiene + cleanup lands on main</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Five integration-branch commits landed</strong></td>
+      <td>Five commits that had accumulated on <code>merge/rl-pipeline-and-demo-ui</code> while main fast-forwarded to v1.0.7n finally land on main:
+        <ul>
+          <li><code>f5ac5b8</code> — chore(pr151): repo hygiene + reconcile engine-state tests after main merge (−2384 lines of stale fixtures/snapshots).</li>
+          <li><code>a449362</code> — chore(pr151): relocate <code>traffic-simulator</code> from <code>tests/</code> to <code>tools/</code> (it is a compose service, not a test).</li>
+          <li><code>da8d4b4</code> — ci(unit-tests): install rl-engine runtime deps before per-service tests so the matrix job no longer fails on missing <code>stable-baselines3</code>.</li>
+          <li><code>d4ec473</code> — docs(sot): renumber v1.0.5 → v1.0.6 + add the demo-ui row to §25.9 slice catalog.</li>
+          <li><code>db6ac16</code> — docs(walkthrough): consolidate to <code>docs/PROJECT_WALKTHROUGH.md</code>, drop the <code>.html</code> mirror (SOT remains the canonical HTML; walkthrough is markdown-only).</li>
+        </ul>
+        Net effect: <code>tests/performance/</code> (orphan locust dir, superseded by <code>tools/traffic-simulator/</code>) is removed; CI matrix is dep-correct; the demo-ui row in §25.9 is present; the walkthrough has a single source.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Conflict resolution via git plumbing</strong></td>
+      <td>Three real content conflicts surfaced once main had v1.0.7n and the integration branch was still based on the pre-v1.0.7n tip: <code>docs/PROJECT_WALKTHROUGH.md</code> (PPO/operator paragraph adjacent edits), <code>docs/SOURCE_OF_TRUTH.html</code> (N2.5 row + §22 changelog insertion vs. v1.0.5 → v1.0.6 renumber), <code>tests/unit/rl-engine/test_new_features.py</code> (same <code>runloop_enabled</code> assert fix on both sides + main added <code>TestEvictStaleAnomalyHealth</code> + <code>TestRefreshPolicyUnderLock</code>). All three resolved by taking main's superset — main already incorporated the integration branch's intent in each case + carried newer content. README.md, docker-compose.yml, the traffic-simulator rename, and the tests/performance removal all auto-merged. The resolution was constructed with <code>git merge-tree --write-tree --messages</code> + a temporary <code>GIT_INDEX_FILE</code>, then <code>git commit-tree</code> assembled the merge commit <code>45d158a</code> directly in the object store. The working tree was never touched (a Windows file-handle held by an external process was blocking unlink on <code>tests/__init__.py</code> + <code>tests/performance/*</code> — the plumbing path sidesteps this entirely).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>CI gate</strong></td>
+      <td>13/13 SmartLoad CI checks green on the merge commit <code>45d158a</code>: <code>lint</code>, <code>unit-tests</code>, <code>build-services</code> matrix (anomaly-detector, autoscaler, forecasting, lb-otel-shipper, lb-sidecar, policy-manager, rl-engine, telemetry), <code>build-test-backend</code>, <code>runtime-import-smoke</code>, <code>compose-test</code>. Admin-merged on green via <code>gh pr merge 154 --admin --merge</code>; GitHub's merge commit is <code>e43982b</code> on main.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Local-only orphan-file workaround</strong></td>
+      <td><code>.git/info/exclude</code> on this clone now ignores <code>tests/performance/</code> until the Windows file-handle holding <code>Dockerfile</code> + <code>locustfile.py</code> releases (reboot or IDE close clears it; the entry self-documents that it should be removed once the directory is gone). The shared <code>.gitignore</code> is unchanged — this is a per-clone workaround, not a project-wide policy.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>State after release</strong></td>
+      <td>Main and <code>origin/merge/rl-pipeline-and-demo-ui</code> are content-equivalent (main has one extra PR-merge commit on top). The <code>close-121-live-engines-e2e</code> branch used to side-step the earlier rebase is deleted from origin. No code logic changes ship in this release — purely structural: removed orphan tests/performance dir, traffic-simulator now under tools/, CI dep order corrected, walkthrough is markdown-only.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7n — 2026-06-03 — Live Engines e2e suite (#121 OUI.3 close-out)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
