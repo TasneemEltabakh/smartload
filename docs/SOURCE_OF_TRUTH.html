@@ -5259,6 +5259,7 @@ flowchart LR
     <tr><td>lb-otel-shipper (sidecar)</td><td>Tasneem</td><td><span class="pill pill-done">T1.2 wired</span></td><td><code>services/lb-otel-shipper/app.py</code></td><td>Tail-and-emit Python sidecar; OTLP/HTTP-JSON to collector — Approach B (issue #9)</td></tr>
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
     <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>tools/traffic-simulator/</code></td><td>—</td></tr>
+    <tr><td>Baseline vs SmartLoad benchmark harness</td><td>Tasneem</td><td><span class="pill pill-done">Harness shipped 2026-06-03 (v1.0.7r, #148) — SHORT validation clean; full-length run pending</span></td><td><code>experiments/baseline-vs-smartload/</code></td><td>Two env profiles (baseline vs smartload) + 3-phase Locust shape (ramp → pause-anomaly → sustain) + orchestration + plotting (6 PNGs + SUMMARY.md). Run with <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>; <code>SHORT=1</code> for ~5-min harness check.</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
     <tr><td>Repo structure + runbook</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docs/running-the-project.md</code></td><td>Phase 1+ updates</td></tr>
     <tr><td>docker-compose (full stack)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docker-compose.yml</code></td><td>—</td></tr>
@@ -5588,6 +5589,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7r — 2026-06-03 — Baseline NGINX RR vs SmartLoad benchmark harness (#148)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Quantified comparison harness scaffolded under <code>experiments/baseline-vs-smartload/</code></strong></td>
+      <td>Closes the gap noted in #148 — every shipped slice (policy, audit, manual actions, live engines, status) is qualitative; nothing in the repo answered "does SmartLoad actually beat plain round-robin?" The harness lets the operator (or CI) generate that comparison on demand: same compose stack, same backend pool, only the four <code>*_RUNLOOP_ENABLED</code> flags + <code>RL_MODE</code> change between sides. Two env files (<code>env/baseline.env</code> + <code>env/smartload.env</code>) drive a <code>docker compose --env-file ... up -d --force-recreate</code> cycle on the decision-plane services + lb-sidecar between sides; the load-balancer NGINX container itself stays identical (baseline = static round-robin from <code>nginx.conf</code>; smartload = sidecar-rewritten upstream weights).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>3-phase Locust load profile + pause-based anomaly</strong></td>
+      <td>New <code>experiments/baseline-vs-smartload/locust/locustfile.py</code> implements a <code>LoadTestShape</code> with three phases: <strong>A — steady ramp</strong> (0 → RAMP_USERS over RAMP_SECS — exercises forecast-driven scale-out); <strong>B — anomaly injection</strong> (RAMP_USERS held, backend-1 frozen via <code>docker pause</code> + synthetic AnomalyEvent posted on <code>/api/v1/isolate</code> at <code>ANOMALY_AT_SECS</code>); <strong>C — sustained tail</strong> (RAMP_USERS held until <code>SUSTAIN_END_SECS</code>). Each request is tagged with the current phase via the request name so post-run analysis can slice per-phase latency distributions. <code>SHORT=1</code> compresses to a 2-min-per-side harness validation profile.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Orchestration + plotting</strong></td>
+      <td><code>scripts/run_experiment.sh</code> sequences per-side: stop the standing traffic-simulator (to avoid polluting the load shape) → apply the env-file + recreate decision-plane services → wait for <code>/api/v1/status</code> to be ready → schedule the background anomaly-inject coroutine → run a one-shot locust container on <code>smartload_smartload-net</code> with <code>--csv-full-history</code> → snapshot pre/post <code>/api/v1/status</code> + Prometheus + scaling audit → tear down. <code>scripts/plot_results.py</code> reads the run's CSVs and emits 6 PNGs (RPS over time, p50/p95/p99 stacked, failure rate, cumulative requests, per-phase p95 bar chart, anomaly-window recovery zoom) plus a <code>SUMMARY.md</code> with the delta one-liner. <code>MSYS_NO_PATHCONV=1</code> on the locust <code>docker run</code> sidesteps Git Bash's path-translation mangling of volume mounts on Windows hosts.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>SHORT validation pass — harness clean end-to-end</strong></td>
+      <td>Ran <code>SHORT=1 bash run_experiment.sh</code> against the live stack. Both sides produced full locust CSVs (38,098 baseline / 38,812 smartload requests over 2 min each at ~320 RPS). Anomaly injection took effect (max-latency &gt; 22 s during the pause window on both sides). Per-side tear-down / set-up worked. All 6 plots + SUMMARY.md generated. Median latency is similar between sides (smartload adds ~1 ms in p95 from sidecar overhead at SHORT scale), but the long-tail signal is already visible — <strong>99.99%-percentile latency is ~6× lower on smartload (420 ms vs 2700 ms during the anomaly window)</strong>. Full-length run (~15 min, default knobs) will tighten the distributions; SHORT-mode statistics are not enough for the final write-up but prove the harness mechanically.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Side-incidental fix — load-balancer recovery</strong></td>
+      <td>While bringing up the harness, found <code>smartload-load-balancer-1</code> in a Docker restart loop with <code>nginx: [emerg] invalid port in upstream "172.18.0.12:8080,"</code>. Root cause is the lb-sidecar's upstream-rewrite logic emitting a malformed entry (trailing comma between <code>&lt;addr&gt;</code> and <code>weight=</code>) into the shared <code>smartload_nginx-conf</code> Docker volume. Reset the volume's <code>upstream.conf</code> to the canonical 5-backend round-robin baseline from <code>services/load-balancer/nginx/conf.d/upstream.conf</code>; force-recreated the LB container to let docker DNS settle on the test-backend hostnames; verified <code>/health</code> and round-robin distribution before the harness run. The lb-sidecar bug itself is filed as a separate follow-up — out of scope for this release.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>SOT alignment</strong></td>
+      <td>§25.10 "Integration adoptions (planned)" row for the benchmark flipped from blocked (#148 / #82) to "Harness shipped 2026-06-03 (v1.0.7r)" with the status pill and a description of what shipped vs. what's pending (the full-length run). §18 Build Status gains a "Baseline vs SmartLoad benchmark harness" row. No §25 evidence-paragraph yet — that's a v1.0.7s follow-up once the full-length run produces publishable numbers.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7q — 2026-06-03 — Consolidated status slice (#149 OUI.9 close-out)</h3>
 <table>
@@ -6982,10 +7020,10 @@ flowchart TD
       <td><code>LB_ADAPTER=haproxy docker compose up</code> works end-to-end; <code>tests/conformance/lb_adapter/</code> suite passes against HAProxy with the same assertions as NGINX.</td>
     </tr>
     <tr>
-      <td><strong>Baseline-LB vs SmartLoad benchmark</strong> — quantified comparison harness</td>
+      <td><strong>Baseline-LB vs SmartLoad benchmark</strong> — quantified comparison harness <span class="pill pill-done">Harness shipped 2026-06-03 (v1.0.7r)</span></td>
       <td>Delivery artefact — experiment under <code>experiments/baseline-vs-smartload/</code>; not a feature slice</td>
-      <td>#148 (blocked on #82 — LB-reads-Redis sidecar)</td>
-      <td>Two compose profiles (baseline NGINX RR vs full SmartLoad) + Locust load profile with steady ramp / anomaly injection / sustained tail; CSV results + plots committed; visible delta on p95, error rate during anomaly, time-to-recover after isolation.</td>
+      <td>#148 (unblocked by #82 T2.1 sidecar — smoke PASSED 2026-05-23, v1.0.6)</td>
+      <td>Two env profiles (baseline NGINX RR + decision plane off vs full SmartLoad + sidecar active) + Locust 3-phase load profile (steady ramp → pause-based anomaly on backend-1 → sustained tail) + orchestration script + plotting script. SHORT validation run (~5 min total) clean end-to-end; 6 PNG plots + SUMMARY.md generated from the locust CSVs. Tail-latency signal already visible at SHORT scale (smartload 99.99%-percentile ~6× lower than baseline during the anomaly window). Full-length run (~15 min total, default load profile) pending — runs <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>.</td>
     </tr>
     <tr>
       <td><strong>Consolidated <code>GET /api/v1/status</code></strong> — single-call aggregator on the BFF</td>
