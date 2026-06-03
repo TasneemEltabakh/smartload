@@ -5590,6 +5590,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7t — 2026-06-04 — Benchmark harness: backend heterogeneity + latency-spike anomaly + honest first finding (#148)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>test-backend gains a runtime-overridable latency endpoint</strong></td>
+      <td><code>test-backends/app.js</code> grows a <code>POST /_admin/delay {ms: N}</code> route + a matching <code>GET</code> for inspection. The endpoint sets a process-local <code>runtimeDelayMs</code> that is added to every <code>GET /</code> + <code>GET /health</code> response. Validated input (<code>0 ≤ ms ≤ 10000</code>); response echoes <code>{server, is_slow_host, static_baseline_ms, runtime_override_ms, effective_ms}</code> for diagnostics. Two static knobs landed alongside but are intentionally NOT wired in compose: <code>SLOW_HOSTNAME</code> + <code>SLOW_DELAY_MS</code> — Docker scaled services give every replica the same short-ID kernel hostname, so a hostname-match doesn't cleanly identify one of N replicas. Knobs documented as aspirational; the runtime-override endpoint is the working mechanism.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Benchmark harness: real heterogeneity + latency-spike anomaly</strong></td>
+      <td><code>experiments/baseline-vs-smartload/scripts/run_experiment.sh</code> now POSTs <code>{ms: 15}</code> to backend-1 at the start of each side (via <code>docker exec</code> against the in-container <code>/_admin/delay</code>) and clears it at tear-down. Mid-run, the anomaly switches from <code>docker pause</code> (binary freeze that NGINX's <code>max_fails=3 fail_timeout=10s</code> catches via passive checks) to <code>POST {ms: 200}</code> — a latency spike where requests still complete (no 5xx, no timeout) so NGINX's passive health checks never trip. This is the case where SmartLoad's lb-sidecar should win: it reacts to the published <code>AnomalyEvent</code> within seconds, while baseline RR keeps dispatching 1/5 of traffic to a slow backend indefinitely.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>SHORT validation: harness exposes heterogeneity correctly</strong></td>
+      <td>Ran <code>SHORT=1 bash run_experiment.sh</code> against the live stack. Baseline aggregate p95 jumped from <strong>6 ms (v1.0.7r, no heterogeneity) to 41 ms</strong>, confirming backend-1's +15 ms baseline + 200 ms anomaly delay is being eaten by 1/5 of RR's traffic exactly as designed. Per-phase breakdown shows the slowdown is concentrated in <code>A_hold</code> (steady-state heterogeneity), <code>B_anomaly</code> (anomaly window), and <code>C_sustain</code> (steady-state after recovery) — phases where backend-1 is slow. The harness mechanically works as intended.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Honest first finding: PPO doesn't yet beat RR on the new workload</strong></td>
+      <td>Per-phase p95 comparison: baseline=14/42/44/43 ms; smartload=23/41/50/44 ms (A_ramp / A_hold / B_anomaly / C_sustain). SmartLoad is tied or slightly worse in every phase. Smartload's max latency was 3082 ms (vs baseline's 150 ms) — that's the lb-sidecar's NGINX reload causing brief connection blips when it rewrites <code>upstream.conf</code> during the anomaly. <strong>The lb-sidecar mechanism costs latency during reload; with the currently-trained PPO model (Alibaba traces — homogeneous latencies, see §22 v1.0.7i) it doesn't earn that cost back via better steady-state routing.</strong> The result confirms the earlier reading: training-data heterogeneity (Rghda's retraining workstream) is the binding constraint for SmartLoad to beat RR in this scenario. The harness changes themselves are correct — they faithfully expose the truth.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>What this release does NOT claim</strong></td>
+      <td>Does not claim SmartLoad beats baseline RR on this benchmark — it does not, with the current model. Does not move the §25 evidence paragraph from the v1.0.7r-still-owed list. Does not close #148 — the third acceptance gate (clear delta on ≥3 of 5 metrics) is still red, and ticking it depends on the retrained PPO model. What this release DOES: lock in the right benchmark *methodology* (heterogeneity + slow-anomaly that NGINX can't passively catch) so the post-retraining run produces meaningful before/after numbers.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7s — 2026-06-04 — demo-ui split into four pages + Benchmark page surfaces #148 runs</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
