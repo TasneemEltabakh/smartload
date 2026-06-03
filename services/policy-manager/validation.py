@@ -107,15 +107,25 @@ _FIELD_CHECKS = {
 }
 
 
+# Canonical user-settable policy fields. POST bodies must use only these.
+CANONICAL_POLICY_FIELDS: frozenset[str] = frozenset(_FIELD_CHECKS.keys())
+
+# Server-managed envelope fields. Clients may echo these back when doing
+# read-modify-write from a GET response, but they are stripped before merge —
+# the server reassigns them on every write.
+_SERVER_MANAGED_FIELDS: frozenset[str] = frozenset({
+    "policy_version",
+    "timestamp",
+    "changed_fields",
+})
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 def validate_field(name: str, value: Any) -> None:
-    """Validate a single field against its per-field rule.
-
-    Unknown fields are accepted — the policy schema is extensible, and we
-    don't want to break operators who add forward-compat fields. Reject the
-    value's *shape* only for fields we know about.
-    """
+    """Validate a single field against its per-field rule. No-op for fields
+    not in the canonical set — strict gating of unknown POST keys is the
+    caller's responsibility (see `validate_updates`)."""
     check = _FIELD_CHECKS.get(name)
     if check is not None:
         check(value)
@@ -147,6 +157,13 @@ def validate_updates(updates: dict, existing: dict) -> dict:
     """Validate a POST body against an existing policy. Returns the merged
     policy on success; raises PolicyValidationError on the first failure.
 
+    Rejects any key not in `CANONICAL_POLICY_FIELDS` or `_SERVER_MANAGED_FIELDS`
+    — surfaces caller bugs like an `actor` field in the body (which belongs in
+    the `X-Actor` header) before they can leak to `config/policy.yaml`.
+    Server-managed fields (`policy_version`, `timestamp`, `changed_fields`) are
+    stripped silently so read-modify-write callers can echo a GET response back
+    without a 400.
+
     The merge is "updates overrides existing" — unmentioned fields keep
     their existing values. Cross-field invariants are checked on the merged
     result so a POST that only changes max_backends still fails if it
@@ -155,9 +172,21 @@ def validate_updates(updates: dict, existing: dict) -> dict:
     if not isinstance(updates, dict):
         raise PolicyValidationError("request body must be a JSON object")
 
-    for name, value in updates.items():
+    unknown = sorted(
+        k for k in updates
+        if k not in CANONICAL_POLICY_FIELDS and k not in _SERVER_MANAGED_FIELDS
+    )
+    if unknown:
+        raise PolicyValidationError(
+            f"unknown field(s) in POST body: {unknown} — not in the canonical policy schema",
+            field=unknown[0],
+        )
+
+    user_updates = {k: v for k, v in updates.items() if k in CANONICAL_POLICY_FIELDS}
+
+    for name, value in user_updates.items():
         validate_field(name, value)
 
-    merged = {**existing, **updates}
+    merged = {**existing, **user_updates}
     validate_merged_policy(merged)
     return merged
