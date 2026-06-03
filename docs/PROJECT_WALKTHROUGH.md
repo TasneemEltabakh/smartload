@@ -2088,14 +2088,24 @@ The **cross-field invariant** — `min_backends ≤ max_backends` — is checked
 def validate_updates(updates, existing):
     if not isinstance(updates, dict):
         raise PolicyValidationError("request body must be a JSON object")
-    for name, value in updates.items():
+    unknown = sorted(
+        k for k in updates
+        if k not in CANONICAL_POLICY_FIELDS and k not in _SERVER_MANAGED_FIELDS
+    )
+    if unknown:
+        raise PolicyValidationError(
+            f"unknown field(s) in POST body: {unknown} ...",
+            field=unknown[0],
+        )
+    user_updates = {k: v for k, v in updates.items() if k in CANONICAL_POLICY_FIELDS}
+    for name, value in user_updates.items():
         validate_field(name, value)
-    merged = {**existing, **updates}
+    merged = {**existing, **user_updates}
     validate_merged_policy(merged)
     return merged
 ```
 
-Two-pass validation: shape-check the updates in isolation (so we 400 fast), then re-validate the merged result for cross-field invariants.
+Three-pass validation: strict gate against unknown POST keys (#152) → shape-check each user-settable update in isolation (so we 400 fast) → re-validate the merged result for cross-field invariants. `_SERVER_MANAGED_FIELDS` (`policy_version`, `timestamp`, `changed_fields`) are accepted but stripped — clients echoing a GET response back in a read-modify-write flow shouldn't get a 400 for fields the server reassigns on every write.
 
 #### `app.py` — HTTP + write + audit + publish
 
@@ -2855,7 +2865,7 @@ export interface Policy {
   min_backends: number;
   max_backends: number;
   ...
-  [k: string]: unknown;  // unknown fields permitted, same as the server
+  [k: string]: unknown;  // unknown fields permitted on the wire (GET response); POST bodies are still strict (v1.0.7p / #152)
 }
 
 export interface PolicyUpdateResponse {
@@ -2871,7 +2881,7 @@ export interface ServiceHealth { ... }
 export interface HealthSummary { ... }
 ```
 
-`[k: string]: unknown` allows extra fields in the policy without TypeScript complaining — matches the server's "unknown fields accepted" policy.
+`[k: string]: unknown` allows extra fields when *reading* a policy without TypeScript complaining (defensive against forward-compat additions in GET responses). When *writing* a policy via `POST /api/v1/policy`, the server is strict — unknown body keys return 400 since v1.0.7p / #152.
 
 ```ts
 async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {

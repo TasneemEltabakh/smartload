@@ -3155,7 +3155,7 @@ rl_confidence_threshold: 0.6          # below this, sidecar ignores RL and uses 
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient. Read-heavy is fine; writes are operator-initiated and rare.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Audit log per change (operator, timestamp, field diff). Metric for policy version.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Future: authn on POST. Now: trusted-network. Validation must reject incoherent states (e.g., min_backends &gt; max_backends).</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.4 wired. <code>GET /api/v1/policy</code> returns the on-disk snapshot. <code>POST /api/v1/policy</code> validates the payload (per-field rules + cross-field <code>min_backends ≤ max_backends</code> via <code>validation.py</code>), merges with existing, computes the diff, atomically writes the YAML (with bind-mount fallback), writes one row per changed field to <code>policy_changes</code> via canonical <code>POLICY_CHANGE_INSERT</code>, bumps <code>policy_version</code>, and publishes a canonical <code>PolicyUpdate</code> envelope on <code>smartload.policy</code>. Idempotent: a POST that matches existing state returns 200 no-op with no audit row and no publish. Startup validates the on-disk policy and logs (not crashes) on failure. Autoscaler-side live reload is wired (see §8.8). Tests: 38 unit (<code>test_policy_validation.py</code>) + 4 integration (<code>test_policy_manager.py</code>).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">T1.4 wired. <code>GET /api/v1/policy</code> returns the on-disk snapshot. <code>POST /api/v1/policy</code> validates the payload (strict canonical-field set + per-field rules + cross-field <code>min_backends ≤ max_backends</code> via <code>validation.py</code> — unknown keys rejected with 400 + the offending field name; server-managed envelope echoes <code>policy_version</code>/<code>timestamp</code>/<code>changed_fields</code> stripped silently, v1.0.7p / #152), merges with existing, computes the diff, atomically writes the YAML (with bind-mount fallback), writes one row per changed field to <code>policy_changes</code> via canonical <code>POLICY_CHANGE_INSERT</code>, bumps <code>policy_version</code>, and publishes a canonical <code>PolicyUpdate</code> envelope on <code>smartload.policy</code>. Idempotent: a POST that matches existing state returns 200 no-op with no audit row and no publish. Startup validates the on-disk policy and logs (not crashes) on failure. Autoscaler-side live reload is wired (see §8.8). Tests: 21 unit (<code>tests/unit/policy-manager/test_validation.py</code>) + 20 integration (<code>tests/integration/test_policy_validation.py</code>).</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Real REST endpoints, validation, atomic YAML write, Redis publish, idempotent semantics, audit row per change.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
@@ -5587,6 +5587,33 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7p — 2026-06-03 — policy-manager: strict POST body schema (#152 fix)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Strict unknown-field rejection on <code>POST /api/v1/policy</code></strong></td>
+      <td>Closes #152. <code>validate_updates()</code> in <code>services/policy-manager/validation.py</code> now rejects any POST-body key outside the canonical schema with HTTP 400 + the offending field name, before the body ever reaches the merge or the atomic YAML write. The repro that originally surfaced the bug — an <code>actor</code> field in the body — now returns <code>{"error":"unknown field(s) in POST body: ['actor'] — not in the canonical policy schema","field":"actor"}</code> with status 400. Header-only fields (<code>X-Actor</code>) and server-managed envelope fields (<code>policy_version</code>, <code>timestamp</code>, <code>changed_fields</code>) can no longer leak into <code>config/policy.yaml</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Read-modify-write echo allowance</strong></td>
+      <td>Clients doing <code>GET /api/v1/policy</code> → modify → <code>POST /api/v1/policy</code> may echo the server-managed envelope fields back in the body without a 400. <code>policy_version</code>, <code>timestamp</code>, and <code>changed_fields</code> are accepted but silently stripped before the merge — the server rewrites <code>policy_version</code> monotonically on every write regardless, and the published envelope's <code>timestamp</code> is always set by <code>contracts._now_iso()</code> at publish time. Net effect: SDK callers that pass through a GET response unmodified still work; unknown fields like <code>actor</code> still get a clear 400.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Module constants exported</strong></td>
+      <td><code>CANONICAL_POLICY_FIELDS</code> (frozenset of the 12 keys in <code>_FIELD_CHECKS</code>) is now a public module constant in <code>validation.py</code> — consumers (e.g. the SDK <code>PolicyClient</code>, future schema-introspection endpoints) can import it as the single source of truth for "what fields can a POST body contain". The previous behaviour where <code>validate_field()</code> silently accepted any key is preserved at the field-rule layer for backwards-compat with startup-time policy loads; the strict gate lives only in <code>validate_updates()</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Test coverage</strong></td>
+      <td>New <code>tests/unit/policy-manager/test_validation.py</code> with <strong>21 unit tests</strong> across 5 classes: <code>TestValidateField</code> (per-field shape checks), <code>TestMergedInvariants</code> (cross-field <code>min_backends ≤ max_backends</code>), <code>TestUnknownFieldsRejected</code> (the #152 bug repro + typo + multi-unknown + non-mutation of <code>existing</code> on failure), <code>TestServerManagedEchoStrip</code> (each of the three echo fields + a server-only body), and <code>TestHappyPath</code> (full canonical body, partial body, empty body, non-dict rejection, drift guard between <code>CANONICAL_POLICY_FIELDS</code> and <code>_FIELD_CHECKS</code> keys). All 21 pass in 0.05 s. Live-smoked against the running stack: the issue's curl-repro now returns 400, <code>config/policy.yaml</code> is untouched, and a valid <code>X-Actor</code>-header POST still increments <code>policy_version</code> normally.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7o — 2026-06-03 — PR #154: pr151 repo hygiene + cleanup lands on main</h3>
 <table>
