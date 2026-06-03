@@ -1,0 +1,5 @@
+# Run outputs are reproducible — committers should not check in `<timestamp>/`
+# directories from local runs. After a publishable full-length run, commit
+# the run's directory explicitly (`git add -f`) along with its plots +
+# SUMMARY.md.
+20*
