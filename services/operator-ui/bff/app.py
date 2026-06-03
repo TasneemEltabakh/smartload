@@ -49,6 +49,7 @@ from engines import (  # noqa: E402
     format_sse_heartbeat,
     subscriber_loop,
 )
+from aggregator import build_status_response  # noqa: E402
 
 try:
     from flask_swagger_ui import get_swaggerui_blueprint
@@ -168,6 +169,76 @@ def ui_health():
         "all_ok": not any_unhealthy,
         "services": summary,
     })
+
+
+# ── /api/v1/status: consolidated read across every service + policy + audit ─
+
+@app.route("/api/v1/status", methods=["GET"])
+def get_status_v1():
+    """One-shot aggregate read for programmatic operators (slice #149 / OUI.9).
+
+    Replaces a 7-call polling burst (six /health + GET /api/v1/policy) with a
+    single read on the BFF. Always 200 — per-service failures surface in
+    `services[name].status` as "down"; `overall` rolls them up to one pill.
+    Fan-out is parallel with a 2s per-service timeout so a stuck service can
+    only delay the response by that bound.
+    """
+    pm_url = SERVICE_URLS["policy-manager"]
+    as_url = SERVICE_URLS["autoscaler"]
+
+    def _fetch_active_policy() -> dict | None:
+        r = _http.get(f"{pm_url}/api/v1/policy", timeout=2.0)
+        if r.status_code != 200:
+            return None
+        body = r.json()
+        if not isinstance(body, dict):
+            return None
+        return {
+            "operating_mode":     body.get("operating_mode"),
+            "safe_mode":          body.get("safe_mode"),
+            "slo_p95_latency_ms": body.get("slo_p95_latency_ms"),
+            "policy_version":     body.get("policy_version"),
+        }
+
+    def _fetch_last_policy_change() -> dict | None:
+        r = _http.get(f"{pm_url}/api/v1/audit/policy", params={"limit": 1}, timeout=2.0)
+        if r.status_code != 200:
+            return None
+        rows = r.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        row = rows[0]
+        return {
+            "actor":  row.get("actor"),
+            "field":  row.get("field"),
+            "from":   row.get("old_value"),
+            "to":     row.get("new_value"),
+            "at":     row.get("time"),
+        }
+
+    def _fetch_last_scaling_event() -> dict | None:
+        r = _http.get(f"{as_url}/api/v1/audit/scaling", params={"limit": 1}, timeout=2.0)
+        if r.status_code != 200:
+            return None
+        rows = r.json()
+        if not isinstance(rows, list) or not rows:
+            return None
+        row = rows[0]
+        return {
+            "action":         row.get("action"),
+            "instance_count": row.get("instance_count"),
+            "reason":         row.get("reason"),
+            "at":             row.get("time"),
+        }
+
+    response = build_status_response(
+        service_urls=SERVICE_URLS,
+        http_get=_http.get,
+        fetch_active_policy=_fetch_active_policy,
+        fetch_last_policy_change=_fetch_last_policy_change,
+        fetch_last_scaling_event=_fetch_last_scaling_event,
+    )
+    return jsonify(response), 200
 
 
 # ── /api/ui/policy: proxy to policy-manager ───────────────────────────────────

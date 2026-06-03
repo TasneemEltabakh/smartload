@@ -26,6 +26,8 @@ tags:
     description: Append-only audit surface for policy changes
   - name: lb-sidecar
     description: Dynamic upstream weight management (T2.1)
+  - name: status
+    description: Consolidated read across every service + policy + recent audit rows (slice #149 / OUI.9)
 
 paths:
   /health:
@@ -403,6 +405,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/TelemetryStats'
 
+  /api/v1/status:
+    get:
+      summary: Consolidated read across every service + active policy + recent audit rows
+      description: |
+        One-shot aggregate read for programmatic operators. Replaces the
+        7-call polling burst (six `/health` + `GET /api/v1/policy`)
+        integrators would otherwise need. Hits operator-UI BFF
+        (port 8090 in local dev).
+
+        Always returns 200. Per-service failures (timeout, connection
+        refused, non-2xx) surface as `{"status": "down"}` in the
+        `services` map; the `overall` field rolls them up.
+
+        Fan-out is parallel with a 2 s per-service timeout — a slow
+        service can only delay the whole response by that bound.
+      tags: [status]
+      responses:
+        '200':
+          description: Aggregated status. Always 200 — even when downstream services are degraded or unreachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
 components:
   schemas:
     HealthOk:
@@ -687,6 +713,88 @@ components:
           description: |
             Names the offending field when the server can pinpoint it
             (validation errors). Null otherwise.
+
+    StatusResponse:
+      type: object
+      required: [generated_at, overall, services, recent]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+          description: ISO-8601 UTC timestamp at which the BFF assembled the response.
+        overall:
+          type: string
+          enum: [ok, degraded, down]
+          description: |
+            Rolled-up pill across every service. `ok` if every service
+            is ok; `degraded` if any returned a non-ok status from a
+            reachable /health; `down` if any was unreachable (timeout,
+            connection refused, non-2xx, malformed JSON).
+        services:
+          type: object
+          description: |
+            Per-service status keyed by canonical service name
+            (policy-manager, autoscaler, telemetry, anomaly-detector,
+            forecasting, rl-engine, lb-sidecar, load-balancer). Every
+            service returns at least `status`; the remaining fields are
+            forwarded verbatim from the service's `/health` body
+            (forward-compatible — new /health fields appear automatically).
+          additionalProperties:
+            $ref: '#/components/schemas/ServiceStatus'
+        active_policy:
+          oneOf:
+            - $ref: '#/components/schemas/ActivePolicySnapshot'
+            - type: 'null'
+          description: |
+            Trimmed view of `GET /api/v1/policy`. Best-effort — null if
+            policy-manager was unreachable during the read.
+        recent:
+          $ref: '#/components/schemas/RecentEvents'
+
+    ServiceStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: |
+            "ok" | "degraded" | "down" | other forward-compat values from
+            future /health revisions.
+        error:
+          type: string
+          description: Present only when `status=down`. Names the failure (`http_503`, `ConnectError`, `malformed_json`, ...).
+      additionalProperties: true
+
+    ActivePolicySnapshot:
+      type: object
+      properties:
+        operating_mode:     { type: [string, "null"] }
+        safe_mode:          { type: [boolean, "null"] }
+        slo_p95_latency_ms: { type: [integer, "null"] }
+        policy_version:     { type: [integer, "null"] }
+
+    RecentEvents:
+      type: object
+      required: [last_policy_change, last_scaling_event]
+      properties:
+        last_policy_change:
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+          description: |
+            Single most recent row from `GET /api/v1/audit/policy?limit=1`
+            (best-effort; null on fetch failure). Keys mirror the policy
+            audit row shape — actor, field, from, to, at.
+        last_scaling_event:
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: 'null'
+          description: |
+            Single most recent row from `GET /api/v1/audit/scaling?limit=1`
+            (best-effort; null on fetch failure). Keys mirror the scaling
+            audit row shape — action, instance_count, reason, at.
 
 # Out of v1.0.0 (filed but not yet specified):
 #   POST /api/v1/scale       (#123)

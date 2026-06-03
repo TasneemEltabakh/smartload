@@ -16,6 +16,12 @@ from .exceptions import (
     SmartLoadError,
     ValidationError,
 )
+from .status import (
+    ActivePolicySnapshot,
+    RecentEvents,
+    ServiceStatus,
+    StatusResponse,
+)
 
 __all__ = [
     "SmartLoadClient",
@@ -32,6 +38,10 @@ __all__ = [
     "CHANNEL_FORECAST",
     "CHANNEL_ROUTING",
     "CHANNEL_SCALE",
+    "StatusResponse",
+    "ServiceStatus",
+    "ActivePolicySnapshot",
+    "RecentEvents",
 ]
 
 __version__ = "0.1.0"

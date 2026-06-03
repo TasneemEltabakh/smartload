@@ -439,3 +439,183 @@ class TestSmartLoadClientActionsWiring:
         c.isolate("backend_2", "degraded", actor="bob")
         assert captured["call"] == ("backend_2", "degraded", "bob", None)
         c.close()
+
+
+# ── status surface (slice #149 / OUI.9) ─────────────────────────────────────
+
+from smartload_client.status import (  # noqa: E402
+    ActivePolicySnapshot,
+    RecentEvents,
+    ServiceStatus,
+    StatusResponse,
+)
+
+
+class TestStatusResponseFromDict:
+    """Round-trip parsing of the BFF's /api/v1/status response."""
+
+    def _full(self) -> dict:
+        return {
+            "generated_at": "2026-06-03T12:00:00Z",
+            "overall": "ok",
+            "services": {
+                "policy-manager": {
+                    "status": "ok",
+                    "redis": True,
+                    "timescaledb": True,
+                    "policy_version": 31,
+                },
+                "rl-engine": {
+                    "status": "ok",
+                    "runloop_enabled": True,
+                    "policy": "ppo",
+                    "mode": "shadow",
+                },
+            },
+            "active_policy": {
+                "operating_mode": "hybrid",
+                "safe_mode": False,
+                "slo_p95_latency_ms": 200,
+                "policy_version": 31,
+            },
+            "recent": {
+                "last_policy_change": {"actor": "ops", "field": "safe_mode", "at": "2026-06-03"},
+                "last_scaling_event": None,
+            },
+        }
+
+    def test_full_payload_round_trips(self):
+        parsed = StatusResponse.from_dict(self._full())
+        assert parsed.overall == "ok"
+        assert parsed.generated_at == "2026-06-03T12:00:00Z"
+        assert isinstance(parsed.services["policy-manager"], ServiceStatus)
+        # Status is split from the rest of the body, which goes into `extra`.
+        pm = parsed.services["policy-manager"]
+        assert pm.status == "ok"
+        assert pm.extra["redis"] is True
+        assert pm.extra["policy_version"] == 31
+        # active_policy → typed snapshot
+        assert isinstance(parsed.active_policy, ActivePolicySnapshot)
+        assert parsed.active_policy.operating_mode == "hybrid"
+        assert parsed.active_policy.safe_mode is False
+        # recent → typed wrapper
+        assert isinstance(parsed.recent, RecentEvents)
+        assert parsed.recent.last_policy_change["actor"] == "ops"
+        assert parsed.recent.last_scaling_event is None
+
+    def test_missing_active_policy_yields_none(self):
+        payload = self._full()
+        payload["active_policy"] = None
+        parsed = StatusResponse.from_dict(payload)
+        assert parsed.active_policy is None
+
+    def test_missing_recent_yields_empty_wrapper(self):
+        payload = self._full()
+        del payload["recent"]
+        parsed = StatusResponse.from_dict(payload)
+        assert parsed.recent.last_policy_change is None
+        assert parsed.recent.last_scaling_event is None
+
+    def test_missing_services_yields_empty_map(self):
+        parsed = StatusResponse.from_dict({"generated_at": "X", "overall": "ok"})
+        assert parsed.services == {}
+
+    def test_to_dict_round_trip_preserves_status_pill(self):
+        # The wire form keeps `status` inline alongside the extras — the
+        # SDK splits it into the `status` field + `extra` dict, and
+        # to_dict() must reassemble.
+        original = self._full()
+        round_tripped = StatusResponse.from_dict(original).to_dict()
+        # The status survives the split/recombine.
+        for name, svc in original["services"].items():
+            assert round_tripped["services"][name]["status"] == svc["status"]
+            # And every extra field survives.
+            for k, v in svc.items():
+                assert round_tripped["services"][name][k] == v
+
+
+class TestStatusClient:
+    """Behaviour of the StatusClient sub-client (no live network)."""
+
+    def test_get_status_top_level_delegates(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        sentinel = StatusResponse(
+            generated_at="X", overall="ok", services={}
+        )
+
+        def fake_get():
+            return sentinel
+
+        monkeypatch.setattr(c.status, "get", fake_get)
+        result = c.get_status()
+        assert result is sentinel
+        c.close()
+
+    def test_get_uses_operator_ui_url(self, monkeypatch):
+        c = SmartLoadClient(
+            base_url="http://example:8086",
+            operator_ui_url="http://my-bff:9090",
+        )
+        captured = {}
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                return {"generated_at": "X", "overall": "ok", "services": {}}
+
+        class _Client:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def get(self, url):
+                captured["url"] = url
+                return _Resp()
+
+        import smartload_client.status as status_mod
+        monkeypatch.setattr(status_mod.httpx, "Client", _Client)
+        c.status.get()
+        assert captured["url"] == "http://my-bff:9090/api/v1/status"
+        c.close()
+
+    def test_get_raises_on_non_200(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+
+        class _Resp:
+            status_code = 503
+            def json(self):
+                return {}
+
+        class _Client:
+            def __init__(self, *a, **kw): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def get(self, url): return _Resp()
+
+        import smartload_client.status as status_mod
+        monkeypatch.setattr(status_mod.httpx, "Client", _Client)
+        with pytest.raises(SmartLoadError):
+            c.status.get()
+        c.close()
+
+    def test_get_raises_on_non_json_body(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+
+        class _Resp:
+            status_code = 200
+            def json(self):
+                raise ValueError("not json")
+
+        class _Client:
+            def __init__(self, *a, **kw): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def get(self, url): return _Resp()
+
+        import smartload_client.status as status_mod
+        monkeypatch.setattr(status_mod.httpx, "Client", _Client)
+        with pytest.raises(SmartLoadError):
+            c.status.get()
+        c.close()

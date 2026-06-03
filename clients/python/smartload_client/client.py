@@ -13,6 +13,7 @@ from .engines import EnginesClient, EngineService
 from .events import EventsClient
 from .metrics import MetricsClient
 from .policy import PolicyClient
+from .status import StatusClient, StatusResponse
 
 __all__ = ["SmartLoadClient"]
 
@@ -126,6 +127,7 @@ class SmartLoadClient:
         self.audit = AuditClient(self)
         self.actions = ActionsClient(self)
         self.engines = EnginesClient(self)
+        self.status = StatusClient(self)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -208,6 +210,19 @@ class SmartLoadClient:
 
     def subscribe_policy(self, callback):
         return self.events.subscribe_policy(callback)
+
+    # ── consolidated status (slice #149 / OUI.9) ────────────────────────────
+
+    def get_status(self) -> StatusResponse:
+        """One-shot aggregate read across every service + active policy +
+        most recent audit rows. Replaces the 7-call polling burst
+        (six /health + GET /api/v1/policy) integrators used to need.
+
+        Hits the operator-UI BFF at `/api/v1/status`. Always returns the
+        parsed `StatusResponse` — callers check `.overall` for the
+        rolled-up pill ("ok" | "degraded" | "down") or iterate
+        `.services` for per-service detail."""
+        return self.status.get()
 
     # ── live engines (slice #121, session 2) ───────────────────────────────
 
