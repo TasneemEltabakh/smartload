@@ -4078,6 +4078,7 @@ SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists =>
     <tr><td>POST</td><td><code>/v1/metrics</code></td><td>Telemetry · 8081</td><td>OTLP/HTTP-JSON ingress from the OTel Collector. Always returns 200; DB write failures observable via <code>/api/v1/stats.rows_dropped_db</code>. Out-of-set metric types (histogram / summary) counted as <code>rows_dropped_shape</code>. <span class="badge badge-implemented">Shipped — T1.1</span></td></tr>
     <tr><td>GET</td><td><code>/api/v1/stats</code></td><td>Telemetry · 8081</td><td>Write / drop counters: <code>rows_written</code>, <code>batches_written</code>, <code>rows_dropped_db</code>, <code>rows_dropped_shape</code>. <span class="badge badge-implemented">Shipped — T1.1</span></td></tr>
     <tr><td>GET</td><td><code>/health</code></td><td>Every service</td><td>Liveness check. Returns <strong>200 OK</strong> if all dependencies (Redis, TimescaleDB, model files where applicable) are reachable; <strong>503 Service Unavailable</strong> if any dependency is down. Body includes per-dependency booleans for diagnostics. <em>HTTP 207 Multi-Status is reserved for WebDAV batch responses and must not be used here</em> — Kubernetes liveness probes treat 2xx as healthy, so 207 would silently classify a degraded service as healthy. The load-balancer's <code>/health</code> is a static NGINX response (<code>{"status":"ok","service":"load-balancer"}</code>); other paths still proxy to the backend pool.</td></tr>
+    <tr><td>GET</td><td><code>/api/v1/status</code></td><td>Operator UI BFF · 8090</td><td>Consolidated read across every service + active policy + most recent rows from both audit streams. Always 200; per-service failures surface as <code>{"status":"down"}</code> in the services map, <code>overall</code> rolls them into one pill (<code>ok</code> / <code>degraded</code> / <code>down</code>). Parallel fan-out with 2 s per-service timeout. <span class="badge badge-implemented">Shipped — slice #5 / OUI.9 (#149, v1.0.7q)</span></td></tr>
     <tr><td>GET</td><td><code>/api/v1/anomalies</code> <span class="badge badge-target">target</span></td><td>Anomaly Detector · 8082</td><td>Recent anomaly events for operator dashboards.</td></tr>
     <tr><td>GET</td><td><code>/api/v1/forecast</code> <span class="badge badge-target">target</span></td><td>Forecasting Engine · 8083</td><td>Latest forecast snapshot.</td></tr>
     <tr><td>GET</td><td><code>/api/v1/routing/state</code> <span class="badge badge-target">target</span></td><td>LB Sidecar · T2.1</td><td>Current effective routing config (debugging).</td></tr>
@@ -5588,6 +5589,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7q — 2026-06-03 — Consolidated status slice (#149 OUI.9 close-out)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New endpoint <code>GET /api/v1/status</code> on the operator-UI BFF</strong></td>
+      <td>Closes #149 / OUI.9. One programmatic read replaces the 7+ call polling burst (six <code>/health</code> + <code>GET /api/v1/policy</code> + two audit reads) integrators previously needed. Returns <code>{generated_at, overall, services: {name: {status, ...extras}}, active_policy, recent: {last_policy_change, last_scaling_event}}</code> in a single JSON document. Always 200 — per-service failures collapse to <code>{"status": "down"}</code> in the services map; <code>overall</code> rolls them into one pill (<code>ok</code> / <code>degraded</code> / <code>down</code>). Fan-out is parallel across all 8 services with a 2 s per-service timeout, so a single hung service can only delay the response by that bound.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Pure aggregator module (<code>services/operator-ui/bff/aggregator.py</code>)</strong></td>
+      <td>The fan-out + per-service fetch + overall rollup + response composition live in a new module with no Flask / Redis / service-client imports — every IO is injected (<code>http_get</code>, <code>fetch_active_policy</code>, <code>fetch_last_*</code>). Same testability discipline as <code>services/policy-manager/validation.py</code>: 22 unit tests cover the happy path, timeout / connection-refused / non-2xx / malformed-JSON / non-object-body collapse to <code>down</code>, forward-compat extras pass through, every cell of the <code>compute_overall</code> truth table (ok / degraded / down / down-dominates / unknown-as-degraded / empty), best-effort secondary fetch failures don't break the response, and the per-service timeout is plumbed through correctly.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>SDK surface (<code>clients/python/smartload_client/status.py</code>)</strong></td>
+      <td>New <code>StatusClient</code> sub-client + typed dataclasses (<code>StatusResponse</code>, <code>ServiceStatus</code>, <code>ActivePolicySnapshot</code>, <code>RecentEvents</code>) with <code>from_dict()</code> / <code>to_dict()</code> round-trip. Top-level convenience <code>SmartLoadClient.get_status()</code> delegates to <code>self.status.get()</code>. Re-exports added to <code>clients/python/smartload_client/__init__.py</code> so consumers can <code>from smartload_client import StatusResponse</code>. 9 new SDK unit tests in <code>tests/unit/test_smartload_client.py</code> covering the round-trip, missing-optional-fields tolerance, top-level delegation, operator-UI URL routing, non-200 raising, and non-JSON body raising.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>OpenAPI canonicalisation</strong></td>
+      <td><code>docs/openapi/smartload-v1.yaml</code> gains the <code>/api/v1/status</code> path + four new schemas (<code>StatusResponse</code>, <code>ServiceStatus</code>, <code>ActivePolicySnapshot</code>, <code>RecentEvents</code>) + a new <code>status</code> tag. <code>ServiceStatus.additionalProperties: true</code> documents the forward-compat contract — service-specific <code>/health</code> fields (e.g. <code>policy_version</code>, <code>active_target_count</code>, <code>rl_mode</code>) appear in the response without spec churn. §11 endpoint table gains the same row pointing at port 8090.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Manifest + scenario + e2e triangulation</strong></td>
+      <td>New feature manifest <code>docs/features/status.md</code> following the SLICE_CHECKLIST template — every layer ticked. New scenario at <code>examples/scenarios/status/status_walk.py</code> (single read, prints per-service breakdown with markers + active policy + recent rows, asserts the server's <code>overall</code> matches a locally-computed rollup, exits 0 on clean). New e2e suite at <code>tests/e2e/status/test_status.py</code> (13 tests across 5 classes: shape + dataclass round-trip, overall-rollup invariant, always-200 + 5 s latency budget, per-service extras the manifest documents, SDK-vs-wire parity). Live-validated: 13/13 e2e pass against the running stack including a deliberately-broken load-balancer container (overall correctly reads as <code>down</code>, single-service down doesn't break the response, total wall clock stays inside the 5 s gate). <code>§25.9</code> slice catalog gains row 5 ("Consolidated status (OUI.9)") with status <code>pill-done</code> + manifest pointer.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7p — 2026-06-03 — policy-manager: strict POST body schema (#152 fix)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -6894,6 +6927,12 @@ flowchart TD
       <td>—</td>
       <td>pending</td>
       <td><span class="pill pill-upcoming">Future — low-risk follow-up (#131)</span></td>
+    </tr>
+    <tr>
+      <td><strong>Consolidated status</strong> (OUI.9)</td>
+      <td>Audit-log slice pattern</td>
+      <td><code>docs/features/status.md</code></td>
+      <td><span class="pill pill-done">Shipped 2026-06-03 (slice #5; #149; v1.0.7q)</span></td>
     </tr>
     <tr>
       <td colspan="4" style="opacity:.7;font-style:italic;">SaaS-track slices — deferred to Phase 2 per §25 <em>Phase scope</em> callout: OUI.7 Auth (#125), multi-tenancy plumbing (#129), tenant API keys + RBAC (#132), rate limiting + quotas (#135).</td>
