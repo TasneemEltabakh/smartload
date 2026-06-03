@@ -5590,6 +5590,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7s — 2026-06-04 — demo-ui split into four pages + Benchmark page surfaces #148 runs</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong><code>tools/demo-ui/web/</code> split from a single 777-line <code>Demo.tsx</code> into four routed pages</strong></td>
+      <td>Adds <code>react-router-dom</code> + a sidebar-shell <code>Layout.tsx</code> + four pages: <code>Overview</code> (decision card + weights chart + RL rankings chart + live metrics + training eval table), <code>Controls</code> (algorithm picker + scenarios + manual degrade/recover/safe-mode/traffic/chaos/reset), <code>Feed</code> (full-page SSE event stream), <code>Benchmark</code> (new — see next row). Shared state hoisted into <code>state/DemoStateContext.tsx</code>: the DemoState polling, DemoMetrics polling, SSE subscription, toast notifications, and the <code>action()</code> helper. Helpers extracted to <code>utils.ts</code> (palette constants, <code>shortName</code>, <code>modeLabel</code>, <code>decisionBasis</code>, <code>feedSummary</code>, etc.). The old <code>Demo.tsx</code> is deleted. The BFF SPA fallback already serves <code>index.html</code> for any unknown path (the audit-log slice's static_url_path fix carried through), so deep-links like <code>/benchmark</code> hard-refresh cleanly.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>New Benchmark page surfacing v1.0.7r baseline-vs-smartload runs</strong></td>
+      <td>New <code>pages/Benchmark.tsx</code> reads <code>GET /api/ui/demo/benchmark/runs</code>, lists historical runs (newest first, with run-type pill — full vs SHORT — and per-run plot completeness count), and on selection renders the run's <code>SUMMARY.md</code> + the six plot images inline. Plots are served by the BFF as direct <code>&lt;img src&gt;</code> URLs (<code>GET /api/ui/demo/benchmark/runs/&lt;ts&gt;/plot/&lt;name&gt;</code>) so the SPA doesn't load PNG bytes through JS. Read-only — operators run <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code> from the repo root and refresh the page; a "trigger a new run from the UI" button would need docker-socket access to the demo-ui container and is deliberately out of scope.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>BFF surface area</strong></td>
+      <td>Four new routes on the demo-ui BFF (<code>tools/demo-ui/bff/app.py</code>): <code>GET /api/ui/demo/benchmark/runs</code> (list runs + manifest knobs + plot completeness), <code>GET .../runs/&lt;ts&gt;/manifest</code> (single MANIFEST.json), <code>GET .../runs/&lt;ts&gt;/summary</code> (SUMMARY.md), <code>GET .../runs/&lt;ts&gt;/plot/&lt;name&gt;</code> (one of six PNG plots by short key). Path-traversal-safe: <code>_safe_run_dir()</code> rejects any timestamp containing <code>..</code>, path separators, or absolute paths, and verifies the resolved directory lives under <code>BENCHMARK_RESULTS_DIR</code>. Reads SUMMARY.md with <code>errors="replace"</code> to tolerate older runs whose <code>plot_results.py</code> wrote with the host's default encoding (cp1252 on Windows) before the UTF-8 fix landed.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Volume mount + plot_results.py UTF-8 fix</strong></td>
+      <td>Compose <code>demo-ui</code> service gets <code>./experiments/baseline-vs-smartload/results:/benchmark-results:ro</code> + <code>BENCHMARK_RESULTS_DIR=/benchmark-results</code> env var; the BFF resolves results paths under that root. <code>plot_results.py</code> now writes <code>SUMMARY.md</code> with <code>encoding="utf-8"</code> explicitly so the on-disk artefact is locale-independent.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Live validation</strong></td>
+      <td>Rebuilt demo-ui (<code>docker compose up -d --build demo-ui</code>). All four routes return <code>200</code> via SPA fallback. The SHORT-validation run from v1.0.7r (<code>results/20260603T194102Z/</code>) appears in the run list with full manifest, 6/6 plots, both sides present. PNG fetch returns a valid image (verified by the PNG magic bytes <code>\x89PNG\r\n</code>). SUMMARY.md reads cleanly (with replacement chars for the pre-fix middle-dot bytes — new runs will be UTF-8 clean). <code>Demo.tsx</code> (777 lines) replaced by four smaller pages averaging ~200 lines each + a 130-line shell + a 130-line context — total LOC is roughly equivalent but distributed across responsibility boundaries.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Architectural framing reaffirmed</strong></td>
+      <td>Demo-ui stays under <code>tools/demo-ui/</code> — it is a delivery artefact for demos, not a production runtime service. SOT §25.10 row stays consistent with v1.0.7r's "Delivery artefact" framing. The Benchmark page is the demo-ui's first feature that consumes the harness from #148 rather than just orchestrating the live stack; this is the natural extension point for future "show stakeholders what the system did" panels.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7r — 2026-06-03 — Baseline NGINX RR vs SmartLoad benchmark harness (#148)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -7041,7 +7078,7 @@ flowchart TD
       <td><strong>Demo UI</strong> — developer end-to-end validation harness (scenario injection, chaos, live event stream)</td>
       <td>Delivery artefact — Flask BFF on <code>:8091</code> + Vite/React SPA under <code>tools/demo-ui/</code>; not a feature slice and explicitly separate from <code>operator-ui</code> (which is the operator's day-to-day control surface)</td>
       <td>PR #151</td>
-      <td>Shipped 2026-05-28 (PR #151). Compose service <code>demo-ui</code> builds <code>./tools/demo-ui</code>; BFF mounts the canonical OpenAPI spec read-only and proxies to anomaly-detector, rl-engine, lb-sidecar, traffic-simulator; React SPA exposes scenario / chaos controls and a SSE-backed live event feed. Used by developers to validate system behaviour end-to-end without going through operator-ui.</td>
+      <td>Shipped 2026-05-28 (PR #151). Compose service <code>demo-ui</code> builds <code>./tools/demo-ui</code>; BFF mounts the canonical OpenAPI spec read-only and proxies to anomaly-detector, rl-engine, lb-sidecar, traffic-simulator; React SPA exposes scenario / chaos controls and a SSE-backed live event feed. Used by developers to validate system behaviour end-to-end without going through operator-ui. <strong>Refactored v1.0.7s (2026-06-04):</strong> single 777-line <code>Demo.tsx</code> split into four routed pages (Overview / Controls / Live Feed / Benchmark) under <code>react-router-dom</code>, with shared polling + SSE + toast hoisted into <code>state/DemoStateContext.tsx</code>. New Benchmark page surfaces the v1.0.7r baseline-vs-smartload run outputs (list + SUMMARY.md + six plots) read-only over a <code>:ro</code> bind-mount of <code>experiments/baseline-vs-smartload/results/</code>.</td>
     </tr>
   </tbody>
 </table>
