@@ -1,0 +1,299 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Anomaly-detector view. The state timeline classifies each backend per time bucket using the same threshold engine the anomaly-detector ships with (latency > 200 ms => degraded; error_rate > 5% => unhealthy). The threshold lines on the latency and error panels show how close each backend is to flipping. The leaderboard tallies time spent in each state over the visible window; the backend_health table panel shows the anomaly-detector's official verdicts straight from TimescaleDB.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Per-backend state derived from raw metrics in the same way the threshold engine does. Green = healthy (within both thresholds), yellow = degraded (latency > 200 ms), red = unhealthy (error_rate > 5%). The strict-threshold view here may show 'healthy' while the anomaly-detector publishes 'degraded' via Redis — the detector uses STDDEV / MAX features in addition to mean. This panel is the raw-metric reference view; the table below carries the detector's actual verdicts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "fillOpacity": 80,
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "healthy":   {"text": "HEALTHY",   "color": "green",  "index": 0},
+                "degraded":  {"text": "DEGRADED",  "color": "yellow", "index": 1},
+                "unhealthy": {"text": "UNHEALTHY", "color": "red",    "index": 2}
+              }
+            }
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "transparent", "value": null}]}
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "alignValue": "left",
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "title": "Backend health timeline (derived from threshold engine rules)",
+      "type": "state-timeline",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  instance AS metric,\n  CASE\n    WHEN AVG(value) FILTER (WHERE metric_name = 'error_rate')         > 0.05  THEN 'unhealthy'\n    WHEN AVG(value) FILTER (WHERE metric_name = 'request_latency_ms') > 200   THEN 'degraded'\n    ELSE 'healthy'\n  END AS state\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'\nGROUP BY 1, 2\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "p95 latency per backend with the 200 ms DEGRADED threshold drawn as a red line. When a series crosses the line the threshold engine flips that backend to DEGRADED; the Redis-published verdict typically arrives within one anomaly-detector poll cycle (~10 s).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "ms",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 200}
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 2,
+      "options": {
+        "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "title": "p95 latency vs DEGRADED threshold",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  instance AS metric,\n  percentile_cont(0.95) WITHIN GROUP (ORDER BY value) AS value\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'\n  AND metric_name = 'request_latency_ms'\nGROUP BY 1, 2\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Error rate per backend with the 5% UNHEALTHY line. The threshold engine publishes UNHEALTHY (not DEGRADED) when error_rate crosses this, and the lb-sidecar excludes the backend from the upstream pool on the next anomaly publish.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "error rate",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 0.05}
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 3,
+      "options": {
+        "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "title": "Error rate vs UNHEALTHY threshold",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  instance AS metric,\n  AVG(value) AS value\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'\n  AND metric_name = 'error_rate'\nGROUP BY 1, 2\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Time each backend spent in each derived state across the visible window. 'degraded_s' and 'unhealthy_s' are the durations from SOT §17.2 line 3287. The bucket width is held at 30 s in SQL so the column units are seconds regardless of the Grafana $__interval.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "degraded_s"},
+            "properties": [
+              {"id": "unit", "value": "s"},
+              {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+              {"id": "color", "value": {"mode": "continuous-YlOr"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "unhealthy_s"},
+            "properties": [
+              {"id": "unit", "value": "s"},
+              {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+              {"id": "color", "value": {"mode": "continuous-RdYlGr", "fixedColor": "red"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "healthy_s"},
+            "properties": [{"id": "unit", "value": "s"}]
+          }
+        ]
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 16},
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "unhealthy_s"}]
+      },
+      "title": "Time-in-state per backend (visible window)",
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH buckets AS (\n  SELECT\n    time_bucket('30 seconds', time) AS bucket,\n    instance,\n    CASE\n      WHEN AVG(value) FILTER (WHERE metric_name = 'error_rate')         > 0.05 THEN 'unhealthy'\n      WHEN AVG(value) FILTER (WHERE metric_name = 'request_latency_ms') > 200  THEN 'degraded'\n      ELSE 'healthy'\n    END AS state\n  FROM metrics\n  WHERE $__timeFilter(time)\n    AND service = 'load-balancer'\n  GROUP BY 1, 2\n)\nSELECT instance,\n       COUNT(*) FILTER (WHERE state = 'healthy')   * 30 AS healthy_s,\n       COUNT(*) FILTER (WHERE state = 'degraded')  * 30 AS degraded_s,\n       COUNT(*) FILTER (WHERE state = 'unhealthy') * 30 AS unhealthy_s\nFROM buckets\nGROUP BY instance\nORDER BY unhealthy_s DESC, degraded_s DESC",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Anomaly-detector's official verdicts as persisted to the backend_health hypertable. This is what the sidecar's startup-hydration path (v1.0.7b G2) reads. If this table is empty for the visible window, the detector isn't persisting — the live Redis stream is still working but exclusions won't survive a sidecar restart.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "status"},
+            "properties": [
+              {"id": "mappings", "value": [{"type": "value", "options": {"healthy": {"color": "green"}, "degraded": {"color": "yellow"}, "unhealthy": {"color": "red"}}}]},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "score"},
+            "properties": [{"id": "decimals", "value": 3}]
+          }
+        ]
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 16},
+      "id": 5,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "time"}]
+      },
+      "title": "Latest backend_health verdicts (last 25)",
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time, backend_id, status, score\nFROM backend_health\nORDER BY time DESC\nLIMIT 25",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["smartload", "anomaly"],
+  "templating": {"list": []},
+  "time": {"from": "now-30m", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "SmartLoad — Anomaly",
+  "uid": "smartload-anomaly",
+  "version": 1,
+  "weekStart": ""
+}

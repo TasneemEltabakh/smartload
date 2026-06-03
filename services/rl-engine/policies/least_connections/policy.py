@@ -35,14 +35,20 @@ from policy_base import (      # noqa: E402
     RoutingAction,
     RoutingPolicy,
     _routing_fallback,
+    is_eligible,
 )
 
 
 class LeastConnectionsPolicy(RoutingPolicy):
-    """Ranks backends by ascending request load; lowest-loaded is preferred."""
+    """Ranks backends by ascending request load; lowest-loaded is preferred.
+
+    Unknown-health backends are excluded — picking the least-loaded among
+    backends with no signal would route to whichever happens to be silent,
+    which is the opposite of intent.
+    """
 
     def act(self, state: list[BackendState]) -> RoutingAction:
-        eligible = [b for b in state if b.health != "unhealthy"]
+        eligible = [b for b in state if is_eligible(b.health)]
         if not eligible:
             return _routing_fallback(state)
 

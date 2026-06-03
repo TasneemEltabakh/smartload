@@ -11,6 +11,7 @@ COPY forecasting/app.py          /app/app.py
 COPY forecasting/runloop.py      /app/runloop.py
 COPY forecasting/engine_base.py  /app/engine_base.py
 COPY forecasting/engines         /app/engines
+COPY forecasting/models          /app/models
 COPY shared                      /app/shared
 
 ENV PORT=8083

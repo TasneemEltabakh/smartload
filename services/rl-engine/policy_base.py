@@ -13,12 +13,30 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
+# ── health states ────────────────────────────────────────────────────────────
+# Four canonical values. "unknown" was added to stop classifying silent
+# backends (no telemetry in the window) as healthy. Eligibility is a policy
+# concern, not a metric concern: only healthy and degraded backends are
+# eligible to receive traffic; unhealthy and unknown are excluded.
+HEALTH_HEALTHY:   str = "healthy"
+HEALTH_DEGRADED:  str = "degraded"
+HEALTH_UNHEALTHY: str = "unhealthy"
+HEALTH_UNKNOWN:   str = "unknown"
+
+ELIGIBLE_HEALTH: frozenset[str] = frozenset({HEALTH_HEALTHY, HEALTH_DEGRADED})
+
+
+def is_eligible(health: str) -> bool:
+    """True iff a backend with this health state may receive routed traffic."""
+    return health in ELIGIBLE_HEALTH
+
+
 @dataclass
 class BackendState:
     backend_id: str
     latency_ms: float
     queue_depth: int
-    health: str  # "healthy" | "degraded" | "unhealthy"
+    health: str  # one of HEALTH_HEALTHY | HEALTH_DEGRADED | HEALTH_UNHEALTHY | HEALTH_UNKNOWN
 
 
 @dataclass
@@ -40,8 +58,16 @@ class RoutingPolicy(ABC):
     def act(self, state: list[BackendState]) -> RoutingAction:
         """Rank backends for the next routing window."""
 
-    def reload(self) -> None:
-        """Optional hook called when operating-mode policy changes."""
+    def reload(self, **kwargs) -> None:
+        """Cheap runtime-parameter update without reconstruction.
+
+        Called when smartload.policy publishes a new operating policy.
+        Default: no-op (suitable for stateless policies like random_shadow).
+        Policies that consume policy-derived kwargs (operating_mode,
+        confidence_threshold, exploration_rate) override this to update
+        their mutable runtime config in place — avoiding an artifact reload
+        from disk on every policy republish.
+        """
 
 
 def _routing_fallback(state: list[BackendState]) -> RoutingAction:

@@ -35,3 +35,7 @@ pytest tests/e2e/policy-management/
 ## Current suites
 
 - `policy-management/` — read, update, audit cycle of the operating policy
+- `audit-log/` — unified viewer over policy + scaling audit streams
+- `manual-actions/` — scale-to-N + isolate-backend operator surfaces
+- `lb-sidecar/` — log-based OTel shipping from NGINX
+- `live-engines/` — `/api/v1/engine/state` per AI service + BFF snapshot + SSE stream + SDK `engines.{snapshot,state,subscribe}` + channel filters

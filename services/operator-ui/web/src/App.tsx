@@ -11,6 +11,7 @@ import {
 
 import ActionsPage from "./pages/Actions";
 import AuditPage from "./pages/Audit";
+import EngineDetailPage from "./pages/EngineDetail";
 import HomePage from "./pages/Home";
 import LiveEnginesPage from "./pages/LiveEngines";
 import PolicyPage from "./pages/Policy";
@@ -90,6 +91,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/engines" element={<LiveEnginesPage />} />
+          <Route path="/engines/:service" element={<EngineDetailPage />} />
           <Route path="/policy" element={<PolicyPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/actions" element={<ActionsPage />} />

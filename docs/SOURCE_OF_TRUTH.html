@@ -2131,7 +2131,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">N1.1 + #138</span></div>
     <h4>Anomaly Detector</h4>
     <div class="role">Decision · Port 8082 · Nada (model) · Tasneem (wiring)</div>
-    <p class="small">Run loop wired via <code>engine_base</code> ABC + plugin folders. Threshold baseline ships; Isolation Forest plugin drops in when the trained <code>.pkl</code> arrives (#101). Off by default — flip <code>ANOMALY_RUNLOOP_ENABLED=true</code>.</p>
+    <p class="small">Run loop wired via <code>engine_base</code> ABC + plugin folders. Threshold baseline ships; Isolation Forest plugin drops in when the trained <code>.pkl</code> arrives (#101). Enabled by default since v1.0.7g (<code>ANOMALY_RUNLOOP_ENABLED=true</code> in <code>docker-compose.yml</code>); revert with <code>=false</code> for debugging.</p>
     <div class="deeplink"><a href="#mod-anomaly">→ Deep dive</a></div>
   </article>
 
@@ -2139,7 +2139,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">N1.2 + #138</span></div>
     <h4>Forecasting Engine</h4>
     <div class="role">Decision · Port 8083 · Nada (model) · Tasneem (wiring)</div>
-    <p class="small">Run loop wired via <code>engine_base</code> ABC + plugin folders. Moving-average baseline ships; ARIMA plugin drops in when the revised model handoff arrives (#102, see PR #144 review). Off by default — flip <code>FORECAST_RUNLOOP_ENABLED=true</code>.</p>
+    <p class="small">Run loop wired via <code>engine_base</code> ABC + plugin folders. Moving-average baseline ships; ARIMA plugin drops in when the revised model handoff arrives (#102, see PR #144 review). Enabled by default since v1.0.7g (<code>FORECAST_RUNLOOP_ENABLED=true</code> in <code>docker-compose.yml</code>); revert with <code>=false</code> for debugging.</p>
     <div class="deeplink"><a href="#mod-forecasting">→ Deep dive</a></div>
   </article>
 
@@ -2147,7 +2147,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">N1.3 + #138</span></div>
     <h4>Reinforcement Learning Engine</h4>
     <div class="role">Decision · Port 8084 · Nada (model) · Tasneem (wiring)</div>
-    <p class="small">Run loop wired via <code>policy_base</code> ABC + plugin folders. Random-shadow baseline ships; PPO plugin drops in when the trained <code>policy.zip</code> arrives (#27). Off by default — flip <code>RL_RUNLOOP_ENABLED=true</code>. <code>RL_MODE</code> separately pins the published <code>mode</code> field to shadow until operators opt into active routing.</p>
+    <p class="small">Run loop wired via <code>policy_base</code> ABC + plugin folders. Random-shadow baseline ships; PPO plugin drops in when the trained <code>policy.zip</code> arrives (#27). Enabled by default since v1.0.7g (<code>RL_RUNLOOP_ENABLED=true</code> in <code>docker-compose.yml</code>); revert with <code>=false</code> for debugging. <code>RL_MODE=shadow</code> (default) is the separate routing-safety pin — the published <code>mode</code> stays shadow until an operator explicitly sets <code>RL_MODE=active</code>, so PPO publishes inference without actuating until then.</p>
     <div class="deeplink"><a href="#mod-rl">→ Deep dive</a></div>
   </article>
 
@@ -2841,7 +2841,7 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient for prototype scale. Replication strategy if needed: sticky-by-backend partitioning (each replica owns a slice of backends).</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle metrics: cycle duration, count of DEGRADED, count of UNHEALTHY, model F1 (offline measurement). <code>/health</code> verifies DB + Redis.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Detection latency target ≤ 2 monitoring intervals (~10 s). KPI: F1 &gt; 0.80 on test split.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update so policy-derived params (e.g. <code>anomaly_latency_multiplier</code>) take effect within one cycle. Threshold baseline ships and is wired to <code>ANOMALY_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop pivots rows into <code>BackendFeatures</code>, scores each backend, and publishes an <code>AnomalyEvent</code> envelope. Falls back to threshold automatically if the requested engine raises on load. Off by default — <code>ANOMALY_RUNLOOP_ENABLED=false</code> keeps the Phase-0 stub the default. Unit tests live at <code>tests/unit/anomaly-detector/test_runloop.py</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update so policy-derived params (e.g. <code>anomaly_latency_multiplier</code>) take effect within one cycle. Threshold baseline ships and is wired to <code>ANOMALY_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop pivots rows into <code>BackendFeatures</code>, scores each backend, and publishes an <code>AnomalyEvent</code> envelope. Falls back to threshold automatically if the requested engine raises on load. Enabled by default since v1.0.7g (<code>ANOMALY_RUNLOOP_ENABLED=true</code>); revert with <code>=false</code> in <code>.env</code> for debugging. Unit tests live at <code>tests/unit/anomaly-detector/test_runloop.py</code>.</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Isolation Forest plugin (#101) implemented at <code>engines/isolation_forest/engine.py</code> with trained <code>.pkl</code> at <code>services/anomaly-detector/models/</code>. Auto-recovery cool-down before clearing UNHEALTHY status. Own-metrics scraped by Prometheus (<code>anomaly_detector_inferences_total</code>, <code>_inference_errors_total</code>, <code>_inference_latency_seconds</code>, <code>_engine_loaded</code>).</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
@@ -2907,7 +2907,7 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica. Inference is constant-time after model load.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle: predicted vs actual (lag join 5 min later). MAPE rolling. Cycle duration. <code>/health</code>.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">No client-controlled inputs. KPI: MAPE &lt; 20% on 5 min horizon.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138 round 2). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update (the <code>safe_mode</code> field gates publishing). Moving-average baseline ships and is wired to <code>FORECAST_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop converts rows into a <code>HistoryWindow</code>, runs <code>engine.forecast()</code>, and publishes a <code>ForecastResult</code> envelope. Falls back to moving-average automatically if the requested engine raises on load. Off by default — <code>FORECAST_RUNLOOP_ENABLED=false</code> keeps the Phase-0 stub the default. <code>FORECAST_QUERY.request_rate</code> is normalised to per-second by dividing the 1-minute bucket sum by 60 — keeps the column's units aligned with the per-second <code>predicted_rps</code> the autoscaler consumes for capacity math, and is pinned by <code>tests/integration/test_s2_baseline.py::TestCanonicalSQLParameterization::test_forecast_query_normalises_to_per_second_rate</code>. Unit tests live at <code>tests/unit/forecasting/test_runloop.py</code>.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138 round 2). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update (the <code>safe_mode</code> field gates publishing). Moving-average baseline ships and is wired to <code>FORECAST_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop converts rows into a <code>HistoryWindow</code>, runs <code>engine.forecast()</code>, and publishes a <code>ForecastResult</code> envelope. Falls back to moving-average automatically if the requested engine raises on load. Enabled by default since v1.0.7g (<code>FORECAST_RUNLOOP_ENABLED=true</code>); revert with <code>=false</code> in <code>.env</code> for debugging. <strong>ARIMA engine shipped v1.0.7i</strong>: <code>engines/arima/engine.py</code> + <code>models/arima_model.pkl</code> (ARIMA(3,0,1), 36.9&nbsp;MB, test MAPE 25.0% on the Alibaba trace — +22.77% over the moving-average baseline). SOT KPI of &lt;20% MAPE not yet met, so <code>moving_average</code> remains the default; operators activate ARIMA via <code>FORECAST_ENGINE=arima</code> in <code>.env</code>. Verified live: <code>engine.loaded=arima, ready=true, predicted=30.84&nbsp;rps, CI=[16.11, 45.57]</code> (statsmodels <code>conf_int(alpha=0.05)</code>). <code>FORECAST_QUERY.request_rate</code> is normalised to per-second by dividing the 1-minute bucket sum by 60 — keeps the column's units aligned with the per-second <code>predicted_rps</code> the autoscaler consumes for capacity math, and is pinned by <code>tests/integration/test_s2_baseline.py::TestCanonicalSQLParameterization::test_forecast_query_normalises_to_per_second_rate</code>. Unit tests live at <code>tests/unit/forecasting/test_runloop.py</code>.</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">ARIMA plugin (#102) implemented at <code>engines/arima/engine.py</code> with trained <code>.pkl</code> at <code>services/forecasting/models/</code>. 5 min horizon for fast scale-out, 1 h horizon for capacity planning. Held-out evaluation reports MAE / MAPE &lt; 20%. Own-metrics scraped by Prometheus.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
@@ -2933,6 +2933,9 @@ cur.execute(ANOMALY_QUERY,
 <!-- ====== 8.7 RL ====== -->
 <article id="mod-rl">
 <h2>8.7 Reinforcement Learning Engine <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Phase-1 wired (flagged off)</span> <span class="badge badge-active">#138 + N1.3</span></h2>
+
+<div class="amendment-box" style="border-left: 3px solid #c47; padding: 0.5em 1em; margin: 0.5em 0; background: #faf3f5;">
+<strong>Amendment (v1.0.7 — 2026-05-28):</strong> The trained policy is now framed as a <strong>contextual bandit</strong> (state → chosen backend) optimised with MaskablePPO, not an MDP-trained RL agent — the offline simulator replays trace windows independently of the agent's action. Canonical <code>operating_mode</code> set is now <code>{shadow, hybrid}</code> (<code>learning</code> retained as a backwards-compat alias for <code>hybrid</code>). <code>PPOPolicy.reload(**kwargs)</code> is now a real in-place update hook (no torch reload on policy publishes). Serving uses argmax-dominant weighting (chosen backend gets 0.7, remainder split evenly). New <code>HEALTH_UNKNOWN</code> state for silent backends (excluded from routing). See §22 v1.0.7 row for the full delta and the RL review changelog at <code>G:/smartload-changelogs/</code> for the engineering rationale.</div>
 <h4>Purpose</h4>
 <p>The headline AI component. Learns adaptive routing policies that outperform static algorithms by optimizing long-term latency and load distribution.</p>
 <h4>Phase staging</h4>
@@ -2942,7 +2945,7 @@ cur.execute(ANOMALY_QUERY,
     <tr><td>1A (S2)</td><td>N1.3 shadow scaffold</td><td>Random policy; publishes <code>RoutingRecommendation{ mode="shadow" }</code>. <em>Validates the full pipeline before any model exists.</em></td></tr>
     <tr><td>2 (S4)</td><td>N2.3 — Gym env</td><td><code>SmartLoadEnv</code> in <code>services/rl-engine/training/env.py</code> (training-only; excluded from runtime Docker image): state=[latency, queue_depth, health_flag] per backend; action=discrete backend selection; reward = <code>−P95_latency − λ · load_imbalance</code> (reward uses <code>next_state</code> latency for correct credit assignment); episode = workload trace. <code>obs_builder.py</code> at the service root is the shared train/serve conversion layer.</td></tr>
     <tr><td>2 (S4)</td><td>N2.4 — PPO training <span class="badge badge-active">CRITICAL PATH</span></td><td>Stable-Baselines3 PPO; ~7 days; reward curves until convergence; saved to <code>services/rl-engine/models/policy.zip</code>. Canary check (50k steps) gates the full budget. Acceptance: PPO beats round_robin AND least_connections on p95 latency and SLO violation rate.</td></tr>
-    <tr><td>2 (S4)</td><td>N2.5 — active mode</td><td>Loads <code>policy.zip</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>} — shadow runs full inference non-actuating; hybrid/learning emit <code>mode=active</code>. T2.1 sidecar consumes scores.</td></tr>
+    <tr><td>2 (S4)</td><td>N2.5 — active mode</td><td>Loads <code>policy.zip</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>} (legacy <code>learning</code> alias maps to <code>hybrid</code>) — shadow runs full inference non-actuating; hybrid emits <code>mode=active</code>. T2.1 sidecar consumes scores. v1.0.7 reframe: serving uses argmax-dominant weighting (chosen backend 0.7, remainder split evenly) instead of softmax-of-logits.</td></tr>
   </tbody>
 </table>
 <h4>Inputs / Outputs</h4>
@@ -2982,7 +2985,7 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Single replica is sufficient. Inference is bounded by model size, not by request rate.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle: chosen action (mode, top-N rankings), reward proxy (next-cycle latency vs RL prediction), exploration rate. Reward curve in Grafana during training/eval.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Action space pre-filtered through anomaly. <code>safe_mode</code> kill-switch. No online learning in production prototype. Trained model is read-only at runtime.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>policy_base</code> ABC and <code>select_policy()</code> factory (#138 round 3 — closes the engine-wrapper cutover). Subscribes to <code>smartload.policy</code> and rebuilds the policy on each update so policy-derived params (<code>rl_exploration_rate</code>, <code>rl_confidence_threshold</code>) take effect within one cycle (kwargs are ignored gracefully by baselines that don't accept them). Queries <code>RL_STATE_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, builds <code>list[BackendState]</code> via <code>runloop.build_state_from_rows</code> with locally-classified health (matching the threshold engine's thresholds), calls <code>policy.act()</code>, and publishes a <code>RoutingRecommendation</code> envelope. The published <code>mode</code> field is composed by <code>effective_mode()</code>: <code>safe_mode=true</code> forces shadow; <code>RL_MODE != "active"</code> forces shadow; only when both <code>RL_MODE=active</code> and the policy itself returns active is the LB allowed to apply weights. Falls back to <code>random_shadow</code> automatically if the requested policy fails to load (raising <code>policy_ready=false</code> on <code>/health</code>). Off by default — <code>RL_RUNLOOP_ENABLED=false</code> keeps the Phase-0 stub the default. Unit tests live at <code>tests/unit/rl-engine/test_runloop.py</code> (26 tests covering the mode-composition truth table, health classification, state pivot, and policy bootstrap fallback).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>policy_base</code> ABC and <code>select_policy()</code> factory (#138 round 3 — closes the engine-wrapper cutover). Subscribes to <code>smartload.policy</code> and rebuilds the policy on each update so policy-derived params (<code>rl_exploration_rate</code>, <code>rl_confidence_threshold</code>) take effect within one cycle (kwargs are ignored gracefully by baselines that don't accept them). Queries <code>RL_STATE_QUERY</code> on <code>POLL_INTERVAL_SECONDS</code>, builds <code>list[BackendState]</code> via <code>runloop.build_state_from_rows</code> with locally-classified health (matching the threshold engine's thresholds), calls <code>policy.act()</code>, and publishes a <code>RoutingRecommendation</code> envelope. The published <code>mode</code> field is composed by <code>effective_mode()</code>: <code>safe_mode=true</code> forces shadow; <code>RL_MODE != "active"</code> forces shadow; only when both <code>RL_MODE=active</code> and the policy itself returns active is the LB allowed to apply weights. Falls back to <code>random_shadow</code> automatically if the requested policy fails to load (raising <code>policy_ready=false</code> on <code>/health</code>). Enabled by default since v1.0.7g (<code>RL_RUNLOOP_ENABLED=true</code>); revert with <code>=false</code> in <code>.env</code> for debugging. <code>RL_MODE=shadow</code> (default) remains the routing-safety pin even with the run loop on. Unit tests live at <code>tests/unit/rl-engine/test_runloop.py</code> (26 tests covering the mode-composition truth table, health classification, state pivot, and policy bootstrap fallback).</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">PPO trained offline (~7 days) on <code>SmartLoadEnv</code> (#27, #29). The trained <code>policy.zip</code> drops into <code>services/rl-engine/models/</code>, <code>policies/ppo/policy.py</code> implements the <code>RoutingPolicy</code> contract, and operators flip <code>RL_POLICY=ppo</code> + <code>RL_MODE=active</code>. T2.1 sidecar consumes the weighted recommendations.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
@@ -3288,7 +3291,7 @@ class RoutingRecommendation:
   </tbody>
 </table>
 
-<h4>Operator UI — page status (4 of 6 shipped)</h4>
+<h4>Operator UI — page status (5 of 6 shipped)</h4>
 <table>
   <thead><tr><th>Page</th><th>Purpose</th><th>Status · slice</th></tr></thead>
   <tbody>
@@ -3296,7 +3299,7 @@ class RoutingRecommendation:
     <tr><td>Policy</td><td>Read current policy · edit JSON · side-by-side diff preview · commit with audit trail. Auto-refreshes every 10 s</td><td><span class="pill pill-done">Shipped — slice #1 / OUI.2 (#120)</span></td></tr>
     <tr><td>Audit</td><td>Unified viewer over <code>policy_changes</code> + <code>scaling_events</code> with kind / actor / action / limit filters and auto-refresh. Two upstream services normalised through one BFF origin</td><td><span class="pill pill-done">Shipped — slice #2 / OUI.4 (#122)</span></td></tr>
     <tr><td>Actions</td><td>Scale-to-N (autoscaler) + isolate backend (anomaly-detector) + disabled force-weights placeholder. Confirmation modal per action with state-change preview. Results feed of latest 10 actions</td><td><span class="pill pill-done">Shipped — slice #3 / OUI.5 (#123)</span></td></tr>
-    <tr><td>Live Engines</td><td>Per-engine card + SSE event feed colour-coded by channel; BFF holds an in-process per-channel deque (#121, OUI.3)</td><td><span class="pill pill-active">In progress — session 1 shipped 2026-05-24 (backend + UI demoable); session 2 closes SDK + e2e + scenario + manifest</span></td></tr>
+    <tr><td>Live Engines</td><td>Per-engine card + SSE event feed colour-coded by channel; BFF holds an in-process per-channel deque (#121, OUI.3)</td><td><span class="pill pill-done">Shipped — OUI.3 (#121, v1.0.7n closes e2e)</span></td></tr>
     <tr><td>Logs</td><td>Per-service tail viewer (optional / drop if time tightens)</td><td><span class="pill pill-upcoming">Future — #124 (OUI.6) low</span></td></tr>
     <tr><td>Embedded metrics</td><td>Grafana panels embedded in operator UI (no Grafana context switch)</td><td><span class="pill pill-upcoming">Future — #131 (OUI.8)</span></td></tr>
     <tr><td colspan="3" style="opacity:.7;font-style:italic;">Auth (OUI.7, #125) — deferred to Phase 2 SaaS adaptation per §25 <em>Phase scope</em> callout. Actor identity is currently a free-text input on the Actions page.</td></tr>
@@ -3336,7 +3339,7 @@ class RoutingRecommendation:
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
         <li>Four remaining Grafana dashboards (Anomaly, Forecast, RL, Scaling) — T2.2.</li>
-        <li>Live Engines acceptance close-out — SDK methods (<code>engines.state()</code> + <code>engines.stream()</code>), e2e suite at <code>tests/e2e/live-engines/</code>, scenario at <code>examples/scenarios/live-engines/</code>, feature manifest at <code>docs/features/live-engines.md</code>; #121 OUI.3 (backend + UI shipped 2026-05-24 in commits <code>495c939</code>/<code>aee5839</code>/<code>ecb147f</code>/<code>eb8e314</code>; remaining layers tracked under the original issue).</li>
+        <li><s>Live Engines acceptance close-out — SDK methods (<code>engines.state()</code> + <code>engines.stream()</code>), e2e suite at <code>tests/e2e/live-engines/</code>, scenario at <code>examples/scenarios/live-engines/</code>, feature manifest at <code>docs/features/live-engines.md</code>; #121 OUI.3</s> <strong>— shipped 2026-06-03 in v1.0.7n; e2e suite (17 tests, 56 s) was the final close-out box.</strong></li>
         <li>Embedded metrics dashboards — #131 OUI.8 (standalone follow-up).</li>
         <li>Logs page — #124 OUI.6 (low priority, optional).</li>
         <li>"Force route weights" form on the Actions page — depends on T2.1 sidecar (#82); placeholder disabled today with a tooltip.</li>
@@ -4835,7 +4838,7 @@ flowchart LR
     <tr><td><strong>Test backend</strong></td><td>Node.js Express</td><td><span class="pill pill-done">Implemented</span></td><td>Multiple instances scaled via compose.</td></tr>
     <tr><td><strong>AI services runtime</strong></td><td>Python 3.11-slim + Flask 3.0.3</td><td><span class="pill pill-done">Implemented</span></td><td>Per-service Dockerfile; <code>psycopg2-binary 2.9.9</code> + <code>redis 5.0.4</code>.</td></tr>
     <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td>Threshold rule first; LSTM-AE as backup if F1 &lt; 0.80.</td></tr>
-    <tr><td><strong>Forecasting model</strong></td><td>Prophet or ARIMA (statsmodels)</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td>Moving average first; LSTM optional.</td></tr>
+    <tr><td><strong>Forecasting model</strong></td><td>ARIMA (statsmodels)</td><td><span class="pill pill-done">v1.0.7i (N2.2) — ships behind <code>FORECAST_ENGINE=arima</code> until MAPE&lt;20%</span></td><td>Moving average remains the default; ARIMA(3,0,1) ships with 25.0% test MAPE (+22.77% vs baseline). Tightening pass needed to cross the SOT KPI.</td></tr>
     <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-done">N2.3–N2.5 code complete</span></td><td>Custom Gym env <code>SmartLoadEnv</code> + <code>obs_builder.py</code> (shared train/serve); <code>PPOPolicy</code> serving plugin; <code>MaskablePPO</code> training script with 50k-step canary gate; <code>round_robin</code> + <code>least_connections</code> baselines; reproducible eval harness (<code>eval_seed_bank.json</code>). DQN fallback (<code>train_dqn.py</code>) ready. <strong>Pending:</strong> ~7-day training run to generate <code>policy.zip</code>.</td></tr>
     <tr><td><strong>Metrics DB</strong></td><td>TimescaleDB (PostgreSQL 16)</td><td><span class="pill pill-done">Implemented</span></td><td>Hypertables + continuous aggregates planned in V1 redesign (draft).</td></tr>
     <tr><td><strong>Control bus</strong></td><td>Redis 7-alpine Pub/Sub</td><td><span class="pill pill-done">Implemented</span></td><td>In-memory only; <code>allkeys-lru</code>.</td></tr>
@@ -5140,9 +5143,9 @@ flowchart LR
   </thead>
   <tbody>
     <tr><td><strong>S1</strong></td><td>Feb 1 – Apr 24</td><td>Phase 0</td><td>Wire all 13 services to Redis + TimescaleDB; full docker-compose up; 33 connectivity tests passing</td><td><span class="pill pill-done">DONE</span></td></tr>
-    <tr><td><strong>S2</strong></td><td>Apr 28 – May 9</td><td>Phase 1A</td><td>Real telemetry flow; threshold AI services; shadow RL; dataset download</td><td><span class="pill pill-active">ACTIVE</span></td></tr>
-    <tr><td><strong>S3</strong></td><td>May 10 – May 23</td><td>Phase 1B</td><td>Autoscaler skeleton; Policy Manager REST API; data loaders; EDA</td><td><span class="pill pill-next">NEXT</span></td></tr>
-    <tr><td><strong>S4</strong></td><td>May 24 – Jun 6</td><td>Phase 2</td><td>Real ML models; LB reads Redis signals; Grafana dashboards</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
+    <tr><td><strong>S2</strong></td><td>Apr 28 – May 9</td><td>Phase 1A</td><td>Real telemetry flow; threshold AI services; shadow RL; dataset download</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td><strong>S3</strong></td><td>May 10 – May 23</td><td>Phase 1B</td><td>Autoscaler skeleton (T1.3 ✓); Policy Manager REST API (T1.4 ✓). Data preprocessors (R1.1, R1.2), loader utilities (R1.4), and EDA carried to S4 — Rghda-owned, no Tasneem dependency to land them in S3.</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td><strong>S4</strong></td><td>May 24 – Jun 6</td><td>Phase 2</td><td>Real ML models; LB reads Redis signals; Grafana dashboards. <strong>Plus:</strong> R1.1 / R1.2 preprocessors + R1.4 data loaders + EDA carried from S3 (Rghda).</td><td><span class="pill pill-active">ACTIVE</span></td></tr>
     <tr><td><strong>S5</strong></td><td>Jun 7 – Jun 20</td><td>Phase 3A</td><td>Integration tests (3 scenarios); unit tests; performance benchmarks</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
     <tr><td><strong>S6</strong></td><td>Jun 21 – Jun 30</td><td>Phase 3B</td><td>Final report results; documentation; presentation polish</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
   </tbody>
@@ -5155,8 +5158,8 @@ flowchart LR
               (lb-otel-shipper sidecar — Approach B)
             └─► N1.1  Threshold anomaly detector    [S2, Nada]
                  └─► T1.3  Autoscaler skeleton      [S3, Tasneem]
-                      └─► R1.4  Data loaders        [S3, Rghda]    ← CRITICAL
-                           └─► N2.3  RL Gym env     [S4, Nada]
+                      └─► R1.4  Data loaders        [S4, Rghda]    ← CRITICAL (carried from S3; N2.3 landed by
+                           └─► N2.3  RL Gym env     [S4, Nada]        using TraceReplayDataset inline)
                                 └─► N2.4  PPO train [S4, Nada]     ← CRITICAL (longest)
                                      └─► N2.5  RL active mode      [S4, Nada]
                                           └─► T2.1  LB reads Redis [S4, Tasneem] ← CRITICAL
@@ -5194,7 +5197,7 @@ flowchart LR
   <thead><tr><th>Risk</th><th>Lik/Imp</th><th>Mitigation</th><th>Owner</th></tr></thead>
   <tbody>
     <tr><td>PPO training diverges or &gt; 7 days</td><td>Med/High</td><td>Reduce state/action space; DQN fallback; pre-check on toy env in N2.3</td><td>Nada</td></tr>
-    <tr><td>R1.4 data loaders not done by May 23 (blocks N2.x)</td><td>Low/Critical</td><td>Rghda starts R1.1–R1.3 on May 10; Nada provides signatures day 1</td><td>Rghda</td></tr>
+    <tr><td><s>R1.4 data loaders not done by May 23 (blocks N2.x)</s> — <strong>retired</strong>: R1.4 carried to S4; N2.x landed without the formal loader by using <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> inline. R1.4 is now a "formalise what already exists at <code>datasets/loaders.py</code>" task.</td><td>—</td><td>—</td><td>Rghda</td></tr>
     <tr><td>Borg gsutil download fails / slow</td><td>Med/Med</td><td>Fall back to PlanetLab CPU traces (HTTP)</td><td>Rghda</td></tr>
     <tr><td>T1.1 delayed (no live metrics for N1.1 testing)</td><td>Low/High</td><td>Seed <code>metrics</code> with synthetic data via S2 day-1 script</td><td>Tasneem</td></tr>
     <tr><td>NGINX upstream reload causes request drops</td><td>Med/Med</td><td>Use <code>nginx -s reload</code> (graceful); test &lt; 1% error rate</td><td>Tasneem</td></tr>
@@ -5262,14 +5265,14 @@ flowchart LR
     <tr><td>OTel Collector config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/otel-collector/otelcol-config.yaml</code></td><td>—</td></tr>
     <tr><td>Redis config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/redis/redis.conf</code></td><td>—</td></tr>
     <tr><td>Prometheus config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/prometheus/prometheus.yml</code></td><td>—</td></tr>
-    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + Overview dashboard</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview shipped; 4 remaining (Anomaly / Forecast / RL / Scaling) — T2.2 (S4)</td></tr>
+    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + all 5 dashboards (T2.2 complete)</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview + RL Routing + Anomaly + Scaling + Forecast shipped (v1.0.7c–v1.0.7f, 2026-05-29). T2.2 complete. Forecast follow-up: persist predicted RPS to a <code>forecasts</code> hypertable so the predicted line is continuous instead of sparse-at-decision-moments.</td></tr>
     <tr><td>Operator UI</td><td>Tasneem</td><td><span class="pill pill-done">Home + Policy + Audit + Actions + Live Engines shipped (slices #1, #2, #3; #121 session 1 — backend + UI demoable, acceptance close-out pending)</span></td><td><code>services/operator-ui/{bff,web}/</code> · port 8090</td><td>Flask BFF + React/Vite SPA. Remaining pages: Embedded metrics (#131), Logs (#124, optional). #121 SDK / e2e / scenario / manifest pending session 2. Auth (#125, OUI.7) deferred to Phase 2 SaaS.</td></tr>
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
     <tr><td>Telemetry service</td><td>Tasneem</td><td><span class="pill pill-done">T1.1 wired</span></td><td><code>services/telemetry/app.py</code></td><td>OTLP/HTTP-JSON ingress, batch insert via <code>METRICS_INSERT</code>, read API, stats counters — PR #108</td></tr>
-    <tr><td>Anomaly detector</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/anomaly-detector/app.py</code> + <code>runloop.py</code></td><td>Isolation Forest plugin drop-in (#101); auto-recovery; own-metrics; flip <code>ANOMALY_RUNLOOP_ENABLED</code> default</td></tr>
-    <tr><td>Forecasting service</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/forecasting/app.py</code> + <code>runloop.py</code></td><td>ARIMA plugin drop-in (#102, post-PR-#144-review); own-metrics; flip <code>FORECAST_RUNLOOP_ENABLED</code> default</td></tr>
-    <tr><td>RL engine</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired (#138, flagged off)</span></td><td><code>services/rl-engine/app.py</code> + <code>runloop.py</code></td><td>PPO plugin drop-in (#27); anomaly-aware action-space filtering; flip <code>RL_RUNLOOP_ENABLED</code> default; <code>RL_MODE=active</code> when sidecar T2.1 lands</td></tr>
+    <tr><td>Anomaly detector</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired + enabled by default (#138, v1.0.7g)</span></td><td><code>services/anomaly-detector/app.py</code> + <code>runloop.py</code></td><td>Isolation Forest plugin drop-in (#101); auto-recovery; own-metrics</td></tr>
+    <tr><td>Forecasting service</td><td>Nada (model) · Tasneem (wiring + handoff)</td><td><span class="pill pill-done">Phase-1 run loop + ARIMA plugin shipped (#138, v1.0.7g/i)</span></td><td><code>services/forecasting/{app,runloop}.py</code> · <code>engines/{moving_average,arima}/engine.py</code> · <code>models/arima_model.pkl</code></td><td>ARIMA artifact at 25.0% MAPE; SOT KPI &lt;20% not yet met — moving_average stays default until tuned. Own-metrics still pending.</td></tr>
+    <tr><td>RL engine</td><td>Nada (model) · Tasneem (wiring)</td><td><span class="pill pill-done">Phase-1 run loop wired + enabled by default (#138, v1.0.7g); shadow-pinned via <code>RL_MODE=shadow</code></span></td><td><code>services/rl-engine/app.py</code> + <code>runloop.py</code></td><td>PPO plugin drop-in (#27); anomaly-aware action-space filtering; flip <code>RL_MODE=active</code> in <code>.env</code> for end-to-end routing</td></tr>
     <tr><td>Autoscaler</td><td>Tasneem</td><td><span class="pill pill-done">T1.3 + T1.4 wired</span></td><td><code>services/autoscaler/{app,decisions,cluster_client}.py</code></td><td>Forecast subscriber + Docker SDK scale + cooldown + reactive fallback + smartload.policy live reload (<code>policy_from_payload</code> + version monotonicity); tests in <code>tests/integration/test_autoscaler{,_decisions,_policy_manager}.py</code></td></tr>
     <tr><td>Policy Manager</td><td>Tasneem</td><td><span class="pill pill-done">T1.4 wired</span></td><td><code>services/policy-manager/{app,validation}.py</code></td><td>GET/POST + validation + atomic YAML + <code>policy_changes</code> audit + envelope publish + idempotent no-op; 38 unit + 4 integration tests</td></tr>
     <tr><td>Redis message contracts</td><td>Nada</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/shared/contracts.py</code></td><td>—</td></tr>
@@ -5279,13 +5282,13 @@ flowchart LR
     <tr><td>Google Borg dataset</td><td>Rghda</td><td><span class="pill pill-active">Phase 1A active (R0.2)</span></td><td><code>datasets/borg/</code></td><td>—</td></tr>
     <tr><td>Alibaba dataset</td><td>Rghda</td><td><span class="pill pill-upcoming">Phase 2 (R2.1)</span></td><td><code>datasets/alibaba/</code></td><td>Manual download steps</td></tr>
     <tr><td>Yahoo SMD dataset</td><td>Rghda</td><td><span class="pill pill-upcoming">Phase 2 (R2.1)</span></td><td><code>datasets/yahoo-smd/</code></td><td>Yahoo registration</td></tr>
-    <tr><td>Data preprocessors</td><td>Rghda</td><td><span class="pill pill-next">Phase 1B (R1.1, R1.2)</span></td><td><code>datasets/&lt;name&gt;/preprocess.py</code></td><td>—</td></tr>
-    <tr><td>Data loader utilities <strong>(critical)</strong></td><td>Rghda</td><td><span class="pill pill-next">Phase 1B (R1.4)</span></td><td><code>datasets/loaders.py</code></td><td>By May 23</td></tr>
+    <tr><td>Data preprocessors</td><td>Rghda</td><td><span class="pill pill-active">S4 (R1.1, R1.2) — carried from S3</span></td><td><code>datasets/&lt;name&gt;/preprocess.py</code></td><td>—</td></tr>
+    <tr><td>Data loader utilities</td><td>Rghda</td><td><span class="pill pill-active">S4 (R1.4) — carried from S3</span></td><td><code>datasets/loaders.py</code> (target) · <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> (informal landing today)</td><td>S4 close-out (Jun 6)</td></tr>
     <tr><td>Anomaly detection model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td><code>services/anomaly-detector/models/</code></td><td>—</td></tr>
     <tr><td>Forecasting model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td><code>services/forecasting/models/</code></td><td>—</td></tr>
     <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
     <tr><td>RL training scripts + baselines (N2.4)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>train_ppo.py</code> (MaskablePPO, 2M steps, ~75 min CPU), <code>train_dqn.py</code> (fallback); <code>round_robin</code> + <code>least_connections</code> policies; <code>eval_harness.py</code> + <code>eval_seed_bank.json</code>. <strong>Artifact:</strong> <code>services/rl-engine/models/policy.zip</code> (156 KB, <code>latency_scale=100.0</code>). <strong>Eval result (20 held-out episodes):</strong> PPO mean_reward&nbsp;=&nbsp;-0.0056 (ties round_robin, best baseline); beats least_connections by 4.8e-2. SLO violation rate 0 for all policies. Homogeneous Alibaba backend latencies (~9.7 ms) mean any balanced policy achieves the same p95; PPO learned round-robin equivalence from offline traces.</td><td>—</td></tr>
-    <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>, <code>learning</code>}; shadow runs full inference non-actuating; <code>reload()</code> raises <code>NotImplementedError</code> (restart to swap artifact); runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
+    <tr><td>RL serving plugin (N2.5)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>policies/ppo/policy.py</code> — <code>PPOPolicy</code>; <code>operating_mode</code> ∈ {<code>shadow</code>, <code>hybrid</code>} (legacy <code>learning</code> → <code>hybrid</code>); shadow runs full inference non-actuating; argmax-dominant weighting (v1.0.7); <code>reload(**kwargs)</code> updates runtime params in place without re-reading <code>policy.zip</code> (v1.0.7 — C4); artifact swap still requires container restart; runtime-import-smoke CI job enforces train/serve separation.</td><td>Unblocked after policy.zip exists</td></tr>
     <tr><td>LB reads Redis (sidecar) <strong>(critical)</strong></td><td>Tasneem</td><td><span class="pill pill-done">Complete + smoke PASSED (T2.1)</span></td><td><code>services/lb-sidecar/</code> — subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code>; <code>NginxAdapter</code> atomically rewrites <code>upstream.conf</code> + signals <code>nginx -s reload</code> via Docker exec; <code>BackendRegistry</code> maps IP:port → container name; conformance + unit + E2E test suites green; Actions page "Force route weights" form live. End-to-end smoke run 2026-05-23: shadow gate confirmed (rl-engine publishes <code>mode=shadow</code>, sidecar ignores); manual <code>mode=active</code> envelope applied backend-1 weight=99 (score=0.99 → round(99)); 20/20 curl HTTP 200; zero log errors. Artifacts in <code>experiments/t2_1_smoke_20260523_213133/</code>.</td><td>—</td></tr>
     <tr><td>Phase 0 integration tests (33)</td><td>Tasneem</td><td><span class="pill pill-done">33/33 passing</span></td><td><code>tests/integration/test_pipeline_health.py</code></td><td>—</td></tr>
     <tr><td>Phase 3A integration tests (3 scenarios)</td><td>All</td><td><span class="pill pill-upcoming">Phase 3A (T2.3)</span></td><td>—</td><td>—</td></tr>
@@ -5584,6 +5587,451 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7n — 2026-06-03 — Live Engines e2e suite (#121 OUI.3 close-out)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New e2e suite at <code>tests/e2e/live-engines/</code></strong></td>
+      <td>17 tests across 6 classes exercising every customer surface the manifest in <code>docs/features/live-engines.md</code> claims, against the live compose stack:
+        <ul>
+          <li><strong>TestEngineState</strong> — <code>client.engines.state(service)</code> for the three AI services + top-level <code>engines_state()</code> alias + unknown-service ValidationError.</li>
+          <li><strong>TestSnapshot</strong> — <code>client.engines.snapshot()</code> covers the three services + all four channel rings; top-level <code>engines_snapshot()</code> alias matches.</li>
+          <li><strong>TestSSEDelivery</strong> — publish a synthetic envelope per channel via <code>publish_envelope</code> with a unique per-test <code>source</code> marker; assert the SDK SSE subscriber observes it inside the 5 s acceptance window.</li>
+          <li><strong>TestSubscribeChannelFilter</strong> — <code>subscribe(..., channels=[...])</code> drops other channels client-side; <code>subscribe_anomaly</code> alias is the single-channel filter operators reach for first.</li>
+          <li><strong>TestSnapshotReflectsPublishes</strong> — a published envelope appears in the BFF's per-channel ring within 5 s of publish (same data plane as the SSE feed).</li>
+          <li><strong>TestSubscriptionLifecycle</strong> — <code>.close()</code> is idempotent; <code>with</code>-block teardown stops the daemon thread cleanly (no leaked callback invocations after exit).</li>
+        </ul>
+        Pattern follows <code>tests/e2e/manual-actions/</code> + <code>tests/e2e/policy-management/</code>: <code>pytestmark = pytest.mark.e2e</code>, per-test SDK fixture, session-scoped readiness gate from <code>tests/e2e/conftest.py</code>. Tests publish via the canonical <code>services.shared.contracts.publish_envelope</code> so the wire shape matches what the AI services emit organically — the <code>source</code> marker is the only filter the test needs to ignore organic traffic on the same channels.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Validation</strong></td>
+      <td><code>pytest tests/e2e/live-engines/ -v</code> against the live compose stack: <strong>17 passed in 56.27 s</strong>. Stack version verified via <code>docker ps</code> (operator-ui, anomaly-detector, forecasting, rl-engine, redis all running on the v1.0.7m image).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Slice manifest checkbox flip</strong></td>
+      <td><code>docs/features/live-engines.md</code> — the last open box in the Status checklist ("E2E test suite — <code>tests/e2e/live-engines/test_live_engines.py</code>") flipped to <code>[x]</code> with the v1.0.7n citation. The <code>§25.9 slice-catalog row flipped to <em>Shipped</em></code> box is flipped <em>in this same release</em>: §25.9 row 5 ("Live Engines page (OUI.3)") moves from <code>pill-active</code> to <code>pill-done</code>, manifest column points to <code>docs/features/live-engines.md</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Closes</strong></td>
+      <td>#121 OUI.3 — the slice is now fully shipped (backend + UI + SDK + scenario + e2e + manifest + deep-dive page + embedded Grafana panels). The slice-checklist contract from <code>docs/features/SLICE_CHECKLIST.md</code> is satisfied for the first non-#1/#2/#3 operator-UI slice.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7m — 2026-05-29 — EngineDetail snapshot-poll method-name hotfix</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Hotfix for v1.0.7k regression</strong></td>
+      <td>End-to-end browser audit via chrome-devtools MCP caught a regression on <code>/engines/&lt;service&gt;</code>: the page header showed "Unreachable" with the banner <code>Snapshot poll: te.getEnginesSnapshot is not a function</code> on every poll, leaving the four data cards empty ("Awaiting first cycle…" / "No policy snapshot yet." / "No output yet." / "No events…"). The Grafana embeds rendered fine because iframes are independent of the JS data path. Root cause: <code>EngineDetail.tsx</code> called <code>api.getEnginesSnapshot()</code> but the real method on <code>services/operator-ui/web/src/api.ts</code> is <code>api.enginesSnapshot()</code>. One-line fix; rebuilt + recreated; verified all three engines (RL: 1405 ticks / 1400 publishes / ppo loaded; Forecasting: 800/800 / arima loaded with <code>predicted_rps=32.69, CI [17.96, 47.42]</code>; Anomaly: 1412/4539 / threshold engine returning the full 9-backend status array). No console errors on any page in the walkthrough (Home, Engines, RL detail, Forecasting detail, Anomaly detail, unknown-engine guard, Policy, Audit, Actions).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7l — 2026-05-29 — Embedded Grafana panels on the engine deep-dive page (#131 Phase 3)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Grafana now embed-ready</strong></td>
+      <td><code>docker-compose.yml</code> grafana service: <code>GF_SECURITY_ALLOW_EMBEDDING=true</code> (drops the default <code>X-Frame-Options: deny</code> header so the iframe loads) + <code>GF_AUTH_ANONYMOUS_ENABLED=true</code> with <code>GF_AUTH_ANONYMOUS_ORG_NAME="Main Org."</code> and <code>GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer</code> (read-only, no login prompt — matches the live-engines manifest's "single-tenant + assumed-trusted in Phase 1" posture; auth lands with #125 Phase 2). Verified: <code>curl -sI http://localhost:3000/d-solo/smartload-rl-routing/&hellip;</code> returns <code>200</code> with <code>X-Frame-Options</code> absent (was <code>deny</code> + <code>302</code> to <code>/login</code> before the env-var flip).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Two embedded panels per engine on <code>/engines/&lt;service&gt;</code></strong></td>
+      <td>New "Live charts" card on <code>services/operator-ui/web/src/pages/EngineDetail.tsx</code> renders two <code>/d-solo/</code> iframes side-by-side per engine, last-30-min window with 10 s refresh, dark theme:
+        <ul>
+          <li><strong>anomaly-detector</strong> → <code>smartload-anomaly</code> panels 1 (Backend health timeline) + 4 (Time-in-state per backend)</li>
+          <li><strong>forecasting</strong> → <code>smartload-forecast</code> panels 1 (Predicted vs actual RPS) + 3 (Forecast accuracy at decision moments)</li>
+          <li><strong>rl-engine</strong> → <code>smartload-rl-routing</code> panels 1 (Request share per backend) + 2 (p95 latency per backend)</li>
+        </ul>
+        Each iframe carries a caption with the panel title + a small external-link glyph that opens the same panel in Grafana's full dashboard view via <code>?viewPanel=&lt;id&gt;</code>. Lazy loaded (<code>loading="lazy"</code>) so they don't block initial paint. Grid collapses to one column under 900 px.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>"Open Grafana dashboard" header link fixed</strong></td>
+      <td>v1.0.7k shipped the link as <code>/grafana&lt;path&gt;</code> assuming a reverse proxy that didn't exist; updated to <code>http://localhost:3000/d/&hellip;</code> directly. Same fix applied to the per-panel "open in Grafana" glyphs. Refactored URL construction into <code>dashUrl()</code> / <code>soloPanelUrl()</code> helpers + a single <code>GRAFANA_ORIGIN</code> constant — when the BFF eventually proxies <code>/grafana/*</code> for same-origin embedding (production TLS path), only the constant changes.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>Rebuilt <code>operator-ui</code> (Vite green, bundle unchanged at ~308 kB / gzip ~93 kB). Recreated <code>grafana</code> + <code>operator-ui</code> containers. <code>GET /d-solo/{smartload-rl-routing,smartload-forecast,smartload-anomaly}/&hellip;?panelId=1</code> all return <code>200</code> with <code>X-Frame-Options</code> stripped. <code>GET /engines/rl-engine</code> on the SPA returns <code>200</code>. Anonymous Viewer confirmed via <code>/api/frontend/settings</code> (<code>anonymousEnabled: True</code>).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Known follow-up</strong></td>
+      <td><code>GRAFANA_ORIGIN</code> is hardcoded to <code>http://localhost:3000</code> for the dev compose stack. Production path is a same-origin BFF reverse proxy at <code>/grafana/*</code> (cleaner cookie story when auth lands in Phase 2 with #125; survives TLS termination at NGINX). Tracked as a follow-up on #131.</td>
+      <td>Follow-up</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7k — 2026-05-29 — Per-engine deep-dive page (#121 OUI.3 close-out, page leg)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New <code>/engines/&lt;service&gt;</code> route</strong></td>
+      <td>New page at <code>services/operator-ui/web/src/pages/EngineDetail.tsx</code> + new route <code>&lt;Route path="/engines/:service" element={&lt;EngineDetailPage /&gt;} /&gt;</code> in <code>App.tsx</code>. Reachable for <code>anomaly-detector</code>, <code>forecasting</code>, <code>rl-engine</code>; any other slug renders a brief "unknown engine" message and bounces to <code>/engines</code> after 1.2 s. Header block carries the engine name + status badge (healthy/degraded/unreachable), the primary publish channel, the loaded engine/policy plus fallback inline (e.g. "fallback from <code>arima</code>"), and two one-click jumps: the matching Grafana dashboard (<code>/grafana/d/smartload-anomaly</code>, <code>…/smartload-forecast</code>, <code>…/smartload-rl-routing</code>) and the raw <code>/api/v1/engine/state</code> endpoint on the service port.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Four-card content grid</strong></td>
+      <td>(1) <em>Run-loop stats</em> — ticks, publishes, last_tick_at with age in seconds, last_publish_at, runloop_enabled flag, and the <code>rl_mode_env</code> pin for the RL engine. (2) <em>Policy snapshot</em> — pretty-printed JSON. (3) <em>Last cycle output</em> — pretty-printed JSON, full-width. (4) <em>Activity on &lt;channel&gt;</em> — last 80 events on the engine's primary channel (anomaly→<code>smartload.anomaly</code>, forecasting→<code>smartload.forecast</code>, rl-engine→<code>smartload.routing</code>) drawn from the BFF snapshot's <code>channels[…]</code> ring. Same 5 s poll cadence as the Live Engines tile page so refresh stays predictable.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tile name made clickable on <code>/engines</code></strong></td>
+      <td>Engine-name title in each tile on <code>services/operator-ui/web/src/pages/LiveEngines.tsx</code> is now a <code>&lt;Link to="/engines/&lt;name&gt;"&gt;</code> with a small external-link glyph (drops the right-slide drawer untouched — drawer remains the quick preview via the existing "View details" button; the new page is the full surface). Styles added under <code>.tile-name-link</code> and a new <code>.engine-detail</code> block (≈200 lines of CSS) in <code>styles.css</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td><code>docker compose build operator-ui</code> green (Vite build 6.88 s, 307.84 kB gzipped 92.69 kB bundle). <code>docker compose up -d operator-ui</code> with the rebuilt image; <code>GET /engines/rl-engine</code>, <code>/engines/forecasting</code>, <code>/engines/anomaly-detector</code> all return <code>200</code> via the SPA fallback. Live snapshot confirms three services reachable with <code>rl-engine</code> loaded <code>ppo</code> and <code>anomaly</code>/<code>forecast</code>/<code>routing</code> channels carrying events, so the page renders real content immediately.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7j — 2026-05-29 — Live Engines SDK (#121 session 2, SDK leg)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>SDK Live Engines surface — three methods + four convenience aliases</strong></td>
+      <td>New <code>clients/python/smartload_client/engines.py</code> implements <code>EnginesClient</code>:
+        <ul>
+          <li><code>client.engines.snapshot()</code> — synchronous fan-out via the operator-UI BFF <code>/api/ui/engines/snapshot</code>; returns <code>{services, channels, recent}</code>.</li>
+          <li><code>client.engines.state(service)</code> — per-engine <code>/api/v1/engine/state</code> hit directly against the service port. Validates <code>service ∈ {anomaly-detector, forecasting, rl-engine}</code>.</li>
+          <li><code>client.engines.subscribe(callback, channels=...)</code> — SSE consumer of <code>/api/ui/engines/stream</code> on a daemon thread. Callback signature <code>(channel, payload, envelope_meta)</code>. Optional client-side channel filter. Returns <code>EnginesSubscription</code> (context-manager friendly, <code>.close()</code> stops the thread cleanly).</li>
+        </ul>
+        Top-level convenience aliases on <code>SmartLoadClient</code>: <code>engines_snapshot()</code>, <code>engines_state(service)</code>, <code>subscribe_engines(callback, channels=...)</code>. The four previously-stubbed <code>subscribe_{anomaly,forecast,routing,scale}</code> methods (which raised <code>NotImplementedError</code>) now route through the SSE stream with a single-channel filter — no Redis client needed.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>New constructor kwargs + env vars</strong></td>
+      <td><code>SmartLoadClient(forecasting_url, rl_engine_url, operator_ui_url, ...)</code> + the matching <code>SMARTLOAD_{FORECASTING,RL_ENGINE,OPERATOR_UI}_URL</code> env vars. Same per-service-upstream pattern as the existing <code>autoscaler_url</code> and <code>anomaly_detector_url</code>. Defaults to localhost ports for dev.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tests + live smoke</strong></td>
+      <td>15 new unit tests at <code>clients/python/tests/test_engines.py</code> covering snapshot happy path / error mapping, state per-service URL routing + unknown-service rejection, SSE drain + channel filter + callback-exception swallow + heartbeat skip + malformed-data skip + close() stops thread, plus top-level convenience-method delegation. All green. Live smoke against the running BFF: <code>snapshot()</code>+<code>state(rl-engine)</code>+<code>state(forecasting)</code>+<code>subscribe_engines</code> all worked; 4 SSE events received in 8 s; clean close (no spurious shutdown warnings — the drain loop now suppresses the expected post-close exception when <code>stop_event</code> is set).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Slice manifest checkbox flip</strong></td>
+      <td><code>docs/features/live-engines.md</code> — SDK row in the Customer-surfaces table flipped from "pending" to ✓; the Status checklist line for "SDK methods" flipped from <code>[ ]</code> to <code>[x]</code> with the v1.0.7j citation. The e2e suite at <code>tests/e2e/live-engines/</code> remains the only #121-session-2 outstanding box.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7i — 2026-05-29 — N2.2 forecasting ARIMA model handoff (extracts PR #144 kernel)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>ARIMA engine + trained artifact land in main</strong></td>
+      <td>PR #144 (Nada's original Feat/forecasting arima arimax) had been stale 12 days post-CHANGES_REQUESTED review. The Tasneem review's "suggested next move" was <em>close + open a small one, ~400 LOC</em>. Per user direction the kernel got extracted and landed directly:
+        <ul>
+          <li><code>services/forecasting/engines/arima/engine.py</code> — thin <code>ArimaEngine(ForecastEngine)</code> on the #138 ABC contract. Loads the pickled bundle; falls back to mean-of-history if the artifact is missing/malformed/raises. <code>model_loaded</code> property surfaced for <code>/health</code>.</li>
+          <li><code>services/forecasting/models/arima_model.pkl</code> — chosen artifact (ARIMA(3,0,1), 36.9 MB; ARIMA picked over ARIMAX since both score ~25% MAPE and ARIMA has no exog plumbing). Future Git LFS migration filed as follow-up in the engine README.</li>
+          <li><code>services/forecasting/engines/arima/test_engine.py</code> — 8 unit tests covering missing-artifact / malformed-pickle / wrong-shape / empty-history / single-sample / fallback-never-raises plus the runtime-path test that exercises the real statsmodels forecast. All 8 pass locally with statsmodels installed.</li>
+          <li><code>services/forecasting/requirements.txt</code> — adds <code>statsmodels==0.14.2</code> + <code>pandas==2.2.2</code> + <code>numpy==1.26.4</code> to the runtime image (needed to unpickle the result object).</li>
+          <li><code>tools/forecasting-training/</code> — relocated <code>train.py</code> + <code>preprocess.py</code> + <code>training_log.json</code> + training-only <code>requirements.txt</code> (prophet, scikit-learn stay here, not in the runtime). README documents the train → promote workflow and the &lt;20% MAPE SOT KPI gate.</li>
+        </ul>
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>SOT KPI status</strong></td>
+      <td>Test MAPE: 25.0% (baseline moving-average: 34.3%, <strong>+22.77% relative improvement</strong>). SOT KPI (&lt;20% on 5-min horizon) <strong>not yet met</strong> — engine ships but is <em>not</em> the default. Operator activates via <code>FORECAST_ENGINE=arima</code> in <code>.env</code>; moving-average baseline stays the canonical Phase-1 forecaster until a tuned model crosses the SLO. This matches the Tasneem review's "accept that the wrapped engine ships behind a flag" branch.</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>What did NOT land from PR #144 (per review)</strong></td>
+      <td>The other two artifacts (ARIMAX, Prophet — review said pick one); the 16,209-row Alibaba CSV in <code>datasets/</code> (SOT §18 — datasets are fetched, not committed); the <code>services/forecasting/app.py</code> rewrite (already handled by #138 wiring); <code>services/forecasting/forecaster.py</code> ad-hoc class (replaced by the engine_base plugin); the docker-compose operator-ui-block deletion (rebase artifact, would have removed shipped service); the .gitignore CLAUDE.md line (unrelated); the integration-test file (lives in <code>tests/unit/forecasting/</code> per #140).</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><strong>Closes</strong></td>
+      <td>PR #144 (stale-review supersede). Issue #102 N2.2 ARIMA model. The forecast-autoscale slice manifest's "ARIMA model artifact" pending checkbox flips.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7h — 2026-05-29 — Sprint-state correction: S3 → DONE, S4 → ACTIVE, R1.x carried</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Sprint table state matches the calendar</strong></td>
+      <td>Today is 2026-05-29. Per §17 the sprint dates are fixed; the status pills were stale. Updates:
+        <ul>
+          <li><strong>S2 (Apr 28 – May 9)</strong>: <code>ACTIVE</code> → <code>DONE</code>.</li>
+          <li><strong>S3 (May 10 – May 23)</strong>: <code>NEXT</code> → <code>DONE</code>. Tasneem-owned items shipped (T1.3 autoscaler, T1.4 policy-manager). Rghda-owned items (R1.1 / R1.2 preprocessors, R1.4 data loaders, EDA) carried to S4 — they have no Tasneem dependency and cannot be landed by Tasneem from this seat.</li>
+          <li><strong>S4 (May 24 – Jun 6)</strong>: <code>UPCOMING</code> → <code>ACTIVE</code>, goal column gains the four carry-over items.</li>
+        </ul>
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Critical path</strong></td>
+      <td>R1.4 node moved from <code>[S3, Rghda]</code> to <code>[S4, Rghda]</code>. The downstream node N2.3 RL Gym env (also S4) already shipped using <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> as an inline loader rather than the planned <code>datasets/loaders.py</code> shim — annotated on the graph.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§12 status grid rows for R1.x</strong></td>
+      <td><code>Data preprocessors</code> and <code>Data loader utilities</code> rows flipped from <code>Phase 1B</code> (S3) to <code>S4 — carried from S3</code>. The data-loader row's "Evidence / files" column now points at both the target path (<code>datasets/loaders.py</code>) and the informal landing (<code>TraceReplayDataset</code>) so Rghda's S4 work is "formalise what's already there" rather than "build from scratch." Deadline column re-anchored to <code>S4 close-out (Jun 6)</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Risk register</strong></td>
+      <td>The "R1.4 not done by May 23 blocks N2.x" risk (line 5200) struck through and annotated <strong>retired</strong>: N2.x landed by using TraceReplayDataset inline; R1.4 is no longer on the critical path for unblocking RL work, it's housekeeping.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7g — 2026-05-29 — Phase-1 runloop defaults flipped to true</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Engine-wrapper runloop defaults: false → true</strong></td>
+      <td>§12 listed "flip <code>&lt;SVC&gt;_RUNLOOP_ENABLED</code> default" as the remaining piece for each of anomaly-detector, forecasting, rl-engine since the #138 cutover landed. v1.0.7b T2.1-smoke-passed and v1.0.7c–v1.0.7f dashboards confirmed each runloop is healthy under live load. <code>docker-compose.yml</code> defaults are now <code>true</code> for all four (<code>ANOMALY_RUNLOOP_ENABLED</code>, <code>FORECAST_RUNLOOP_ENABLED</code>, <code>RL_RUNLOOP_ENABLED</code>, <code>LB_SIDECAR_RUNLOOP_ENABLED</code>). An operator can still pin any service back to its Phase-0 stub by setting the flag to <code>false</code> in <code>.env</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Safety story (unchanged)</strong></td>
+      <td><code>RL_MODE</code> still defaults to <code>shadow</code> in <code>docker-compose.yml</code> — the rl-engine publishes inference, but every published envelope carries <code>mode=shadow</code> until an operator explicitly sets <code>RL_MODE=active</code>. The lb-sidecar's <code>handle_routing</code> mode-gate (v1.0.7b) refuses anything except <code>mode="active"</code>, so even with both runloops on by default, <code>upstream.conf</code> sees no rewrites until the operator opts in. Defence-in-depth holds.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Prose updates across 7 files</strong></td>
+      <td>Updated every "default <code>false</code>" / "Off by default" / "flip to start" claim that referenced the old defaults: <code>README.md</code> services table + Engine-wrapper section, <code>services/{anomaly-detector,forecasting,rl-engine,lb-sidecar}/README.md</code>, <code>docs/features/lb-sidecar.md</code>, <code>docs/PROJECT_WALKTHROUGH.md</code> (§4 plane summary + RL activation sequence), <code>docs/SOURCE_OF_TRUTH.html</code> §6.5–6.7 module cards + §8.5–8.7 deep-dive "Current state" rows + §12 status rows. Historical changelog entries describing the original <code>=false</code> Phase-1 defaults (v1.0.2–v1.0.4, §22 lines 5879/5884/5914 + the §25.9 status line 6485) are left intact as the record of when the cutover originally landed.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7f — 2026-05-29 — T2.2 Grafana Forecast dashboard (4 of 4 — T2.2 COMPLETE)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — Forecast (T2.2 complete)</strong></td>
+      <td>SOT §17.2 line 3288 ("Predicted vs actual request rate (overlay)"). Final T2.2 dashboard. Predicted RPS values are not currently persisted to TimescaleDB — the forecasting service publishes <code>ForecastResult</code> envelopes to <code>smartload.forecast</code> Redis but nothing writes them down. The autoscaler's <code>scaling_events.reason</code> column does encode the predicted RPS at decision time (<code>forecast predicted N rps &lt; shed-capacity ...</code>); the dashboard extracts that value with a PostgreSQL <code>regexp_match</code> so the overlay is real, just sparse (one point per autoscaler decision). Four panels: (1) predicted vs actual overlay — actual as a smooth green line, predicted as purple points at decision moments; (2) actual RPS smoothed for trend context; (3) forecast accuracy table — predicted vs the actual mean over the 5-minute horizon following the decision, gradient-coloured by error; (4) recent forecast-driven scaling decisions audit. Verified live: shows that the baseline moving-average forecaster is mis-predicting under simulator load (predicted=0 → actual=15.9 RPS for today's decisions) — a real finding the dashboard surfaces. <strong>T2.2 is now 5/5 shipped (Overview + RL + Anomaly + Scaling + Forecast).</strong></td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Follow-up: forecast persistence</strong></td>
+      <td>A small change to the forecasting service to write each <code>ForecastResult</code> to a new <code>forecasts</code> hypertable would let the Forecast dashboard show a continuous predicted line instead of sparse-at-decision-moments. ~30 lines of code + a hypertable definition in <code>infrastructure/timescaledb/init.sql</code>. Filed as a follow-up; not blocking T2.2.</td>
+      <td>—</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7e — 2026-05-29 — T2.2 Grafana Scaling dashboard (3 of 4 pending)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — Scaling</strong></td>
+      <td>SOT §17.2 line 3290: "Scale events overlay on request rate." New <code>infrastructure/grafana/dashboards/smartload-scaling.json</code> ships the third T2.2 dashboard. The overlay is implemented as a dashboard-level annotation query against <code>scaling_events</code>, so every scale_out / scale_in fires as a red vertical marker on every timeseries panel — including the throughput panel which is the SOT-mandated overlay. Five panels: (1) throughput with scale events overlaid; (2) cluster size over time as a step series using TimescaleDB's <code>LAST(instance_count, time)</code> aggregate per bucket; (3) scale-out vs scale-in counts per bucket (stacked bars with fixed colours — orange for out, blue for in); (4) current cluster state (last row of <code>scaling_events</code> rendered as a table); (5) recent 20 decisions audit table. T2.2 progress flipped from <strong>3/5 shipped</strong> to <strong>4/5 shipped</strong>; one remaining (Forecast — blocked on predicted-rps persistence to TimescaleDB; see §17.2 follow-up).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7d — 2026-05-29 — T2.2 Grafana Anomaly dashboard (2 of 4 pending)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — Anomaly</strong></td>
+      <td>SOT §17.2 line 3287: "Anomaly events per backend (timeline), DEGRADED/UNHEALTHY durations." New <code>infrastructure/grafana/dashboards/smartload-anomaly.json</code> ships the second of the four T2.2 dashboards. Five panels: (1) per-backend state-timeline derived from the same threshold rules the anomaly-detector's threshold engine ships with (latency &gt; 200 ms → DEGRADED; error_rate &gt; 5% → UNHEALTHY), value-mapped to green/yellow/red; (2) p95 latency per backend with the 200 ms threshold line; (3) error rate per backend with the 5% threshold line; (4) time-in-state table summarising the visible window (healthy / degraded / unhealthy seconds, sorted by unhealthy desc, gradient-coloured by severity); (5) latest 25 rows from the <code>backend_health</code> hypertable — the same data the lb-sidecar startup hydration (v1.0.7b G2) reads, so an empty result here means the anomaly-detector isn't persisting and sidecar restarts would lose state. T2.2 progress flipped from <strong>2/5 shipped</strong> to <strong>3/5 shipped</strong>; two remaining (Forecast, Scaling).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7c — 2026-05-29 — T2.2 Grafana RL Routing dashboard (1 of 4 pending)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New Grafana dashboard — RL Routing</strong></td>
+      <td>SOT §17.2 lines 3287–3290: T2.2 calls for four dashboards (Anomaly, Forecast, RL, Scaling). New <code>infrastructure/grafana/dashboards/smartload-rl-routing.json</code> ships the RL one. Five panels, all backed by the existing <code>metrics</code> hypertable (no new instrumentation required): (1) per-backend request share over time (stacked area, normalised so total reads 100% per bucket) — directly visualises the v1.0.7 argmax-dominant weighting; (2) per-backend p95 latency with the 200 ms SLO line; (3) per-backend error rate with the 5% UNHEALTHY line; (4) total throughput; (5) backend leaderboard table sorted by last-minute request count with a colour gradient on share. Verified live: backend <code>172.18.0.12:8080</code> shows 68.6% share, the four others 7.84% each — the exact ratio of the NGINX <code>weight=70/8/8/8/8</code> upstream block produced by PPO's argmax-dominant ranking + the lb-sidecar v1.0.7b merge. T2.2 progress flipped from <strong>1/5 shipped</strong> to <strong>2/5 shipped</strong>; three remaining (Anomaly, Forecast, Scaling).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7b — 2026-05-29 — lb-sidecar SOT alignment (G1–G6)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>G1 — Anomaly exclusion survives partial RL rankings</strong></td>
+      <td>SOT §3.4 line 1756 / §16 line 3699: "Policy <code>safe_mode</code> can short-circuit RL but never bypasses anomaly exclusion." Previously, when RL published weights for only the eligible subset (PPO's <code>is_eligible</code> filter omits unhealthy/unknown backends), the adapter's <code>set_upstream_weights</code> <em>replaced</em> the full weights dict — the previously-excluded backend disappeared entirely from <code>upstream.conf</code> instead of staying as <code>server &hellip; down;</code>. Anomaly exclusion was silently bypassed by every RL publish. <code>handle_routing</code> now merges the RL-supplied weights with the full known-backend pool (starting from a floor weight of 1 for every known backend, then overlaying RL's values) so excluded backends always appear in <code>upstream.conf</code> and the adapter renders them as <code>down;</code> per the existing exclusion set.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G2 — backend_health hydration on startup</strong></td>
+      <td>SOT §30 lines 7635 + 7760: "LB sidecar consumes BACKEND_HEALTH_QUERY." The sidecar previously relied solely on <code>smartload.anomaly</code> pub/sub for exclusion state — a Redis disconnect or container restart wiped the in-memory exclusion set until anomaly-detector republished. <code>_hydrate_excluded_from_db</code> now runs once after adapter init: reads the latest <code>backend_health</code> row per backend within a configurable window (default 5 min), and calls <code>adapter.exclude_backend</code> for every <code>status=unhealthy</code> entry. Failure is non-fatal — a missing DB, empty result set, or connect error degrade gracefully to "no hydration" and the loop continues.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G3 — rl_confidence_threshold gate</strong></td>
+      <td>SOT §13 line 3128: "<code>rl_confidence_threshold: 0.6 # below this, sidecar ignores RL and uses classical</code>." New <code>PolicyState</code> dataclass in <code>runloop.py</code> tracks <code>safe_mode</code> and <code>rl_confidence_threshold</code> across <code>smartload.policy</code> publishes. <code>handle_routing</code> accepts <code>confidence_threshold</code> as a kwarg; treats <code>confidence = max(scores)</code> (matches the argmax-dominant serving shape from v1.0.7); when confidence is below threshold, rejects the recommendation and the previous adapter state stands. Threshold of 0 disables the gate (default before any policy publish). Smoke-verified by raising threshold to 0.9 → sidecar logs <code>routing rejected (confidence=0.700 &lt; threshold=0.900); using previous weights</code> with PPO's 0.7 argmax-dominant confidence.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G4 — Shadow envelopes logged</strong></td>
+      <td>SOT v1.0.6 row line 5703: "shadow envelopes received but not applied." Code previously had <code>pass # shadow mode: log nothing extra</code> — operators had no way to confirm shadow envelopes were being received. The drain loop now emits <code>routing shadow — not applied (N rankings)</code> and surfaces <code>confidence</code> on every <code>RoutingOutcome</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G5 — Graceful shutdown</strong></td>
+      <td>Module-level <code>_shutdown_event</code> + SIGTERM/SIGINT handlers installed from <code>__main__</code>. The run loop polls the event between message reads; on shutdown closes pubsub and prints <code>run loop exited</code>. Docker SIGTERM during <code>compose down</code> now produces a clean exit instead of leaving an orphan pubsub subscription on Redis. Matches the symmetric L4 fix from v1.0.7 in the RL engine.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>G6 — Redis reconnect</strong></td>
+      <td>SOT §8.1 line 2299: "If Redis is unreachable or the sidecar dies: NGINX continues serving traffic with the last successfully applied config." NGINX-side guarantee was already correct; the sidecar previously crashed its drain loop on <code>redis.exceptions.ConnectionError</code> and stopped processing forever. The loop now catches it, closes the dead pubsub, sleeps <code>_REDIS_RECONNECT_BACKOFF_SECONDS</code> (default 2 s), and rebuilds the subscription. NGINX keeps serving the last applied weights throughout.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>/health surface — new fields</strong></td>
+      <td><code>policy_safe_mode</code> and <code>rl_confidence_threshold</code> added to the runloop-enabled <code>/health</code> body so operators can confirm the policy snapshot the sidecar is reasoning under without grepping container logs.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Test coverage</strong></td>
+      <td><code>tests/unit/lb-sidecar/test_runloop.py</code> grew from 35 → 45 cases. New: partial-ranking merge with floor weights (G1), confidence-threshold rejection above + below (G3), confidence reporting on shadow envelopes (G4), case-insensitive active mode, PolicyState mutation across publishes including partial-publish and malformed-threshold fallback.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7a — 2026-05-28 — Repo hygiene (post RL review)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Structural cleanup</strong></td>
+      <td>Aligns the working tree with the canonical structure in <code>README.md</code>:
+        <ul>
+          <li><code>ui_mockups/</code> → <code>docs/ui-mockups/</code> (design artefacts belong under <code>docs/</code>, not at the repo root)</li>
+          <li><code>services/webhook-dispatcher/README.md</code> → <code>docs/planned/webhook-dispatcher.md</code> — the folder was README-only (no Dockerfile, no <code>app.py</code>, not in <code>docker-compose.yml</code>); the placeholder lives in <code>docs/planned/</code> until #130 lands the real implementation, and <code>services/</code> regains the invariant that every directory is a deployable service.</li>
+          <li><code>docs/PROJECT_WALKTHROUGH.html</code> removed — stale untracked mirror left after 613139d consolidated to <code>.md</code>.</li>
+          <li><code>docs/runs/</code> removed — empty directory orphaned by 72e53db (moved smoke runs to <code>experiments/</code>).</li>
+        </ul>
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>tests/ → namespace packages</strong></td>
+      <td>Removed 18 <code>__init__.py</code> files from the <code>tests/</code> tree (root, per-type, per-service). Identical filenames in sibling service test dirs (e.g. <code>tests/unit/anomaly-detector/test_runloop.py</code> vs <code>tests/unit/rl-engine/test_runloop.py</code>) previously collided when collected together because pytest treated them as the same fully-qualified module. PEP 420 namespace packages let them coexist; <code>pytest tests/</code> now runs the full unit suite without collection errors.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>README + tree updates</strong></td>
+      <td>Added <code>lb-sidecar</code> row to the services table; added <code>tools/</code>, <code>experiments/</code>, <code>docs/ui-mockups/</code>, <code>docs/planned/</code> to the canonical tree; flagged <code>tests/</code> as namespace packages; flagged <code>datasets/</code> as gitignored (fetched via script).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7 — 2026-05-28 — RL review fixes (C1–C5, M1–M10, L4)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Contextual-bandit reframe (C1, M9)</strong></td>
+      <td>The offline simulator (<code>services/rl-engine/training/simulator.py</code>) replays Alibaba trace windows independently of the agent's action — there are no environment dynamics. Module docstrings + READMEs now explicitly frame the trained policy as a <strong>contextual bandit</strong> trained with MaskablePPO on logged production traces, not an MDP-trained RL agent. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX <code>max_fails</code>, anomaly-detector exclusions, autoscaler reactivity). Imbalance term in <code>reward.py</code> is now documented as a regulariser over the trace's historical spread, not a learned consequence of weighting.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Argmax-dominant serving weights (C2)</strong></td>
+      <td><code>PPOPolicy.act</code> previously took a single forward pass for argmax then a second one to extract logits, then softmaxed them into per-backend weights. That distribution was never an optimisation target — Discrete(N) PPO learns argmax, not calibrated mass. Replaced with a single forward pass that produces argmax + ranking together: chosen backend receives <code>_DOMINANT_WEIGHT</code> (0.7); the remaining 0.3 is split evenly across other eligibles. Matches what the policy was trained for and keeps a floor so NGINX health probing of the rest still works.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong><code>mean_eval_reward</code> → <code>mean_training_reward</code> (C3a)</strong></td>
+      <td>The shipped <code>artifact_meta.json</code> field was sourced from <code>model.ep_info_buffer</code> (training rollouts), not from <code>eval_harness</code> against the held-out seed bank — the old name overclaimed. Renamed in <code>train_ppo.py</code> and the committed artifact. To populate a real held-out number, run <code>training/eval_harness.py</code> on <code>policy.zip</code> and store the result alongside.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>PPO reload without disk re-read (C4)</strong></td>
+      <td><code>_refresh_policy_under_lock</code> previously called <code>bootstrap_policy</code> on every <code>smartload.policy</code> publish, which reconstructed <code>PPOPolicy</code> → reloaded <code>policy.zip</code> from disk → rebuilt the torch graph. Now <code>RoutingPolicy.reload(**kwargs)</code> is a real in-place update hook: <code>PPOPolicy.reload</code> overrides it to update <code>_operating_mode</code> / <code>_confidence_threshold</code> / <code>_exploration_rate</code> without touching the artifact. The refresh path falls back to full bootstrap only when reload raises <code>NotImplementedError</code> or <code>TypeError</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Anomaly-health TTL eviction (C5)</strong></td>
+      <td><code>_anomaly_health</code> in <code>app.py</code> previously grew without bound — a backend ID seen once on <code>smartload.anomaly</code> stayed in the dict forever. Each entry now carries a monotonic seen-at timestamp; <code>_evict_stale_anomaly_health</code> runs at the top of every inference cycle and drops entries older than <code>ANOMALY_HEALTH_TTL_MULTIPLIER × RL_WINDOW_SECONDS</code> (default 6 × 30 s = 3 min). Keeps the dict bounded under backend churn.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>"unknown" health state (M1)</strong></td>
+      <td>A backend with NULL <code>latency</code> and NULL <code>error_rate</code> in <code>RL_STATE_QUERY</code> was previously coerced to <code>health=healthy</code> — silence read as a positive signal. Added <code>HEALTH_UNKNOWN</code> constant in <code>policy_base</code>; <code>build_state_from_rows</code> emits <code>unknown</code> when both telemetry signals are absent. <code>is_eligible()</code> excludes both <code>unhealthy</code> and <code>unknown</code> from routing — silent backends are no longer routed to. All policies (<code>round_robin</code>, <code>least_connections</code>, <code>ppo</code>) plus <code>obs_builder.build_action_mask</code> consume the same predicate.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Single forward pass + bounded fallback (M2, M4)</strong></td>
+      <td><code>PPOPolicy.act</code> now does one forward pass (logit extraction; argmax derived from the masked logits). When every live backend is ineligible (unhealthy or unknown), the policy emits <code>RoutingAction(mode=shadow, rankings=[])</code> instead of including the "best" ineligible one — the anomaly detector's existing LB-sidecar exclusions remain in effect rather than being undone by RL.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>DB reconnect (M5)</strong></td>
+      <td>The run loop previously caught any DB exception, logged it, and kept the dead connection — the service stayed "up" but stopped publishing for the lifetime of the container. Now <code>psycopg2.OperationalError</code> is detected specifically; the loop closes the dead connection, opens a fresh one, logs <code>DB connection rebuilt</code>, and continues. Other DB exceptions (query bugs) still skip the cycle without reconnecting.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Case-insensitive action.mode (M7)</strong></td>
+      <td><code>effective_mode</code> previously matched <code>RL_MODE</code> env case-insensitively but action mode case-sensitively. Both now lowercase before comparison.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Stable round-robin rotation (M8)</strong></td>
+      <td><code>RoundRobinPolicy</code> previously kept a modular index <code>_idx % len(eligible)</code>. When the eligible set shrunk (backend going degraded) the rotation reshuffled because the modular wrap-around point moved. Replaced with a backend_id pointer: the rotation advances to the lowest backend_id strictly greater than <code>_last_id</code>. Adding or removing a backend no longer perturbs the cycle.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>"learning" operating_mode (M10)</strong></td>
+      <td>Previously accepted as a distinct value but identical to <code>hybrid</code> in all serving paths. Removed from the canonical set; <code>policy_from_payload</code> and <code>PPOPolicy._normalise_operating_mode</code> both transparently map <code>learning</code> → <code>hybrid</code> so existing <code>policy.yaml</code> files keep working. The canonical set is now <code>{shadow, hybrid}</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Safety-boundary documentation (M3)</strong></td>
+      <td>The same intent (don't actually move traffic) appears in three places: <code>runloop.effective_mode</code>, <code>lb-sidecar.handle_routing</code>, and <code>lb-sidecar.handle_policy</code>. <code>services/rl-engine/README.md</code> now documents that the LB sidecar is the safety boundary; the rl-engine gate is telemetry hygiene. A future contributor "consolidating" the rl-engine gate would no longer remove unsafe-routing protection — the sidecar still refuses anything except <code>mode=active</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Graceful shutdown signal (L4)</strong></td>
+      <td>Module-level <code>_shutdown_event</code> + SIGTERM/SIGINT handlers installed in <code>__main__</code>. The run loop polls the event between cycles; on shutdown it drains the current cycle, closes pubsub + DB, prints <code>run loop exited</code>. Docker's SIGTERM during <code>compose down</code> now produces a clean exit instead of leaving orphan pubsub subscriptions on Redis.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Test coverage</strong></td>
+      <td>Local <code>pytest tests/unit/rl-engine/</code> count: 123 → 131 (gymnasium-dependent tests still skip locally). New tests cover the unknown-health state, learning → hybrid mapping, action.mode case insensitivity, anomaly-health TTL eviction, and the C4 reload-vs-bootstrap path. PPO test fixture-based suite updated for the empty-rankings contract and the argmax-dominant weight shape; runs in CI / sb3-contrib environment.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.6 — 2026-05-24 — T2.1 smoke test PASSED; lb-sidecar walk script + Dockerfile fixes</h3>
 <table>
@@ -6358,8 +6806,8 @@ flowchart TD
     <tr>
       <td><strong>Live Engines page</strong> (OUI.3)</td>
       <td>#138 engine-wrapper (engines must emit state)</td>
-      <td>pending</td>
-      <td><span class="pill pill-next">Next — after #138 (#121)</span></td>
+      <td><code>docs/features/live-engines.md</code></td>
+      <td><span class="pill pill-done">Shipped 2026-06-03 (#121; v1.0.7n closes the e2e suite)</span></td>
     </tr>
     <tr>
       <td><strong>Manual actions</strong> (OUI.5)</td>
@@ -7213,7 +7661,7 @@ flowchart LR
     <tr><td>OUI.2 Policy editor with diff preview</td><td>#120</td><td><span class="badge badge-implemented">Shipped — slice #1</span></td></tr>
     <tr><td>OUI.4 Audit log viewer (policy_changes + scaling_events)</td><td>#122</td><td><span class="badge badge-implemented">Shipped — slice #2</span></td></tr>
     <tr><td>OUI.5 Manual actions — scale + isolate</td><td>#123</td><td><span class="badge badge-implemented">Shipped — slice #3</span></td></tr>
-    <tr><td>OUI.3 Live Engines + SSE event stream</td><td>#121</td><td><span class="badge badge-implemented">Backend + UI shipped 2026-05-24 (session 1); acceptance close-out pending (SDK, e2e, scenario, manifest)</span></td></tr>
+    <tr><td>OUI.3 Live Engines + SSE event stream</td><td>#121</td><td><span class="badge badge-implemented">Shipped — every layer (backend + UI + SDK + scenario + manifest + e2e) closed by v1.0.7n on 2026-06-03</span></td></tr>
     <tr><td>OUI.6 Service log viewer (optional)</td><td>#124</td><td><span class="badge badge-planned">Future (low priority)</span></td></tr>
     <tr><td>OUI.8 Embedded charts (no Grafana context switch)</td><td>#131</td><td><span class="badge badge-planned">Future</span></td></tr>
     <tr><td>OUI.7 Operator UI authentication</td><td>#125</td><td><span class="badge badge-planned">Phase 2 SaaS (deferred per §25 scope)</span></td></tr>
@@ -7481,7 +7929,7 @@ export function verifySmartLoadSignature(rawBody, header, secret) {
 <table>
   <thead><tr><th>Where</th><th>What</th></tr></thead>
   <tbody>
-    <tr><td><code>services/webhook-dispatcher/</code></td><td>The service itself — subscribes to Redis, signs, POSTs, retries. Scaffolded; implementation pending #130.</td></tr>
+    <tr><td><code>services/webhook-dispatcher/</code></td><td>The service itself — subscribes to Redis, signs, POSTs, retries. <em>Not yet implemented (#130);</em> placeholder doc lives at <code>docs/planned/webhook-dispatcher.md</code> until the service folder is created.</td></tr>
     <tr><td><code>services/policy-manager/app.py</code> (planned)</td><td>Webhook management endpoints — the policy-manager hosts them today; may move to a dedicated <code>webhook-manager</code> service if scope expands.</td></tr>
     <tr><td><code>docs/openapi/smartload-v1.yaml</code> (planned)</td><td>Endpoint specs land here as #130 ships.</td></tr>
     <tr><td><code>tests/e2e/webhook-delivery/</code> (planned)</td><td>End-to-end suite: register URL → publish event → assert customer endpoint received within 5 s with valid signature.</td></tr>

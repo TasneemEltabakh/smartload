@@ -1,8 +1,11 @@
 """
-Tests for the 3 features added to services/rl-engine/app.py:
-  1. _handle_anomaly_message  — updates _anomaly_health from smartload.anomaly envelopes
-  2. _pull_initial_policy     — syncs policy from Policy Manager on startup
-  3. GET /api/v1/engine/state — returns SOT §11-compliant engine state shape
+Tests for app.py features:
+  1. _handle_anomaly_message       — updates _anomaly_health from smartload.anomaly envelopes
+  2. _pull_initial_policy          — syncs policy from Policy Manager on startup
+  3. GET /api/v1/engine/state      — returns SOT §11-compliant engine state shape
+  4. _evict_stale_anomaly_health   — C5: drops entries older than the TTL
+  5. _refresh_policy_under_lock    — C4: reuses live policy via reload() instead
+                                     of reconstructing it on every publish
 """
 from __future__ import annotations
 
@@ -51,6 +54,13 @@ def _clear_anomaly_health() -> None:
 
 # ── 1. _handle_anomaly_message ────────────────────────────────────────────────
 
+def _status_of(backend_id: str) -> str | None:
+    """Pull the status out of the (status, monotonic_ts) tuple stored in
+    _anomaly_health since the C5 eviction change. Returns None if absent."""
+    entry = _app._anomaly_health.get(backend_id)
+    return entry[0] if entry is not None else None
+
+
 class TestHandleAnomalyMessage:
     def setup_method(self):
         _clear_anomaly_health()
@@ -58,22 +68,22 @@ class TestHandleAnomalyMessage:
     def test_healthy_verdict_stored(self):
         raw = _make_anomaly_raw("backend-1", "healthy")
         _handle_anomaly_message(raw)
-        assert _app._anomaly_health.get("backend-1") == "healthy"
+        assert _status_of("backend-1") == "healthy"
 
     def test_degraded_verdict_stored(self):
         raw = _make_anomaly_raw("backend-2", "degraded")
         _handle_anomaly_message(raw)
-        assert _app._anomaly_health.get("backend-2") == "degraded"
+        assert _status_of("backend-2") == "degraded"
 
     def test_unhealthy_verdict_stored(self):
         raw = _make_anomaly_raw("backend-3", "unhealthy")
         _handle_anomaly_message(raw)
-        assert _app._anomaly_health.get("backend-3") == "unhealthy"
+        assert _status_of("backend-3") == "unhealthy"
 
     def test_verdict_overwrites_previous(self):
         _handle_anomaly_message(_make_anomaly_raw("backend-1", "healthy"))
         _handle_anomaly_message(_make_anomaly_raw("backend-1", "unhealthy"))
-        assert _app._anomaly_health["backend-1"] == "unhealthy"
+        assert _status_of("backend-1") == "unhealthy"
 
     def test_malformed_json_ignored(self):
         _handle_anomaly_message(b"not-json")
@@ -97,7 +107,9 @@ class TestHandleAnomalyMessage:
     def test_multiple_backends_independent(self):
         _handle_anomaly_message(_make_anomaly_raw("b1", "healthy"))
         _handle_anomaly_message(_make_anomaly_raw("b2", "unhealthy"))
-        assert _app._anomaly_health == {"b1": "healthy", "b2": "unhealthy"}
+        assert _status_of("b1") == "healthy"
+        assert _status_of("b2") == "unhealthy"
+        assert set(_app._anomaly_health.keys()) == {"b1", "b2"}
 
 
 # ── 2. _pull_initial_policy ───────────────────────────────────────────────────
@@ -225,3 +237,96 @@ class TestEngineStateEndpoint:
         # RUNLOOP_ENABLED defaults to False unless env var is set
         data = client.get("/api/v1/engine/state").get_json()
         assert data["runloop_enabled"] is False
+
+
+# ── 4. C5: _evict_stale_anomaly_health ────────────────────────────────────────
+
+class TestEvictStaleAnomalyHealth:
+    def setup_method(self):
+        _clear_anomaly_health()
+
+    def test_recent_entries_kept(self):
+        _handle_anomaly_message(_make_anomaly_raw("b1", "healthy"))
+        # The just-inserted entry is well within TTL.
+        _app._evict_stale_anomaly_health(now_monotonic=__import__("time").monotonic())
+        assert "b1" in _app._anomaly_health
+
+    def test_old_entries_evicted(self):
+        import time as _time
+        _handle_anomaly_message(_make_anomaly_raw("b1", "healthy"))
+        # Force the entry to look ancient by rewinding its timestamp past
+        # the TTL window.
+        status, _ts = _app._anomaly_health["b1"]
+        _app._anomaly_health["b1"] = (
+            status,
+            _time.monotonic() - _app._anomaly_health_ttl_seconds - 1.0,
+        )
+        _app._evict_stale_anomaly_health(now_monotonic=_time.monotonic())
+        assert "b1" not in _app._anomaly_health
+
+    def test_eviction_preserves_other_backends(self):
+        import time as _time
+        _handle_anomaly_message(_make_anomaly_raw("b1", "healthy"))
+        _handle_anomaly_message(_make_anomaly_raw("b2", "healthy"))
+        # Stale only b1.
+        status, _ts = _app._anomaly_health["b1"]
+        _app._anomaly_health["b1"] = (
+            status,
+            _time.monotonic() - _app._anomaly_health_ttl_seconds - 1.0,
+        )
+        _app._evict_stale_anomaly_health(now_monotonic=_time.monotonic())
+        assert "b1" not in _app._anomaly_health
+        assert "b2" in _app._anomaly_health
+
+
+# ── 5. C4: _refresh_policy_under_lock reuses live policy ──────────────────────
+
+class TestRefreshPolicyUnderLock:
+    def setup_method(self):
+        # Ensure a baseline policy is loaded before each test so the
+        # refresh path has something to call reload() on.
+        with _state_lock:
+            _app._engine_policy = _app.EnginePolicy()
+            boot = _app.bootstrap_policy("random_shadow", _app._engine_policy)
+            _app._set_policy_state(boot)
+
+    def test_refresh_reuses_existing_policy_instance(self):
+        """A new EnginePolicy publish should NOT replace the policy
+        instance — reload() updates kwargs in place. Verified by object
+        identity: the policy reference before and after must be the
+        same object."""
+        before = _app._policy
+        assert before is not None
+
+        new_policy = _app.EnginePolicy(
+            rl_confidence_threshold=0.9,
+            rl_exploration_rate=0.1,
+            policy_version=1,
+        )
+        with _state_lock:
+            _app._refresh_policy_under_lock(new_policy)
+
+        assert _app._policy is before, (
+            "Policy was reconstructed instead of reloaded — C4 regression"
+        )
+        assert _app._engine_policy.policy_version == 1
+
+    def test_refresh_falls_back_to_bootstrap_when_reload_unsupported(self):
+        """If a policy raises NotImplementedError from reload(), the
+        refresh path must fall through to bootstrap_policy. This is the
+        old behaviour, preserved as a safety net."""
+        # Monkey-patch the live policy's reload to refuse the update.
+        original_reload = _app._policy.reload
+        _app._policy.reload = lambda **kw: (_ for _ in ()).throw(NotImplementedError())
+        try:
+            with _state_lock:
+                _app._refresh_policy_under_lock(
+                    _app.EnginePolicy(policy_version=2)
+                )
+            # The reload refused → bootstrap rebuilt the policy instance.
+            assert _app._policy is not None
+        finally:
+            # Restore so other tests don't inherit the broken reload.
+            with _state_lock:
+                boot = _app.bootstrap_policy("random_shadow", _app._engine_policy)
+                _app._set_policy_state(boot)

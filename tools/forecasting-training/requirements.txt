@@ -1,0 +1,10 @@
+# Training-only deps for the forecasting ARIMA model. NOT in the
+# runtime forecasting service image — keep these here so the service
+# stays slim. Promote a trained .pkl to services/forecasting/models/
+# after running train.py.
+
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.0
+statsmodels==0.14.2
+prophet==1.1.5

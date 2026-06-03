@@ -96,15 +96,23 @@ def build_action_mask(
     """Return a bool array of shape (n_max,).
 
     True  = backend is eligible (healthy or degraded).
-    False = backend is masked out (unhealthy or absent / padded slot).
+    False = backend is masked out (unhealthy, unknown, or absent / padded slot).
+
+    The eligibility predicate lives in policy_base.is_eligible — kept central
+    so all serving paths (this mask, ranking filters in PPO/round_robin/
+    least_connections, sidecar reweighting) agree on what "eligible" means.
 
     Caller must check for all-False and invoke all_masked_fallback() before
     passing the mask to MaskablePPO — SB3 will raise on an all-False mask.
     """
+    # Late import to avoid a hard dependency cycle between obs_builder and
+    # policy_base in test setups that import only obs_builder.
+    from policy_base import is_eligible
+
     mask = np.zeros(n_max, dtype=bool)
     sorted_state = sorted(state, key=lambda s: s.backend_id)
     for i, s in enumerate(sorted_state[:n_max]):
-        mask[i] = s.health != "unhealthy"
+        mask[i] = is_eligible(s.health)
     return mask
 
 

@@ -79,6 +79,15 @@ services:
       # the datasource is provisioned with an empty password and every
       # dashboard panel fails with SASL auth error.
       TIMESCALEDB_PASSWORD: ${TIMESCALEDB_PASSWORD:-changeme}
+      # Embedded-panel embedding for the operator UI (v1.0.7l, #131 Phase 3).
+      # ALLOW_EMBEDDING flips X-Frame-Options off so the iframe loads; the
+      # AUTH_ANONYMOUS_* set lets the iframe render without a login prompt
+      # (the operator UI is single-tenant + assumed-trusted in Phase 1 —
+      # auth lands with #125, Phase 2). Viewer role is read-only.
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_NAME: "Main Org."
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     ports:
       - "3000:3000"
     volumes:
@@ -130,7 +139,7 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-10}
       # Run loop defaults to off so the Phase-0 stub stays the default until
       # operators flip the flag explicitly. See SOT §8.5 + issue #138.
-      ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-false}
+      ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-true}
       ANOMALY_ENGINE: ${ANOMALY_ENGINE:-threshold}
       ANOMALY_WINDOW_SECONDS: ${ANOMALY_WINDOW_SECONDS:-60}
     depends_on:
@@ -157,7 +166,7 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
       # Run loop defaults to off so the Phase-0 stub stays the default until
       # operators flip the flag explicitly. See SOT §8.6 + issue #138.
-      FORECAST_RUNLOOP_ENABLED: ${FORECAST_RUNLOOP_ENABLED:-false}
+      FORECAST_RUNLOOP_ENABLED: ${FORECAST_RUNLOOP_ENABLED:-true}
       FORECAST_ENGINE: ${FORECAST_ENGINE:-moving_average}
       FORECAST_WINDOW_MINUTES: ${FORECAST_WINDOW_MINUTES:-60}
     depends_on:
@@ -188,7 +197,7 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
       # Run loop defaults to off so the Phase-0 stub stays the default
       # until operators flip the flag explicitly. See SOT §8.7 + issue #138.
-      RL_RUNLOOP_ENABLED: ${RL_RUNLOOP_ENABLED:-false}
+      RL_RUNLOOP_ENABLED: ${RL_RUNLOOP_ENABLED:-true}
       RL_POLICY: ${RL_POLICY:-random_shadow}
       RL_WINDOW_SECONDS: ${RL_WINDOW_SECONDS:-30}
     depends_on:
@@ -363,7 +372,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       NGINX_CONTAINER: ${NGINX_CONTAINER:-smartload-load-balancer-1}
       NGINX_CONF_PATH: /nginx-conf/upstream.conf
-      LB_SIDECAR_RUNLOOP_ENABLED: ${LB_SIDECAR_RUNLOOP_ENABLED:-false}
+      LB_SIDECAR_RUNLOOP_ENABLED: ${LB_SIDECAR_RUNLOOP_ENABLED:-true}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
       ALL_BACKENDS: >-
         smartload-test-backend-1:8080,smartload-test-backend-2:8080,

@@ -1,7 +1,11 @@
 """
 services/rl-engine/training/env.py
 ────────────────────────────────────
-SmartLoadEnv — Gymnasium environment for offline PPO training.
+SmartLoadEnv — Gymnasium environment that hosts the offline contextual-
+bandit training for SmartLoad's routing policy. PPO is the optimisation
+algorithm; the underlying task is a contextual bandit (state → chosen
+backend) replayed against logged Alibaba traces.  See simulator.py
+docstring for the framing rationale.
 
 Canonical path per SOT §8.7 (updated from root-level to training/env.py).
 This file is training-only and is never COPY'd into the runtime Docker image.

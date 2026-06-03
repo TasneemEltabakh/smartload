@@ -20,7 +20,7 @@ Selection: `FORECAST_ENGINE` env var.
 
 ## Env vars
 - `TIMESCALEDB_URL`, `REDIS_URL`
-- `FORECAST_RUNLOOP_ENABLED` (default `false`) — flip to `true` to start the inference run loop. Off by default so the Phase-0 stub stays the safe default until operators opt in. See SOT §8.6 + issue #138.
+- `FORECAST_RUNLOOP_ENABLED` (default `true` since v1.0.7g; was `false` before) — set to `false` to revert to the Phase-0 stub (no engine, `/health` only). See SOT §8.6 + issue #138.
 - `FORECAST_ENGINE` (default `moving_average`) — `moving_average` | `arima`. If the requested engine fails to load (e.g. missing `.pkl`), the service falls back to `moving_average` and reports `engine_ready=false` on `/health`.
 - `POLL_INTERVAL_SECONDS` (default 60)
 - `FORECAST_WINDOW_MINUTES` (default 60) — DB lookback window passed to `FORECAST_QUERY`.

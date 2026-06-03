@@ -609,7 +609,7 @@ Five backend slots enumerated explicitly. The comment in the file explains why:
 
 > Open-source NGINX doesn't round-robin across A records when `proxy_pass` uses a variable, and doesn't support the Plus-only `server ... resolve` directive for dynamic upstream membership. Enumerate the docker-compose replicas explicitly so the in-block round-robin actually distributes requests across them.
 
-The autoscaler toggles backends 1..5 between running/stopped at runtime. NGINX keeps all 5 hostnames in its block, and `proxy_next_upstream` retries past whichever ones are currently stopped. The T2.1 sidecar will eventually replace this static block with a regenerated one.
+The autoscaler toggles backends 1..5 between running/stopped at runtime. NGINX keeps all 5 hostnames in its block, and `proxy_next_upstream` retries past whichever ones are currently stopped. The T2.1 sidecar (shipped 2026-05-23, refined under v1.0.7b) now overwrites this block with a regenerated one whenever RL or anomaly-detector publishes; the static seed remains as the bootstrap fallback when the sidecar hasn't yet applied a recommendation.
 
 **Server block.**
 
@@ -1071,7 +1071,7 @@ def health():
 
 ## 4. Decision plane
 
-The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1), `forecasting` (round 2), and `rl-engine` (round 3) are now all wired through their `engine_base` / `policy_base` ABCs and baseline engines behind `<SVC>_RUNLOOP_ENABLED=false` — flip the flag on each to start its run loop. **The #138 engine-wrapper cutover is complete.**
+The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1), `forecasting` (round 2), and `rl-engine` (round 3) are now all wired through their `engine_base` / `policy_base` ABCs and baseline engines, **enabled by default in `docker-compose.yml` since v1.0.7g**. To revert any one of them to its Phase-0 stub for debugging, set `<SVC>_RUNLOOP_ENABLED=false` in `.env`. **The #138 engine-wrapper cutover is complete.**
 
 This staging is deliberate. The plugin layer (engines/, policies/) was written *first* so that when each service's run-loop cutover lands, the schema, factory, and conformance tests are already in place — and so a single service can be smoke-tested in isolation before replicating to siblings.
 
@@ -1408,9 +1408,12 @@ A `_features` builder is the only fixture — every test constructs the input it
 
 ### 4.2 `forecasting` (plugin-per-engine)
 
+> **Framing (v1.0.7i amendment, 2026-05-29):** The ARIMA engine is now shipped. `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, test MAPE 25.0% on the Alibaba trace — +22.77% over the moving-average baseline) land via the PR #144 kernel extract documented in SOT §22 v1.0.7i. The training pipeline relocated to `tools/forecasting-training/` (out of the runtime image). The SOT KPI is <20% MAPE — **not yet met** — so the engine ships but is NOT the default; operators activate it via `FORECAST_ENGINE=arima` in `.env`. `moving_average` remains the canonical Phase-1 forecaster until a tuned model crosses the SLO. Verified live: `engine.loaded=arima, ready=true, predicted=30.84 rps, CI=[16.11, 45.57]` (statsmodels `conf_int(alpha=0.05)` produces wider bands than the baseline's stddev band — that's actual model uncertainty). Two Dockerfile / kwargs bugs caught + fixed during the integration check (see SOT v1.0.7i changelog row).
+
+
 #### What it is
 
-Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publishes `ForecastResult` envelopes to `smartload.forecast`. As of #138 round 2, the service runs a real inference loop (behind `FORECAST_RUNLOOP_ENABLED=true`) using the configured engine; the moving-average baseline ships today, and the ARIMA plugin scaffold awaits the revised model handoff from #102 (see PR #144 review).
+Produces short-horizon (default 5-minute) RPS forecasts for the autoscaler. Publishes `ForecastResult` envelopes to `smartload.forecast`. As of #138 round 2 the service runs a real inference loop (now `FORECAST_RUNLOOP_ENABLED=true` by default since v1.0.7g) using the configured engine. Two engines ship today: `moving_average` (baseline, default) and `arima` (trained ARIMA(3,0,1) artifact landed v1.0.7i, 25.0% test MAPE — operator opts in via `FORECAST_ENGINE=arima`). Engine selection + policy-derived kwargs flow through `engine_base.select_engine()` per #138.
 
 #### Files
 
@@ -1506,9 +1509,11 @@ The tests cover:
 
 ### 4.3 `rl-engine` (plugin-per-policy)
 
+> **Framing (v1.0.7 amendment, 2026-05-28):** The trained policy is a **contextual bandit** optimised with MaskablePPO on logged Alibaba traces — the offline simulator replays trace windows independently of the agent's action, so there are no environment dynamics to learn. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX `max_fails`, anomaly-detector exclusions, autoscaler reactivity). Canonical `operating_mode` set is now `{shadow, hybrid}` (`learning` kept as a backwards-compat alias for `hybrid`). Serving uses argmax-dominant weighting (chosen backend → 0.7, remainder split evenly across other eligibles) instead of softmax of logits. `PPOPolicy.reload(**kwargs)` is a real in-place update hook — policy republishes no longer reload `policy.zip` from disk. New `HEALTH_UNKNOWN` state excludes silent backends (no telemetry in the query window) from routing. Anomaly-health verdicts evict on a TTL so the dict stays bounded under backend churn. Full delta in SOT §22 v1.0.7.
+
 #### What it is
 
-Reinforcement-learning routing engine. Publishes `RoutingRecommendation` to `smartload.routing` with `mode="shadow"` (logged only) or `mode="active"` (load balancer applies the weights). As of #138 round 3, the service runs a real inference loop (behind `RL_RUNLOOP_ENABLED=true`) using the configured policy; the random-shadow baseline ships today, and the PPO plugin scaffold awaits the trained `policy.zip` from #27.
+Routing decision engine. Publishes `RoutingRecommendation` to `smartload.routing` with `mode="shadow"` (logged only) or `mode="active"` (load balancer applies the weights). As of #138 round 3 the service runs a real inference loop behind `RL_RUNLOOP_ENABLED=true` using the configured policy; baseline policies (random_shadow, round_robin, least_connections) plus the trained PPO bandit ship today.
 
 #### Why "policies/" instead of "engines/"
 
@@ -1591,7 +1596,7 @@ class RoutingPolicy(ABC):
     def reload(self) -> None: ...
 ```
 
-Two named types reflect the RL contract: `state → act → action`. State is a list (one entry per backend), action is a ranking and a mode. The shape is what the planned T2.1 LB sidecar will consume.
+Two named types reflect the RL contract: `state → act → action`. State is a list (one entry per backend), action is a ranking and a mode. The shape is what the T2.1 LB sidecar consumes today (shipped 2026-05-23) — `services/lb-sidecar/runloop.py:handle_routing` parses the rankings into NGINX weights, with `confidence = max(scores)` gated by `rl_confidence_threshold` per SOT §13 (v1.0.7b).
 
 #### `policies/random_shadow/policy.py`
 
@@ -1625,7 +1630,7 @@ Tests confirm:
 
 `PPOPolicy` is implemented at `policies/ppo/policy.py` and registered in `policy_base.select_policy()`. **Training is complete** — `services/rl-engine/models/policy.zip` (156 KB, 2M steps, ~75 min CPU) and `artifact_meta.json` (`latency_scale=100.0`) are committed. Eval on 20 held-out episodes: PPO `mean_reward = -0.0056`, ties `round_robin` (joint best); SLO violation rate 0; beats `least_connections` by 4.8e-2.
 
-Operator activation sequence: (1) set `RL_POLICY=ppo` + `RL_RUNLOOP_ENABLED=true` and restart the container; (2) verify shadow envelopes on `smartload.routing` before setting `policy.yaml: operating_mode: hybrid` to go active. No `app.py` changes required. The fallback-to-baseline path is automatic if `policy.zip` is absent (`policy_ready=false` on `/health`).
+Operator activation sequence (since v1.0.7g `RL_RUNLOOP_ENABLED=true` is the default): (1) set `RL_POLICY=ppo` and restart the container; (2) verify shadow envelopes on `smartload.routing` (the `RL_MODE=shadow` default keeps PPO publishing without actuating); (3) set `RL_MODE=active` AND `policy.yaml: operating_mode: hybrid` to go active end-to-end. No `app.py` changes required. The fallback-to-baseline path is automatic if `policy.zip` is absent (`policy_ready=false` on `/health`).
 
 When the policy is loaded and `operating_mode=hybrid`, the policy reports `mode=active` instead of `mode=shadow` — the LB sidecar (T2.1) starts honouring the rankings. That mode flip is the v1 → v2 contract.
 
@@ -2690,7 +2695,7 @@ Replay first so a freshly-opened page isn't blank. Then block on `q.get(timeout=
 
 #### What it is
 
-A React 18 SPA built with Vite + TypeScript. Five pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), Actions (manual scale + isolate forms with confirmation modals, slice #3), and Live Engines (per-engine tiles + colour-coded SSE event feed, #121 session 1).
+A React 18 SPA built with Vite + TypeScript. Six pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), Actions (manual scale + isolate forms with confirmation modals, slice #3), Live Engines (per-engine tiles + colour-coded SSE event feed, #121 session 1), and the per-engine deep-dive page at `/engines/<service>` (#121 OUI.3 close-out, v1.0.7k — engine block, run-loop stats, policy snapshot, full last_output, channel-filtered activity ring, one-click Grafana + raw-state jumps).
 
 #### Files
 
@@ -2710,7 +2715,8 @@ services/operator-ui/web/
         ├── Policy.tsx
         ├── Audit.tsx
         ├── Actions.tsx
-        └── LiveEngines.tsx
+        ├── LiveEngines.tsx
+        └── EngineDetail.tsx   # /engines/<service> deep-dive page (v1.0.7k)
 ```
 
 #### Live Engines page — two-pane layout (#121)
@@ -2746,6 +2752,23 @@ Status (ok/warn/bad) drives a left-border colour: unreachable → bad, runloop d
 The **activity feed** (right column) subscribes via `EventSource(ENGINES_STREAM_URL)`. One entry per envelope, colour-coded by a 3 px left border (anomaly red, forecast blue, routing purple, scale green). Channel filter chips at the top of the panel; client-side cap at `FEED_MAX = 200` so the DOM stays bounded under sustained traffic. Stream-state indicator in the page header (`● live` / `○ connecting…` / `✕ stream error`).
 
 The page deliberately surfaces nothing through tables — the first cut packed every counter into a 6-row table per card and felt like a dashboard from 2010. The redesign (commit `eb8e314`) puts headline content first and pushes forensics to detail-on-demand.
+
+#### Per-engine deep-dive page — `/engines/<service>` (v1.0.7k, #121 OUI.3 close-out)
+
+`EngineDetail.tsx` is the full surface for one engine. The right-slide drawer on `/engines` stays as the quick preview; the new page is what operators reach for when they need the complete state of `anomaly-detector`, `forecasting`, or `rl-engine` in one place. Reached by clicking the engine name in any tile on `/engines`, or directly via the SPA fallback at `/engines/<service>`.
+
+Header carries the engine name + a colour-coded status badge (healthy / degraded / unreachable), the primary publish channel, the loaded engine / policy with fallback inline (e.g. `(fallback from arima)` in warn yellow), and two one-click jumps: the matching Grafana dashboard (`/grafana/d/smartload-anomaly`, `…/smartload-forecast`, `…/smartload-rl-routing`) and the raw `/api/v1/engine/state` on the service port. A small spinner in the meta row indicates an in-flight snapshot fetch.
+
+Four content cards sit in a two-column grid (collapses to one column under 900 px):
+
+- **Run-loop stats** — `ticks_total`, `publishes_total`, `last_tick_at` with age in seconds, `last_publish_at`, the `runloop_enabled` flag (rendered in warn yellow when off), and the `rl_mode_env` pin for the RL engine.
+- **Policy snapshot** — pretty-printed JSON of `body.policy_snapshot`.
+- **Last cycle output** — pretty-printed JSON of `body.last_output`, full-width.
+- **Activity on `<channel>`** — last 80 events on the engine's primary publish channel drawn from the BFF snapshot's `channels[…]` ring (anomaly → `smartload.anomaly`, forecasting → `smartload.forecast`, rl-engine → `smartload.routing`). One row per envelope: timestamp · source · `JSON.stringify(payload)` clipped to one line, full payload visible by widening the column. No separate SSE connection on the page — the BFF already buckets events per channel into the snapshot, so the same 5 s `getEnginesSnapshot()` poll cadence that drives the cards also keeps this ring fresh, and the page stays predictable to reason about.
+
+The page handles unknown slugs gracefully: if the URL points at something other than the three configured engines, it renders a brief "unknown engine" message and bounces to `/engines` after 1.2 s.
+
+**Embedded Grafana panels (v1.0.7l, #131 Phase 3).** Below the activity feed the deep-dive page renders a "Live charts" card with two `/d-solo/<dashUid>/<dashSlug>?panelId=<id>&theme=dark&from=now-30m&to=now&refresh=10s` iframes per engine (anomaly → panels 1 + 4 of `smartload-anomaly`; forecasting → 1 + 3 of `smartload-forecast`; rl → 1 + 2 of `smartload-rl-routing`). Two prerequisites land in the Grafana service in `docker-compose.yml`: `GF_SECURITY_ALLOW_EMBEDDING=true` (drops the default `X-Frame-Options: deny` that otherwise blocks any iframe) and `GF_AUTH_ANONYMOUS_ENABLED=true` with `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer` (read-only, no login prompt — matches the live-engines manifest's "single-tenant + assumed-trusted" Phase 1 posture; real auth lands with #125). The iframe `src` points at `http://localhost:3000` directly for the dev compose stack; a same-origin `/grafana/*` reverse proxy in the BFF is the production path (cleaner cookie story when auth arrives, survives TLS termination at NGINX) and is tracked as a #131 follow-up. URL construction is centralised in `dashUrl()` / `soloPanelUrl()` helpers so the eventual proxy swap only changes a single constant.
 
 #### `package.json`
 

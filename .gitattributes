@@ -1,0 +1,4 @@
+# Force LF for shell scripts so Docker/Linux containers don't choke on CRLF
+# shebangs when checking out on Windows (core.autocrlf=true would otherwise
+# convert *.sh to CRLF and break `/docker-entrypoint.d/*.sh`).
+*.sh text eol=lf

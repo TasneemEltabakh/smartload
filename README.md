@@ -144,14 +144,14 @@ smartload/
 ├── services/                         # one folder per deployable service
 │   ├── load-balancer/                # NGINX
 │   ├── lb-otel-shipper/              # NGINX log → OTLP shipper
+│   ├── lb-sidecar/                   # dynamic upstream rewriter (T2.1)
 │   ├── telemetry/                    # OTLP ingress + read API
 │   ├── anomaly-detector/             # plugin-per-folder under engines/
 │   ├── forecasting/                  # plugin-per-folder under engines/
 │   ├── rl-engine/                    # plugin-per-folder under policies/
 │   ├── autoscaler/                   # Docker SDK → test-backend pool
 │   ├── policy-manager/               # operating policy + audit
-│   ├── operator-ui/                  # bff/ (Flask) + web/ (React) — slice #1
-│   ├── webhook-dispatcher/           # planned (#130)
+│   ├── operator-ui/                  # bff/ (Flask) + web/ (React)
 │   └── shared/
 │       ├── contracts.py              # Redis envelope dataclasses
 │       ├── queries.py                # canonical SQL constants
@@ -164,13 +164,26 @@ smartload/
 │   ├── grafana/ otel-collector/ prometheus/ redis/ timescaledb/
 │   ├── k8s/                          # raw manifests
 │   └── helm/smartload/               # Chart.yaml + values.yaml (#133)
-├── tests/
+├── tests/                            # PEP 420 namespace packages — no __init__.py
 │   ├── unit/<service>/               # pure-function tests per service
 │   ├── integration/                  # service-pair / contract tests
 │   ├── e2e/<feature>/                # feature-level tests via the SDK
 │   ├── conformance/lb_adapter/       # every adapter must pass these
 │   └── performance/                  # Locust
-├── docs/                             # see "Contracts" above
+├── tools/                            # dev-utility containers (NOT shipped middleware)
+│   ├── demo-ui/                      # scenario-injection + chaos + live SSE feed (8091)
+│   └── traffic-simulator/            # Locust UI for synthetic load (8089)
+├── experiments/                      # one-off integration / smoke run artifacts
+│   └── <feature>_<UTC-timestamp>/    # frozen by date; readable via git log
+├── docs/
+│   ├── SOURCE_OF_TRUTH.html          # canonical spec (read first)
+│   ├── PROJECT_WALKTHROUGH.md        # narrative walkthrough
+│   ├── features/                     # per-feature manifests (+ SLICE_CHECKLIST.md)
+│   ├── architecture/                 # control/data plane, multi-tenancy, failure modes
+│   ├── openapi/                      # smartload-v1.yaml
+│   ├── planned/                      # placeholder docs for unimplemented services (e.g. webhook-dispatcher)
+│   ├── ui-mockups/                   # operator-UI page mockups (PNG)
+│   └── redis-channels.md             # canonical channel registry
 ├── scripts/
 │   ├── lint-structure.py             # per-service README + plugin layout + e2e/feature alignment
 │   ├── lint-redis-channels.py        # channel-registry anti-drift
@@ -178,7 +191,7 @@ smartload/
 │   ├── seed-metrics.py               # synthetic telemetry seeder
 │   └── download-datasets.sh
 ├── config/                           # policy.yaml + .env.example
-├── datasets/                         # public training data (Borg, Alibaba, NAB, Yahoo SMD)
+├── datasets/                         # public training data (Borg, Alibaba, NAB, Yahoo SMD); fetched, gitignored
 ├── test-backends/                    # Node.js stubs the autoscaler scales
 └── docker-compose.yml
 ```
@@ -193,20 +206,21 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 |---|---|---|---|
 | `load-balancer` | NGINX | 8080 | wired |
 | `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
+| `lb-sidecar` | Python | 8087 | T2.1 shipped — subscribes to `smartload.routing` + `smartload.anomaly` + `smartload.policy`, dynamically rewrites `upstream.conf`, `nginx -s reload` via Docker exec |
 | `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
-| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=false` default) + `/api/v1/isolate` (slice #3, #123) |
-| `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=false` default) |
-| `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=false` default; `RL_MODE=shadow` pin) |
+| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=true` default since v1.0.7g) + `/api/v1/isolate` (slice #3, #123) |
+| `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=true` default since v1.0.7g) |
+| `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=true` default since v1.0.7g; `RL_MODE=shadow` is the safety pin that keeps routing inert until an operator opts in); v1.0.7 review fixes (see SOT §22) |
 | `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2) + `/api/v1/scale` (slice #3, #123) |
 | `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
 | `operator-ui` | Flask + React | 8090 | Home + Policy + Audit + Actions pages (slices #1, #2, #3) |
-| `webhook-dispatcher` | Python | — | scaffolded; #130 |
+| `webhook-dispatcher` | — | — | placeholder; tracking doc lives at `docs/planned/webhook-dispatcher.md` until #130 lands the implementation |
 
 Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
 
 ### Engine-wrapper foundation (#138 — cutover complete)
 
-All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine/policy via `select_engine()` / `select_policy()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each service ships behind a `<SVC>_RUNLOOP_ENABLED=false` flag so the Phase-0 stub stays the safe default until operators opt in.
+All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine/policy via `select_engine()` / `select_policy()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each service is enabled by default since v1.0.7g (`<SVC>_RUNLOOP_ENABLED=true` in `docker-compose.yml`) now that the smoke runs have shipped; an operator can still pin a service back to the Phase-0 stub by setting the flag to `false` in `.env`. The remaining safety is the `RL_MODE=shadow` pin on the rl-engine and the LB sidecar's `mode != "active"` gate — both still default safe, so RL publishes shadow envelopes the sidecar ignores until an operator opts in.
 
 - **anomaly-detector** — `ANOMALY_RUNLOOP_ENABLED` + `ANOMALY_ENGINE` (threshold | isolation_forest)
 - **forecasting** — `FORECAST_RUNLOOP_ENABLED` + `FORECAST_ENGINE` (moving_average | arima)

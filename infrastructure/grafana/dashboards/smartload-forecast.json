@@ -1,0 +1,262 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Forecast-vs-actual view per SOT §17.2 line 3288 ('Predicted vs actual request rate (overlay)'). Predicted RPS is currently only persisted as part of the autoscaler's reason text in `scaling_events` — the forecasting service publishes ForecastResult envelopes to `smartload.forecast` but those don't write to TimescaleDB. The overlay panel here renders both series on the same axis when forecast-triggered scaling decisions land; until a forecasts hypertable is added, the predicted series will be sparse (only one point per autoscaler decision). The autoscaler decisions table is the durable record of what was predicted at decision time.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Actual aggregate RPS from the metrics hypertable, overlaid with predicted RPS extracted from scaling_events.reason via regex. Predicted points appear only at moments when the autoscaler made a decision — see the gap notice in the dashboard description. The two series sharing an axis is the SOT-mandated overlay.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "req/s",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "predicted"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}},
+              {"id": "custom.drawStyle", "value": "points"},
+              {"id": "custom.pointSize", "value": 10},
+              {"id": "custom.lineWidth", "value": 0}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "actual"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "title": "Predicted vs actual RPS",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  'actual' AS metric,\n  SUM(value) / EXTRACT(EPOCH FROM '$__interval'::interval) AS value\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'\n  AND metric_name = 'request_count'\nGROUP BY 1\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        },
+        {
+          "refId": "B",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time AS \"time\",\n  'predicted' AS metric,\n  (regexp_match(reason, 'predicted (\\d+(?:\\.\\d+)?) rps'))[1]::float AS value\nFROM scaling_events\nWHERE $__timeFilter(time)\n  AND reason LIKE 'forecast predicted%'\nORDER BY time",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Aggregate RPS over a wider window, smoothed to give context for the forecast accuracy panel below. Useful for spotting trend shifts the forecasting service should be tracking.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "req/s",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9},
+      "id": 2,
+      "options": {
+        "legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "title": "Actual RPS (smoothed)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  SUM(value) / EXTRACT(EPOCH FROM '$__interval'::interval) AS rps\nFROM metrics\nWHERE $__timeFilter(time)\n  AND service = 'load-balancer'\n  AND metric_name = 'request_count'\nGROUP BY 1\nORDER BY 1",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Per-decision forecast error: predicted RPS (extracted from reason) versus the actual mean RPS in the 5 minutes following the decision (the forecast's horizon). A persistent bias here means the forecasting model is systematically wrong, not the autoscaler.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "predicted_rps"},
+            "properties": [{"id": "unit", "value": "reqps"}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "actual_rps_next_5min"},
+            "properties": [{"id": "unit", "value": "reqps"}, {"id": "decimals", "value": 1}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "error"},
+            "properties": [
+              {"id": "unit", "value": "reqps"},
+              {"id": "decimals", "value": 1},
+              {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}},
+              {"id": "color", "value": {"mode": "continuous-RdYlGr"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "action"},
+            "properties": [
+              {"id": "mappings", "value": [{"type": "value", "options": {"scale_out": {"color": "orange"}, "scale_in": {"color": "blue"}}}]},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9},
+      "id": 3,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "time"}]
+      },
+      "title": "Forecast accuracy at decision moments",
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH decisions AS (\n  SELECT time,\n         action,\n         (regexp_match(reason, 'predicted (\\d+(?:\\.\\d+)?) rps'))[1]::float AS predicted_rps\n  FROM scaling_events\n  WHERE reason LIKE 'forecast predicted%'\n)\nSELECT d.time,\n       d.action,\n       d.predicted_rps,\n       (SELECT SUM(value) / 300.0\n        FROM metrics\n        WHERE metric_name = 'request_count'\n          AND service = 'load-balancer'\n          AND time >= d.time\n          AND time <  d.time + INTERVAL '5 minutes') AS actual_rps_next_5min,\n       (SELECT SUM(value) / 300.0\n        FROM metrics\n        WHERE metric_name = 'request_count'\n          AND service = 'load-balancer'\n          AND time >= d.time\n          AND time <  d.time + INTERVAL '5 minutes') - d.predicted_rps AS error\nFROM decisions d\nORDER BY d.time DESC\nLIMIT 20",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    },
+    {
+      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "description": "Recent forecast-driven decisions, newest first. Reads from the same scaling_events table the Scaling dashboard surfaces but filters to only the forecast-triggered ones — i.e. decisions that were reactions to a forecasting service publish, not manual operator scales.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "auto",
+            "cellOptions": {"type": "auto"},
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "action"},
+            "properties": [
+              {"id": "mappings", "value": [{"type": "value", "options": {"scale_out": {"color": "orange"}, "scale_in": {"color": "blue"}}}]},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 17},
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "time"}]
+      },
+      "title": "Recent forecast-driven scaling decisions",
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT time, action, instance_count, reason\nFROM scaling_events\nWHERE reason LIKE 'forecast predicted%'\nORDER BY time DESC\nLIMIT 20",
+          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["smartload", "forecast"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "SmartLoad — Forecast",
+  "uid": "smartload-forecast",
+  "version": 1,
+  "weekStart": ""
+}

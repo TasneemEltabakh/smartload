@@ -1,11 +1,28 @@
 """
 services/rl-engine/training/simulator.py
 ─────────────────────────────────────────
-BackendSimulator — wraps TraceReplayDataset to provide the Gym-compatible
-reset()/step() interface used by SmartLoadEnv.
+BackendSimulator — replays Alibaba trace windows on a Gym-compatible
+reset()/step() interface so PPOPolicy can be trained as an offline
+contextual bandit on logged production telemetry.
 
-Design notes
-────────────
+Contextual-bandit framing (important)
+─────────────────────────────────────
+This is NOT an MDP — step(action) does NOT modify next_state based on the
+agent's choice. next_state is the next pre-recorded trace window, returned
+verbatim from TraceReplayDataset regardless of which backend the policy
+picked. The reward is the latency of the chosen backend in that next
+window, which is observational, not consequential: the policy is learning
+to predict which backend will have low latency next, given the current
+state, NOT how its routing decisions perturb the system.
+
+Why we kept the framing: building a queue-aware response model (M/M/1-style
+backend dynamics) was scoped out — the production load balancer already has
+deterministic feedback loops (NGINX max_fails, anomaly-detector exclusions,
+autoscaler reactivity) that handle the "consequence" axis. The trained policy
+needs to be a good *predictor* of next-window latency; the closed-loop
+correction lives elsewhere. See the C1 entry in the RL review changelog for
+the decision rationale.
+
 queue_depth synthesis:
   RL_STATE_QUERY returns SUM(request_count) per backend per window, aliased as
   queue_depth in BackendState. The Alibaba trace does not provide a separate
@@ -70,10 +87,13 @@ class BackendSimulator:
     def step(self, action: int) -> tuple[list[BackendState], bool]:
         """Advance one window. Returns (next_state, done).
 
-        `action` is the backend index chosen by the policy (0-based, sorted by
-        backend_id). The simulator is stateless with respect to routing — it
-        replays the trace regardless of what action was taken. The reward
-        function reads the consequence from next_state.
+        `action` is the backend index chosen by the policy (0-based, sorted
+        by backend_id). The simulator is stateless with respect to routing
+        — next_state is the next pre-recorded trace window, returned
+        independently of `action`. This is the contextual-bandit framing
+        documented in the module docstring; the reward function reads the
+        chosen backend's latency from next_state as an observational
+        signal, not as a causal consequence.
         """
         self._current_ts += self._dataset.window_ms
         self._step_count += 1
