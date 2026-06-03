@@ -100,34 +100,55 @@ _wait_for_status_not_down() {
     return 0
 }
 
+_set_backend_delay_via_exec() {
+    # POST /_admin/delay {ms: N} on backend-1 from inside its own container
+    # (the test-backend port isn't published on the host). Used for both the
+    # baseline-heterogeneity setup (a constant per-side slowness) and the
+    # mid-run anomaly spike.
+    local target_ms="$1"
+    docker exec smartload-test-backend-1 sh -c \
+        "wget -q -O /dev/null --post-data='{\"ms\": ${target_ms}}' --header='Content-Type: application/json' http://localhost:8080/_admin/delay" \
+        2>/dev/null || true
+}
+
 _inject_anomaly_at() {
-    # Run in the background; at t=anomaly_at, freezes backend-1 with
-    # `docker pause` (TCP succeeds, requests hang → time out) AND publishes
-    # the synthetic AnomalyEvent via POST /api/v1/isolate so SmartLoad's
-    # signal flow has something to react to. At t+hold, unpauses the
-    # backend and publishes a healthy event so the run returns to baseline.
+    # Schedule a latency-spike anomaly. At t=anomaly_at:
+    #   1. POST /_admin/delay {ms: ANOMALY_DELAY_MS} on backend-1 via
+    #      `docker exec` (we hit the in-container endpoint, not host:8080,
+    #      since backend-1 isn't published). The request still completes —
+    #      it's slow, not failed. This is the case where NGINX's passive
+    #      max_fails check NEVER trips (no 5xx, no timeout on the LB side),
+    #      so baseline RR keeps sending 1/5 of traffic to a slow backend
+    #      indefinitely. SmartLoad's lb-sidecar, in contrast, reacts to
+    #      the published AnomalyEvent within ~1 s and pulls the bad
+    #      backend out of rotation.
+    #   2. POST /api/v1/isolate to publish the AnomalyEvent that SmartLoad's
+    #      signal flow needs (the anomaly-detector hasn't observed enough
+    #      latency yet to fire on its own this early in the run).
     #
-    # The pause is what creates the actual failure signal — in baseline
-    # mode NGINX RR keeps dispatching 1/5 of traffic to a frozen backend
-    # and those requests fail. In SmartLoad mode the lb-sidecar should
-    # see the AnomalyEvent and rewrite the upstream weight so the bad
-    # backend stops receiving requests; failures should drop to near zero
-    # within the sidecar's reaction time.
+    # At t+hold: clear the runtime delay (back to the static baseline
+    # latency from SLOW_HOSTNAME/SLOW_DELAY_MS) and publish the recovery
+    # event so SmartLoad re-enables routing to the backend.
     local at_secs="$1"
     local hold_secs="$2"
     local label="$3"
+    local anomaly_delay="${ANOMALY_DELAY_MS:-200}"
     (
         sleep "$at_secs"
-        echo "[anomaly] t=${at_secs}s injecting backend-1 unhealthy + paused ($label)" >&2
-        docker pause smartload-test-backend-1 >/dev/null 2>&1 || true
+        echo "[anomaly] t=${at_secs}s injecting backend-1 +${anomaly_delay}ms latency ($label)" >&2
+        docker exec smartload-test-backend-1 sh -c \
+            "wget -q -O - --post-data='{\"ms\": ${anomaly_delay}}' --header='Content-Type: application/json' http://localhost:8080/_admin/delay" \
+            > /dev/null 2>&1 || true
         curl -fsS -X POST http://localhost:8082/api/v1/isolate \
             -H 'Content-Type: application/json' \
             -H "X-Actor: bench-$label" \
-            -d '{"backend_id":"smartload-test-backend-1","status":"unhealthy","reason":"benchmark anomaly injection"}' \
+            -d '{"backend_id":"smartload-test-backend-1","status":"unhealthy","reason":"benchmark latency-spike anomaly"}' \
             > /dev/null 2>&1 || true
         sleep "$hold_secs"
         echo "[anomaly] t=$((at_secs + hold_secs))s recovering backend-1 ($label)" >&2
-        docker unpause smartload-test-backend-1 >/dev/null 2>&1 || true
+        docker exec smartload-test-backend-1 sh -c \
+            "wget -q -O - --post-data='{\"ms\": 0}' --header='Content-Type: application/json' http://localhost:8080/_admin/delay" \
+            > /dev/null 2>&1 || true
         curl -fsS -X POST http://localhost:8082/api/v1/isolate \
             -H 'Content-Type: application/json' \
             -H "X-Actor: bench-$label" \
@@ -170,6 +191,21 @@ _run_side() {
     }
 
     _wait_for_status_not_down
+
+    # Backend heterogeneity setup: backend-1 gets a constant baseline
+    # slowness of BASELINE_SLOW_MS (default 15 ms) for the full run.
+    # In baseline (NGINX RR) mode this means 1/5 of traffic eats the
+    # extra latency on every request — a deterministic p95/p99 drag.
+    # In SmartLoad mode the RL engine + lb-sidecar can in principle
+    # downweight the slow backend; whether the *currently trained*
+    # PPO model actually does so depends on training data (see SOT
+    # §22 v1.0.7i — Alibaba traces had homogeneous latencies so the
+    # model may not have learned strong latency discrimination — Rghda
+    # is retraining on a heterogeneous dataset as a separate workstream).
+    # The lb-sidecar's reaction to the mid-run AnomalyEvent is the
+    # cleaner SmartLoad signal regardless of PPO discrimination.
+    echo "[run] setting backend-1 baseline slowness to ${BASELINE_SLOW_MS:-15} ms ($side)"
+    _set_backend_delay_via_exec "${BASELINE_SLOW_MS:-15}"
 
     # Pre-run prometheus + status snapshot.
     curl -fsS http://localhost:8090/api/v1/status > "$out/pre_status.json" 2>/dev/null || true
@@ -217,6 +253,12 @@ _run_side() {
 
     # Wait for the anomaly background process to finish.
     wait "$anomaly_pid" 2>/dev/null || true
+
+    # Tear down the per-side backend-1 slowness so the next side starts
+    # from the same on-disk baseline and the dev stack (if anyone leaves
+    # the harness mid-run) doesn't keep a stuck slow backend.
+    echo "[run] clearing backend-1 runtime delay ($side)"
+    _set_backend_delay_via_exec 0
 
     # Post-run snapshots.
     curl -fsS http://localhost:8090/api/v1/status > "$out/post_status.json" 2>/dev/null || true

@@ -318,6 +318,16 @@ services:
     environment:
       PORT: "8080"
       DEMO_TOKEN: ${DEMO_TOKEN:-}
+      # SLOW_HOSTNAME / SLOW_DELAY_MS are intentionally NOT set here.
+      # Docker scaled services don't get unique kernel hostnames (they
+      # all see the short container ID), so a hostname-match wouldn't
+      # work cleanly across the 5 replicas. The benchmark harness
+      # (experiments/baseline-vs-smartload/scripts/run_experiment.sh)
+      # achieves backend heterogeneity at runtime instead — it POSTs
+      # /_admin/delay {ms: BASELINE_SLOW_MS} on backend-1 during set-up
+      # and clears it during tear-down. To make any single backend
+      # statically slow without the bench harness, split this scaled
+      # service into named services + set SLOW_HOSTNAME explicitly.
     expose:
       - "8080"
     networks:
