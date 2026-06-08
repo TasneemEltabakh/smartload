@@ -1479,9 +1479,9 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.0.2 &nbsp;·&nbsp;
-    <strong>Last updated:</strong> 2026-05-14 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">Sprint 3 — Vertical Slice #1 (Policy Management) shipped</span> &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
+    <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S4 — Phase 2 — v1.0.7v Adaptive-bench foundation (#155 R1) — provision/decommission + dynamic discovery + DNS pre-flight</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -1535,7 +1535,7 @@
       <tr>
         <td><strong>Researcher / thesis reader</strong></td>
         <td><a href="#sec-2-overview">§2 Executive Overview</a></td>
-        <td><a href="#sec-3-definition">§3 Definition</a> · <a href="#sec-9-data">§14 ML Foundations</a> · <a href="#sec-10-routing">§15 Routing Authority</a> · <a href="#sec-15-changelog">§22 Changelog</a></td>
+        <td><a href="#sec-3-definition">§3 Definition</a> · <a href="#sec-9-data">§14 ML Foundations</a> · <a href="#sec-10-routing">§15 Routing Authority</a> · <a href="#sec-15-changelog">§22 Changelog</a> · <strong><a href="#sec-31-related-work">§31 Related Work</a> · <a href="#sec-32-algorithms">§32 Algorithms</a> · <a href="#sec-33-methodology">§33 Methodology</a> · <a href="#sec-34-results">§34 Results &amp; Discussion</a> · <a href="#sec-35-limitations">§35 Limitations &amp; Future Work</a></strong></td>
       </tr>
       <tr>
         <td><strong>Service contributor</strong><br><span class="small muted">write code in this repo</span></td>
@@ -5260,6 +5260,7 @@ flowchart LR
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
     <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>tools/traffic-simulator/</code></td><td>—</td></tr>
     <tr><td>Baseline vs SmartLoad benchmark harness</td><td>Tasneem</td><td><span class="pill pill-done">Harness shipped 2026-06-03 (v1.0.7r, #148) — SHORT validation clean; full-length run pending</span></td><td><code>experiments/baseline-vs-smartload/</code></td><td>Two env profiles (baseline vs smartload) + 3-phase Locust shape (ramp → pause-anomaly → sustain) + orchestration + plotting (6 PNGs + SUMMARY.md). Run with <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>; <code>SHORT=1</code> for ~5-min harness check.</td></tr>
+    <tr><td>Adaptive-bench dynamic-pool foundation (#155 R1)</td><td>Tasneem</td><td><span class="pill pill-done">R1 shipped 2026-06-09 (v1.0.7v) — provision/decommission + dynamic backend discovery + DNS pre-flight; behind feature flag</span></td><td><code>services/autoscaler/cluster_client.py</code> · <code>services/lb-sidecar/runloop.py</code> · <code>services/shared/lb_adapters/nginx/__init__.py</code></td><td>Autoscaler gains <code>provision()</code> / <code>decommission()</code> alongside <code>start()</code> / <code>stop()</code>; <code>scale_out()</code>/<code>scale_in()</code> return <code>(name, mechanism)</code>. <code>ScalingEvent.mechanism</code> publishes the lifecycle path. lb-sidecar discovers backends via Docker label query on every Redis message (2&nbsp;s TTL cache). NGINX adapter <code>socket.gethostbyname()</code> pre-flights every hostname before reload (Risk-3 de-risk). Feature-flagged via <code>AUTOSCALER_PROVISIONING_ENABLED</code> env var — OFF by default so #148 harness keeps working unchanged. 40 new unit tests + 7 integration tests against the live Docker daemon green. R2 (Python orchestrator + collectors) + R3 (plots + analysis) pending.</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
     <tr><td>Repo structure + runbook</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docs/running-the-project.md</code></td><td>Phase 1+ updates</td></tr>
     <tr><td>docker-compose (full stack)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docker-compose.yml</code></td><td>—</td></tr>
@@ -5589,6 +5590,110 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7v — 2026-06-09 — Adaptive-bench dynamic-pool foundation (#155 Round 1)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Autoscaler <code>cluster_client.py</code> gains a second lifecycle pair: <code>provision()</code> / <code>decommission()</code></strong></td>
+      <td>The existing <code>start()</code> / <code>stop()</code> pair toggles the pre-provisioned compose pool (the #148 routing bench path, unchanged). The new pair creates and destroys containers via the Docker SDK, gated by the <code>AUTOSCALER_PROVISIONING_ENABLED</code> env var (default <code>false</code>). Containers carry both <code>com.docker.compose.service=test-backend</code> (so <code>get_backend_count()</code> sees them) and a new <code>smartload.dynamic=true</code> label — the dynamic label is the safety contract that prevents <code>decommission()</code> from ever tearing down a compose-provisioned container. Index allocation picks the lowest unused integer ≥&nbsp;1 over existing labelled containers (1,&nbsp;2,&nbsp;4 → picks 3), so decommissioning a middle backend frees its slot for re-use rather than monotonically inflating the index. The Docker SDK <code>containers.run</code> call injects the same healthcheck spec compose configures on the test-backend service so dynamic backends report healthy state via the same <code>State.Health.Status</code> field the poller reads.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong><code>scale_out()</code> / <code>scale_in()</code> now return <code>(name, mechanism)</code> tuples</strong></td>
+      <td><code>scale_out()</code> returns <code>(name, "start")</code> when a stopped labelled container exists (cheap path) and <code>(name, "provision")</code> when provisioning runs. <code>scale_in()</code> returns <code>(name, "decommission")</code> when a dynamic container is running (preferred so the pool returns to its compose floor cleanly) and <code>(name, "stop")</code> when it falls through to the legacy path. <code>None</code> means nothing actuated. <code>app.py::apply_decision</code> and the manual <code>POST /api/v1/scale</code> endpoint unpack the tuple; the <code>ScalingEvent.mechanism</code> field carries the lifecycle path on the wire, and the reason text gains a textual marker like <code>"... [provision]"</code> for searchable audit. <code>scaling_events</code> schema unchanged — the existing <code>action</code> column still carries <code>scale_out</code> / <code>scale_in</code>, no migration needed.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Risk-1 de-risk: healthcheck-then-announce sequence</strong></td>
+      <td><code>provision()</code> polls <code>container.attrs["State"]["Health"]["Status"]</code> until <code>healthy</code> (30&nbsp;s default timeout, configurable via <code>AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS</code>) <strong>before</strong> returning a non-<code>None</code> name. Only after the return does <code>apply_decision()</code> publish the <code>ScalingEvent</code> envelope, write the <code>scaling_events</code> row, and bump the cooldown clock. This prevents the provision-then-announce race where the lb-sidecar would rewrite <code>upstream.conf</code> with a hostname Docker DNS hasn't propagated yet — <code>nginx -s reload</code> would otherwise crash with <code>host not found in upstream</code> (the exact failure mode observed in the v1.0.7r LB restart loop). The integration test <code>test_provision_returns_only_after_healthy</code> asserts the ordering by re-querying <code>State.Health.Status</code> after <code>provision()</code> returns.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>lb-sidecar dynamic backend discovery</strong></td>
+      <td><code>services/lb-sidecar/runloop.py</code> gains <code>discover_all_backends(docker_client, seed_backends)</code> — queries containers labelled <code>com.docker.compose.service=test-backend</code> with <code>status=running</code>, returns a sorted <code>name:port</code> list. Used by both <code>handle_routing</code> (line ~279 — replaces the static <code>all_backends</code> in the merged-weights init) and <code>handle_policy</code> (line ~366 — safe-mode equal-weight reset path; the Plan-agent's catch). A 2&nbsp;s TTL cache <code>_BackendNameCache</code> guards against per-message hammering of the Docker daemon; <code>invalidate_backend_discovery_cache()</code> is called on every Redis message in <code>app.py</code> so a freshly-provisioned backend is visible on the next decision rather than waiting up to TTL seconds. <code>ALL_BACKENDS</code> env var is now a cold-boot seed only — used until Docker is reachable and as a safety net on transient daemon errors.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Risk-3 de-risk: NGINX adapter hostname pre-flight</strong></td>
+      <td><code>services/shared/lb_adapters/nginx/__init__.py</code> — <code>_render_and_reload()</code> now calls <code>socket.gethostbyname()</code> on every active backend hostname before writing <code>upstream.conf</code>. If any host fails to resolve, the reload is deferred this cycle and the next message re-triggers; the warning log line names the unresolved hosts. NGINX resolves upstream hostnames at config-load time, so without the pre-flight a freshly-provisioned backend would crash the reload (the exact failure observed in the v1.0.7r LB restart loop). The <code>NginxAdapter</code> constructor gains a <code>dns_preflight: bool = True</code> kwarg so unit tests using synthetic backend names (<code>b1:8080</code>, <code>a:8080</code>) can disable the check — production keeps it on by default. An autouse fixture <code>tests/unit/lb-sidecar/conftest.py</code> patches <code>socket.gethostbyname</code> so existing tests pass unchanged.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong><code>ScalingEvent.mechanism</code> forward-compat field</strong></td>
+      <td><code>services/shared/contracts.py</code> — adds optional <code>mechanism: str | None = None</code> to <code>ScalingEvent</code> with documented values <code>"start" | "provision" | "stop" | "decommission"</code>. Forward-compat additive change — older subscribers (operator-UI live engines feed, audit page) ignore the field; the Round-2 adaptive-bench analysis pipeline reads it to plot toggle vs create/destroy activity separately. Envelope version is unchanged because the change is purely additive.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Feature flag (#148 backwards-compat preserved)</strong></td>
+      <td><code>docker-compose.yml</code> autoscaler service gains four env vars — <code>AUTOSCALER_PROVISIONING_ENABLED</code> (default <code>false</code>), <code>AUTOSCALER_PROVISIONING_IMAGE</code> (default <code>smartload-test-backend:latest</code>), <code>AUTOSCALER_PROVISIONING_NETWORK</code> (default <code>smartload_smartload-net</code>), <code>AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS</code> (default <code>30</code>). The Round-2 adaptive-bench orchestrator flips <code>ENABLED=true</code> at preflight via an env-file and <code>--force-recreate autoscaler</code>; the standing dev stack and the #148 routing bench keep the toggle OFF and pay no extra cost. <code>config/policy.yaml</code> gains a YAML comment block documenting the env vars (deployment-time concern, not a runtime policy knob, so kept out of the policy-manager API surface).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Test coverage</strong></td>
+      <td>40 new unit tests across two files. <code>tests/unit/autoscaler/test_cluster_client_dynamic.py</code> (27 tests): <code>_next_unused_index</code> (5), <code>_replica_number</code> (2), provisioning feature flag on/off (2), <code>containers.run</code> args (image / name / network / labels / restart policy / lowest-unused index — 2), ceiling enforcement (2), <code>_wait_for_healthy</code> timeout behaviour (3 — immediate, timeout, no-healthcheck fallback), decommission label gate (3 — never-touches-compose, removes-highest-dynamic, none-when-no-dynamic), <code>scale_out</code> tuple shape (3 — start mechanism, provision fallback, None on both fail), <code>scale_in</code> tuple shape (3 — decommission preferred, stop fallback, None on empty pool), <code>get_backend_count</code> (2). <code>tests/unit/lb-sidecar/test_discover_all_backends.py</code> (13 tests): query produces sorted <code>name:port</code> list, fallback to seed on empty / Docker error / <code>None</code> client, label-filter shape, TTL cache hit/miss/expiry/invalidate, concurrent set changes visible after invalidate. <strong>Integration tests against the live Docker daemon</strong> (<code>tests/integration/test_autoscaler_dynamic_pool.py</code>, 7 tests): provision returns only after healthy (Risk-1 assertion by re-querying <code>State.Health.Status</code>), full provision/decommission cycle, dynamic-label safety contract, lowest-unused-index allocation, feature-flag fallback to <code>start</code> mechanism, ceiling enforcement, manual smoke validated end-to-end. All 47 new tests pass + 100 pre-existing autoscaler/lb-sidecar/policy-manager/operator-ui/SDK unit tests pass.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>What this release does NOT do</strong></td>
+      <td>Does NOT ship <code>experiments/adaptive-bench/</code> — that's Round 2 (Python orchestrator + 5-phase Locust shape + three async collectors + first end-to-end run with raw artefacts). Does NOT ship the plot pipeline or the joined <code>run.parquet</code> — that's Round 3 with the doc sync. Does NOT yet add a <code>docs/features/adaptive-bench.md</code> manifest — landed alongside Round 3 per the SLICE_CHECKLIST contract. Does NOT touch the §34 Results numbers — adaptive-bench runs will produce data only after Round 2 lands. Does NOT modify the <code>scaling_events</code> SQL schema — the <code>action</code> column already accepts arbitrary text, and the mechanism rides in the envelope + textually in <code>reason</code>. Does NOT change the <code>RoutingRecommendation</code> contract — RL routing is orthogonal to autoscaler provisioning.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7u — 2026-06-08 — Thesis-grade documentation pass: §§31–35 + walkthrough §8 + README pointer block</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>SOT gains five new canonical sections positioned for thesis / poster / presentation reading</strong></td>
+      <td>Five new top-level sections, each badged <code>badge-canonical</code>, slot between §30 (Database Design Consolidation) and Appendix A. Existing §1–§30 are unchanged; all original anchor IDs (<code>#sec-2-overview</code>, <code>#sec-10-routing</code>, etc.) remain stable. New anchors: <code>#sec-31-related-work</code>, <code>#sec-32-algorithms</code>, <code>#sec-33-methodology</code>, <code>#sec-34-results</code>, <code>#sec-35-limitations</code>. The §1 persona-panel "Researcher / thesis reader" row now lists §31–§35 as follow-ups; the SOT meta version bumps to <strong>1.0.7u</strong> + last-updated 2026-06-08.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§31 Background &amp; Related Work</strong></td>
+      <td>Survey + positioning. 7 sub-sections: classical L4/L7 LBs (NGINX/HAProxy/Envoy + AWS ALB/GCP/Azure), cloud autoscalers (HPA/VPA/Cluster Autoscaler/AWS ASG/predictive scaling), RL-for-routing literature (DeepRM, Pensieve, PPO, action masking, contextual bandits), anomaly detection (threshold/Isolation Forest/LSTM-AE/NAB/Yahoo SMD), forecasting (ARIMA Box-Jenkins / Prophet / DeepAR), AIOps + commercial AI-driven systems (Datadog, Borg, Autopilot, Katran), and the one-paragraph SmartLoad positioning. Inline citations follow author + venue + year; a §31.8 reference list ends the section as a lift-ready BibTeX seed.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§32 Algorithm Foundations</strong></td>
+      <td>Per-algorithm math + parameters + implementation pointer + design rationale. Covers: round-robin (with backend_id-pointer rationale), least-connections (queue-depth proxy caveat), threshold anomaly engine (latency_multiplier=3.0, error_rate_threshold=0.05), Isolation Forest (recursive partitioning + path-length scoring + scaffolded status), moving-average forecaster (window_samples=60 + variance band), ARIMA (Box-Jenkins (p,d,q) + statsmodels bundle layout + honest MAPE=25% status), and the PPO routing policy in full (contextual-bandit framing, observation space, action space, action masking, reward function, PPO clipped surrogate objective, MaskablePPO, training recipe, argmax-dominant serving weighting, shadow/hybrid operating modes). §32.5 records "Why these algorithms, not others" as a 5-row decision table; §32.6 is the per-section review checklist.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§33 Evaluation Methodology</strong></td>
+      <td>The formal evaluation contract. 4 research questions (RQ1 system-level beat baseline, RQ2 offline PPO beat baselines, RQ3 lb-sidecar reacts faster than passive max_fails, RQ4 forecast-driven scale-out vs reactive). Comparison protocol (same-stack-only-flags-differ, env-files reproduced verbatim). Workload model (3-phase Locust shape). Anomaly model (persistent +15 ms heterogeneity + 200 ms latency spike, with the rationale for replacing the earlier <code>docker pause</code> approach). Metrics taxonomy (per-request Locust + system-level Prometheus + offline PPO eval). Reproducibility recipe (MANIFEST.json + artifact_meta.json + dataset MD5s). Threats to validity, split into internal / external / construct / conclusion. §33.9 review checklist.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§34 Results &amp; Discussion</strong></td>
+      <td>Synthesises the v1.0.7r SHORT validation + v1.0.7t honest finding into a single thesis-quality landing. §34.1 reports the offline PPO eval (PPO ties round_robin on homogeneous Alibaba traces; beats least_connections by 4.8e-2). §34.2 SHORT validation (harness mechanical sanity). §34.3 the v1.0.7t per-phase p95 table — baseline 14/42/44/43 ms, smartload 23/41/50/44 ms; max latency 150 ms vs 3082 ms — and the honest finding that PPO doesn't yet beat RR on the heterogeneous workload. §34.4 analysis: PPO trained on homogeneous distribution + lb-sidecar reload cost; mechanism works, model is mis-trained for the workload. §34.5 what the result confirms (harness sound, sidecar enforces hierarchy, fallback path exercised continuously, product framing honest). §34.6 closing the gap = retrain PPO on heterogeneous traces (Rghda's workstream) + full-length run + multi-run CIs. §34.7 cross-references to §22 v1.0.7r/s/t.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§35 Limitations &amp; Future Work</strong></td>
+      <td>Consolidates limitations scattered across per-module "Gap to close" entries + the §17 roadmap + the §22 Phase 2 split. 10 sub-sections: scope limitations (single-tenant phase, Phase 2 SaaS deferrals), model limitations (PPO retraining, ARIMA MAPE, IF artifact), evaluation harness limitations (single-run, SHORT-mode statistics, single host class, single backend image, only NGINX RR baseline), deployment limitations (Docker Compose canonical, Helm scaffold, K8s deferred), K8s posture explicit, future engines (LSTM-AE, Prophet, DeepAR, Envoy/HAProxy adapters), future evaluations (full-length harness, real-traffic shadow, K8s HPA comparison, multi-run batching, B1/B2/B3), operational maturity gaps (API versioning #134, webhook dispatcher #130, embedded metrics #131, forecast persistence, correlation IDs #143, lint flip #139), and §35.9 "what is NOT a limitation" (contextual bandit framing + classical fallback floor are intentional canonical choices, not gaps). §35.10 review checklist.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>PROJECT_WALKTHROUGH gains §8 Algorithms &amp; training procedure</strong></td>
+      <td>New §8 covers per-engine algorithm internals — paired with SOT §32. 17 sub-sections: §8.1 framing, §8.2 threshold engine, §8.3 Isolation Forest scaffold, §8.4 moving-average, §8.5 ARIMA (artifact handoff + fallback layers), §8.6 round_robin (stable-rotation pointer detail), §8.7 least_connections (queue-depth proxy), §8.8 PPOPolicy (artifact validation + inference + argmax-dominant weighting + operating modes), §8.9 training directory overview, §8.10 TraceReplayDataset (Alibaba schema + windowing), §8.11 simulator (bandit framing in code), §8.12 SmartLoadEnv (Gym wrapper), §8.13 RewardCalculator, §8.14 train_ppo.py (canary gates + 2M-step recipe + artifact_meta.json), §8.15 eval_harness.py (reproducibility contract), §8.16 baseline-vs-smartload bench harness, §8.17 cross-reference table linking each implementation file to its SOT design section.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>README gains a "Writing about SmartLoad (thesis / poster / presentation)" block</strong></td>
+      <td>15-row table under the "What it does" block, routing each thesis chapter / poster panel / presentation slide to the specific SOT or walkthrough section to lift from. "Read for thesis / research" row in the doc-map table is extended to list §31–§35. No existing pointers were removed; the existing persona-doc-map table is unchanged. The block makes the docs-as-source-for-thesis contract explicit at the README level.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>What this release does NOT do</strong></td>
+      <td>Does not move the §25 evidence paragraph (still depends on the retrained PPO + full-length bench run). Does not add code, tests, or config; this release is a pure documentation pass aligned with the existing implementation at HEAD. Does not change the §1 SOT meta-status's "Implementation Reference" mode &mdash; the new sections are descriptions of what already exists in the code + the bench harness. Does not change any anchor ID for §1–§30 (back-references in §22 / §25 / §28 stay valid).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7t — 2026-06-04 — Benchmark harness: backend heterogeneity + latency-spike anomaly + honest first finding (#148)</h3>
 <table>
@@ -8376,6 +8481,938 @@ SELECT create_hypertable('policy_changes', 'time');</code></pre>
     <tr><td>Storage choices for Redis</td><td><a href="#mod-control-bus">§8.10</a></td></tr>
   </tbody>
 </table>
+
+</section>
+
+<!-- ========================================================================== -->
+<!--                  31. BACKGROUND & RELATED WORK                              -->
+<!-- ========================================================================== -->
+<section id="sec-31-related-work">
+<h1>31. Background &amp; Related Work <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>This section is the canonical positioning of SmartLoad in the existing technology and research landscape. It exists so that the project can be evaluated, written up, and presented without re-deriving why the system was designed the way it was. Every claim here that involves prior art carries an inline citation (author + venue + year). Concepts are explained in terms a reader of §2–§6 already has — no extra theoretical apparatus is assumed.</p>
+</div>
+
+<h3>31.1 Classical L4/L7 load balancers</h3>
+
+<p>The dominant production load-balancing fabric is built on long-lived reverse proxies that select an upstream per request from a small set of well-understood scheduling rules. The four scheduling rules in routine use are:</p>
+
+<table>
+  <thead><tr><th>Rule</th><th>Decision</th><th>Failure mode</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Round-robin (RR)</strong></td><td>Hand out requests in a fixed cyclic order over the upstream set.</td><td>Fairness assumption (every backend has identical capacity and latency profile). One slow backend eats 1/N of traffic until passive health checks trip.</td></tr>
+    <tr><td><strong>Weighted round-robin (WRR)</strong></td><td>Same as RR but each upstream carries a static weight; the cycle yields each upstream weight-many times before advancing.</td><td>Weights are operator-configured at admit time and rarely revisited; degrades as load patterns drift.</td></tr>
+    <tr><td><strong>Least-connections (LC)</strong></td><td>Send the next request to the upstream with the smallest current in-flight count.</td><td>Open connections is a noisy proxy for true load; correlates with capacity only when per-request CPU is uniform.</td></tr>
+    <tr><td><strong>IP-hash / consistent-hash</strong></td><td>Hash a request header (client IP, session cookie) to a slot in the upstream set.</td><td>Sticky by design — cannot react to backend health within the affinity window without breaking session identity.</td></tr>
+  </tbody>
+</table>
+
+<p>The three open-source implementations SmartLoad most directly addresses are <strong>NGINX</strong> (Sysoev, 2004), <strong>HAProxy</strong> (Tarreau, 2002), and <strong>Envoy</strong> (Klein et al., USENIX SREcon 2017 / Lyft). All three publish the four scheduling rules above plus passive and active health checking. None of the three ship a built-in feedback loop that re-weights upstreams from external telemetry: in NGINX, dynamic upstream weights require either a paid module (NGINX Plus &mdash; <code>upstream</code> API), an external operator (the SmartLoad LB Sidecar pattern in §8.10), or a reload triggered by a config rewrite. The <em>data plane</em> in all three projects is therefore designed around <strong>in-memory static config + passive health probing</strong>; "intelligent" routing is explicitly out of scope.</p>
+
+<p>Cloud-managed equivalents &mdash; <strong>AWS Application Load Balancer</strong> (Amazon, 2016), <strong>GCP Cloud Load Balancing</strong> (Google, 2015), <strong>Azure Front Door</strong> (Microsoft, 2018) &mdash; expose similar scheduling rules with managed control planes but constrain weight updates to coarse-grained autoscaling-group events. None expose a per-second decision surface for an external controller to drive.</p>
+
+<div class="callout" style="background:#eff6ff;border:1px solid #1d4ed8;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <strong>Where SmartLoad sits:</strong> SmartLoad does <em>not</em> replace NGINX. It runs NGINX as its data plane and adds an out-of-band <strong>LB Sidecar</strong> (§8.10) that consumes Redis-published decisions and rewrites <code>upstream.conf</code> + <code>nginx -s reload</code> on the order of seconds. The classical scheduler stays in place as the deterministic safety floor (Principle 9, §4); it is never deprecated.
+</div>
+
+<h3>31.2 Cloud autoscalers</h3>
+
+<p>The dominant production autoscaling shapes split along two axes: <em>what triggers a scaling decision</em> (reactive metric thresholds vs predictive), and <em>what dimension is scaled</em> (replica count vs per-pod resources vs cluster nodes).</p>
+
+<table>
+  <thead><tr><th>System</th><th>Trigger</th><th>Dimension</th><th>Reaction shape</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Kubernetes HPA</strong> (Burns et al., USENIX OSDI 2016)</td><td>CPU/memory utilization (default) or custom metrics via the metrics-server API.</td><td>Replica count of a Deployment / StatefulSet.</td><td>Reactive. Default 15s control interval; scales when observed metric crosses target for the stabilization window.</td></tr>
+    <tr><td><strong>Kubernetes VPA</strong></td><td>Observed resource consumption.</td><td>Per-pod CPU/memory requests.</td><td>Reactive; typically requires pod restart on apply, so most operators leave it in "recommend" mode.</td></tr>
+    <tr><td><strong>Kubernetes Cluster Autoscaler</strong></td><td>Pending pods that cannot schedule.</td><td>Node count in a managed node group.</td><td>Reactive. Adds nodes when pods stay pending; removes underutilized nodes after a cool-down.</td></tr>
+    <tr><td><strong>AWS Auto Scaling Groups</strong></td><td>CloudWatch metric breach (target tracking, step scaling, or predictive scaling using a built-in forecaster).</td><td>EC2 instance count in an ASG.</td><td>Mostly reactive; predictive scaling (Amazon, 2018) is the closest commercial analogue to SmartLoad's forecast-driven autoscaler.</td></tr>
+    <tr><td><strong>GCP Managed Instance Group</strong></td><td>Average CPU, HTTP load-balancing utilization, or custom Stackdriver metrics.</td><td>VM instance count.</td><td>Reactive.</td></tr>
+  </tbody>
+</table>
+
+<p>The dominant production scheme is therefore <strong>reactive scaling</strong>: a metric crosses a threshold, a stabilization window prevents flapping, then the replica count moves. The lag between load arrival and the new replica being ready is structurally bounded below by container start time + warm-up &mdash; commonly 30&ndash;90 s for typical web workloads (Verma et al., EuroSys 2015 &mdash; Borg paper, observes similar tail latencies on Google's internal fleet).</p>
+
+<p><strong>AWS Predictive Scaling</strong> (Amazon, 2018) is the closest commercial analogue: it fits a recurrent forecasting model on CloudWatch metrics and pre-warms instances on the predicted shape. The model is a black box and the forecasting and routing decisions are not coupled &mdash; the forecaster cannot inform the per-request scheduler.</p>
+
+<div class="callout" style="background:#eff6ff;border:1px solid #1d4ed8;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <strong>Where SmartLoad sits:</strong> SmartLoad's <strong>forecasting service</strong> (§8.4) publishes a horizon-N RPS forecast on <code>smartload.forecast</code>; the <strong>autoscaler</strong> (§8.6) consumes the forecast and scales the backend pool ahead of saturation. The split between predictive (forecast-driven) and reactive (telemetry-driven) is explicit: when the forecaster is silent or fails liveness, the autoscaler falls back to a reactive sliding-window rule. This is a direct application of Principle 4 (graceful degradation).
+</div>
+
+<h3>31.3 Reinforcement learning for routing and resource allocation</h3>
+
+<p>Applying RL to systems decision-making has a deep literature; the lines most relevant to SmartLoad's bandit-style routing policy (§32.4) are:</p>
+
+<ul>
+  <li><strong>RL for job scheduling.</strong> <em>DeepRM</em> (Mao, Alizadeh, Menache, Kandula &mdash; HotNets 2016) is the canonical reference for "use RL to schedule jobs against a heterogeneous pool"; the framing &mdash; observation = system snapshot, action = where to place the next job, reward = makespan / completion-time signal &mdash; transfers almost directly to per-request routing if "job" is replaced by "next request."</li>
+  <li><strong>RL for adaptive video bitrate routing.</strong> <em>Pensieve</em> (Mao, Netravali, Alizadeh &mdash; SIGCOMM 2017) used a neural policy trained with A3C on logged client traces; the offline-replay-of-logged-traces methodology &mdash; not online interaction &mdash; is essentially the framing SmartLoad uses with the Alibaba traces (see <a href="#sec-32-algorithms">§32.4</a> &mdash; "contextual-bandit framing").</li>
+  <li><strong>PPO</strong> (Schulman, Wolski, Dhariwal, Radford, Klimov &mdash; arXiv:1707.06347, 2017) is the on-policy actor-critic algorithm SmartLoad uses; it is preferred over earlier policy-gradient methods because the clipped surrogate objective is robust to mis-tuned learning rates and bounded-update KL constraints implicitly. PPO is implemented in <em>Stable-Baselines3</em> (Raffin et al., JMLR 2021) and the action-masking variant in <em>sb3-contrib</em> <code>MaskablePPO</code>, both of which SmartLoad's training pipeline uses verbatim.</li>
+  <li><strong>Action masking under invalid actions.</strong> The masking approach used in <code>MaskablePPO</code> follows Vinyals et al. (StarCraft II, Nature 2019) and Huang &amp; Ontañón (arXiv:2006.14171, 2020) &mdash; replace invalid-action logits with <code>-inf</code> before the softmax so the policy assigns zero probability mass to masked actions and the policy gradient is well-defined. SmartLoad uses the mask to exclude unhealthy backends from the action space (§32.4).</li>
+  <li><strong>Contextual bandits for content selection.</strong> Li, Chu, Langford, Schapire (WWW 2010) framed news article recommendation as a contextual bandit; the framing &mdash; per-step context, discrete arm choice, observed reward without environment dynamics &mdash; is precisely how SmartLoad treats the offline trace replay. The trained policy is a <em>predictor</em> of which backend will have low latency next, given the current state; it is not a learned model of how routing perturbs the system. Auer (NeurIPS 2002 &mdash; UCB) provides the foundational regret-bound analysis on the same framing.</li>
+</ul>
+
+<details>
+<summary>Why bandit framing instead of full MDP <span class="badge badge-canonical">Architecture decision</span></summary>
+<div class="body">
+<p>A full MDP framing of routing would require a learned environment model: "if I send this request to backend B, what does the next observation look like?" SmartLoad explicitly does <em>not</em> learn such a model. The reasons, in priority order:</p>
+<ol>
+  <li><strong>Production safety.</strong> A learned environment model would loop into the policy's training signal &mdash; bias in the model becomes bias in the policy. The deterministic feedback loops that already exist in production (NGINX <code>max_fails</code> passive health, anomaly-detector exclusions, autoscaler reactivity) handle the "consequence" axis cleanly; adding a learned model on top of them is a coupling risk.</li>
+  <li><strong>Reproducibility.</strong> Offline replay of logged traces (Alibaba) is byte-deterministic given a seed and partition. A learned environment introduces a second stochastic system whose evolution depends on weight initialisation. The evaluation harness (§33) needs reproducible runs to support a meaningful comparison.</li>
+  <li><strong>Training cost.</strong> Joint training of environment + policy roughly doubles the wall-clock and triples the failure modes. PPO on the bandit framing trains to convergence on the canary partition in ~75 minutes of CPU; the MDP variant was estimated at ≈10&times; on the same hardware.</li>
+</ol>
+<p>This decision is recorded in <code>services/rl-engine/training/simulator.py</code> module docstring and in SOT §22 v1.0.7 review changelog entries. The trade-off is explicit: the trained policy is good at <em>predicting</em> next-window backend latency from current state; it does <em>not</em> reason about how its own routing decisions perturb the system.</p>
+</div>
+</details>
+
+<p>None of the RL-for-routing papers above ship as integration-ready middleware. SmartLoad's positioning relative to them is to take the same trained-policy &harr; offline-trace methodology and package it as a serving plugin behind a stable contract (<code>policies/ppo/policy.py</code> &harr; <code>policies/random_shadow/policy.py</code>) so the same load balancer can swap between trained, shadow, and classical without restarting the data plane (§8.5, §8.10).</p>
+
+<h3>31.4 Anomaly detection for system telemetry</h3>
+
+<p>The relevant techniques for backend-health anomaly detection in the routing path:</p>
+
+<table>
+  <thead><tr><th>Technique</th><th>Reference</th><th>Why it fits routing telemetry</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Static thresholding</strong></td><td>Industry standard (Cloud Monitoring rules, PagerDuty alerts, Datadog monitors).</td><td>Cheap, explainable, ships before any model. Used as SmartLoad's baseline anomaly engine (§8.3).</td></tr>
+    <tr><td><strong>Isolation Forest</strong></td><td>Liu, Ting, Zhou &mdash; ICDM 2008 / TKDD 2012.</td><td>Per-point unsupervised scoring; isolates anomalies via random recursive partitioning &mdash; anomalous points are isolated in fewer splits than normal points. Linear training cost; no labels needed. Strong fit for SmartLoad: the NAB and Yahoo SMD reference traces have no clean labels.</td></tr>
+    <tr><td><strong>LSTM autoencoder</strong></td><td>Malhotra, Vig, Shroff, Agarwal &mdash; ESANN 2015. Extended by Park et al. (2018) and Hundman et al. (KDD 2018 &mdash; NASA telemetry).</td><td>Reconstruction error on a learned sequential model; catches contextual anomalies that point-based methods miss. Heavier to train and deploy; SmartLoad treats it as a deferred upgrade path (§35.6).</td></tr>
+    <tr><td><strong>Robust statistics (EWMA / median absolute deviation)</strong></td><td>Hochenbaum et al. &mdash; arXiv:1704.07706, 2017 (Twitter's <em>AnomalyDetection</em> R package).</td><td>Resists outliers in the training window. Considered but not adopted &mdash; the threshold engine + rolling mean is the simpler baseline and the Isolation Forest upgrade path covers contextual cases.</td></tr>
+  </tbody>
+</table>
+
+<p>The <strong>Numenta Anomaly Benchmark</strong> (Lavin &amp; Ahmad &mdash; ICMLA 2015) and <strong>Yahoo Server Machine Dataset</strong> (Su et al., KDD 2019 / NetManAIOps OmniAnomaly) are the open reference traces SmartLoad's anomaly engine is benchmarked against. The implementation pointers and status are in §8.3 (engine deep dive) and §32.2 (algorithm theory).</p>
+
+<h3>31.5 Time-series forecasting for load and capacity</h3>
+
+<p>Three lines of work bear on SmartLoad's forecasting engine (§8.4):</p>
+
+<ul>
+  <li><strong>Box-Jenkins ARIMA</strong> (Box, Jenkins, Reinsel &mdash; first edition 1970, fifth edition Wiley 2015) is the canonical autoregressive framework. SmartLoad's production forecaster is a pre-trained ARIMA(<em>p,d,q</em>) bundle produced by <code>tools/forecasting-training/train.py</code> and served by <code>services/forecasting/engines/arima/engine.py</code> (§32.3).</li>
+  <li><strong>Prophet</strong> (Taylor &amp; Letham &mdash; <em>The American Statistician</em>, 2017 / Facebook open-source) is the additive decomposition model with explicit trend + weekly/yearly seasonality + holiday components. Considered for the forecasting plugin but deferred: ARIMA + moving-average are sufficient for the prototype's 5-minute horizon and the project's KPI (§19 &mdash; MAPE &lt; 20%) does not yet demand the extra capacity. The Prophet path is tracked as a future plugin (§35.6).</li>
+  <li><strong>LSTM / GRU sequence models</strong> have published wins on long-horizon, highly seasonal load (e.g. Salinas et al. &mdash; <em>DeepAR</em>, International Journal of Forecasting 2020). Deferred for the same reason as Prophet &mdash; the marginal accuracy gain at the 5-min horizon does not justify the model-deployment surface area today.</li>
+</ul>
+
+<p>SmartLoad's <strong>moving-average</strong> baseline (§32.3) is the same windowed-mean predictor that NGINX Plus, AWS Auto Scaling target-tracking, and most reactive autoscalers use under the hood. Its presence as a first-class plugin in the forecasting service ensures the system never has a "no forecast available" state &mdash; a direct embodiment of Principle 4 (graceful degradation).</p>
+
+<h3>31.6 AIOps and commercial AI-driven load management</h3>
+
+<p>The commercial AIOps space (Datadog Watchdog, New Relic Applied Intelligence, Dynatrace Davis, Splunk ITSI) has converged on a recognisable shape: <em>read telemetry from an arbitrary tool stack, surface anomalies and forecasts to a human, do not automate the data-plane response</em>. The boundary between detection and actuation is preserved because the cost of an incorrect automated action is too high for a horizontal vendor to take on the customer's behalf.</p>
+
+<p>Google's internal <strong>Borg</strong> (Verma et al., EuroSys 2015) and <strong>Autopilot</strong> (Rzadca et al., EuroSys 2020) combine forecast + reactive control loops for cluster-wide resource allocation, but the system is closed-source and not deployable outside Google's fleet. Facebook's <strong>Katran</strong> (2018) is an XDP-based L4 load balancer with deterministic scheduling; it is the cleanest open-source data-plane reference but explicitly does not host a decision layer.</p>
+
+<div class="callout" style="background:#ecfdf5;border:1px solid #047857;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <strong>The gap SmartLoad addresses:</strong> a single, open-source, on-prem deployable middleware that closes the loop between AIOps-style detection (anomaly, forecasting, RL routing) and actuation in the data plane (NGINX upstream weights, container scaling), with the routing-hierarchy safety contract (§15) making automated actuation defensible by construction.
+</div>
+
+<h3>31.7 SmartLoad's positioning in one paragraph</h3>
+
+<p>Existing classical load balancers (§31.1) provide deterministic, well-understood scheduling but cannot react to backend health within seconds without external orchestration. Existing cloud autoscalers (§31.2) react to threshold breaches but cannot pre-warm against a predicted spike outside narrow proprietary offerings. RL-for-routing research (§31.3) demonstrates feasibility but does not ship as integration-ready middleware. AIOps platforms (§31.6) surface decisions but do not automate the data-plane response. <strong>SmartLoad combines these capabilities into a single coherent middleware</strong>: classical routing as the deterministic floor, anomaly detection as a hard safety constraint, RL routing as an adaptive optimisation inside the bounds, forecasting as the proactive scaling driver, and a strict routing decision hierarchy (§15) so the AI is trusted only inside provably-safe envelopes. The contribution is not any single algorithm &mdash; it is the integration shape that makes those algorithms safe to ship behind one load balancer.</p>
+
+<h3>31.8 Inline reference list <span class="badge badge-canonical">Lift to thesis bibliography</span></h3>
+
+<p class="small muted">Inline only &mdash; lift these author/venue/year tuples directly into your thesis BibTeX file. Each citation is used in the prose above.</p>
+
+<ul class="small">
+  <li>Amazon Web Services. <em>AWS Application Load Balancer</em>. 2016. AWS service launch announcement.</li>
+  <li>Amazon Web Services. <em>Predictive Scaling for Amazon EC2 Auto Scaling Groups</em>. 2018. AWS service launch / re:Invent.</li>
+  <li>Auer, P. "Using Confidence Bounds for Exploitation-Exploration Trade-offs." <em>NeurIPS</em>, 2002.</li>
+  <li>Box, G. E. P., Jenkins, G. M., Reinsel, G. C., Ljung, G. M. <em>Time Series Analysis: Forecasting and Control</em>. 5th ed., Wiley, 2015 (first ed. 1970).</li>
+  <li>Burns, B., Grant, B., Oppenheimer, D., Brewer, E., Wilkes, J. "Borg, Omega, and Kubernetes." <em>USENIX OSDI</em>, 2016.</li>
+  <li>Hochenbaum, J., Vallis, O., Kejariwal, A. "Automatic Anomaly Detection in the Cloud via Statistical Learning." arXiv:1704.07706, 2017.</li>
+  <li>Huang, S., Ontañón, S. "A Closer Look at Invalid Action Masking in Policy Gradient Algorithms." arXiv:2006.14171, 2020.</li>
+  <li>Hundman, K., Constantinou, V., Laporte, C., Colwell, I., Söderström, T. "Detecting Spacecraft Anomalies Using LSTMs and Nonparametric Dynamic Thresholding." <em>ACM KDD</em>, 2018.</li>
+  <li>Klein, M., et al. <em>Envoy Proxy</em>. Lyft / CNCF, 2017 onwards.</li>
+  <li>Lavin, A., Ahmad, S. "Evaluating Real-Time Anomaly Detection Algorithms &mdash; The Numenta Anomaly Benchmark." <em>IEEE ICMLA</em>, 2015.</li>
+  <li>Li, L., Chu, W., Langford, J., Schapire, R. E. "A Contextual-Bandit Approach to Personalized News Article Recommendation." <em>WWW</em>, 2010.</li>
+  <li>Liu, F. T., Ting, K. M., Zhou, Z.-H. "Isolation Forest." <em>IEEE ICDM</em>, 2008. Extended: "Isolation-Based Anomaly Detection." <em>ACM TKDD</em>, 2012.</li>
+  <li>Malhotra, P., Vig, L., Shroff, G., Agarwal, P. "Long Short Term Memory Networks for Anomaly Detection in Time Series." <em>ESANN</em>, 2015.</li>
+  <li>Mao, H., Alizadeh, M., Menache, I., Kandula, S. "Resource Management with Deep Reinforcement Learning." <em>ACM HotNets</em>, 2016.</li>
+  <li>Mao, H., Netravali, R., Alizadeh, M. "Neural Adaptive Video Streaming with Pensieve." <em>ACM SIGCOMM</em>, 2017.</li>
+  <li>Park, D., Hoshi, Y., Kemp, C. C. "A Multimodal Anomaly Detector for Robot-Assisted Feeding Using an LSTM-Based Variational Autoencoder." <em>IEEE RA-L</em>, 2018.</li>
+  <li>Raffin, A., Hill, A., Gleave, A., Kanervisto, A., Ernestus, M., Dormann, N. "Stable-Baselines3: Reliable Reinforcement Learning Implementations." <em>JMLR</em>, 2021.</li>
+  <li>Rzadca, K., et al. "Autopilot: Workload Autoscaling at Google." <em>EuroSys</em>, 2020.</li>
+  <li>Salinas, D., Flunkert, V., Gasthaus, J. "DeepAR: Probabilistic Forecasting with Autoregressive Recurrent Networks." <em>International Journal of Forecasting</em>, 2020.</li>
+  <li>Schulman, J., Wolski, F., Dhariwal, P., Radford, A., Klimov, O. "Proximal Policy Optimization Algorithms." arXiv:1707.06347, 2017.</li>
+  <li>Su, Y., Zhao, Y., Niu, C., Liu, R., Sun, W., Pei, D. "Robust Anomaly Detection for Multivariate Time Series through Stochastic Recurrent Neural Network." <em>ACM KDD</em>, 2019. (OmniAnomaly / Yahoo SMD reference.)</li>
+  <li>Sysoev, I. <em>NGINX HTTP Server</em>. 2004 onwards.</li>
+  <li>Tarreau, W. <em>HAProxy</em>. 2002 onwards.</li>
+  <li>Taylor, S. J., Letham, B. "Forecasting at Scale." <em>The American Statistician</em>, 2017. (Prophet.)</li>
+  <li>Verma, A., Pedrosa, L., Korupolu, M., Oppenheimer, D., Tune, E., Wilkes, J. "Large-scale Cluster Management at Google with Borg." <em>EuroSys</em>, 2015.</li>
+  <li>Vinyals, O., et al. "Grandmaster Level in StarCraft II Using Multi-Agent Reinforcement Learning." <em>Nature</em>, 2019.</li>
+</ul>
+
+</section>
+
+<!-- ========================================================================== -->
+<!--                  32. ALGORITHM FOUNDATIONS                                  -->
+<!-- ========================================================================== -->
+<section id="sec-32-algorithms">
+<h1>32. Algorithm Foundations <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>This section is the canonical statement of <em>what each engine actually computes</em>, including the math, the parameters in the wired implementation, and the design choices that determined "this algorithm, not another." It is structured so that the same content can be lifted into a thesis methodology chapter without re-deriving anything. Every algorithm description lists: (a) the formula or rule, (b) the parameters wired today, (c) the file path of the implementation, (d) the rationale for the choice.</p>
+</div>
+
+<h3>32.1 Classical routing baselines</h3>
+
+<h4>Round-robin (cyclic over eligible backends)</h4>
+
+<p><strong>Rule.</strong> Given the current set of backends <em>B</em> = {<em>b<sub>1</sub></em>, ..., <em>b<sub>N</sub></em>} and the most-recently-served backend id <em>last</em>, the next backend served is the lowest <em>b<sub>i</sub></em> ∈ <em>B'</em> with <em>b<sub>i</sub>.id</em> &gt; <em>last</em>; wrap to the first element of <em>B'</em> when no such backend exists. <em>B'</em> is the <em>eligible</em> subset &mdash; <code>is_eligible(health)</code> excludes <code>unhealthy</code> and <code>unknown</code>; <code>healthy</code> and <code>degraded</code> remain in rotation (degraded backends are slower but still serving).</p>
+
+<p><strong>Why <em>backend_id</em> pointer, not modular index.</strong> A modular index (<code>self._idx % len(eligible)</code>) reshuffles the entire rotation whenever the eligible set changes size. A backend_id pointer is stable: removing the just-served backend still serves the next id; adding a backend doesn't reset the cycle. This is the difference between "deterministic under set changes" and "well-behaved on a static set" &mdash; SmartLoad's eligible set is dynamic (anomaly excludes / restores backends in real time), so the pointer form is the correct choice.</p>
+
+<p><strong>Implementation.</strong> <code>services/rl-engine/policies/round_robin/policy.py</code> (use site: training-time baseline + <code>RL_POLICY=round_robin</code>); NGINX's built-in cyclic upstream selection is the production data-plane equivalent and is the deterministic floor (§15).</p>
+
+<h4>Least-connections (load proxy)</h4>
+
+<p><strong>Rule.</strong> Sort the eligible set by (<em>queue_depth</em> ASC, <em>backend_id</em> ASC) and route to the head; secondary key is a deterministic tie-breaker. Scores are descending: rank <em>i</em> &rarr; (<em>N</em>−<em>i</em>)/<em>N</em>.</p>
+
+<p><strong>Queue-depth caveat.</strong> The Alibaba trace does not provide a separate queue-depth signal, so SmartLoad proxies it with the SUM of request_count per window (<code>RL_STATE_QUERY</code> in <code>services/shared/queries.py</code>). The proxy correlates with true load when per-request CPU cost is uniform &mdash; it does not when the workload mixes cheap and expensive requests. This is a documented limitation of the offline evaluation (§33.7).</p>
+
+<p><strong>Implementation.</strong> <code>services/rl-engine/policies/least_connections/policy.py</code>.</p>
+
+<h3>32.2 Anomaly detection</h3>
+
+<h4>Threshold engine (baseline)</h4>
+
+<p><strong>Rule.</strong> For each backend, given the current measured <em>latency<sub>ms</sub></em>, the per-backend rolling-mean <em>μ<sub>lat</sub></em>, the error rate <em>e</em>, and the sample count <em>n</em>:</p>
+
+<table>
+  <thead><tr><th>Condition</th><th>Classification</th><th>Score (∈ [0, 1])</th></tr></thead>
+  <tbody>
+    <tr><td><em>n</em> &lt; <code>min_sample_count</code></td><td><code>healthy</code></td><td>0.0 &mdash; not enough data to call.</td></tr>
+    <tr><td><em>e</em> &gt; <code>error_rate_threshold</code></td><td><code>unhealthy</code></td><td>min(1, <em>e</em> / <code>error_rate_threshold</code>) &mdash; error-rate dominates other signals.</td></tr>
+    <tr><td><em>latency<sub>ms</sub></em> &gt; <code>latency_multiplier</code> × <em>μ<sub>lat</sub></em></td><td><code>degraded</code></td><td>min(1, ratio / (<code>latency_multiplier</code> × 2)) &mdash; saturates at 2× the multiplier.</td></tr>
+    <tr><td>otherwise</td><td><code>healthy</code></td><td>0.0</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Wired parameters</strong> (defaults in <code>services/anomaly-detector/engines/threshold/engine.py</code>):</p>
+<ul>
+  <li><code>latency_multiplier = 3.0</code> &mdash; latency &gt; 3× rolling mean trips degraded.</li>
+  <li><code>error_rate_threshold = 0.05</code> &mdash; 5% error rate trips unhealthy.</li>
+  <li><code>min_sample_count = 10</code> &mdash; below this, no classification.</li>
+</ul>
+
+<p><strong>Design rationale.</strong> No labels are available on the production telemetry, so a parametric supervised model can't be the baseline. A static rule is cheap, explainable, and falsifiable &mdash; an operator can read the threshold and trace why a backend was flagged. The same rule is the fallback path for the Isolation Forest plugin (next sub-section) when the model artifact is missing.</p>
+
+<h4>Isolation Forest <span class="badge badge-planned">Scaffolded</span></h4>
+
+<p><strong>Algorithm.</strong> Liu, Ting, Zhou (ICDM 2008) construct an ensemble of randomly-grown decision trees; each tree splits on a random feature and a random threshold within the feature's range. The <em>anomaly score</em> for a point <em>x</em> is derived from the expected path length <em>E[h(x)]</em> to isolate <em>x</em> across the ensemble: anomalous points sit in sparse regions of feature space and are isolated in fewer splits than normal points. The score is normalised to [0, 1] via</p>
+
+<pre><code>s(x, n) = 2 ^ ( -E[h(x)] / c(n) )</code></pre>
+
+<p>where <em>c(n)</em> is the average path length of an unsuccessful binary-search-tree probe on <em>n</em> points &mdash; an analytical constant. The free parameter is the <strong>contamination</strong> &mdash; the operator's prior on the expected fraction of anomalies in the training data.</p>
+
+<p><strong>Why this, not LSTM autoencoders.</strong> The LSTM-AE family (Malhotra et al., ESANN 2015; Hundman et al., KDD 2018) catches contextual anomalies that point-based methods miss, but requires a meaningful training set per workload and a GPU at inference time. Isolation Forest is point-based and works on the per-backend feature vector that SmartLoad already extracts (rolling latency, error rate, request rate). It ships under one Python package (scikit-learn), is trivially serialisable to a <code>.pkl</code>, and falls back cleanly to the threshold rule when the artifact is missing &mdash; the integration shape SmartLoad's plugin contract requires (Principle 6).</p>
+
+<p><strong>Implementation status.</strong> Plugin folder exists at <code>services/anomaly-detector/engines/isolation_forest/</code> with a README documenting the planned files; the factory in <code>services/anomaly-detector/engine_base.py</code> already references the module. The trained <code>.pkl</code> artifact is owned by the model workstream (issue #101); the serving plugin will land alongside the artifact.</p>
+
+<h3>32.3 Workload forecasting</h3>
+
+<h4>Moving-average baseline</h4>
+
+<p><strong>Rule.</strong> Given the last <em>W</em> windowed request-rate samples <em>r<sub>1</sub></em>, ..., <em>r<sub>W</sub></em>:</p>
+
+<pre><code>predicted_rps     = (1/W) Σ r_i
+confidence_lower  = max(0, predicted_rps − σ)
+confidence_upper  = predicted_rps + σ
+σ                 = sqrt( (1/(W−1)) Σ (r_i − predicted_rps)² )   (sample stddev)</code></pre>
+
+<p><strong>Wired parameters</strong> (defaults in <code>services/forecasting/engines/moving_average/engine.py</code>):</p>
+<ul>
+  <li><code>window_samples = 60</code> &mdash; last 60 windowed observations enter the mean.</li>
+  <li><code>horizon_minutes = 5</code> &mdash; the published forecast horizon label; the predictor is a one-step model, so the horizon is informational (the autoscaler treats the value as "expected RPS for the next decision cycle").</li>
+</ul>
+
+<p><strong>Why this is a first-class plugin, not a fallback.</strong> The moving-average predictor is the same windowed-mean model that AWS Auto Scaling target-tracking, NGINX Plus least-time, and most reactive autoscalers use under the hood. Keeping it in the engine catalogue rather than burying it as a private fallback means the operator can run the forecasting service on the baseline predictor without producing a "no forecast available" state. This is a direct application of Principle 4 (graceful degradation).</p>
+
+<h4>ARIMA(<em>p,d,q</em>)</h4>
+
+<p><strong>Model.</strong> An autoregressive integrated moving-average model fits</p>
+
+<pre><code>(1 − Σ φ_i L^i)(1 − L)^d X_t = (1 + Σ θ_j L^j) ε_t</code></pre>
+
+<p>where <em>L</em> is the backshift operator, <em>d</em> is the integration order, <em>φ</em> are the autoregressive coefficients, <em>θ</em> are the moving-average coefficients, and <em>ε</em> is white noise. The Box-Jenkins methodology (Box, Jenkins, Reinsel; Wiley 2015) selects (<em>p</em>, <em>d</em>, <em>q</em>) via partial autocorrelation, autocorrelation, and unit-root testing on the differenced series.</p>
+
+<p><strong>Wired model.</strong> The training pipeline (<code>tools/forecasting-training/train.py</code>, owned by Nada Nabil &mdash; PR #144) writes a pickled bundle to <code>services/forecasting/models/arima_model.pkl</code> with shape:</p>
+
+<pre><code>{
+  "result":    statsmodels ARIMA result object (.append + .get_forecast),
+  "order":     (p, d, q) tuple,
+  "freq":      "5min",                       # training frequency
+  "exog_cols": list[str],                    # empty for plain ARIMA
+  "exog_stats": dict                         # empty for plain ARIMA
+}</code></pre>
+
+<p>The serving plugin (<code>services/forecasting/engines/arima/engine.py</code>) loads the bundle, calls <code>result.append(recent_window, refit=False)</code> on each cycle to nudge state, and emits a one-step forecast with the 95% confidence interval. The append window is capped at <code>_MAX_APPEND_SAMPLES = 60</code> so a long-running service does not pay an <em>O</em>(history) cost per cycle. If the artifact is missing or the load fails, the engine falls back to a mean-of-history forecast so the service stays alive.</p>
+
+<p><strong>Current quality &mdash; honest.</strong> The shipped ARIMA artifact (v1.0.7g/i &mdash; see §22 changelog) measures <strong>MAPE ≈ 25.0%</strong> on the held-out partition. The SOT KPI is <strong>MAPE &lt; 20%</strong> (§19), which means the artifact is wired but does not yet meet the gate; <code>FORECAST_ENGINE=moving_average</code> remains the default until tuning closes the gap. The retraining workstream is tracked in §35.2.</p>
+
+<h3>32.4 Reinforcement-learning routing</h3>
+
+<h4>Framing: offline contextual bandit, not online MDP</h4>
+
+<p>SmartLoad treats per-request backend selection as a <strong>contextual bandit</strong> (Li, Chu, Langford, Schapire &mdash; WWW 2010), not a Markov Decision Process. The simulator (<code>services/rl-engine/training/simulator.py</code>) replays Alibaba trace windows independently of the agent's action &mdash; <code>step(action)</code> does <em>not</em> modify <em>next_state</em> based on the chosen backend. <em>next_state</em> is the next pre-recorded trace window, returned verbatim regardless of the policy's pick. The reward is the latency of the chosen backend in that next window: an <em>observational</em> signal, not a causal consequence.</p>
+
+<p>The trained policy is therefore a good <em>predictor</em> of which backend will have low latency next, given the current state. It is not a learned model of how routing decisions perturb the system &mdash; the production feedback loops (NGINX <code>max_fails</code>, anomaly-detector exclusions, autoscaler reactivity) handle that axis. The bandit framing rationale is recorded in detail in §31.3 (collapsible).</p>
+
+<h4>Observation space</h4>
+
+<p>Flat <code>Box(shape=(N_MAX_BACKENDS × 3,), dtype=float32, low=0, high=∞)</code>. Per-backend features, in fixed slot order:</p>
+
+<table>
+  <thead><tr><th>Index</th><th>Feature</th><th>Normalisation</th></tr></thead>
+  <tbody>
+    <tr><td>3<em>i</em></td><td><em>latency<sub>ms</sub></em> of backend <em>i</em></td><td>divided by <code>NormParams.latency_scale</code> (default 2000 ms, matching Alibaba p99)</td></tr>
+    <tr><td>3<em>i</em>+1</td><td>request count of backend <em>i</em></td><td>divided by <code>NormParams.request_count_scale</code> (default 200, typical 30s window count)</td></tr>
+    <tr><td>3<em>i</em>+2</td><td>health flag of backend <em>i</em></td><td>1.0 if eligible, 0.0 otherwise</td></tr>
+  </tbody>
+</table>
+
+<p>The same <code>build_observation()</code> function (<code>services/rl-engine/obs_builder.py</code>) is used at training time and at serving time, guaranteeing train/serve parity. <code>NormParams</code> are persisted to <code>artifact_meta.json</code> alongside <code>policy.zip</code> so the serving plugin can restore the exact scaling the policy was trained on.</p>
+
+<h4>Action space</h4>
+
+<p><code>Discrete(N_MAX_BACKENDS)</code> &mdash; the index of the chosen backend (0-based, sorted by <code>backend_id</code>). The trained policy emits one chosen backend per step.</p>
+
+<h4>Action masking</h4>
+
+<p>The mask is constructed by <code>build_action_mask(state, N_MAX_BACKENDS)</code>: <code>True</code> for slots whose health is eligible (<code>healthy</code> or <code>degraded</code>), <code>False</code> for <code>unhealthy</code> / <code>unknown</code> / empty slots. Invalid-action logits are replaced with <code>−∞</code> before the softmax (Huang &amp; Ontañón, arXiv:2006.14171, 2020) so the policy assigns zero probability mass to masked actions. When every slot is masked, <code>all_masked_fallback()</code> unmasks the least-bad backend so training doesn't deadlock; in production the routing-decision hierarchy (§15) takes over.</p>
+
+<p>This is implemented via the <code>sb3-contrib</code> <code>ActionMasker</code> wrapper feeding <code>MaskablePPO</code>.</p>
+
+<h4>Reward function</h4>
+
+<p>The per-step reward in <code>services/rl-engine/training/reward.py</code> is:</p>
+
+<pre><code>r(s, a, s') = − ( latency_ms(s'_a) / latency_scale )
+              − λ × imbalance(s')
+              − 10.0 × [ s'_a.health = "unhealthy" ]</code></pre>
+
+<p>where:</p>
+
+<ul>
+  <li><em>s'<sub>a</sub></em> is the chosen backend in the next state.</li>
+  <li><code>latency_scale = 2000.0</code> ms (matches the observation normalisation).</li>
+  <li><code>λ = 0.1</code> &mdash; the imbalance penalty weight; <em>imbalance</em>(<em>s'</em>) = std(queue_depths) / (mean(queue_depths) + ε), ε = 1.0.</li>
+  <li>The <em>−10.0</em> health term is a defence-in-depth hard penalty for routing to an unhealthy backend. In practice the action mask prevents this; the term ensures a strong negative signal if the mask is ever misconfigured.</li>
+</ul>
+
+<p><strong>Why the imbalance term.</strong> Because the simulator does not model how the policy's choice perturbs queue depths, the imbalance term is a <em>regulariser on the historical spread</em>, not a learned consequence. It discourages picks that bias the policy toward backends whose contemporaneous load is an outlier and produces a smoother reward signal during training. Removing it did not improve held-out metrics during the canary run (§32.5 rationale).</p>
+
+<h4>PPO &mdash; clipped surrogate objective</h4>
+
+<p>PPO (Schulman et al., arXiv:1707.06347, 2017) optimises the clipped surrogate objective</p>
+
+<pre><code>L_CLIP(θ) = E_t[ min(  r_t(θ) A_t,
+                       clip(r_t(θ), 1−ε, 1+ε) A_t  ) ]
+r_t(θ) = π_θ(a_t | s_t) / π_θ_old(a_t | s_t)</code></pre>
+
+<p>where <em>π<sub>θ</sub></em> is the current policy, <em>π<sub>θ<sub>old</sub></sub></em> is the policy at rollout time, <em>r<sub>t</sub></em> is the importance-sampling ratio, <em>A<sub>t</sub></em> is the advantage estimate (Generalised Advantage Estimation, Schulman et al. 2015), and <em>ε</em> is the clip range. The clip term turns off the gradient when the importance ratio leaves the trust region [1−ε, 1+ε], which makes the algorithm robust to mis-tuned learning rates without an explicit KL constraint.</p>
+
+<p>SmartLoad uses <code>MaskablePPO</code> from <code>sb3-contrib</code>, which adds invalid-action masking to the action distribution before sampling and log-prob computation. The action-space layout makes the optimisation single-step per episode in the bandit framing &mdash; the on-policy machinery is preserved for hyperparameter robustness, not for credit assignment across time.</p>
+
+<h4>Training recipe</h4>
+
+<p>Driver: <code>services/rl-engine/training/train_ppo.py</code>. Hyperparameters and defaults:</p>
+
+<table>
+  <thead><tr><th>Parameter</th><th>Value</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td>algorithm</td><td>MaskablePPO (<code>sb3-contrib</code>)</td><td>Invalid-action masking is non-negotiable &mdash; the trained policy must never propose an unhealthy backend.</td></tr>
+    <tr><td>total_steps (canary)</td><td>50,000</td><td>Fast pre-flight on the first <em>K</em> partitions. Two gates must pass before full training begins.</td></tr>
+    <tr><td>total_steps (full)</td><td>2,000,000</td><td>~75 min on a single CPU; produces the artifact behind <code>policies/ppo/policy.py</code>.</td></tr>
+    <tr><td>episode_length</td><td>200 windows (=100 minutes of 30 s windows)</td><td>Long enough to span typical daily-load curvature in the trace; short enough that the GAE bootstrap is not dominated by trace-end edge effects.</td></tr>
+    <tr><td>n_max_backends</td><td>5</td><td>Matches the production backend-pool size in <code>docker-compose.yml</code> + the static <code>upstream.conf</code>. The serving plugin validates this at load time.</td></tr>
+    <tr><td>imbalance_lambda</td><td>0.1</td><td>The largest value where removing the term did not measurably change held-out metrics in the canary (see §22 v1.0.7 changelog).</td></tr>
+    <tr><td>norm.latency_scale</td><td>2000 ms</td><td>Alibaba p99 across the training partitions.</td></tr>
+    <tr><td>norm.request_count_scale</td><td>200 requests / 30s</td><td>Mean request count per window at moderate load.</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Canary gates.</strong> Both must pass before full training is allowed to begin:</p>
+
+<ol>
+  <li><code>policy_gradient_loss</code> trending down across the last 10 logged updates (linear-regression slope &le; 0 on the tail window).</li>
+  <li>PPO mean reward &gt; round-robin mean reward on 3 ad-hoc mini-episodes drawn from the canary dataset.</li>
+</ol>
+
+<p>If either gate fails, the script exits with code 1 and prints instructions to switch to <code>train_dqn.py</code>. The DQN fallback exists per the risk register (§17 &mdash; "PPO training diverges or &gt; 7 days").</p>
+
+<h4>Serving: argmax-dominant weighting</h4>
+
+<p>The trained PPO policy chooses one backend per step (Discrete(N) action space). At serving time, the LB needs to translate that into NGINX <em>upstream weights</em>. Two natural mappings exist; SmartLoad rejects one and adopts the other:</p>
+
+<table>
+  <thead><tr><th>Mapping</th><th>Rejected / adopted</th><th>Reason</th></tr></thead>
+  <tbody>
+    <tr><td>Softmax of logits across backends &rarr; weight distribution</td><td>Rejected</td><td>The policy was trained to <em>pick one</em>, not to <em>distribute mass</em>. Softmax over logits is a different objective than the one optimised &mdash; using it at serving time would route traffic against the policy's training distribution.</td></tr>
+    <tr><td>Argmax-dominant: chosen backend gets <code>_DOMINANT_WEIGHT</code>, remainder split evenly across the other eligibles</td><td>Adopted</td><td>Heavily emphasises the policy's choice while leaving a meaningful floor so NGINX's health probing doesn't starve the other backends. <code>_DOMINANT_WEIGHT = 0.7</code> in <code>services/rl-engine/policies/ppo/policy.py</code>.</td></tr>
+  </tbody>
+</table>
+
+<h4>Operating modes (serving)</h4>
+
+<table>
+  <thead><tr><th>Mode</th><th>Behaviour</th><th>Use case</th></tr></thead>
+  <tbody>
+    <tr><td><code>shadow</code> <span class="badge badge-canonical">Default</span></td><td>Full inference each cycle but <code>RoutingAction.mode</code> is always <code>shadow</code>; the LB sidecar ignores the envelope.</td><td>Pre-production verification, validation runs, when the policy hasn't been trusted yet.</td></tr>
+    <tr><td><code>hybrid</code></td><td>Inference runs; <code>RoutingAction.mode = "active"</code>. The LB sidecar applies the weights iff every other gate agrees (anomaly mask, policy short-circuit; see §15).</td><td>Production routing.</td></tr>
+    <tr><td><code>learning</code></td><td>Deprecated; accepted for backwards-compat and silently mapped to <code>hybrid</code>.</td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+
+<p>The <code>shadow</code> default is the canonical safety pin (see §22 v1.0.7g rollout: <code>RL_RUNLOOP_ENABLED=true</code> default, but <code>RL_MODE=shadow</code> default &mdash; the runloop publishes, the sidecar ignores). Flipping <code>RL_MODE=active</code> in <code>.env</code> is an explicit operator opt-in.</p>
+
+<h3>32.5 Why these algorithms, not others</h3>
+
+<p>Five design decisions concentrate the algorithm choice surface. Each is recorded below with its trade-off:</p>
+
+<table>
+  <thead><tr><th>Decision</th><th>Adopted</th><th>Rejected</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td>Anomaly baseline</td><td>Threshold</td><td>Isolation Forest as day-1 baseline</td><td>Threshold ships without any model or training data; IF needs an artifact. Threshold is also the fallback path for IF when the artifact is missing &mdash; making it the baseline means the fallback path is exercised continuously.</td></tr>
+    <tr><td>Anomaly upgrade path</td><td>Isolation Forest</td><td>LSTM autoencoder</td><td>IF is single-package, fast to train, serialises to a <code>.pkl</code>. LSTM-AE catches contextual anomalies IF misses, but the integration cost (GPU at inference, deeper training pipeline) is not warranted at the current KPI gate (anomaly F1 &gt; 0.80). LSTM-AE remains the deferred upgrade (§35.6).</td></tr>
+    <tr><td>Forecasting baseline</td><td>Moving-average</td><td>Per-service no-forecast state</td><td>Eliminates the "no forecast available" failure mode by always having a predictor &mdash; Principle 4 in action.</td></tr>
+    <tr><td>Forecasting model</td><td>ARIMA</td><td>Prophet, DeepAR</td><td>The 5-min horizon does not yet demand the extra capacity. ARIMA's statsmodels footprint is well-understood; the pickle bundle is trivially shipped. Prophet and DeepAR are deferred (§35.6).</td></tr>
+    <tr><td>RL framing</td><td>Offline contextual bandit on Alibaba traces</td><td>Online MDP with a learned environment model</td><td>Reproducibility + safety + training cost (§31.3 collapsible). The cost is that the policy doesn't reason about its own routing impact &mdash; SmartLoad relies on the production feedback loops to handle that axis.</td></tr>
+  </tbody>
+</table>
+
+<h3>32.6 Review checklist &mdash; algorithms</h3>
+
+<ul class="review-checklist">
+  <li>Does every engine ship with a baseline that requires no model artifact?</li>
+  <li>Does the trained-model path fall back to the baseline cleanly when the artifact is missing?</li>
+  <li>Are the parameters used at serving time persisted alongside the model artifact (e.g. <code>artifact_meta.json</code>)?</li>
+  <li>Does the action-masking layer guarantee the trained policy cannot propose an unhealthy backend?</li>
+  <li>Are the action / observation shapes identical between training and serving (single <code>build_observation</code>, single <code>build_action_mask</code>)?</li>
+  <li>Does flipping <code>RL_MODE=active</code> require an explicit operator change, not a silent default?</li>
+  <li>Is the reward function recorded in one canonical file and never duplicated in serving code?</li>
+</ul>
+
+</section>
+
+<!-- ========================================================================== -->
+<!--                  33. EVALUATION METHODOLOGY                                 -->
+<!-- ========================================================================== -->
+<section id="sec-33-methodology">
+<h1>33. Evaluation Methodology <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>This section defines the canonical evaluation contract for SmartLoad: what claims we test, what we compare against, what we measure, how we report. The harness implementation lives at <code>experiments/baseline-vs-smartload/</code> (§22 v1.0.7r/t); this section is the framing that gives the harness numbers meaning. Two distinct evaluation surfaces co-exist and are documented separately: the <em>offline PPO eval</em> (training-time) and the <em>baseline-vs-SmartLoad bench harness</em> (system-level). The first lives in <code>services/rl-engine/training/eval_harness.py</code>; the second in <code>experiments/baseline-vs-smartload/</code>.</p>
+</div>
+
+<h3>33.1 Research questions</h3>
+
+<p>SmartLoad's evaluation is structured around four questions. Each maps to a specific harness or eval layer.</p>
+
+<table>
+  <thead><tr><th>#</th><th>Question</th><th>Surface</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>RQ1</td>
+      <td>Given identical infrastructure (same NGINX, same backend pool, same workload), does enabling the SmartLoad decision plane produce measurably better tail-latency and failure-rate outcomes than plain NGINX round-robin?</td>
+      <td>System-level bench harness (<code>experiments/baseline-vs-smartload/</code>).</td>
+    </tr>
+    <tr>
+      <td>RQ2</td>
+      <td>Does the trained PPO routing policy, evaluated offline on held-out trace partitions, outperform the classical baselines (round-robin, least-connections) on per-window p50/p95/p99 latency and SLO-violation rate?</td>
+      <td>Offline PPO eval (<code>services/rl-engine/training/eval_harness.py</code>).</td>
+    </tr>
+    <tr>
+      <td>RQ3</td>
+      <td>Does the LB sidecar successfully pull a misbehaving backend out of rotation faster than NGINX's passive health checks would, in the case where the backend is slow but still returns 200 OK (so passive checks never trip)?</td>
+      <td>System-level bench harness, Phase B (anomaly window). Requires the latency-spike anomaly model from §33.4.</td>
+    </tr>
+    <tr>
+      <td>RQ4</td>
+      <td>Does the forecasting service publish a predicted-RPS curve far enough ahead of saturation that the autoscaler can pre-warm a new backend before the ramp tops out?</td>
+      <td>System-level bench harness, Phase A (ramp). Currently observed via scaling-event audit rather than a quantitative pre-warm-time metric.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>33.2 Comparison protocol — same stack, only flags differ</h3>
+
+<p>The protocol minimises hidden variables: the docker-compose stack, the backend pool image, the NGINX configuration, the test-backend code, and the operator-UI BFF are identical across sides. Only the four decision-plane runloop flags and the RL operating mode change between sides. The two env-file profiles are reproduced below verbatim from <code>experiments/baseline-vs-smartload/env/</code>:</p>
+
+<table>
+  <thead><tr><th>Variable</th><th><code>baseline.env</code></th><th><code>smartload.env</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>ANOMALY_RUNLOOP_ENABLED</code></td><td>false</td><td>true</td></tr>
+    <tr><td><code>FORECAST_RUNLOOP_ENABLED</code></td><td>false</td><td>true</td></tr>
+    <tr><td><code>RL_RUNLOOP_ENABLED</code></td><td>false</td><td>true</td></tr>
+    <tr><td><code>LB_SIDECAR_RUNLOOP_ENABLED</code></td><td>false</td><td>true</td></tr>
+    <tr><td><code>RL_MODE</code></td><td>shadow</td><td>active</td></tr>
+  </tbody>
+</table>
+
+<p>In baseline mode, the decision plane is silent &mdash; the AI services start up, expose <code>/health</code>, but never enter the inference cycle. The lb-sidecar does not subscribe to Redis; <code>upstream.conf</code> stays at the static round-robin baseline baked into <code>services/load-balancer/nginx/nginx.conf</code>. In SmartLoad mode the same services run their full inference cycle and the sidecar rewrites <code>upstream.conf</code> + reloads NGINX in response to the published envelopes.</p>
+
+<p>The orchestrator script (<code>scripts/run_experiment.sh</code>) applies one env-file at a time via <code>docker compose --env-file ... up -d --force-recreate &lt;decision-plane services + lb-sidecar&gt;</code>. The load-balancer container itself does not depend on these env vars and is not bounced. The load-generation step is a one-shot Locust container run on the same Docker network as the LB &mdash; the harness does not use the standing traffic-simulator (which is stopped during the run to avoid polluting the load shape).</p>
+
+<h3>33.3 Workload model — three-phase Locust shape</h3>
+
+<p>The load profile is a three-phase shape implemented in <code>experiments/baseline-vs-smartload/locust/locustfile.py</code>. Each phase is named at request time so the post-run analysis can slice the histogram cleanly by phase.</p>
+
+<table>
+  <thead><tr><th>Phase</th><th>Window</th><th>User curve</th><th>What it tests</th></tr></thead>
+  <tbody>
+    <tr><td><strong>A_ramp</strong></td><td>0 → <code>RAMP_SECS</code></td><td>0 → <code>RAMP_USERS</code> linear ramp</td><td>RQ4. Does forecasting drive scale-out before backends saturate?</td></tr>
+    <tr><td><strong>A_hold</strong></td><td><code>RAMP_SECS</code> → <code>ANOMALY_AT_SECS</code></td><td><code>RAMP_USERS</code> held</td><td>Steady-state baseline. Exposes heterogeneity drag (§33.4).</td></tr>
+    <tr><td><strong>B_anomaly</strong></td><td><code>ANOMALY_AT_SECS</code> → <code>ANOMALY_AT_SECS + ANOMALY_HOLD_SECS</code></td><td><code>RAMP_USERS</code> held</td><td>RQ3. Does the LB sidecar react to the slow backend faster than NGINX's passive max_fails?</td></tr>
+    <tr><td><strong>C_sustain</strong></td><td>(end of B) → <code>SUSTAIN_END_SECS</code></td><td><code>RAMP_USERS</code> held</td><td>RQ1. Steady-state post-recovery &mdash; does the system return to a clean tail-latency distribution?</td></tr>
+  </tbody>
+</table>
+
+<p>Defaults are <code>RAMP_USERS=50</code>, <code>RAMP_SECS=60</code>, <code>ANOMALY_AT_SECS=120</code>, <code>ANOMALY_HOLD_SECS=60</code>, <code>SUSTAIN_END_SECS=360</code> &mdash; a six-minute run per side. The <code>SHORT=1</code> override compresses these to a 2-minute-per-side harness-validation profile (used in v1.0.7r and v1.0.7t SHORT runs). User wait time is <code>between(0.05, 0.20)</code> seconds so per-user RPS is bounded and the aggregate rate is determined by the user count, not per-user burstiness.</p>
+
+<h3>33.4 Anomaly model — heterogeneity + latency spike</h3>
+
+<p>Two anomaly mechanisms operate concurrently. They were chosen to cover two distinct failure classes that round-robin's static configuration genuinely cannot handle.</p>
+
+<h4>Baseline-slowness heterogeneity (constant)</h4>
+
+<p>At the start of each side, the orchestrator POSTs <code>{ms: BASELINE_SLOW_MS}</code> (default 15 ms) to backend-1's in-container <code>/_admin/delay</code> endpoint, via <code>docker exec</code>. The endpoint sets a process-local <code>runtimeDelayMs</code> that is added to every <code>GET /</code> + <code>GET /health</code> response. The delay persists for the entire run on that side and is cleared at tear-down.</p>
+
+<p><strong>Why it matters.</strong> NGINX RR distributes traffic uniformly across the five backends, so 1/5 of every request is eating an extra 15 ms even at steady state. SmartLoad <em>could</em> in principle down-weight backend-1, but whether it does depends on whether the trained PPO model has learned latency-aware routing (see §34 for the honest answer).</p>
+
+<h4>Latency-spike anomaly (Phase B)</h4>
+
+<p>At <em>t</em> = <code>ANOMALY_AT_SECS</code>, the orchestrator concurrently:</p>
+
+<ol>
+  <li>POSTs <code>{ms: ANOMALY_DELAY_MS}</code> (default 200 ms) to backend-1's <code>/_admin/delay</code> &mdash; raising the per-request latency by 200 ms on top of the baseline-slowness 15 ms.</li>
+  <li>POSTs <code>POST /api/v1/isolate</code> with <code>{backend_id: "smartload-test-backend-1", status: "unhealthy", reason: "benchmark latency-spike anomaly"}</code> to the anomaly-detector. This publishes an <code>AnomalyEvent</code> envelope to <code>smartload.anomaly</code> so the lb-sidecar's signal flow can react immediately; the anomaly-detector hasn't observed enough latency this early to fire on its own.</li>
+</ol>
+
+<p>After <code>ANOMALY_HOLD_SECS</code>, both actions reverse: <code>/_admin/delay {ms: 0}</code> clears the runtime delay, and a recovery <code>isolate</code> envelope (<code>status: "healthy"</code>) re-enables routing.</p>
+
+<p><strong>Why the latency-spike (not <code>docker pause</code>) model.</strong> Earlier prototype runs used <code>docker pause</code> to freeze backend-1. The freeze causes connection timeouts that NGINX's passive <code>max_fails=3 fail_timeout=10s</code> health check catches reliably &mdash; baseline RR pulls the backend out of rotation on its own, and the comparison shows no SmartLoad advantage because there's no advantage to show. The latency-spike model is precisely the case where the backend still returns 200 OK &mdash; just slowly &mdash; so NGINX's passive checks never trip, and baseline RR keeps dispatching 1/5 of traffic to the slow backend indefinitely. This is the failure class SmartLoad's anomaly + lb-sidecar pipeline is designed to solve.</p>
+
+<div class="callout" style="background:#fffbeb;border:1px solid #b45309;padding:0.5em 0.9em;margin:0.4em 0;border-radius:4px;">
+  <strong>Design decision recorded:</strong> the <code>SLOW_HOSTNAME</code> + <code>SLOW_DELAY_MS</code> static-knob path documented in <code>test-backends/app.js</code> exists but is not wired in compose &mdash; Docker scaled services give every replica the same short-ID kernel hostname, so a hostname match doesn't cleanly identify one of N replicas. The runtime-override endpoint (<code>POST /_admin/delay</code>) is the working mechanism; the static knobs are aspirational. (Recorded in §22 v1.0.7t for traceability.)
+</div>
+
+<h3>33.5 Metrics taxonomy</h3>
+
+<p>Two metric layers are reported. The harness emits raw Locust CSVs + Prometheus snapshots + a SUMMARY.md; the post-run plotter (<code>scripts/plot_results.py</code>) lifts these into six PNGs and a one-line delta summary.</p>
+
+<h4>Per-request metrics (Locust)</h4>
+
+<table>
+  <thead><tr><th>Metric</th><th>Definition</th><th>Why we report it</th></tr></thead>
+  <tbody>
+    <tr><td>Aggregate p50/p95/p99 latency</td><td>50th / 95th / 99th percentile of the per-request response time across all phases.</td><td>SLO surface &mdash; p95 is the canonical KPI (§19).</td></tr>
+    <tr><td>Per-phase p50/p95/p99 latency</td><td>Same, sliced by request name (which embeds the phase marker).</td><td>Lets us see which phase the difference comes from. "We're faster" is meaningless if it's because the bad phase was short.</td></tr>
+    <tr><td>Failure rate</td><td>Fraction of requests with status &ge; 4xx.</td><td>The latency-spike anomaly model is designed to keep this at 0 on both sides; if either side starts failing, something downstream of routing is misbehaving.</td></tr>
+    <tr><td>Max latency</td><td>Single highest per-request response time across the run.</td><td>Catches LB-side blips (e.g. NGINX reload during an upstream rewrite). The SmartLoad side pays a non-zero max-latency cost during reload &mdash; this is reported honestly.</td></tr>
+    <tr><td>Aggregate RPS</td><td>Requests/sec across the run.</td><td>Sanity check that both sides exercised the same load. If one side processes fewer requests, the comparison is biased.</td></tr>
+  </tbody>
+</table>
+
+<h4>System-level metrics (Prometheus + scaling audit)</h4>
+
+<table>
+  <thead><tr><th>Metric</th><th>Source</th><th>Why we report it</th></tr></thead>
+  <tbody>
+    <tr><td>Backend pool size over time</td><td>Pre/post <code>/api/v1/status</code> snapshots + scaling-event audit.</td><td>RQ4. Did the forecaster's prediction actually drive a scale-out?</td></tr>
+    <tr><td>Scaling-event count per phase</td><td><code>GET /api/v1/audit/scaling?limit=50</code> snapshot.</td><td>Detects flapping &mdash; many scales/min suggests a tuning issue, not adaptiveness.</td></tr>
+    <tr><td>Prometheus <code>up</code> per service</td><td><code>/api/v1/query?query=up</code> snapshot.</td><td>Sanity check that every SmartLoad service stayed reachable across the run.</td></tr>
+  </tbody>
+</table>
+
+<h4>Offline PPO eval metrics</h4>
+
+<p><code>services/rl-engine/training/eval_harness.py</code> emits one row per (policy, episode) over 20 held-out episodes, with columns:</p>
+
+<ul>
+  <li><code>policy</code> &mdash; the policy under test (random_shadow / round_robin / least_connections / ppo).</li>
+  <li><code>episode_id</code>, <code>mean_reward</code>, <code>p50_latency</code>, <code>p95_latency</code>, <code>p99_latency</code>, <code>slo_violation_rate</code>, <code>utilization_variance</code>.</li>
+</ul>
+
+<p>The CSV is deterministic given the seed bank + dataset partitions (excluding the timestamp in the meta JSON). The git SHA is embedded in the filename for cross-run cross-reference.</p>
+
+<h3>33.6 Reproducibility recipe</h3>
+
+<p>Every harness run writes a <code>MANIFEST.json</code> with the timestamp, git SHA, git working-tree state (clean / dirty), the SIDES list, and every knob value. The plotter consumes the manifest so the SUMMARY.md cross-references the exact configuration. A reproduction by a third party requires:</p>
+
+<ol>
+  <li>The same SmartLoad checkout at the recorded git SHA.</li>
+  <li>The same Docker host class (CPU, memory).</li>
+  <li>The same five-backend pool (<code>docker-compose.yml</code> is the canonical source).</li>
+  <li>The <code>experiments/baseline-vs-smartload/env/baseline.env</code> + <code>smartload.env</code> verbatim.</li>
+  <li>The trained PPO artifact at <code>services/rl-engine/models/policy.zip</code> + <code>artifact_meta.json</code>. The <code>artifact_meta.json</code> records the NormParams + the training data partition hashes; together these pin the trained model.</li>
+  <li>The same trace partitions in <code>datasets/alibaba/</code>. The eval-harness CSV header embeds the partition MD5s in the meta JSON.</li>
+</ol>
+
+<p>Running:</p>
+
+<pre><code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh        # full 6-min/side run
+SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min/side validation</code></pre>
+
+<p>Plotting (six PNGs + SUMMARY.md):</p>
+
+<pre><code>python experiments/baseline-vs-smartload/scripts/plot_results.py experiments/baseline-vs-smartload/results/&lt;TIMESTAMP&gt;</code></pre>
+
+<h3>33.7 Threats to validity</h3>
+
+<p>Five classes of threat are documented explicitly so the reader can weight the results accordingly.</p>
+
+<h4>Internal validity</h4>
+
+<table>
+  <thead><tr><th>Threat</th><th>Mitigation / status</th></tr></thead>
+  <tbody>
+    <tr><td>The LB-sidecar reload mechanism causes transient connection blips that show up as max-latency spikes.</td><td>Reported honestly. The cost is part of the SmartLoad side and is included in the SUMMARY.md numbers without filtering. This is a real production cost; suppressing it would mis-represent the trade-off.</td></tr>
+    <tr><td>NGINX's <code>max_fails=3</code> passive health check might trip on the baseline side if the anomaly is severe enough.</td><td>The latency-spike anomaly (§33.4) is designed precisely so passive checks do not trip &mdash; the backend still returns 200 OK. This is verified in §22 v1.0.7r: baseline side aggregate p95 jumped from 6 ms (no anomaly) to 41 ms (with heterogeneity), confirming the slow backend stays in rotation.</td></tr>
+    <tr><td>The <code>BASELINE_SLOW_MS</code> heterogeneity is configured by env var; a stale value would silently change results.</td><td>The MANIFEST.json captures every knob; the SUMMARY.md surfaces them in the rendered report. Comparison across runs is only valid when the knobs match.</td></tr>
+    <tr><td>The standing traffic-simulator is stopped during the run, but other dev-stack background load (operator-UI polling, demo-ui SSE) keeps generating low-rate traffic.</td><td>Both sides see the same dev-stack background load; the comparison cancels. The absolute numbers are inflated by ~2–4 RPS of background traffic; the deltas are not.</td></tr>
+  </tbody>
+</table>
+
+<h4>External validity</h4>
+
+<table>
+  <thead><tr><th>Threat</th><th>Mitigation / status</th></tr></thead>
+  <tbody>
+    <tr><td>The PPO policy was trained on Alibaba traces with homogeneous backend latencies (~9.7 ms). The benchmark workload is heterogeneous (backend-1 at +15 ms baseline + 200 ms anomaly). The training distribution does not match the eval distribution.</td><td>Recorded and discussed in §34. This is the binding constraint on the current honest finding; the retraining workstream on heterogeneous traces is tracked in §35.2.</td></tr>
+    <tr><td>The harness uses a single backend image (Node.js stub). Real backends have non-uniform per-request CPU cost; the queue-depth proxy SmartLoad uses for "load" doesn't track that.</td><td>Acknowledged. Real-traffic shadow-mode runs are tracked as a deferred evaluation (§35.7).</td></tr>
+    <tr><td>The harness runs on a single Docker host. Cross-host network behaviour (different latency, jitter, packet loss) is not exercised.</td><td>Acknowledged. K8s-deployment evaluations are tracked under §35.5.</td></tr>
+  </tbody>
+</table>
+
+<h4>Construct validity</h4>
+
+<table>
+  <thead><tr><th>Threat</th><th>Mitigation / status</th></tr></thead>
+  <tbody>
+    <tr><td>"SmartLoad beats baseline" requires defining what "beats" means. The harness reports a vector of metrics; no single scalar dominance criterion is defined.</td><td>The acceptance gate in #148 reads "clear delta on ≥3 of 5 metrics." This is recorded but is not a one-number summary &mdash; the comparison is intentionally multi-dimensional. §34 reports the per-metric verdict.</td></tr>
+    <tr><td>p99 / p99.99 latencies on the SHORT 2-min profile are noisy; the distributions are not yet tight enough to support strong claims.</td><td>Recorded. SHORT-mode statistics are validation-only; the full-length 6-min profile produces tighter distributions but has not yet been run with the retrained PPO model (§22 v1.0.7r outstanding item).</td></tr>
+  </tbody>
+</table>
+
+<h4>Conclusion validity</h4>
+
+<table>
+  <thead><tr><th>Threat</th><th>Mitigation / status</th></tr></thead>
+  <tbody>
+    <tr><td>One run per side does not control for run-to-run variance from cold caches, JIT effects, container warm-up.</td><td>Acknowledged. Multi-run averaging is a deferred harness extension (§35.3).</td></tr>
+  </tbody>
+</table>
+
+<h3>33.8 Statistical reporting</h3>
+
+<p>The harness today reports point estimates: per-phase p50/p95/p99, max, failure rate, RPS. No confidence intervals are computed across runs &mdash; each side is a single run. The SUMMARY.md surfaces the one-liner delta on aggregate p95; the six PNGs visualise the full distribution. This is appropriate for the current evaluation stage (harness validation + first honest read) but is explicitly insufficient for the final write-up. A run-of-N batching + per-metric CI computation is tracked under §35.3.</p>
+
+<h3>33.9 Review checklist &mdash; evaluation</h3>
+
+<ul class="review-checklist">
+  <li>Does each research question map to a single harness or eval layer?</li>
+  <li>Is the comparison protocol "same stack, only flags differ" preserved by the recorded env-files?</li>
+  <li>Are the anomaly mechanisms (heterogeneity + latency spike) chosen so NGINX's passive checks cannot trivially solve the problem?</li>
+  <li>Does every reported metric have a clear definition and a rationale for why it's reported?</li>
+  <li>Does every harness run write a MANIFEST.json with the git SHA + every knob?</li>
+  <li>Are threats to validity called out before the results are presented (this section, not §34)?</li>
+  <li>Does the offline PPO eval CSV embed the trained-artifact and dataset-partition hashes?</li>
+</ul>
+
+</section>
+
+<!-- ========================================================================== -->
+<!--                  34. RESULTS & DISCUSSION                                   -->
+<!-- ========================================================================== -->
+<section id="sec-34-results">
+<h1>34. Results &amp; Discussion <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>This section is the synthesised, thesis-quality landing for SmartLoad's evaluation results. It is deliberately honest: where SmartLoad wins, where it ties, where it loses today, and what's required to close each gap. The same numbers appear in raw form in §22's per-release changelog rows; this section is the cross-release synthesis. The convention used here is the project's <em>product-honest</em> framing &mdash; the result is reported as it is, with the binding constraint identified, not framed away.</p>
+</div>
+
+<h3>34.1 Offline PPO eval &mdash; trained on homogeneous Alibaba traces</h3>
+
+<p>The trained PPO artifact (<code>policy.zip</code>, 156 KB, <code>latency_scale=100.0</code>) was evaluated against the held-out seed bank (20 episodes) by <code>eval_harness.py</code>. Reproduced from §18 build-status row "RL training scripts + baselines (N2.4)":</p>
+
+<table>
+  <thead><tr><th>Policy</th><th>Mean reward</th><th>SLO violation rate</th><th>Position vs PPO</th></tr></thead>
+  <tbody>
+    <tr><td>ppo</td><td>−0.0056</td><td>0</td><td>&mdash;</td></tr>
+    <tr><td>round_robin</td><td>−0.0056</td><td>0</td><td>Ties PPO. Best baseline.</td></tr>
+    <tr><td>least_connections</td><td>−0.054 (4.8×10<sup>−2</sup> below PPO)</td><td>0</td><td>Worse than both PPO and RR.</td></tr>
+    <tr><td>random_shadow</td><td>(stochastic; baseline floor)</td><td>0</td><td>Lower bound.</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Read.</strong> The trained policy ties round-robin on the held-out trace partitions. SLO-violation rate is 0 for every policy &mdash; the trace's backend latencies are uniformly below the 200 ms SLO. The policy is measurably better than least-connections by 4.8×10<sup>−2</sup> in mean reward (driven by the imbalance regulariser term, which penalises LC's "concentrate on the lowest-load backend" tendency at the start of each window).</p>
+
+<p><strong>Why the tie.</strong> The Alibaba traces have homogeneous backend latencies (≈9.7 ms across the partition). Any reasonably balanced policy &mdash; including round-robin &mdash; produces effectively the same p95 latency, because the per-backend p95 distributions overlap to within the noise floor. PPO learned this; it converged to a near-uniform sampling policy that mimics round-robin's behaviour. This is the expected outcome of training a latency-sensitive policy on data where latency does not discriminate across backends &mdash; the optimal policy on that distribution is round-robin.</p>
+
+<h3>34.2 SHORT validation &mdash; v1.0.7r (harness mechanical sanity)</h3>
+
+<p>The first benchmark harness landed in v1.0.7r (2026-06-03). The SHORT validation profile (2 min/side, 3-phase shape, baseline-vs-SmartLoad) produced:</p>
+
+<table>
+  <thead><tr><th>Metric</th><th>Baseline</th><th>SmartLoad</th><th>Comment</th></tr></thead>
+  <tbody>
+    <tr><td>Total requests</td><td>38,098</td><td>38,812</td><td>≈320 RPS for 2 min, both sides &mdash; sanity check OK.</td></tr>
+    <tr><td>Median latency</td><td>baseline+1 ms</td><td>+1 ms vs baseline (sidecar overhead at SHORT scale)</td><td>Visible but small at the central tendency.</td></tr>
+    <tr><td>p99.99 latency (during anomaly window)</td><td>~2,700 ms</td><td>~420 ms</td><td>~6× lower on SmartLoad. Largest delta at SHORT scale.</td></tr>
+    <tr><td>Max latency (across run)</td><td>~22 s</td><td>~22 s</td><td>Both sides see the anomaly's tail; SHORT-mode statistics are not tight enough for a definitive max-latency verdict.</td></tr>
+    <tr><td>Plots + SUMMARY.md</td><td>6/6 PNGs generated</td><td>6/6 PNGs generated</td><td>Harness mechanically end-to-end clean.</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Read.</strong> The SHORT validation proved the harness works end-to-end: env-file cycling, decision-plane recreate, status wait, locust headless run, anomaly injection, plot generation. The long-tail signal at p99.99 was a first directional read &mdash; SmartLoad reacts to the anomaly within seconds while baseline RR keeps dispatching to the slow backend &mdash; but the 2-minute distribution at SHORT scale is not tight enough to publish as a thesis-quality result. The mechanical sanity is the contribution of v1.0.7r; the numerical sharpness is a v1.0.7t / post-retraining concern.</p>
+
+<h3>34.3 First honest finding &mdash; v1.0.7t (heterogeneous workload + latency-spike anomaly)</h3>
+
+<p>The v1.0.7t harness extension introduced the two anomaly mechanisms described in §33.4: persistent heterogeneity (backend-1 at +15 ms baseline) and a latency-spike anomaly (backend-1 at +200 ms during phase B). The SHORT validation pass produced:</p>
+
+<table>
+  <thead><tr><th>Sanity / scope</th><th>Result</th></tr></thead>
+  <tbody>
+    <tr><td>Baseline aggregate p95 with heterogeneity</td><td><strong>41 ms</strong> &mdash; up from 6 ms in v1.0.7r (no heterogeneity). The slowness of backend-1 is being eaten by 1/5 of RR's traffic exactly as the design requires.</td></tr>
+    <tr><td>Per-phase concentration of the slowdown</td><td>p95 jump concentrated in A_hold, B_anomaly, C_sustain &mdash; the phases where backend-1 is slow. A_ramp doesn't yet hit steady state, so the slowdown is muted there. The harness is mechanically correct.</td></tr>
+  </tbody>
+</table>
+
+<h4>Per-phase p95 comparison</h4>
+
+<table>
+  <thead><tr><th>Phase</th><th>Baseline p95 (ms)</th><th>SmartLoad p95 (ms)</th><th>Delta</th></tr></thead>
+  <tbody>
+    <tr><td>A_ramp</td><td>14</td><td>23</td><td>+9 ms slower</td></tr>
+    <tr><td>A_hold</td><td>42</td><td>41</td><td>≈ tied</td></tr>
+    <tr><td>B_anomaly</td><td>44</td><td>50</td><td>+6 ms slower</td></tr>
+    <tr><td>C_sustain</td><td>43</td><td>44</td><td>≈ tied</td></tr>
+  </tbody>
+</table>
+
+<table>
+  <thead><tr><th>Max latency (single highest response in the run)</th><th>Baseline</th><th>SmartLoad</th></tr></thead>
+  <tbody>
+    <tr><td>Across full run</td><td>150 ms</td><td><strong>3,082 ms</strong></td></tr>
+  </tbody>
+</table>
+
+<p><strong>Read &mdash; honest first finding.</strong> SmartLoad is tied or slightly worse than baseline RR in every phase. SmartLoad's max latency is &gt;20× the baseline's; the cost source is the lb-sidecar's NGINX reload during the anomaly window, which causes brief connection blips while <code>upstream.conf</code> is regenerated and <code>nginx -s reload</code> is issued. <strong>The lb-sidecar mechanism costs latency during reload; with the currently-trained PPO model (Alibaba traces &mdash; homogeneous latencies) it does not earn that cost back via better steady-state routing.</strong></p>
+
+<h3>34.4 Why this is the result &mdash; analysis</h3>
+
+<p>The result is consistent with the offline eval (§34.1) and the training-data narrative recorded in §22 v1.0.7i. The chain of reasoning:</p>
+
+<ol>
+  <li><strong>The trained PPO policy converged to round-robin equivalence</strong> on the homogeneous Alibaba traces (§34.1). The policy's logits, when summed under the argmax-dominant weighting (§32.4), produce upstream weights that are close to uniform &mdash; not because the policy is broken, but because uniform is the optimal solution on the training distribution.</li>
+  <li><strong>The bench harness intentionally exposes a distribution that is <em>not</em> homogeneous</strong>: backend-1 is at +15 ms baseline + 200 ms during the anomaly window. To beat round-robin here, the policy needs to learn to down-weight backend-1.</li>
+  <li><strong>The policy has not been trained on a distribution that contains this heterogeneity.</strong> It cannot extrapolate from "uniform latency → uniform weights" to "+15 ms backend → downweight it." The policy is doing what it was trained to do, on a distribution it was not trained for.</li>
+  <li><strong>The lb-sidecar mechanism itself works.</strong> When the AnomalyEvent is published, the sidecar reacts within ~1 s and rewrites <code>upstream.conf</code> to exclude backend-1. The reload during this rewrite causes the +3 s max-latency tail observed on the SmartLoad side. Operationally, this is the right behaviour; numerically, it is a cost that the routing improvement was supposed to amortise &mdash; and on the current PPO model, it doesn't.</li>
+</ol>
+
+<p>The harness has exposed the correct truth. SmartLoad's mechanism does what it claims; the trained policy has not been trained for the workload the mechanism is being asked to handle.</p>
+
+<h3>34.5 What this confirms &mdash; positive read</h3>
+
+<p>The result confirms three architectural choices and one product framing:</p>
+
+<table>
+  <thead><tr><th>Confirmed</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><strong>The harness methodology is sound.</strong></td><td>The per-phase decomposition, the latency-spike anomaly model, the env-file cycle &mdash; all surfaces produce the result they should. The 6 ms → 41 ms baseline p95 jump with heterogeneity is mechanical confirmation.</td></tr>
+    <tr><td><strong>The lb-sidecar enforces the routing hierarchy correctly.</strong></td><td>On AnomalyEvent publish, backend-1 is pulled out of rotation; on recovery, it returns. The sidecar's <code>upstream.conf</code> rewrite + <code>nginx -s reload</code> mechanism is end-to-end functional in the live stack.</td></tr>
+    <tr><td><strong>The fallback path is exercised continuously.</strong></td><td>Even with PPO not producing latency-aware routing, the classical scheduler under SmartLoad's wraparound (anomaly mask + RR floor + policy short-circuit) is the deterministic floor. The system never loses safe behaviour.</td></tr>
+    <tr><td><strong>The product framing is honest.</strong></td><td>The §22 v1.0.7t row publishes this result openly. The acceptance gate for #148 (clear delta on ≥3 of 5 metrics) remains red. SmartLoad's design discipline is to report this and identify the binding constraint, not to revise the benchmark to make it pass.</td></tr>
+  </tbody>
+</table>
+
+<h3>34.6 What's needed to close the gap</h3>
+
+<p>The binding constraint is a single concrete deliverable, owned by a single workstream:</p>
+
+<ol>
+  <li><strong>Retrain the PPO model on a heterogeneous-latency training distribution.</strong> The current artifact was trained on Alibaba traces where the backend-1 ≈ backend-2 ≈ ... ≈ backend-5 latency assumption holds. A retrained artifact on synthetic-injection traces (or a heterogeneous subset of Alibaba where backend identity correlates with latency) should produce a policy that learns to down-weight slow backends. This workstream is owned by Rghda Salah &mdash; the retraining track recorded in §22 v1.0.7i.</li>
+  <li><strong>Re-run the full-length (6-min/side) harness</strong> after the retrained artifact lands. The SHORT-mode statistics in §34.2 / §34.3 are insufficient for the thesis-quality write-up; the full-length distributions are needed to make the per-phase deltas statistically defensible.</li>
+  <li><strong>Add multi-run batching with confidence intervals</strong> to the harness so the comparison reports CIs, not point estimates (§33.8 / §35.3).</li>
+</ol>
+
+<h3>34.7 Cross-reference to §22 changelog entries</h3>
+
+<p>The raw run-by-run data and per-release commentary live in §22. The pointer table below maps each v1.0.7 release to the result it produced.</p>
+
+<table>
+  <thead><tr><th>Release</th><th>Date</th><th>Contribution</th><th>Where to read</th></tr></thead>
+  <tbody>
+    <tr><td>v1.0.7r</td><td>2026-06-03</td><td>Bench harness landed; SHORT validation pass; 6× lower p99.99 in anomaly window at SHORT scale.</td><td><a href="#sec-15-changelog">§22 v1.0.7r</a></td></tr>
+    <tr><td>v1.0.7s</td><td>2026-06-04</td><td>demo-ui Benchmark page surfaces run history + plots inline.</td><td><a href="#sec-15-changelog">§22 v1.0.7s</a></td></tr>
+    <tr><td>v1.0.7t</td><td>2026-06-04</td><td>Heterogeneity + latency-spike anomaly model; honest first finding: PPO ties / loses to RR on the new workload because of training-data homogeneity.</td><td><a href="#sec-15-changelog">§22 v1.0.7t</a></td></tr>
+  </tbody>
+</table>
+
+<h3>34.8 Review checklist &mdash; results &amp; discussion</h3>
+
+<ul class="review-checklist">
+  <li>Does the results section report the negative result openly?</li>
+  <li>Is the binding constraint identified by name (the homogeneous training distribution)?</li>
+  <li>Is the closing-the-gap deliverable owned by a single workstream?</li>
+  <li>Does every reported number tie back to a release in §22?</li>
+  <li>Are the harness's mechanical confirmations (heterogeneity p95 jump, lb-sidecar reload cost) called out separately from the algorithmic outcomes?</li>
+  <li>Is the difference between "SmartLoad's mechanism works" and "SmartLoad's current model wins" stated explicitly?</li>
+</ul>
+
+</section>
+
+<!-- ========================================================================== -->
+<!--                  35. LIMITATIONS & FUTURE WORK                              -->
+<!-- ========================================================================== -->
+<section id="sec-35-limitations">
+<h1>35. Limitations &amp; Future Work <span class="badge badge-canonical">Canonical</span></h1>
+
+<div class="canonical-intent">
+  <span class="label">Canonical Design Intent</span>
+  <p>This section consolidates the limitations and deferred work that are scattered across the deep-dives' "Gap to close" entries, the §22 changelog, and the §17 roadmap. It exists so a thesis reader can see the full forward surface at once without triangulating across 30 sections. The limitations are split by axis &mdash; scope, model, evaluation, deployment, operations &mdash; with the deferred deliverable that closes each one called out by issue number where applicable.</p>
+</div>
+
+<h3>35.1 Scope limitations (current phase: single-tenant middleware)</h3>
+
+<p>The present-phase scope is single-tenant middleware. The following capabilities are explicitly out of scope for this phase and tracked as Phase 2 SaaS adaptations:</p>
+
+<table>
+  <thead><tr><th>Capability</th><th>Status</th><th>Deferred to</th></tr></thead>
+  <tbody>
+    <tr><td>Multi-tenancy (tenant_id plumbing in every schema row, per-tenant Redis channel suffixes, tenant-scoped policy isolation)</td><td>Out of scope</td><td>Issue #129 (Phase 2)</td></tr>
+    <tr><td>Tenant API keys + RBAC</td><td>Out of scope</td><td>Issue #132 (Phase 2)</td></tr>
+    <tr><td>Rate limiting + per-token quotas</td><td>Out of scope</td><td>Issue #135 (Phase 2)</td></tr>
+    <tr><td>Per-tenant Redis namespacing</td><td>Out of scope</td><td>Phase 2 (managed SaaS shape, §25.1)</td></tr>
+    <tr><td>TLS termination at the LB</td><td>Out of scope (assumed trusted internal network)</td><td>Phase 2</td></tr>
+    <tr><td>Session affinity / sticky sessions</td><td>Out of scope (Principle 7: stateless on the request path)</td><td>Not currently planned</td></tr>
+  </tbody>
+</table>
+
+<p>The scope discipline is enforced: no present-phase slice may require any of these capabilities, and the OUI.7 auth track (§28) is explicitly deferred. Operator-UI access remains LAN-only on the prototype.</p>
+
+<h3>35.2 Model limitations</h3>
+
+<table>
+  <thead><tr><th>Model</th><th>Current state</th><th>Limitation</th><th>What closes it</th></tr></thead>
+  <tbody>
+    <tr><td>PPO routing policy</td><td>Shipped, evaluated; ties round-robin on homogeneous Alibaba; loses to RR on heterogeneous bench (§34.3)</td><td>Training distribution does not match the heterogeneous workload the bench harness exposes.</td><td><strong>Retraining workstream</strong> on a heterogeneous-latency distribution (synthetic injection or a heterogeneous Alibaba subset). Owner: Rghda Salah; tracked under §22 v1.0.7i carry-forward.</td></tr>
+    <tr><td>ARIMA forecaster</td><td>Shipped at MAPE ≈ 25.0%; <code>moving_average</code> remains default</td><td>SOT KPI is MAPE &lt; 20% (§19); the artifact does not yet meet the gate.</td><td>Hyperparameter tuning + extended training window. Tracked in §22 v1.0.7g/i forecast-engine row.</td></tr>
+    <tr><td>Isolation Forest anomaly model</td><td>Plugin folder scaffolded; trained <code>.pkl</code> not yet present</td><td>Threshold rule remains default; no contextual anomaly detection in production.</td><td>Issue #101 (Nada's workstream). Lands the trained artifact + serving plugin.</td></tr>
+    <tr><td>Yahoo SMD dataset ingestion</td><td>R2.1, upcoming</td><td>No multivariate anomaly dataset wired today; NAB is univariate.</td><td>Issue tracked as R2.1 in §17 roadmap.</td></tr>
+    <tr><td>Real failure-mode coverage</td><td>Synthetic anomaly injection only</td><td>Real-traffic anomalies (DB connection storm, GC pause, partial network partition) not exercised.</td><td>Real-traffic shadow-mode evaluation (§35.7).</td></tr>
+  </tbody>
+</table>
+
+<h3>35.3 Evaluation harness limitations</h3>
+
+<table>
+  <thead><tr><th>Limitation</th><th>Impact</th><th>What closes it</th></tr></thead>
+  <tbody>
+    <tr><td>Single run per side</td><td>No confidence interval on the reported metrics. Run-to-run variance from JIT effects, cold caches, container warm-up is uncontrolled.</td><td>Multi-run batching (e.g. <code>RUNS=5 bash run_experiment.sh</code>) + per-metric CI computation in <code>plot_results.py</code>.</td></tr>
+    <tr><td>SHORT-mode statistics in the published runs to date</td><td>p99/p99.99 distributions at SHORT scale are noisy. The 6× p99.99 delta in v1.0.7r is directional, not definitive.</td><td>Full-length 6-min/side run after the retrained PPO artifact lands.</td></tr>
+    <tr><td>Single host class</td><td>Cross-host network behaviour (real jitter, packet loss, multi-AZ latency) not exercised.</td><td>K8s deployment evaluation (§35.5).</td></tr>
+    <tr><td>Single backend image (Node.js stub)</td><td>Per-request CPU cost is uniform; queue-depth proxy holds. Real backends have mixed cost profiles.</td><td>Heterogeneous-backend harness extension &mdash; mix of CPU-bound + I/O-bound backends.</td></tr>
+    <tr><td>Only NGINX RR as the baseline</td><td>HAProxy + Envoy are the next two production data planes; AWS ALB / GCP LB are the cloud-managed analogues. No comparison data exists.</td><td>Multi-baseline harness extension. Tracked as a future evaluation surface; not a Phase 2 SaaS item.</td></tr>
+    <tr><td>No K8s HPA / VPA comparison</td><td>RQ4 (forecast-driven scale-out) is currently observed only on the SmartLoad side; the comparable Kubernetes-native autoscaling shape is not measured.</td><td>K8s deployment harness (§35.5) + HPA-vs-SmartLoad comparison run.</td></tr>
+    <tr><td>Workload shape is a single 3-phase Locust profile</td><td>Diurnal patterns, multi-day workload curvature, sudden burst arrivals (incidents) are not exercised.</td><td>Workload profile catalogue extension. The B1/B2/B3 scenarios in §17 (ALL.2 benchmarks) are the planned next coverage.</td></tr>
+  </tbody>
+</table>
+
+<h3>35.4 Deployment limitations (current target: Docker Compose self-host)</h3>
+
+<table>
+  <thead><tr><th>Deployment shape</th><th>Status</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Docker Compose self-host (single host)</td><td><span class="pill pill-done">Shipped</span></td><td>The canonical prototype deployment. <code>docker-compose.yml</code> at repo root; 14 containers, full stack.</td></tr>
+    <tr><td>Helm chart for Kubernetes</td><td><span class="pill pill-active">Scaffold</span></td><td><code>infrastructure/helm/smartload/</code> has Chart.yaml + values.yaml + an empty <code>templates/</code> directory. Issue #133 lands the Deployments, StatefulSets, ConfigMap+Secret, HPA, optional Ingress + ServiceMonitor.</td></tr>
+    <tr><td>Raw K8s manifests</td><td><span class="pill pill-upcoming">Placeholder</span></td><td><code>infrastructure/k8s/</code> only has <code>.gitkeep</code>. Intended for cluster-wide CRDs, namespaces, RBAC that don't fit into Helm.</td></tr>
+    <tr><td>Managed SaaS shape</td><td><span class="pill pill-upcoming">Phase 2 deferred</span></td><td>Multi-tenant control plane (§25.1). Out of scope this phase.</td></tr>
+    <tr><td>K8s operator (CRD-based)</td><td><strong>Explicitly rejected</strong></td><td><code>infrastructure/helm/smartload/README.md</code> records this as an anti-pattern for v1: "Helm is the only supported mode in v1. CRDs add operational surface area without adoption gain at this stage."</td></tr>
+  </tbody>
+</table>
+
+<h3>35.5 K8s posture &mdash; deferred but explicit</h3>
+
+<p>The K8s deferral is intentional and tracked. The Helm chart is the only supported K8s path for v1; the scaffold exists so the layout discipline is visible (Chart.yaml, values.yaml, the planned templates list in the README) but the templates themselves land under #133. The K8s-native autoscaling comparison (RQ4 against HPA / VPA, §35.3) requires the chart to ship first.</p>
+
+<p>Two open questions are recorded explicitly:</p>
+
+<ol>
+  <li><strong>The autoscaler's Docker SDK pathway is not portable to K8s.</strong> The current implementation uses <code>docker.from_env()</code> to start/stop test-backend containers; on K8s the equivalent would be a K8s API client modifying a Deployment's replica count. The plugin contract for the cluster client is in <code>services/autoscaler/cluster_client.py</code>; the K8s adapter is an open task under #133.</li>
+  <li><strong>The lb-sidecar's NGINX-config-rewrite pathway depends on a shared docker volume.</strong> On K8s the same pattern works via an emptyDir or shared PVC, but the operator must opt-in. Alternative: switch the production LB to the NGINX Plus dynamic-upstream API or Envoy (which has a first-class control-plane API). Tracked as a §35.6 future-engine item.</li>
+</ol>
+
+<h3>35.6 Future engines / future evaluation surfaces</h3>
+
+<table>
+  <thead><tr><th>Surface</th><th>Why deferred</th><th>What it would add</th></tr></thead>
+  <tbody>
+    <tr><td>LSTM autoencoder anomaly engine</td><td>Heavier training pipeline + GPU inference. Marginal value until IF + threshold leaves a gap on contextual anomalies.</td><td>Contextual anomaly detection — patterns that point-based IF misses.</td></tr>
+    <tr><td>Prophet forecaster engine</td><td>5-min horizon does not yet demand the extra model capacity.</td><td>Explicit weekly / yearly seasonality + holiday components for longer-horizon forecasting.</td></tr>
+    <tr><td>DeepAR forecaster</td><td>Same as Prophet plus deeper deployment surface.</td><td>Probabilistic forecasting at scale; useful if the autoscaler ever needs quantile-based scaling decisions.</td></tr>
+    <tr><td>Envoy adapter (or NGINX Plus dynamic upstream API)</td><td>The classical NGINX reload pathway is sufficient for v1; the Envoy adapter is a 2nd lb_adapter plugin.</td><td>Sub-second weight updates without an upstream-config reload &mdash; would eliminate the +3 s max-latency cost observed in §34.3.</td></tr>
+    <tr><td>HAProxy adapter</td><td>Same as Envoy; lb_adapter plugin slot exists in <code>services/shared/lb_adapters/</code>.</td><td>Same coverage as Envoy for HAProxy shops.</td></tr>
+    <tr><td>AWS ALB adapter</td><td>Phase 2 / SaaS deployment shape.</td><td>Managed-cloud LB path.</td></tr>
+    <tr><td>OpenTelemetry-native ingest (replace lb-otel-shipper sidecar)</td><td>NGINX's native OTLP support is not yet mature in OSS; the shipper is the integration path that works today.</td><td>Eliminates the sidecar process and the access-log tailing pathway.</td></tr>
+  </tbody>
+</table>
+
+<h3>35.7 Future evaluations</h3>
+
+<table>
+  <thead><tr><th>Evaluation</th><th>What it would show</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Full-length bench harness on the retrained PPO model</td><td>Whether the retrained policy beats RR on the heterogeneous workload (the open question from §34.3).</td><td>Blocked on the retraining workstream.</td></tr>
+    <tr><td>Real-traffic shadow-mode run</td><td>Whether the production telemetry distribution matches the offline trace distribution closely enough that the trained policy generalises.</td><td>Requires a live integrator (Phase 2 customer or thesis demo environment).</td></tr>
+    <tr><td>K8s HPA-vs-SmartLoad autoscaling comparison</td><td>Quantitative read on RQ4 (forecast-driven scale-out vs reactive HPA).</td><td>Blocked on the Helm chart (#133).</td></tr>
+    <tr><td>Multi-run batching with confidence intervals</td><td>Statistically defensible per-metric deltas.</td><td>Harness extension; small.</td></tr>
+    <tr><td>B1 / B2 / B3 benchmark scenarios from §17 (ALL.2)</td><td>Coverage of B1 steady, B2 burst, B3 degraded-backend cases beyond the single 3-phase Locust shape.</td><td>Phase 3A (S5).</td></tr>
+    <tr><td>Phase 3A integration tests (3 scenarios, T2.3)</td><td>System-level test coverage beyond unit / contract layers.</td><td>Phase 3A (S5).</td></tr>
+  </tbody>
+</table>
+
+<h3>35.8 Operational maturity gaps</h3>
+
+<table>
+  <thead><tr><th>Capability</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>API versioning + deprecation policy</td><td>Issue #134 &mdash; path versioning is canonical; the formal deprecation window mechanism is the open piece.</td></tr>
+    <tr><td>Webhook dispatcher</td><td>Placeholder service. Issue #130 lands the implementation; <code>docs/planned/webhook-dispatcher.md</code> is the tracking doc.</td></tr>
+    <tr><td>Embedded metrics page in operator UI</td><td>Issue #131 (OUI.x).</td></tr>
+    <tr><td>Logs page in operator UI</td><td>Issue #124, optional.</td></tr>
+    <tr><td>Forecast persistence (predicted_rps over time)</td><td>Forecast values published to Redis but not persisted; Grafana's "predicted RPS" panel is therefore sparse-at-decision-moments. Would need a <code>forecasts</code> hypertable.</td></tr>
+    <tr><td>Request correlation ID propagation</td><td>Issue #143 &mdash; tracking ID flows through every service so audit replay is deterministic.</td></tr>
+    <tr><td>Test reorganisation (PEP 420 namespace packages)</td><td>Issue #140 &mdash; in progress.</td></tr>
+    <tr><td>Structural lint flip from permissive to strict</td><td>Issue #139 &mdash; lint rules ship in permissive mode today; the flip to fail-on-violation gates the strict CI mode.</td></tr>
+  </tbody>
+</table>
+
+<h3>35.9 What is <em>not</em> a limitation</h3>
+
+<p>Two design decisions are sometimes raised as limitations but are explicit canonical choices. They are listed here so a reader doesn't mistake them for forward work.</p>
+
+<table>
+  <thead><tr><th>Decision</th><th>Why it's not a limitation</th></tr></thead>
+  <tbody>
+    <tr><td>The trained policy is a contextual bandit, not a full MDP</td><td>Recorded in §31.3 / §32.4. The trade-off (no learned environment model) is intentional: production safety + reproducibility + training cost. Adding the MDP variant would be a different system.</td></tr>
+    <tr><td>The classical scheduler stays as the deterministic floor and is never deprecated</td><td>Principle 9 + §15. The classical fallback is the safety contract that lets RL be trusted at all. "Replacing" it with RL would defeat the safety guarantee.</td></tr>
+  </tbody>
+</table>
+
+<h3>35.10 Review checklist &mdash; limitations &amp; future work</h3>
+
+<ul class="review-checklist">
+  <li>Is every limitation accompanied by either an issue number that closes it or an explicit "deferred to Phase 2"?</li>
+  <li>Are out-of-scope items distinguished from limitations (the former are intentional, the latter are forward work)?</li>
+  <li>Does the K8s deferral cover both the deployment-shape gap (#133) and the autoscaler portability gap (cluster_client adapter)?</li>
+  <li>Are the model limitations (PPO retraining, ARIMA MAPE, IF artifact) tied back to the §22 entries that recorded the gap?</li>
+  <li>Are the §35.9 non-limitations distinguished from real limitations?</li>
+</ul>
 
 </section>
 

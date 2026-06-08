@@ -44,9 +44,130 @@ SOT-anchored rules (each call-site cites the originating SOT line):
 
 from __future__ import annotations
 
+import re
 import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
+
+
+# ── Dynamic backend discovery (#155 adaptive-bench foundation) ────────────────
+
+_BACKEND_LABEL_KEY     = "com.docker.compose.service"
+_BACKEND_LABEL_VALUE   = "test-backend"
+_BACKEND_INDEX_RE      = re.compile(r"-(\d+)$")
+_DEFAULT_BACKEND_PORT  = 8080
+
+
+def _backend_index(name: str) -> int:
+    """Sort key for backend container names (`smartload-test-backend-3` → 3)."""
+    match = _BACKEND_INDEX_RE.search(name)
+    return int(match.group(1)) if match else 0
+
+
+class _BackendNameCache:
+    """Tiny TTL cache around the Docker label query.
+
+    `discover_all_backends()` is called from the routing + policy
+    message-handler hot path; without a cache, every published envelope
+    would hammer the Docker API. The TTL is intentionally short (2 s) so
+    a newly-provisioned container appears in the upstream block within
+    one cache window of its healthcheck passing.
+
+    Thread-safe: the snapshot dict is replaced atomically; concurrent
+    readers see either the previous or new snapshot (benign stale read).
+    """
+
+    def __init__(self, ttl_seconds: float = 2.0) -> None:
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+        self._cached_at: float | None = None
+        self._cached: list[str] = []
+
+    def get(self, docker_client, fallback: list[str]) -> list[str]:
+        with self._lock:
+            now = time.monotonic()
+            if self._cached_at is not None and (now - self._cached_at) < self._ttl:
+                return list(self._cached)
+        fresh = _query_backends_via_docker(docker_client, fallback)
+        with self._lock:
+            self._cached = list(fresh)
+            self._cached_at = time.monotonic()
+        return fresh
+
+    def invalidate(self) -> None:
+        """Drop the cached snapshot. Next `get()` queries Docker afresh.
+
+        Called by message handlers on every Redis message so the next
+        decision uses an up-to-the-moment backend list. Combined with
+        the 2 s TTL the result is: at most one Docker query per 2 s
+        when idle, exactly one per published envelope when busy.
+        """
+        with self._lock:
+            self._cached_at = None
+
+
+def _query_backends_via_docker(docker_client, fallback: list[str]) -> list[str]:
+    """Return sorted `name:port` for all running test-backend containers.
+
+    Falls back to `fallback` on any Docker error so the sidecar stays
+    serviceable through transient daemon unavailability. The fallback
+    list is the cold-boot seed from `ALL_BACKENDS` env var — used at
+    startup before the daemon is reachable and as a safety net
+    afterwards.
+    """
+    if docker_client is None:
+        return list(fallback)
+    try:
+        containers = docker_client.containers.list(
+            filters={
+                "label":  f"{_BACKEND_LABEL_KEY}={_BACKEND_LABEL_VALUE}",
+                "status": "running",
+            },
+        )
+    except Exception:  # noqa: BLE001
+        return list(fallback)
+    if not containers:
+        return list(fallback)
+    names = sorted(containers, key=lambda c: _backend_index(c.name))
+    return [f"{c.name}:{_DEFAULT_BACKEND_PORT}" for c in names]
+
+
+# Module-level cache singleton. The handlers thread the docker client through;
+# the cache hides behind discover_all_backends() so call sites don't need to
+# carry it around.
+_BACKEND_NAME_CACHE = _BackendNameCache()
+
+
+def discover_all_backends(
+    docker_client,
+    seed_backends: Optional[list[str]] = None,
+) -> list[str]:
+    """Return the current set of running test-backend containers.
+
+    Uses the module-level 2 s TTL cache so a Redis-message burst doesn't
+    fan out to the Docker daemon. Falls back to `seed_backends` (the
+    cold-boot `ALL_BACKENDS` env var list) on Docker error or empty
+    result so the sidecar stays serviceable during daemon hiccups.
+
+    Called from both `handle_routing` (line ~current_callsite) and
+    `handle_policy` (safe-mode equal-weight reset) so safe_mode always
+    resets to a view consistent with what routing was using.
+    """
+    return _BACKEND_NAME_CACHE.get(docker_client, seed_backends or [])
+
+
+def invalidate_backend_discovery_cache() -> None:
+    """Drop the cached backend list — next discover() goes to Docker.
+
+    Wired into the lb-sidecar's per-message dispatch loop so a newly-
+    provisioned backend is picked up on the very next envelope rather
+    than waiting up to TTL seconds. Two cycles of discovery still hits
+    the Docker daemon at most twice per Redis-message burst (cache
+    rebuilds the snapshot immediately after the invalidation, then
+    serves it for the next TTL window).
+    """
+    _BACKEND_NAME_CACHE.invalidate()
 
 
 # ── Weight calculation ────────────────────────────────────────────────────────

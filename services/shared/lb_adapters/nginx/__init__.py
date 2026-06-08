@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import socket
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 from ..base import AdapterState, LoadBalancerAdapter
+
+_log = logging.getLogger("lb_adapter.nginx")
 
 _CONF_HEADER = "upstream backend_pool {\n"
 _CONF_FOOTER = "}\n"
@@ -39,10 +43,25 @@ class NginxAdapter(LoadBalancerAdapter):
         nginx_container: str,
         docker_client,
         all_backends: Optional[list[str]] = None,
+        *,
+        dns_preflight: bool = True,
     ) -> None:
+        """
+        Args (continued):
+            dns_preflight: when True (production default), every backend
+                hostname is resolved via ``socket.gethostbyname()`` before
+                the upstream.conf is written. If any host fails to resolve
+                the reload is deferred and logged — this prevents the
+                `host not found in upstream` crash NGINX would otherwise
+                raise on a freshly-provisioned backend whose hostname
+                hasn't propagated through Docker DNS yet (#155 Risk 3).
+                Set False in unit tests that use synthetic backend names
+                like ``b1:8080`` which aren't real resolvable hosts.
+        """
         self._conf_path = Path(conf_path)
         self._nginx_container = nginx_container
         self._docker = docker_client
+        self._dns_preflight = dns_preflight
         self._weights: dict[str, int] = {}
         self._excluded: set[str] = set()
         self._algorithm: str = "round_robin"
@@ -131,9 +150,47 @@ class NginxAdapter(LoadBalancerAdapter):
         return "".join(lines)
 
     def _render_and_reload(self) -> None:
+        # #155 Risk 3 de-risk — NGINX resolves upstream hostnames at config
+        # load time. If a dynamically-provisioned backend's hostname hasn't
+        # propagated through Docker's embedded DNS yet, `nginx -s reload`
+        # raises `host not found in upstream`. Pre-flight every host via
+        # the host's resolver; if any host is unresolvable we DEFER the
+        # reload this cycle and let the next message re-trigger. The new
+        # backend will appear on the next discover_all_backends() call
+        # after DNS has propagated (≤ 2 s typically).
+        if self._dns_preflight:
+            unresolved = self._unresolved_hosts()
+            if unresolved:
+                _log.warning(
+                    "deferring nginx reload — %d host(s) not yet resolvable: %s",
+                    len(unresolved), ", ".join(sorted(unresolved)),
+                )
+                return
         conf = self._render_conf()
         self._atomic_write(conf)
         self._reload_nginx()
+
+    def _unresolved_hosts(self) -> set[str]:
+        """Return the subset of `_weights` whose hostname doesn't yet resolve.
+
+        Excluded backends are skipped — they're rendered as `down;` in
+        upstream.conf and don't need a live DNS record. The resolver call
+        is `socket.gethostbyname()` per host; failures (NXDOMAIN, timeout)
+        return the unresolvable name into the result set. Returning an
+        empty set means every active server will resolve under NGINX too.
+        """
+        unresolved: set[str] = set()
+        for addr in self._weights:
+            if addr in self._excluded:
+                continue
+            host = addr.split(":", 1)[0] if ":" in addr else addr
+            if not host:
+                continue
+            try:
+                socket.gethostbyname(host)
+            except OSError:
+                unresolved.add(addr)
+        return unresolved
 
     def _atomic_write(self, content: str) -> None:
         """Write content to conf_path atomically via tmp+rename."""

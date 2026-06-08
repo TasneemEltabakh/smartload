@@ -61,9 +61,11 @@ from shared.queries import BACKEND_HEALTH_QUERY    # noqa: E402
 from runloop import (  # noqa: E402
     BackendRegistry,
     PolicyState,
+    discover_all_backends,
     handle_anomaly,
     handle_policy,
     handle_routing,
+    invalidate_backend_discovery_cache,
 )
 
 app = Flask(__name__)
@@ -86,13 +88,23 @@ POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 HEALTH_HYDRATION_WINDOW_SECONDS = int(
     os.environ.get("LB_SIDECAR_HEALTH_HYDRATION_WINDOW_SECONDS", "300")
 )
+# ALL_BACKENDS is now a cold-boot SEED used until the Docker daemon is
+# reachable + `discover_all_backends()` returns a non-empty live list.
+# Per #155: production runtime queries the test-backend label dynamically
+# on every message so a freshly-provisioned backend appears in
+# upstream.conf within one cache window (2 s by default). See
+# runloop.discover_all_backends() for the cache + fallback semantics.
 ALL_BACKENDS_RAW      = os.environ.get(
     "ALL_BACKENDS",
     "smartload-test-backend-1:8080,smartload-test-backend-2:8080,"
     "smartload-test-backend-3:8080,smartload-test-backend-4:8080,"
     "smartload-test-backend-5:8080",
 )
-ALL_BACKENDS = [b.strip() for b in ALL_BACKENDS_RAW.split(",") if b.strip()]
+ALL_BACKENDS_SEED = [b.strip() for b in ALL_BACKENDS_RAW.split(",") if b.strip()]
+# Kept as `ALL_BACKENDS` too so callers / tests that import the name still
+# resolve to the cold-boot seed list. The live discovery is
+# discover_all_backends(_docker_client, seed_backends=ALL_BACKENDS).
+ALL_BACKENDS = ALL_BACKENDS_SEED
 
 RUNLOOP_ENABLED = os.environ.get("LB_SIDECAR_RUNLOOP_ENABLED", "false").lower() == "true"
 
@@ -292,11 +304,20 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                 continue
             payload, _meta = parsed
 
+            # #155 — invalidate the backend-discovery cache on every message so
+            # a freshly-provisioned backend appears in the next routing /
+            # policy decision. Cache rebuilds on the next discover() call;
+            # the 2 s TTL caps the per-burst Docker-query rate.
+            invalidate_backend_discovery_cache()
+
             if channel == ROUTING_CHANNEL:
                 with _state_lock:
                     threshold = _policy_state.rl_confidence_threshold
+                live_backends = discover_all_backends(
+                    docker_client, seed_backends=ALL_BACKENDS_SEED,
+                )
                 outcome = handle_routing(
-                    payload, registry, adapter, ALL_BACKENDS,
+                    payload, registry, adapter, live_backends,
                     confidence_threshold=threshold,
                 )
                 if outcome.applied:
@@ -336,7 +357,10 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
             elif channel == POLICY_CHANNEL:
                 with _state_lock:
                     policy_state_ref = _policy_state
-                outcome = handle_policy(payload, adapter, ALL_BACKENDS,
+                live_backends = discover_all_backends(
+                    docker_client, seed_backends=ALL_BACKENDS_SEED,
+                )
+                outcome = handle_policy(payload, adapter, live_backends,
                                         policy_state=policy_state_ref)
                 if outcome.applied:
                     with _state_lock:

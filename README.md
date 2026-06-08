@@ -31,7 +31,7 @@ Pick the section that matches what you're trying to do. Every link points into t
 | **Understand the architecture** | [§5 Big Picture](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [§16 Plane Split](docs/SOURCE_OF_TRUTH.html#sec-control-plane) |
 | **Self-host or deploy** | [§25 Distribution](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) + [§20 Deployment](docs/SOURCE_OF_TRUTH.html#sec-14-deploy) |
 | **Contribute to a service** | [§7 Service Directory](docs/SOURCE_OF_TRUTH.html#sec-5-directory) + [§8 Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) |
-| **Read for thesis / research** | [§2 Overview](docs/SOURCE_OF_TRUTH.html#sec-2-overview) → [§14 ML Foundations](docs/SOURCE_OF_TRUTH.html#sec-9-data) → [§15 Routing Authority](docs/SOURCE_OF_TRUTH.html#sec-10-routing) → [§22 Changelog](docs/SOURCE_OF_TRUTH.html#sec-15-changelog) |
+| **Read for thesis / research** | [§2 Overview](docs/SOURCE_OF_TRUTH.html#sec-2-overview) → [§14 ML Foundations](docs/SOURCE_OF_TRUTH.html#sec-9-data) → [§15 Routing Authority](docs/SOURCE_OF_TRUTH.html#sec-10-routing) → [§22 Changelog](docs/SOURCE_OF_TRUTH.html#sec-15-changelog) → **[§31 Related Work](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) · [§32 Algorithm Foundations](docs/SOURCE_OF_TRUTH.html#sec-32-algorithms) · [§33 Methodology](docs/SOURCE_OF_TRUTH.html#sec-33-methodology) · [§34 Results & Discussion](docs/SOURCE_OF_TRUTH.html#sec-34-results) · [§35 Limitations & Future Work](docs/SOURCE_OF_TRUTH.html#sec-35-limitations)** |
 
 ---
 
@@ -41,6 +41,32 @@ Pick the section that matches what you're trying to do. Every link points into t
 - **Forecast-driven autoscaling.** The pool grows ahead of the spike, not in response to it.
 - **Reinforcement-learning routing.** Trained against real workload traces; switchable between `shadow` (observe-only) and `active` per policy.
 - **Operator-first overrides.** A `safe_mode` flag forces every engine to the deterministic fallback. Every change is audit-logged.
+
+---
+
+## Writing about SmartLoad (thesis / poster / presentation)
+
+The three docs are designed to be the only source you need for a thesis, poster, or presentation — no repo reading required.
+
+| Artefact | Lift from |
+|---|---|
+| **Thesis — Introduction** | [SOT §2 Executive Overview](docs/SOURCE_OF_TRUTH.html#sec-2-overview) + [§3 Canonical Project Definition](docs/SOURCE_OF_TRUTH.html#sec-3-definition) |
+| **Thesis — Background / Related Work** | [SOT §31 Background & Related Work](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) (inline citations are lift-ready) |
+| **Thesis — System Design** | [SOT §4 Principles](docs/SOURCE_OF_TRUTH.html#sec-design-principles) + [§5 Big Picture](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [§8 Service Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) + [§12 Diagrams](docs/SOURCE_OF_TRUTH.html#sec-architecture-map) + [§15 Routing Authority](docs/SOURCE_OF_TRUTH.html#sec-10-routing) |
+| **Thesis — Algorithms / Methodology** | [SOT §32 Algorithm Foundations](docs/SOURCE_OF_TRUTH.html#sec-32-algorithms) + [§33 Evaluation Methodology](docs/SOURCE_OF_TRUTH.html#sec-33-methodology) + [Walkthrough §8 Algorithms & training procedure](docs/PROJECT_WALKTHROUGH.md#8-algorithms--training-procedure) |
+| **Thesis — Implementation** | [Walkthrough](docs/PROJECT_WALKTHROUGH.md) (file-by-file tour, code excerpts, §1–§8) |
+| **Thesis — Results / Discussion** | [SOT §34 Results & Discussion](docs/SOURCE_OF_TRUTH.html#sec-34-results) — synthesised honest finding; raw run-by-run numbers in [§22 Changelog](docs/SOURCE_OF_TRUTH.html#sec-15-changelog) v1.0.7r/s/t |
+| **Thesis — Limitations / Future Work** | [SOT §35 Limitations & Future Work](docs/SOURCE_OF_TRUTH.html#sec-35-limitations) |
+| **Thesis — Conclusion** | [SOT §31.7 Positioning in one paragraph](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) + [§34.5 What this confirms](docs/SOURCE_OF_TRUTH.html#sec-34-results) |
+| **Poster — Problem statement** | [SOT §2 Problem statement](docs/SOURCE_OF_TRUTH.html#sec-2-overview) (one paragraph, lift-ready) |
+| **Poster — System diagram** | [SOT §5 Figure 5.1 Context](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [Figure 5.2 Layer](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [Figure 5.3 MAPE Loop](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) (Mermaid sources) |
+| **Poster — Contribution** | [SOT §31.7 Positioning paragraph](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) |
+| **Poster — Headline numbers** | [SOT §34.3 Per-phase p95 table](docs/SOURCE_OF_TRUTH.html#sec-34-results) (honest, including the +3 s max-latency cost) |
+| **Presentation — Story arc** | §2 (what / why) → §31 (where the field is) → §5 + §15 (the architecture) → §32 (how the engines work) → §33 (how we evaluate) → §34 (what we found) → §35 (what's next) |
+| **Presentation — Demo flow** | [SOT §28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui) (policy → audit → manual actions → status) + the demo-ui benchmark page from [Walkthrough §5.5](docs/PROJECT_WALKTHROUGH.md#55-toolsdemo-ui--developer-demo-harness) |
+| **Presentation — Honest read** | [SOT §34.3–§34.6](docs/SOURCE_OF_TRUTH.html#sec-34-results) — the harness works, the mechanism works, the trained policy needs retraining on heterogeneous traces; the binding constraint is named. |
+
+> Every cross-section reference inside the SOT is a working hash anchor — Ctrl-F by section number to jump.
 
 ---
 

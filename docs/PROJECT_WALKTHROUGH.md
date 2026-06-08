@@ -1753,63 +1753,98 @@ Cooldown is checked **after** the bounds check — a cooldown-blocked decision s
 
 `now_text` ("forecast" or "reactive") tags the audit string so operators can tell which signal drove a decision. Same `decide` function called from both code paths — single source of truth for the policy logic.
 
-#### `cluster_client.py` — Docker SDK abstraction
+#### `cluster_client.py` — Docker SDK abstraction with two lifecycle pairs
 
 ```python
 class ClusterClient(ABC):
     @abstractmethod
     def get_backend_count(self) -> int: ...
     @abstractmethod
-    def scale_out(self) -> str | None: ...
+    def start(self) -> str | None: ...           # toggle stopped → running
     @abstractmethod
-    def scale_in(self) -> str | None: ...
+    def stop(self) -> str | None: ...            # toggle running → stopped
+    @abstractmethod
+    def provision(self) -> str | None: ...       # create new container
+    @abstractmethod
+    def decommission(self) -> str | None: ...    # stop + remove dynamic container
+    @abstractmethod
+    def scale_out(self) -> tuple[str, str] | None: ...   # (name, mechanism)
+    @abstractmethod
+    def scale_in(self) -> tuple[str, str] | None: ...    # (name, mechanism)
 ```
 
-Three methods. **Returns `str | None`** — the name of the container that was started/stopped, or `None` if the action couldn't be performed (no stopped container to start, no running container to stop). Callers use the `None` signal to skip the DB write and Redis publish.
+Two distinct lifecycle pairs share the same business-logic surface:
 
-This is the abstraction the SOT §8.8 checklist asked for: "Does the Docker abstraction allow swapping to K8s API without rewriting business logic?" Yes — a `KubernetesClusterClient` implementing the same three methods drops in.
+- **`start()` / `stop()`** toggle the running state of a container that already exists. Compose provisions the initial pool (5 containers named `smartload-test-backend-1..5`); the autoscaler toggles their `running` flag to express scale-out / scale-in within that fixed set. This is the only path used by the #148 routing bench harness.
+- **`provision()` / `decommission()`** (added v1.0.7v, #155) create and destroy containers from the same `test-backend` image. Used by the #155 adaptive bench harness, which needs to grow the pool past compose's initial set (`min_backends=1` up to `max_backends=8+`). Dynamically-created containers carry an extra label `smartload.dynamic=true` so the decommission path can never tear down compose-provisioned containers.
+
+`scale_out()` / `scale_in()` are the canonical autoscaler entry points; they pick the right lifecycle pair internally and return a `(name, mechanism)` tuple so the caller can publish `ScalingEvent.mechanism = "start" | "provision" | "stop" | "decommission"`. Returning `None` means nothing actuated (no container to toggle, provisioning disabled or capped, etc.) — callers skip the DB write and Redis publish on `None`.
+
+This is the abstraction the SOT §8.8 checklist asked for: "Does the Docker abstraction allow swapping to K8s API without rewriting business logic?" Yes — a `KubernetesClusterClient` implementing the same six methods drops in. The K8s shim's `provision()` translates to a Deployment replica edit; `decommission()` is the inverse.
 
 ```python
 class DockerClusterClient(ClusterClient):
-    def __init__(self, client: docker.DockerClient | None = None):
-        self._client = client or docker.from_env()
+    def __init__(
+        self,
+        client=None,
+        *,
+        provisioning_enabled: bool = False,
+        provisioning_image: str = "smartload-test-backend:latest",
+        provisioning_network: str = "smartload_smartload-net",
+        max_backends_ceiling: int = 10,
+        healthcheck_timeout_seconds: int = 30,
+    ):
+        ...
 
-    def _backends(self) -> list:
-        containers = self._client.containers.list(
-            all=True,
-            filters={"label": f"{_BACKEND_LABEL_KEY}={_BACKEND_LABEL_VALUE}"},
-        )
-        return sorted(containers, key=lambda c: _replica_number(c.name))
-
-    def get_backend_count(self) -> int:
-        return sum(1 for c in self._backends() if c.status == "running")
-
-    def scale_out(self) -> str | None:
-        for container in self._backends():
-            if container.status != "running":
-                container.start()
-                return container.name
-        return None
-
-    def scale_in(self) -> str | None:
-        running = [c for c in self._backends() if c.status == "running"]
-        if not running:
+    def provision(self) -> str | None:
+        if not self._provisioning_enabled:
             return None
-        target = running[-1]
-        target.stop(timeout=5)
-        return target.name
+        # ceiling guard — belt-and-braces over decisions.py
+        if len(self._backends()) >= self._max_backends_ceiling:
+            return None
+
+        index = _next_unused_index(
+            [_replica_number(c.name) for c in self._backends()]
+        )
+        name = f"smartload-test-backend-{index}"
+        container = self._client.containers.run(
+            self._provisioning_image,
+            name=name,
+            network=self._provisioning_network,
+            labels={
+                "com.docker.compose.service": "test-backend",
+                "smartload.dynamic":          "true",
+            },
+            healthcheck=_BACKEND_HEALTHCHECK,    # injected — image has none
+            restart_policy={"Name": "unless-stopped"},
+            detach=True,
+        )
+        if not self._wait_for_healthy(container):
+            container.stop(timeout=5)            # left in place for inspection
+            return None
+        return name
 ```
 
-The scaling model:
+**Risk-1 de-risk — healthcheck-then-announce.** `provision()` blocks on `container.attrs["State"]["Health"]["Status"]` reaching `"healthy"` before returning a non-`None` name. The healthcheck spec is **injected** into `containers.run()` because the `smartload-test-backend` image has no baked-in healthcheck (compose configures it at runtime; the dynamic path does the same translation). The poll cadence is 1 s; the timeout is configurable via `AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS` (default 30 s). On timeout the container is stopped but not removed — an operator can inspect why the healthcheck never passed.
 
-- Compose creates 5 test-backend containers at startup, named `smartload-test-backend-1..5`.
-- The set stays at 5 forever — the autoscaler only toggles their *running state*.
-- `scale_out` starts the lowest-numbered stopped container.
-- `scale_in` stops the highest-numbered running container.
+**Index allocation.** `_next_unused_index` picks the lowest integer ≥ 1 not in the existing labelled-container set. If backends 1, 2, 4 exist (after backend-3 was decommissioned), provision picks **3** — not 5. This keeps container names bounded and re-uses freed slots cleanly.
 
-The `_NUMBER_RE` regex extracts the trailing replica number; `_replica_number` returns 0 for unparseable names so they sort first and don't displace the numbered replicas.
+**Decommission safety contract.** The `smartload.dynamic=true` label is the gate. `decommission()` enumerates only containers carrying that label and stops + removes the highest-numbered one. A compose-provisioned container can never be torn down by this path, even if it shares the `test-backend` service label.
 
-The "toggle the same N containers" design is why the NGINX upstream block can be static. If the autoscaler created/destroyed containers, NGINX's enumerated upstream list would drift out of sync.
+```python
+def scale_out(self) -> tuple[str, str] | None:
+    started = self.start()
+    if started is not None:
+        return started, "start"
+    provisioned = self.provision()
+    if provisioned is not None:
+        return provisioned, "provision"
+    return None
+```
+
+`scale_out` prefers the cheap toggle path (`start`) over `provision` so the legacy #148 harness pays no extra cost. `scale_in` mirrors the preference in reverse — it prefers `decommission` over `stop` so the dynamic pool unwinds to its compose floor before any compose-provisioned container is stopped.
+
+**Feature flag.** `provisioning_enabled` defaults to `False`. The `docker-compose.yml` `AUTOSCALER_PROVISIONING_ENABLED` env var threads through to the constructor; the legacy #148 routing bench harness keeps the flag off and behaves exactly as before v1.0.7v. The Round-2 adaptive-bench orchestrator (issue #155 R2 — pending) flips it on via an env-file at preflight and off at teardown.
 
 #### `app.py` — the wiring
 
@@ -3909,6 +3944,444 @@ The Helm chart's README also calls out an **explicit non-goal**:
 ### 7.7 `k8s/` — raw manifests (placeholder)
 
 Only `.gitkeep`. Planned home for raw manifests that don't fit into Helm (cluster-wide CRDs, namespaces, RBAC). Empty until needed.
+
+---
+
+## 8. Algorithms & training procedure
+
+This section is the walkthrough-style companion to SOT §32 (Algorithm Foundations). The SOT section is the canonical math and design rationale; this section is the file-by-file tour of where each algorithm lives, what its inputs and outputs are, and how the pieces fit together at training time. The split is the same as elsewhere in this walkthrough: the SOT tells you *what* and *why*, the walkthrough tells you *where* and *how*.
+
+### 8.1 Why algorithms get their own walkthrough section
+
+The decision-plane services (§4 above) read telemetry, invoke an engine, and publish an envelope. The engines themselves — the actual algorithms — were elided from §4 to keep the service-shell description focused. Now that the service shells are clear, this section opens the engines.
+
+Three properties hold for every engine:
+
+1. **Plugin-per-folder.** Each engine lives in `engines/<name>/engine.py` (or `policies/<name>/policy.py` for the RL service). Adding a new engine is a new folder + a factory registration; the service shell does not change.
+2. **Baseline always present.** Every engine catalogue includes a no-model baseline (threshold, moving-average, round-robin) so the service is never in a "no engine available" state. Trained-model engines fall back to the baseline at runtime if the model artifact is missing.
+3. **Train/serve separation.** Training code lives in `training/` (rl-engine) or `tools/<service>-training/` (forecasting). The training directory is **never** copied into the runtime Docker image. The handoff is a model artifact + a metadata sidecar.
+
+### 8.2 `services/anomaly-detector/engines/threshold/engine.py` — the baseline
+
+39 lines of code. The rule reads exactly as the SOT §32.2 table says:
+
+```python
+class ThresholdEngine(AnomalyEngine):
+    def __init__(
+        self,
+        latency_multiplier: float = 3.0,
+        error_rate_threshold: float = 0.05,
+        min_sample_count: int = 10,
+    ):
+        self.latency_multiplier = latency_multiplier
+        self.error_rate_threshold = error_rate_threshold
+        self.min_sample_count = min_sample_count
+
+    def score(self, features: BackendFeatures) -> AnomalyScore:
+        if features.sample_count < self.min_sample_count:
+            return AnomalyScore(features.backend_id, "healthy", 0.0)
+
+        if features.error_rate > self.error_rate_threshold:
+            return AnomalyScore(
+                features.backend_id,
+                "unhealthy",
+                min(1.0, features.error_rate / self.error_rate_threshold),
+            )
+
+        if features.latency_rolling_mean_ms <= 0:
+            return AnomalyScore(features.backend_id, "healthy", 0.0)
+
+        ratio = features.latency_ms / features.latency_rolling_mean_ms
+        if ratio > self.latency_multiplier:
+            return AnomalyScore(
+                features.backend_id,
+                "degraded",
+                min(1.0, ratio / (self.latency_multiplier * 2)),
+            )
+
+        return AnomalyScore(features.backend_id, "healthy", 0.0)
+```
+
+Three observations:
+
+- **Order matters.** Error-rate is checked before latency. A backend that errors *and* is slow is reported as `unhealthy` (the more severe classification), not `degraded`. This is intentional — error rate dominates because it's a harder safety signal.
+- **No training, no model file.** This is also why it is the canonical fallback path: every other engine can fail to load gracefully, and the threshold rule will still produce a classification.
+- **The score is bounded.** Both the `unhealthy` and `degraded` paths cap the score at 1.0. The downstream consumer (the LB sidecar) doesn't need to defensively clamp.
+
+### 8.3 `services/anomaly-detector/engines/isolation_forest/` — scaffolded
+
+Only `README.md` and `__init__.py` today. The factory in `engine_base.py` references the module so registering a new engine name is a one-line change once `engine.py` lands.
+
+Planned files (recorded in the folder README):
+
+- `engine.py` — `IsolationForestEngine(AnomalyEngine)` that loads `.pkl` on init and falls back to threshold logic if the file is missing.
+- `models/isolation_forest.pkl` — the trained artifact, living at the service-level `models/` directory.
+- `test_engine.py` — fixture-based tests against a known-anomalous trace.
+
+The scaffolding pattern is the convention used by every plugin folder: the folder exists with a README the day the contract is agreed; the implementation lands when the model is trained. This makes the plugin contract visible to the team before the work is done.
+
+### 8.4 `services/forecasting/engines/moving_average/engine.py` — windowed mean
+
+43 lines. The complete forecast cycle:
+
+```python
+def forecast(self, history: HistoryWindow) -> Forecast:
+    rates = history.request_rates[-self.window_samples :]
+    if not rates:
+        return Forecast(self.horizon_minutes, 0.0, 0.0, 0.0)
+
+    mean = sum(rates) / len(rates)
+    if len(rates) >= 2:
+        var = sum((r - mean) ** 2 for r in rates) / (len(rates) - 1)
+        std = var**0.5
+    else:
+        std = 0.0
+
+    return Forecast(
+        horizon_minutes=self.horizon_minutes,
+        predicted_rps=mean,
+        confidence_lower=max(0.0, mean - std),
+        confidence_upper=mean + std,
+    )
+```
+
+The "confidence interval" is one sample standard deviation around the mean. It's not a Bayesian band; it's a simple spread indicator. The autoscaler treats it as a sanity check rather than a probability — it scales on `predicted_rps` and uses the band only to gate flapping behaviour.
+
+Why ship this as a first-class plugin: see SOT §32.3. Short version — having a real predictor always available eliminates the "no forecast available" failure mode.
+
+### 8.5 `services/forecasting/engines/arima/engine.py` — pre-trained ARIMA
+
+180 lines, mostly defensive. The interesting parts:
+
+**Artifact handoff.** The training pipeline (`tools/forecasting-training/train.py`, owned by Nada) writes a pickle bundle with a documented shape:
+
+```python
+{
+    "result":    statsmodels ARIMA result object (.append + .get_forecast),
+    "order":     (p, d, q) tuple,
+    "freq":      "5min",
+    "exog_cols": [],
+    "exog_stats": {},
+}
+```
+
+The serving plugin only needs `result` and `order` from this bundle. The exog fields are documented for forward-compat with a future ARIMAX variant and ignored here.
+
+**Inference loop.** Every cycle the engine calls `result.append(recent_window, refit=False)` — this adds the recent window to the model's state without recomputing the coefficient estimates. The recent window is capped at `_MAX_APPEND_SAMPLES = 60` so the cost stays O(window) regardless of run-loop tenure:
+
+```python
+y_recent = np.asarray(rates[-_MAX_APPEND_SAMPLES:], dtype=float)
+updated = self._result.append(y_recent, refit=False)
+fc = updated.get_forecast(steps=1)
+
+pred = max(float(np.asarray(fc.predicted_mean).flat[0]), 0.0)
+ci = np.asarray(fc.conf_int(alpha=0.05))
+lower = max(float(ci.flat[0]), 0.0)
+upper = max(float(ci.flat[1]), pred)
+```
+
+The `max(..., 0.0)` clamps are not paranoia — statsmodels' 95% CI can produce a negative lower bound on noisy windows. Clamping to 0 honours the physical meaning of "requests per second can't be negative."
+
+**Fallback path.** If the pickle load fails or `forecast()` raises, the engine returns a mean-of-history Forecast. The run-loop's `select_engine` mechanism handles the case where the entire engine module fails to import — the service falls back one layer up to `moving_average`. Two layers of defence.
+
+**Honest status.** The shipped artifact measures MAPE ≈ 25% on the held-out partition; the SOT KPI is &lt; 20%. `FORECAST_ENGINE=moving_average` remains the default; ARIMA is wired but not yet promoted (SOT §32.3 records this honestly).
+
+### 8.6 `services/rl-engine/policies/round_robin/policy.py` — the deterministic baseline
+
+87 lines. The algorithm is described in SOT §32.1; the implementation detail to call out here is the **stable rotation under set changes**:
+
+```python
+def act(self, state: list[BackendState]) -> RoutingAction:
+    eligible = sorted(
+        [b for b in state if is_eligible(b.health)],
+        key=lambda b: b.backend_id,
+    )
+    if not eligible:
+        return _routing_fallback(state)
+
+    head_idx = 0
+    if self._last_id is not None:
+        for i, b in enumerate(eligible):
+            if b.backend_id > self._last_id:
+                head_idx = i
+                break
+        else:
+            head_idx = 0   # wrap
+
+    ordered = eligible[head_idx:] + eligible[:head_idx]
+    self._last_id = ordered[0].backend_id
+    ...
+```
+
+The rotation pointer is `_last_id` (a backend ID), not `_idx` (a modular index). This is the difference that makes the algorithm deterministic under eligible-set changes. If an anomaly excludes a backend mid-cycle, the next call still serves the lowest-ID backend strictly greater than the last one; the cycle doesn't perturb.
+
+`_routing_fallback()` is the canonical no-eligible-backends path — defined once in `policy_base.py`, used identically by both `RoundRobinPolicy` and `LeastConnectionsPolicy`. The pattern (one canonical fallback function, all policies route to it) is enforced by inspection — the structural lint doesn't yet check it.
+
+### 8.7 `services/rl-engine/policies/least_connections/policy.py` — load proxy
+
+64 lines. The interesting detail is the queue-depth proxy:
+
+```python
+ranked = sorted(eligible, key=lambda b: (b.queue_depth, b.backend_id))
+```
+
+`BackendState.queue_depth` is `SUM(request_count)` from `RL_STATE_QUERY` (`services/shared/queries.py`). This is not a true connection-queue depth — the schema doesn't have one. The algorithm name reflects the *intent*; the implementation works with what telemetry provides.
+
+This is recorded in the module docstring so a reader who searches for "least_connections" gets the actual semantic, not just the algorithm name.
+
+### 8.8 `services/rl-engine/policies/ppo/policy.py` — the trained policy
+
+333 lines. This is the production serving plugin for the trained MaskablePPO artifact. The structure:
+
+- `__init__` validates `artifact_meta.json`, restores `NormParams`, loads `policy.zip`.
+- `act(state)` runs one forward pass, picks the argmax over masked logits, returns an argmax-dominant weighting.
+- `reload(**kwargs)` is the cheap-runtime-update path called on every `smartload.policy` publish — operating mode, confidence threshold, exploration rate. Does **not** re-read `policy.zip`.
+
+**Artifact validation.** The bundle layout requires `artifact_meta.json` next to `policy.zip`. The plugin reads `n_max_backends` from the meta JSON and raises `ValueError` if it does not match the runtime `N_MAX_BACKENDS`:
+
+```python
+stored_n = int(meta.get("n_max_backends", N_MAX_BACKENDS))
+if stored_n != N_MAX_BACKENDS:
+    raise ValueError(
+        f"PPOPolicy: artifact n_max_backends={stored_n} does not match "
+        f"runtime N_MAX_BACKENDS={N_MAX_BACKENDS}. "
+        "Rebuild the artifact with the correct backend count."
+    )
+self._norm = NormParams.from_dict(meta["norm_params"])
+```
+
+This is a hard fail because using a mismatched artifact would silently corrupt every routing decision — the observation vector would be the wrong shape, the action mask wouldn't align with the backend slots, and the policy would route to the wrong backends.
+
+**Inference path.** Single forward pass per `act()`. Argmax over masked logits gives the chosen backend in one shot, no second `predict()` call:
+
+```python
+obs  = build_observation(state, N_MAX_BACKENDS, self._norm)
+mask = build_action_mask(state, N_MAX_BACKENDS)
+
+raw_logits = self._get_logits(obs)
+masked_logits = np.where(mask, raw_logits, -np.inf)
+chosen_slot = int(np.argmax(masked_logits))
+```
+
+**Argmax-dominant weighting.** The policy chose one backend; the LB needs upstream weights:
+
+```python
+_DOMINANT_WEIGHT: float = 0.7
+
+@staticmethod
+def _argmax_dominant_rankings(eligible, chosen):
+    n_other = len(eligible) - 1
+    if n_other <= 0:
+        return [Ranking(backend_id=chosen.backend_id, score=1.0)]
+    floor = (1.0 - _DOMINANT_WEIGHT) / n_other
+    out = []
+    for b in eligible:
+        score = _DOMINANT_WEIGHT if b.backend_id == chosen.backend_id else floor
+        out.append(Ranking(backend_id=b.backend_id, score=score))
+    out.sort(key=lambda r: r.score, reverse=True)
+    return out
+```
+
+The chosen backend gets `0.7` (`_DOMINANT_WEIGHT`); the remaining `0.3` is split evenly across the other eligibles. The split exists so NGINX's health probing has live targets to check — a zero-weight backend never receives traffic and never reveals if it recovered. SOT §32.4 records the rejected alternative (softmax-of-logits) and why argmax-dominant was the canonical choice.
+
+**Operating modes.** `shadow` (full inference, envelope marked `shadow`, sidecar ignores) is the default; `hybrid` is the explicit operator opt-in. The check is a one-liner:
+
+```python
+mode = "active" if self._operating_mode == "hybrid" else "shadow"
+return RoutingAction(mode=mode, rankings=rankings)
+```
+
+The legacy `learning` value is silently mapped to `hybrid` for backwards-compatibility with older `policy.yaml` schemas — recorded in `_normalise_operating_mode`.
+
+### 8.9 `services/rl-engine/training/` — the training directory
+
+This directory is **excluded** from the rl-engine Docker image. The Dockerfile's `COPY` statements pick `app.py`, `runloop.py`, `policy_base.py`, `obs_builder.py`, and the `policies/` plugin directories; `training/` is left out. This is enforced by the `runtime-import-smoke` CI job (SOT §22 records the job's history) — if a training module ever gets imported by the runtime, the job fails.
+
+Files:
+
+| File | Lines | Purpose |
+|---|---|---|
+| `dataset.py` | ~250 | `TraceReplayDataset` — load Alibaba CSVs, produce windowed `BackendState` snapshots. |
+| `simulator.py` | ~110 | `BackendSimulator` — replays trace windows on a Gym-compatible `reset()/step()`. |
+| `env.py` | ~170 | `SmartLoadEnv` — Gymnasium environment wrapping the simulator. |
+| `reward.py` | ~125 | `RewardCalculator` — the reward function from SOT §32.4. |
+| `train_ppo.py` | ~500 | The training entry point (canary gates + full run). |
+| `train_dqn.py` | ~210 | The DQN fallback (risk register §17). |
+| `eval_harness.py` | ~300 | Reproducible offline evaluation harness. |
+
+### 8.10 `dataset.py` — Alibaba trace replay
+
+The dataset module loads Alibaba `MSCallGraph` partitions and translates them into windowed `BackendState` snapshots equivalent to what `RL_STATE_QUERY` would return at serving time. This is what makes the train/serve representation parity work — the policy sees the same state shape in both regimes.
+
+Key implementation details:
+
+- **Schema (8 columns):** `traceid, timestamp, rpcid, um, rpctype, dm, interface, rt`. Only `rpctype=="http"` rows are kept.
+- **Backend mapping:** `dm` (callee service hash) is sorted lexicographically across the entire loaded dataset and mapped to stable names `backend_1`, `backend_2`, ..., so a backend keeps the same name across partitions and across random episode starts.
+- **Window aggregation:** for a start timestamp `T` and window size `W` (default 30,000 ms):
+  - `latency_ms = mean(rt) for rt >= 0` (non-error rows only); `0.0` if none.
+  - `queue_depth = count(rows)` (the proxy used by least-connections; matches `RL_STATE_QUERY` semantically).
+  - `error_rate = fraction of rows with rt < 0`.
+- **Health classification:** `classify_health()` from `runloop.py` is applied to each backend's aggregated metrics — same function used at serving time. Train/serve parity again.
+
+### 8.11 `simulator.py` — replay-as-environment
+
+The simulator is what makes the contextual-bandit framing concrete. The crucial property:
+
+```python
+def step(self, action: int) -> tuple[list[BackendState], bool]:
+    self._current_ts += self._dataset.window_ms
+    self._step_count += 1
+    next_state = self._dataset.get_window(self._current_ts)
+    done = (
+        self._step_count >= self.episode_length
+        or self._current_ts + self._dataset.window_ms > self._dataset._max_ts
+    )
+    return next_state, done
+```
+
+**`step(action)` does not use `action`.** `next_state` is the next pre-recorded trace window, returned independently of what the policy chose. The reward function reads the chosen backend's latency from `next_state` as an observational signal — the chosen backend's latency is observed at the next window, not caused by the action.
+
+SOT §31.3 (collapsible) records why this framing was chosen over a full MDP with a learned environment model. Short version: the production feedback loops handle the "consequence" axis; the policy needs to be a good predictor of next-window latency, not a model of how routing perturbs the system.
+
+### 8.12 `env.py` — Gymnasium-compliant wrapper
+
+`SmartLoadEnv(gym.Env)` exposes the standard `reset()` / `step()` / `action_masks()` triple. The observation and action spaces are defined to match SOT §32.4:
+
+```python
+obs_dim = N_MAX_BACKENDS * 3
+self.observation_space = spaces.Box(
+    low=0.0, high=np.inf, shape=(obs_dim,), dtype=np.float32
+)
+self.action_space = spaces.Discrete(N_MAX_BACKENDS)
+```
+
+The masking interface is `action_masks()`, called by `sb3-contrib`'s `ActionMasker` wrapper before each policy sample. When every backend is masked (every one is unhealthy), `all_masked_fallback()` unmasks the least-bad one so training doesn't deadlock; in production the routing hierarchy (§15) takes over.
+
+The `_default_dataset()` factory function constructs a tiny dataset from the first available Alibaba partition so `check_env()` calls and quick smoke tests work without manual setup.
+
+### 8.13 `reward.py` — the reward function
+
+The formula reproduced from SOT §32.4, in code:
+
+```python
+def compute(
+    self,
+    state: list[BackendState],
+    action: int,
+    next_state: list[BackendState],
+) -> float:
+    if not next_state:
+        return 0.0
+
+    sorted_next = sorted(next_state, key=lambda s: s.backend_id)
+
+    if action < 0 or action >= len(sorted_next):
+        return _UNHEALTHY_PENALTY
+
+    chosen = sorted_next[action]
+
+    health_penalty = _UNHEALTHY_PENALTY if chosen.health == "unhealthy" else 0.0
+    latency_term = -(chosen.latency_ms / self._norm.latency_scale)
+
+    counts = np.array([s.queue_depth for s in sorted_next], dtype=float)
+    mean_count = counts.mean()
+    imbalance = counts.std() / (mean_count + _EPSILON)
+    imbalance_term = -self._imbalance_lambda * imbalance
+
+    return float(latency_term + imbalance_term + health_penalty)
+```
+
+`_UNHEALTHY_PENALTY = -10.0`, `_EPSILON = 1.0`. The latency term is *negative* (lower latency is better, so the reward is more positive when latency is low). The imbalance term penalises uneven historical spread per the SOT rationale (regulariser, not learned consequence). The hard penalty is defence-in-depth — the mask should prevent the unhealthy choice in the first place.
+
+### 8.14 `train_ppo.py` — canary gates and full run
+
+The training entry point has two modes: `run_canary` (50k steps, first 2 partitions, ad-hoc reward gate) and the full 2M-step run.
+
+**Canary gate 1 — loss trending down.** The script patches the SB3 logger's `record()` to capture every `train/policy_gradient_loss` value at the moment it's recorded (before `dump()` clears it). At the end of training it fits a linear regression on the last 10 values and PASSES if the slope is below `_SLOPE_TOLERANCE = 1e-4`:
+
+```python
+def _loss_trending_down(losses: list[float], window: int = 10) -> bool:
+    if len(losses) < window:
+        return True
+    tail = np.array(losses[-window:], dtype=float)
+    slope = float(np.polyfit(np.arange(len(tail)), tail, 1)[0])
+    return slope < _SLOPE_TOLERANCE
+```
+
+The small tolerance is because PG loss fluctuates heavily at 50k steps; only a clearly positive slope (loss actively growing) fails the gate.
+
+**Canary gate 2 — beats round-robin.** Three mini-episodes are sampled from the canary dataset and PPO's mean per-episode reward must exceed `round_robin`'s on the same episodes. Both gates must pass before the full run is allowed to start.
+
+**Full run.** 2M steps, all Alibaba partitions, ~75 minutes on a single CPU. Writes `services/rl-engine/models/policy.zip` + `artifact_meta.json`. The artifact_meta.json includes:
+
+```json
+{
+  "n_max_backends": 5,
+  "norm_params": {"latency_scale": 100.0, "request_count_scale": ...},
+  "trained_at": "...",
+  "git_sha": "..."
+}
+```
+
+— enough for the serving plugin to validate the artifact matches its runtime config (PPO `policy.py` §8.8 reads this on init).
+
+### 8.15 `eval_harness.py` — reproducible offline eval
+
+20 episodes per policy, fixed seed bank (`eval_seed_bank.json`), one CSV row per (policy, episode). The CSV columns reproduce SOT §33.5:
+
+- `policy, episode_id, mean_reward, p50_latency, p95_latency, p99_latency, slo_violation_rate, utilization_variance`
+
+**Reproducibility contract:**
+
+```python
+# Reproducibility contract:
+#   Given identical seed bank and dataset partitions, two runs on the same
+#   codebase produce byte-identical CSVs (excluding timestamps in meta JSON).
+```
+
+The git SHA is embedded in the filename (`eval_results_<8-char-sha>.csv`), and `eval_meta_<sha>.json` records the seed-bank MD5, dataset-partition MD5s, and the train/eval split index. This is what makes the eval result citable — anyone with the codebase and the seed bank can reproduce the same numbers.
+
+**What it does:** for each (policy, episode), the harness instantiates a fresh policy, seeds the simulator at the recorded `start_ts`, runs `episode_length` steps, and accumulates per-step latencies, utilisation variance, and reward. The chosen backend per step is the highest-score entry in the `RoutingAction.rankings`.
+
+**What it doesn't do:** it does not retrain. It is purely an evaluation harness; the policies under test are loaded from disk (PPO via `policy.zip`) or instantiated stateless (round_robin, least_connections, random_shadow). This is why it can be run in CI without paying training cost.
+
+### 8.16 The system-level bench harness: `experiments/baseline-vs-smartload/`
+
+The offline eval covers RQ2 from SOT §33.1. The other three research questions are answered by the system-level harness under `experiments/baseline-vs-smartload/`. Files:
+
+| File | Purpose |
+|---|---|
+| `env/baseline.env` | Decision-plane silent; LB falls back to NGINX static round-robin. |
+| `env/smartload.env` | Full decision plane on; lb-sidecar active; `RL_MODE=active`. |
+| `locust/locustfile.py` | 3-phase load shape (A_ramp / A_hold / B_anomaly / C_sustain) with per-phase request-name tagging. |
+| `scripts/run_experiment.sh` | Orchestrator — cycles env-files, recreates decision-plane services, schedules the anomaly, runs Locust headless, snapshots Prometheus + scaling audit. |
+| `scripts/plot_results.py` | Reads the CSVs and emits 6 PNGs + SUMMARY.md per run. |
+| `results/<timestamp>/` | One subdir per run; `MANIFEST.json` records git SHA + every knob. |
+
+The two anomaly mechanisms — persistent heterogeneity (backend-1 at +15 ms baseline) and the latency-spike anomaly (backend-1 at +200 ms during phase B) — are described in SOT §33.4. The orchestrator drives them via `docker exec` against backend-1's in-container `/_admin/delay` endpoint.
+
+The `MSYS_NO_PATHCONV=1` quirk on the Locust `docker run` step exists because Git Bash on Windows translates `/path/to/dir` to `C:/path/to/dir` and breaks the volume mounts. The setting disables that translation for the single command. SOT §22 v1.0.7r records this for the next operator who hits it.
+
+### 8.17 Reading these files for thesis context
+
+The map below cross-references each implementation file to the SOT section a thesis chapter would draw from. The walkthrough section explains the file; the SOT section explains the design intent and the rationale.
+
+| Implementation file | Walkthrough §  | SOT § (design + theory) |
+|---|---|---|
+| `services/anomaly-detector/engines/threshold/engine.py` | §8.2 | §32.2 (threshold rule) |
+| `services/anomaly-detector/engines/isolation_forest/` | §8.3 | §32.2 (Isolation Forest theory) |
+| `services/forecasting/engines/moving_average/engine.py` | §8.4 | §32.3 (windowed mean rationale) |
+| `services/forecasting/engines/arima/engine.py` | §8.5 | §32.3 (ARIMA + bundle handoff) |
+| `services/rl-engine/policies/round_robin/policy.py` | §8.6 | §32.1 (classical baselines) |
+| `services/rl-engine/policies/least_connections/policy.py` | §8.7 | §32.1 (load proxy caveat) |
+| `services/rl-engine/policies/ppo/policy.py` | §8.8 | §32.4 (PPO serving + argmax-dominant weighting) |
+| `services/rl-engine/training/dataset.py` | §8.10 | §32.4 (observation space + bandit framing) |
+| `services/rl-engine/training/simulator.py` | §8.11 | §31.3 + §32.4 (bandit vs MDP rationale) |
+| `services/rl-engine/training/env.py` | §8.12 | §32.4 (action mask + Gym wrapper) |
+| `services/rl-engine/training/reward.py` | §8.13 | §32.4 (reward function design) |
+| `services/rl-engine/training/train_ppo.py` | §8.14 | §32.4 (training recipe + canary gates) |
+| `services/rl-engine/training/eval_harness.py` | §8.15 | §33.5 (offline metrics taxonomy) + §33.6 (reproducibility recipe) |
+| `experiments/baseline-vs-smartload/` | §8.16 | §33 (full methodology) + §34 (results) |
 
 ---
 

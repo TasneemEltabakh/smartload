@@ -1,3 +1,14 @@
+# Canonical operating policy — read by every decision-plane service on boot.
+# Live updates flow through smartload.policy (policy-manager is the writer).
+#
+# #155 Adaptive-bench note: the autoscaler's *dynamic-pool provisioning* is
+# wired via env vars on the autoscaler service (see docker-compose.yml).
+# Knobs are AUTOSCALER_PROVISIONING_{ENABLED,IMAGE,NETWORK,HEALTHCHECK_TIMEOUT_SECONDS}.
+# These are deployment-time (not runtime-policy) settings; the bench
+# orchestrator flips ENABLED=true at preflight via an env-file and
+# recreates the autoscaler container. They live in compose rather than
+# policy.yaml so the policy-manager API surface stays focused on
+# operator-runtime knobs.
 anomaly_latency_multiplier: 3
 anomaly_recovery_window_seconds: 30
 anomaly_response: auto-isolate
@@ -6,7 +17,7 @@ max_backends: 10
 min_backends: 1
 operating_mode: hybrid
 per_instance_capacity_rps: 100
-policy_version: 29
+policy_version: 31
 rl_confidence_threshold: 0.6
 rl_exploration_rate: 0
 safe_mode: false

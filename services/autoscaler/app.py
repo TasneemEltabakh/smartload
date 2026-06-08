@@ -86,6 +86,23 @@ FORECAST_CHANNEL = "smartload.forecast"
 POLICY_CHANNEL   = "smartload.policy"
 SCALE_CHANNEL    = "smartload.scale"
 
+# Dynamic-pool provisioning config (#155 adaptive bench). The flag is OFF by
+# default — the legacy #148 routing bench harness relies on the toggle-only
+# path. Operators flip it ON via env var at the start of an adaptive-bench
+# run (see experiments/adaptive-bench/scripts/run.py) and OFF at teardown.
+PROVISIONING_ENABLED = os.environ.get(
+    "AUTOSCALER_PROVISIONING_ENABLED", "false"
+).lower() == "true"
+PROVISIONING_IMAGE   = os.environ.get(
+    "AUTOSCALER_PROVISIONING_IMAGE", "smartload-test-backend:latest"
+)
+PROVISIONING_NETWORK = os.environ.get(
+    "AUTOSCALER_PROVISIONING_NETWORK", "smartload_smartload-net"
+)
+PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS = int(os.environ.get(
+    "AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS", "30"
+))
+
 # How long to block on a single pubsub.get_message() call. Doubles as the
 # reactive-fallback poll interval — when no forecast arrives within this
 # window, we check whether to fall back on observed RPS.
@@ -165,6 +182,27 @@ def observed_rps(db_conn) -> float:
 
 # ── action: scale + persist + publish ─────────────────────────────────────────
 
+def _make_cluster_client() -> DockerClusterClient:
+    """Build a DockerClusterClient with provisioning config from env vars.
+
+    The `provisioning_enabled` flag controls the #155 dynamic-pool path;
+    legacy #148 deployments keep it OFF and pay no extra cost. The
+    `max_backends_ceiling` is wired from the live policy so a runtime
+    policy change to `max_backends` is honoured on the next decision
+    cycle (the autoscaler reconstructs the client via this helper inside
+    each control-loop call site).
+    """
+    with _state_lock:
+        ceiling = _policy.max_backends
+    return DockerClusterClient(
+        provisioning_enabled=PROVISIONING_ENABLED,
+        provisioning_image=PROVISIONING_IMAGE,
+        provisioning_network=PROVISIONING_NETWORK,
+        max_backends_ceiling=ceiling,
+        healthcheck_timeout_seconds=PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS,
+    )
+
+
 def apply_decision(
     decision: Decision,
     cluster,
@@ -174,6 +212,13 @@ def apply_decision(
 ) -> None:
     """Execute the decision: scale, write scaling_events row, publish envelope.
 
+    Order is strict for the #155 adaptive bench: cluster.scale_out() blocks
+    on the new container's healthcheck reaching `healthy` BEFORE returning
+    a non-None name. Only then does this function publish the
+    ScalingEvent envelope. This prevents the provision-then-announce race
+    where the lb-sidecar would rewrite upstream.conf with a hostname
+    Docker DNS hasn't propagated yet (Risk 1 in the #155 plan).
+
     NOOP decisions do not touch Docker or the DB — they are logged only.
     """
     if decision.action == ACTION_NOOP:
@@ -182,14 +227,15 @@ def apply_decision(
         return
 
     if decision.action == ACTION_SCALE_OUT:
-        name = cluster.scale_out()
+        result = cluster.scale_out()
     else:
-        name = cluster.scale_in()
+        result = cluster.scale_in()
 
-    if name is None:
-        # Cluster could not actuate (e.g. no stopped container to start, or no
-        # running container to stop). Log + skip the DB/publish writes — the
-        # state never materialised.
+    if result is None:
+        # Cluster could not actuate (no stopped container to start, provisioning
+        # disabled or capped, no running container to stop, no dynamic container
+        # to decommission). Log + skip the DB/publish writes — the state never
+        # materialised.
         log.warning(
             "%s requested but cluster could not actuate (target=%d, reason=%r)",
             decision.action, decision.target_count, decision.reason,
@@ -197,10 +243,19 @@ def apply_decision(
         _bump_action(ACTION_NOOP)
         return
 
+    name, mechanism = result
+
     log.info(
-        "%s container=%s target_count=%d reason=%r",
-        decision.action, name, decision.target_count, decision.reason,
+        "%s mechanism=%s container=%s target_count=%d reason=%r",
+        decision.action, mechanism, name, decision.target_count, decision.reason,
     )
+
+    # The DB schema's `action` column is unchanged ("scale_out" | "scale_in").
+    # The new mechanism is recorded textually in `reason` for searchable
+    # audit (e.g. "forecast predicted 450 rps > capacity 400 [provision]")
+    # AND structurally in the envelope's `mechanism` field for the
+    # adaptive-bench analysis pipeline.
+    reason_with_mechanism = f"{decision.reason} [{mechanism}]"
 
     # scaling_events: autoscaler is the only writer (SOT §8.8).
     with db_conn.cursor() as cur:
@@ -210,7 +265,7 @@ def apply_decision(
                 datetime.now(timezone.utc),
                 decision.action,
                 decision.target_count,
-                decision.reason,
+                reason_with_mechanism,
             ),
         )
     db_conn.commit()
@@ -219,8 +274,9 @@ def apply_decision(
     event = ScalingEvent(
         action=decision.action,
         instance_count=decision.target_count,
-        reason=decision.reason,
+        reason=reason_with_mechanism,
         forecast_event_id=forecast_event_id,
+        mechanism=mechanism,
     )
     envelope = make_envelope(source=SERVICE_NAME, payload=event)
     redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))
@@ -259,7 +315,7 @@ def control_loop(stop_event: threading.Event | None = None) -> None:
     pubsub.subscribe(FORECAST_CHANNEL, POLICY_CHANNEL)
 
     db_conn = psycopg2.connect(TIMESCALEDB_URL)
-    cluster = DockerClusterClient()
+    cluster = _make_cluster_client()
 
     while True:
         if stop_event is not None and stop_event.is_set():
@@ -514,7 +570,7 @@ def post_manual_scale():
     with _state_lock:
         policy = _policy
 
-    cluster = DockerClusterClient()
+    cluster = _make_cluster_client()
     try:
         current_count = cluster.get_backend_count()
     except Exception as exc:                            # noqa: BLE001
@@ -537,22 +593,23 @@ def post_manual_scale():
     # the audit row matches what actually happened.
     actuated_steps = 0
     last_name: str | None = None
+    last_mechanism: str | None = None
     for _ in range(plan.steps):
         if plan.action == ACTION_SCALE_OUT:
-            name = cluster.scale_out()
+            result = cluster.scale_out()
         elif plan.action == ACTION_SCALE_IN:
-            name = cluster.scale_in()
+            result = cluster.scale_in()
         else:
-            name = None
+            result = None
             break
-        if name is None:
+        if result is None:
             log.warning(
                 "manual %s reached cluster limit after %d/%d steps",
                 plan.action, actuated_steps, plan.steps,
             )
             break
+        last_name, last_mechanism = result
         actuated_steps += 1
-        last_name = name
 
     final_count = current_count + actuated_steps if plan.action == ACTION_SCALE_OUT \
         else current_count - actuated_steps if plan.action == ACTION_SCALE_IN \
@@ -591,12 +648,16 @@ def post_manual_scale():
 
     # smartload.scale: one envelope per operator click. forecast_event_id is
     # null per the issue spec — manual actions don't have a forecast origin.
+    # `mechanism` carries the lifecycle path of the last actuated step (or
+    # None if no step actuated — effective_action will be ACTION_NOOP in that
+    # case, so analysis pipelines can join on (action != noop) ⇒ mechanism).
     redis_client = redis_lib.from_url(REDIS_URL)
     event = ScalingEvent(
         action=effective_action,
         instance_count=final_count,
         reason=plan.reason,
         forecast_event_id=None,
+        mechanism=last_mechanism,
     )
     envelope = make_envelope(source=SERVICE_NAME, payload=event)
     redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))

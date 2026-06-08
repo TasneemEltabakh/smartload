@@ -24,7 +24,7 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 - Forecasting service: `services/forecasting/{app,runloop,engine_base}.py` + plugin folders under `engines/`
 - Baseline engine: `services/forecasting/engines/moving_average/engine.py` — wired against `FORECAST_QUERY` (1-minute buckets, last 60 minutes by default)
 - ARIMA engine: `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, 25.0% test MAPE — landed v1.0.7i, closes #102, supersedes stale PR #144). Training pipeline at `tools/forecasting-training/`.
-- Autoscaler: `services/autoscaler/{app,decisions,cluster_client}.py` — Forecast subscriber + Docker SDK + cooldown + reactive fallback when forecast stream goes stale
+- Autoscaler: `services/autoscaler/{app,decisions,cluster_client}.py` — Forecast subscriber + Docker SDK + cooldown + reactive fallback when forecast stream goes stale. `cluster_client.py` exposes two lifecycle pairs: `start()`/`stop()` toggle compose-provisioned containers (the default, used by the #148 routing bench), and `provision()`/`decommission()` create/destroy dynamic containers via Docker SDK (gated by `AUTOSCALER_PROVISIONING_ENABLED=true`, used by the #155 adaptive bench). `scale_out()` and `scale_in()` return `(name, mechanism)` so the published `ScalingEvent.mechanism` field records which path actuated.
 - Envelopes: `services/shared/contracts.py::ForecastResult`, `::ScalingEvent`
 - SQL: `services/shared/queries.py::FORECAST_QUERY` (forecaster) + `::SCALING_AUDIT_QUERY` + `::OBSERVED_RPS_QUERY` (autoscaler reactive fallback)
 - Storage: `scaling_events` hypertable (TimescaleDB)

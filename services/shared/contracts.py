@@ -319,6 +319,7 @@ class ScalingEvent:
     SOT §11 channel-specific payload fields:
       required: action, instance_count, reason
       optional: forecast_event_id (provenance — which forecast triggered this)
+                mechanism (lifecycle path — added for #155 adaptive bench)
     """
     action: str          # "scale_out" | "scale_in"
     instance_count: int  # resulting backend count after action
@@ -326,6 +327,21 @@ class ScalingEvent:
     timestamp: str = field(default_factory=_now_iso)
     # ── optional provenance ──────────────────────────────────────────────────
     forecast_event_id: str | None = None    # join key back to ForecastResult
+    # `mechanism` distinguishes lifecycle paths within a scale_out / scale_in
+    # action. Forward-compat additive — older subscribers ignore it; newer
+    # ones (operator UI, adaptive-bench analysis) can plot toggle vs
+    # create/destroy separately. Values:
+    #   "start"        — toggled an already-existing labelled container
+    #                    to running (cheap path; the #148 routing-bench
+    #                    default)
+    #   "provision"    — created a new container via Docker SDK
+    #                    (the #155 adaptive-bench dynamic-pool path)
+    #   "stop"         — toggled a labelled container to stopped (the
+    #                    counterpart of "start")
+    #   "decommission" — stopped + removed a dynamic-only container
+    #                    (the counterpart of "provision")
+    # None means the publisher didn't record the mechanism (legacy / pre-#155).
+    mechanism: str | None = None
 
 
 @dataclass
