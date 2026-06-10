@@ -59,6 +59,7 @@ Commands a reader can run to see the feature work end-to-end.
 - [policy-management](policy-management.md) — read / write / audit the operating policy (slice #1, shipped 2026-05-14)
 - [audit-log](audit-log.md) — browse `policy_changes` + `scaling_events` history (slice #2, shipped 2026-05-21, #122)
 - [manual-actions](manual-actions.md) — operator overrides for scale + isolate, surfaced with `manual:<actor>:` audit prefix (slice #3, shipped 2026-05-22, #123)
+- [adaptive-bench](adaptive-bench.md) — 5-phase Locust shape + 3 async collectors + join + 4 plots + SUMMARY for RQ4 evidence (#155 R1 + #156 R2 + #157 R3, shipped 2026-06-10)
 
 ## Planned slices
 

@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7w Forecasts hypertable closes §35.8 (#159) — forecasts persisted per cycle + dense Grafana overlay</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7x Adaptive-bench R2 + R3 ship (#156 + #157); first real run on 2026-06-10 surfaces #163 + #164 as the binding constraint to clean RQ4 evidence</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5260,7 +5260,7 @@ flowchart LR
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
     <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>tools/traffic-simulator/</code></td><td>—</td></tr>
     <tr><td>Baseline vs SmartLoad benchmark harness</td><td>Tasneem</td><td><span class="pill pill-done">Harness shipped 2026-06-03 (v1.0.7r, #148) — SHORT validation clean; full-length run pending</span></td><td><code>experiments/baseline-vs-smartload/</code></td><td>Two env profiles (baseline vs smartload) + 3-phase Locust shape (ramp → pause-anomaly → sustain) + orchestration + plotting (6 PNGs + SUMMARY.md). Run with <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>; <code>SHORT=1</code> for ~5-min harness check.</td></tr>
-    <tr><td>Adaptive-bench dynamic-pool foundation (#155 R1)</td><td>Tasneem</td><td><span class="pill pill-done">R1 shipped 2026-06-09 (v1.0.7v) — provision/decommission + dynamic backend discovery + DNS pre-flight; behind feature flag</span></td><td><code>services/autoscaler/cluster_client.py</code> · <code>services/lb-sidecar/runloop.py</code> · <code>services/shared/lb_adapters/nginx/__init__.py</code></td><td>Autoscaler gains <code>provision()</code> / <code>decommission()</code> alongside <code>start()</code> / <code>stop()</code>; <code>scale_out()</code>/<code>scale_in()</code> return <code>(name, mechanism)</code>. <code>ScalingEvent.mechanism</code> publishes the lifecycle path. lb-sidecar discovers backends via Docker label query on every Redis message (2&nbsp;s TTL cache). NGINX adapter <code>socket.gethostbyname()</code> pre-flights every hostname before reload (Risk-3 de-risk). Feature-flagged via <code>AUTOSCALER_PROVISIONING_ENABLED</code> env var — OFF by default so #148 harness keeps working unchanged. 40 new unit tests + 7 integration tests against the live Docker daemon green. R2 (Python orchestrator + collectors) + R3 (plots + analysis) pending.</td></tr>
+    <tr><td>Adaptive-bench (R1 + R2 + R3)</td><td>Tasneem</td><td><span class="pill pill-done">R1 + R2 + R3 shipped 2026-06-09 → 2026-06-10 (v1.0.7v + v1.0.7x; #155 + #156 + #157)</span></td><td><code>experiments/adaptive-bench/</code> · <code>services/autoscaler/cluster_client.py</code> · <code>services/lb-sidecar/runloop.py</code> · <code>services/shared/lb_adapters/nginx/__init__.py</code> · <code>tests/e2e/adaptive-bench/</code></td><td>R1 (v1.0.7v, #155): autoscaler <code>provision()</code>/<code>decommission()</code> via Docker SDK + lb-sidecar dynamic backend discovery + NGINX DNS pre-flight, behind <code>AUTOSCALER_PROVISIONING_ENABLED</code>. R2 (v1.0.7x, #156): asyncio orchestrator + three async collectors (Prometheus 1 Hz, BFF SSE, upstream.conf watcher) + 5-phase Locust shape + phase-D anomaly injector + <code>--short</code> e2e test. R3 (v1.0.7x, #157): <code>join_run.py</code> + <code>plot_results.py</code> + 4 plots + auto-generated <code>SUMMARY.md</code>. First end-to-end run on 2026-06-10 (<code>results/20260610T135509Z/</code>) produced 197 envelopes + 2 autoscaler decisions; numbers in §34.6. Acceptance gates "pool grew during B" + "pool shrank during D" blocked on <strong>#163</strong> (silent thread death) + <strong>#164</strong> (lb-sidecar missing scale subscription); same harness re-runs to affirmative gates once both close.</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
     <tr><td>Repo structure + runbook</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docs/running-the-project.md</code></td><td>Phase 1+ updates</td></tr>
     <tr><td>docker-compose (full stack)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docker-compose.yml</code></td><td>—</td></tr>
@@ -5590,6 +5590,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7x — 2026-06-10 — Adaptive-bench R2 + R3 ship; first real run + two gaps surfaced (#156 + #157)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Adaptive-bench R2 orchestrator + collectors + 5-phase shape (#156)</strong></td>
+      <td><code>experiments/adaptive-bench/</code> ships with the asyncio orchestrator (<code>run.py</code> with strict pre-flight &rarr; concurrent &rarr; post-flight lifecycle), three async collectors (<code>prom_collector</code> @ 1 Hz to parquet, <code>sse_collector</code> for BFF SSE to JSONL, <code>upstream_watcher</code> for 2 s <code>docker exec cat upstream.conf</code> diff), the phase-D anomaly injector (picks dynamic backend by <code>smartload.dynamic=true</code> label preference, fires both <code>/_admin/delay</code> and <code>POST /api/v1/isolate</code>), and the 5-phase Locust shape (A_bootstrap &rarr; B_forecast_burst &rarr; C_sustain &rarr; D_anomaly_scale_down &rarr; E_steady). All 8 artefacts named in #156 AC land per run. <code>tests/e2e/adaptive-bench/test_compressed_run.py</code> drives <code>--short</code> mode (60 s) with a 5-min CI budget.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Adaptive-bench R3 analysis pipeline + 4 plots + SUMMARY (#157)</strong></td>
+      <td><code>experiments/adaptive-bench/scripts/join_run.py</code> joins prom_timeseries + SSE envelopes + upstream snapshots + Locust history via <code>pandas.merge_asof</code> onto a single per-second UTC timeline (<code>run.parquet</code>). Per-channel parquets (<code>forecasts</code>, <code>anomalies</code>, <code>scalings</code>, <code>routings</code>, <code>scaling_audit</code>) are emitted alongside for plot consumers. <code>plot_results.py</code> reads them and produces <code>plot_pool_size.png</code>, <code>plot_time_to_react.png</code>, <code>plot_upstream_timeline.png</code>, <code>plot_anomaly_recovery.png</code> + a populated <code>SUMMARY.md</code> reporting phase timings, pool stats per phase, time-to-react per forecast, anomaly recovery window, action counts, and acceptance-gate evaluations. <code>matplotlib.use("Agg")</code> is set before the first pyplot import so the pipeline is safe to run headless.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>First real R2 run on 2026-06-10 &mdash; SUMMARY numbers in §34.6</strong></td>
+      <td>The first full-length R2 run (<code>experiments/adaptive-bench/results/20260610T135509Z/</code>) drove 125,607 Locust requests at 0% failure across all five phases. 6 ForecastResult envelopes captured, 107 AnomalyEvent envelopes, 71 RoutingRecommendation envelopes, 3 ScalingEvent envelopes. 2 autoscaler decisions fired (1 <code>scale_in</code> at 5.7 s after first forecast, 1 <code>scale_out</code> at 1.2 s after a 317 RPS forecast crossed capacity). Phase D anomaly injection + recovery both POSTed 200. Full per-phase + per-forecast table in §34.6.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Two architectural gaps surfaced &mdash; tracked as #163 + #164</strong></td>
+      <td><strong>#163</strong>: the first attempted R2 run produced <code>actions_total: 0</code> because all four decision services' run-loop daemon threads had died silently sometime during the multi-day container uptime. After <code>docker compose restart forecasting anomaly-detector rl-engine autoscaler lb-sidecar</code>, every service immediately resumed ticking and produced the run above. Fix scope: catch-all outer loop body in each <code>_run_loop()</code> + liveness check on <code>/health</code> that reports degraded when <code>last_tick_age &gt; N &times; poll_interval</code>. <strong>#164</strong>: the lb-sidecar subscribes to <code>smartload.routing</code> + <code>smartload.anomaly</code> + <code>smartload.policy</code> but NOT <code>smartload.scale</code>; <code>upstream.conf</code> therefore never rewrites in response to autoscaler decisions. NGINX falls back to passive <code>max_fails=3</code> handling of stopped backends &mdash; works for the static <code>ALL_BACKENDS</code> seed list but defeats #155 R1's dynamic-pool path because newly-provisioned backends are never added to <code>upstream.conf</code>. Both are S5 high; once both land, a re-run produces the affirmative pool-growth + pool-shrink gate strings.</td>
+      <td>Tracked &mdash; closes #163 + #164</td>
+    </tr>
+    <tr>
+      <td><strong>Slice manifest, walkthrough, README index sync</strong></td>
+      <td><code>docs/features/adaptive-bench.md</code> shipped &mdash; first manifest under the new "delivery artefact" framing (per §25.10). <code>docs/features/README.md</code> index gains the row. <code>docs/PROJECT_WALKTHROUGH.md</code> §8.16 expanded from #148-only to cover adaptive-bench's 5-phase shape + three collectors + joined <code>run.parquet</code> + four plots. <code>docs/SOURCE_OF_TRUTH.html</code> §18 Build Status pill flipped to "R1 + R2 + R3 shipped"; §25.10 catalogue row added; §33 methodology note added that the adaptive-bench is the dynamic complement covering RQ4; §35.5 K8s-HPA-vs-SmartLoad row updated to point at adaptive-bench as the baseline harness that the K8s comparison will eventually use.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7w — 2026-06-10 — Forecasts hypertable closes §35.8 (#159)</h3>
 <table>
@@ -7230,6 +7262,12 @@ flowchart TD
       <td>Delivery artefact — experiment under <code>experiments/baseline-vs-smartload/</code>; not a feature slice</td>
       <td>#148 (unblocked by #82 T2.1 sidecar — smoke PASSED 2026-05-23, v1.0.6)</td>
       <td>Two env profiles (baseline NGINX RR + decision plane off vs full SmartLoad + sidecar active) + Locust 3-phase load profile (steady ramp → pause-based anomaly on backend-1 → sustained tail) + orchestration script + plotting script. SHORT validation run (~5 min total) clean end-to-end; 6 PNG plots + SUMMARY.md generated from the locust CSVs. Tail-latency signal already visible at SHORT scale (smartload 99.99%-percentile ~6× lower than baseline during the anomaly window). Full-length run (~15 min total, default load profile) pending — runs <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Adaptive-bench</strong> — dynamic-pool harness covering RQ4 (forecast-driven scale-out) <span class="pill pill-done">R1 + R2 + R3 shipped 2026-06-10 (v1.0.7v + v1.0.7x)</span></td>
+      <td>Delivery artefact — experiment under <code>experiments/adaptive-bench/</code>; complements the static-pool baseline-vs-SmartLoad harness above by exercising the autoscaler's <code>provision()</code>/<code>decommission()</code> lifecycle through a 5-phase Locust shape designed for forecast bursts and anomaly-driven scale-down</td>
+      <td>#155 R1 + #156 R2 + #157 R3</td>
+      <td>R1 (v1.0.7v) shipped the autoscaler dynamic-pool lifecycle + lb-sidecar dynamic discovery + NGINX DNS pre-flight. R2 (v1.0.7x, #156) shipped the asyncio orchestrator + three async collectors (Prometheus / BFF SSE / upstream.conf watcher) + 5-phase Locust shape (A_bootstrap → B_forecast_burst → C_sustain → D_anomaly_scale_down → E_steady) + phase-D anomaly injector + e2e <code>--short</code> test. R3 (v1.0.7x, #157) shipped the <code>join_run.py</code> pipeline + <code>plot_results.py</code> + 4 plots + auto-generated SUMMARY.md. First end-to-end run (2026-06-10) captured 197 envelopes + 2 autoscaler decisions; <code>SUMMARY.md</code> in §34.6. <strong>Acceptance gates "pool grew during B" + "pool shrank during D" require #163 + #164 to close</strong> — the harness itself works; the run produces affirmative gate strings on a clean re-run once those two land.</td>
     </tr>
     <tr>
       <td><strong>Consolidated <code>GET /api/v1/status</code></strong> — single-call aggregator on the BFF</td>
@@ -8964,7 +9002,7 @@ r_t(θ) = π_θ(a_t | s_t) / π_θ_old(a_t | s_t)</code></pre>
     <tr>
       <td>RQ4</td>
       <td>Does the forecasting service publish a predicted-RPS curve far enough ahead of saturation that the autoscaler can pre-warm a new backend before the ramp tops out?</td>
-      <td>System-level bench harness, Phase A (ramp). Currently observed via scaling-event audit rather than a quantitative pre-warm-time metric.</td>
+      <td>Dual surface as of v1.0.7x: <code>experiments/baseline-vs-smartload/</code> Phase A (ramp) for the static comparison, and the new <code>experiments/adaptive-bench/</code> 5-phase shape (Phase B "forecast_burst" + Phase D "anomaly_scale_down") for the dynamic-pool surface that exercises the autoscaler's <code>provision()</code> lifecycle from §22 v1.0.7v. Quantitative time-to-react per forecast lands in the adaptive-bench's <code>plot_time_to_react.png</code> + <code>SUMMARY.md</code>; first numbers in §34.6.</td>
     </tr>
   </tbody>
 </table>
@@ -9262,17 +9300,56 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
   </tbody>
 </table>
 
-<h3>34.6 What's needed to close the gap</h3>
+<h3>34.6 Adaptive-bench R1 + R2 + R3 &mdash; first end-to-end RQ4 evidence</h3>
+
+<p>The adaptive-bench (#155 R1 + #156 R2 + #157 R3) is the second harness in the evaluation surface, designed to exercise the forecast-driven scale-out path (RQ4) that #148's three-phase shape does not. The first end-to-end run landed on 2026-06-10 against the live stack with all decision services freshly restarted (see §22 v1.0.7x). Numbers below are from <code>experiments/adaptive-bench/results/20260610T135509Z/SUMMARY.md</code>.</p>
+
+<p><strong>Per-phase observed RPS + p95 + pool size (from <code>run.parquet</code>):</strong></p>
+
+<table>
+  <thead><tr><th>Phase</th><th>Window</th><th>Users (target)</th><th>Observed RPS p50</th><th>Latency p95</th><th>Pool size (min..max)</th></tr></thead>
+  <tbody>
+    <tr><td><code>A_bootstrap</code></td><td>0 &rarr; 60 s</td><td>0 &rarr; 20</td><td>49.4</td><td>11 ms</td><td>5..5</td></tr>
+    <tr><td><code>B_forecast_burst</code></td><td>60 &rarr; 90 s</td><td>200</td><td>521.6</td><td>200 ms</td><td>5..5</td></tr>
+    <tr><td><code>C_sustain</code></td><td>90 &rarr; 240 s</td><td>200</td><td>544.2</td><td>210 ms</td><td>5..5</td></tr>
+    <tr><td><code>D_anomaly_scale_down</code></td><td>240 &rarr; 300 s</td><td>30 + anomaly</td><td>158.5</td><td>210 ms</td><td>5..5</td></tr>
+    <tr><td><code>E_steady</code></td><td>300 &rarr; 360 s</td><td>30</td><td>204.4</td><td>33 ms</td><td>5..5</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Time-to-react (forecast publish &rarr; next autoscaler action):</strong></p>
+
+<table>
+  <thead><tr><th>#</th><th>Forecast time</th><th>Predicted RPS</th><th>First action</th><th>Delay</th></tr></thead>
+  <tbody>
+    <tr><td>f0</td><td>13:55:43</td><td>266.4</td><td><code>scale_in</code> ic=3</td><td><strong>5.7 s</strong></td></tr>
+    <tr><td>f1</td><td>13:56:43</td><td>265.8</td><td><code>scale_out</code> ic=4</td><td>121.5 s</td></tr>
+    <tr><td>f2</td><td>13:57:43</td><td>294.3</td><td><code>scale_out</code> ic=4</td><td>61.3 s</td></tr>
+    <tr><td>f3</td><td>13:58:44</td><td>317.2</td><td><code>scale_out</code> ic=4</td><td><strong>1.2 s</strong></td></tr>
+    <tr><td>f4, f5</td><td>13:59:44, 14:00:44</td><td>325.4, 314.7</td><td>&mdash;</td><td>&mdash;</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Read &mdash; mechanically honest.</strong> The harness, collectors, and join pipeline produce the timeline expected: 6 ForecastResult envelopes, 197 decision-plane envelopes total, 2 autoscaler decisions. The autoscaler responded in 1.2 s once a forecast crossed the capacity threshold (f3); the longer 121 s delays on f1/f2 are the autoscaler's cooldown (overridden to 10 s for the bench) + the band that 265 RPS sits inside given the 4-backend pool (band [300, 400] from 4 &times; 100 capacity).</p>
+
+<p><strong>Read &mdash; architectural gaps surfaced.</strong> The "Pool size (min..max)" column reads 5..5 across <em>every</em> phase &mdash; the lb-sidecar's view of <code>upstream.conf</code> never changed despite the autoscaler making real <code>scale_out</code> and <code>scale_in</code> decisions at the Docker level. Root cause: <strong>the lb-sidecar does not subscribe to <code>smartload.scale</code></strong> (issue #164, S5 high). NGINX continued to route to the seed-list backends and relied on its own passive <code>max_fails=3</code> to handle the missing scaled-down container, which is why locust still reported 0% errors. The "Pool grew during B" and "Pool shrank during D" acceptance gates from #155 R3 therefore cannot be evaluated affirmatively from this run; they will pass affirmatively once #164 lands and a re-run is performed.</p>
+
+<p><strong>A second gap also surfaced during the same run:</strong> on the first attempted bench, all four decision services returned <code>actions_total: 0</code> &mdash; the daemon-thread run loops had died silently sometime during the multi-day container uptime (issue <strong>#163</strong>, S5 high). Restarting them brought the chain back online and produced the run above. The fix is a catch-all outer loop body + a liveness check on <code>/health</code> that reports degraded when <code>last_tick_age</code> exceeds N &times; the poll interval.</p>
+
+<p><strong>What the harness proved despite the gaps.</strong> The full collector + join + plot pipeline works end-to-end (4 PNGs + <code>SUMMARY.md</code> emitted from a single CLI). The forecast-driven decision path is observable at sub-second resolution. The phase-D anomaly injection (manual <code>POST /api/v1/isolate</code> + per-container <code>/_admin/delay</code>) succeeds. These are the foundations RQ4's quantitative answer rests on; once #163 + #164 close, the same harness re-runs without modification to produce affirmative gate strings.</p>
+
+<h3>34.7 What's needed to close the gap</h3>
 
 <p>The binding constraint is a single concrete deliverable, owned by a single workstream:</p>
 
 <ol>
   <li><strong>Retrain the PPO model on a heterogeneous-latency training distribution.</strong> The current artifact was trained on Alibaba traces where the backend-1 ≈ backend-2 ≈ ... ≈ backend-5 latency assumption holds. A retrained artifact on synthetic-injection traces (or a heterogeneous subset of Alibaba where backend identity correlates with latency) should produce a policy that learns to down-weight slow backends. This workstream is owned by Rghda Salah &mdash; the retraining track recorded in §22 v1.0.7i.</li>
   <li><strong>Re-run the full-length (6-min/side) harness</strong> after the retrained artifact lands. The SHORT-mode statistics in §34.2 / §34.3 are insufficient for the thesis-quality write-up; the full-length distributions are needed to make the per-phase deltas statistically defensible.</li>
-  <li><strong>Add multi-run batching with confidence intervals</strong> to the harness so the comparison reports CIs, not point estimates (§33.8 / §35.3).</li>
+  <li><strong>Add multi-run batching with confidence intervals</strong> to the harness so the comparison reports CIs, not point estimates (§33.8 / §35.3 / #160).</li>
+  <li><strong>Land #163 + #164</strong> so the adaptive-bench (§34.6) re-runs with a live decision plane + scale-event-driven <code>upstream.conf</code> rewrites. Closes the §34.6 "5..5 pool" caveat and produces the affirmative pool-growth / pool-shrink gate strings.</li>
 </ol>
 
-<h3>34.7 Cross-reference to §22 changelog entries</h3>
+<h3>34.8 Cross-reference to §22 changelog entries</h3>
 
 <p>The raw run-by-run data and per-release commentary live in §22. The pointer table below maps each v1.0.7 release to the result it produced.</p>
 
@@ -9282,10 +9359,11 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
     <tr><td>v1.0.7r</td><td>2026-06-03</td><td>Bench harness landed; SHORT validation pass; 6× lower p99.99 in anomaly window at SHORT scale.</td><td><a href="#sec-15-changelog">§22 v1.0.7r</a></td></tr>
     <tr><td>v1.0.7s</td><td>2026-06-04</td><td>demo-ui Benchmark page surfaces run history + plots inline.</td><td><a href="#sec-15-changelog">§22 v1.0.7s</a></td></tr>
     <tr><td>v1.0.7t</td><td>2026-06-04</td><td>Heterogeneity + latency-spike anomaly model; honest first finding: PPO ties / loses to RR on the new workload because of training-data homogeneity.</td><td><a href="#sec-15-changelog">§22 v1.0.7t</a></td></tr>
+    <tr><td>v1.0.7x</td><td>2026-06-10</td><td>Adaptive-bench R2 + R3 ship (#156 + #157); first end-to-end run captures 197 envelopes + 2 autoscaler decisions; surfaces #163 (silent thread death) + #164 (lb-sidecar missing scale subscription) as the binding constraint to unblock the pool-growth / pool-shrink acceptance gates.</td><td><a href="#sec-15-changelog">§22 v1.0.7x</a></td></tr>
   </tbody>
 </table>
 
-<h3>34.8 Review checklist &mdash; results &amp; discussion</h3>
+<h3>34.9 Review checklist &mdash; results &amp; discussion</h3>
 
 <ul class="review-checklist">
   <li>Does the results section report the negative result openly?</li>
@@ -9370,7 +9448,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
 
 <h3>35.5 K8s posture &mdash; deferred but explicit</h3>
 
-<p>The K8s deferral is intentional and tracked. The Helm chart is the only supported K8s path for v1; the scaffold exists so the layout discipline is visible (Chart.yaml, values.yaml, the planned templates list in the README) but the templates themselves land under #133. The K8s-native autoscaling comparison (RQ4 against HPA / VPA, §35.3) requires the chart to ship first.</p>
+<p>The K8s deferral is intentional and tracked. The Helm chart is the only supported K8s path for v1; the scaffold exists so the layout discipline is visible (Chart.yaml, values.yaml, the planned templates list in the README) but the templates themselves land under #133. The K8s-native autoscaling comparison (RQ4 against HPA / VPA, §35.3) requires the chart to ship first &mdash; and the comparison shape is now defined: it will reuse the <code>experiments/adaptive-bench/</code> 5-phase Locust shape + <code>join_run.py</code> + <code>plot_results.py</code> pipeline shipped in v1.0.7x (#157), with the Docker-SDK cluster client swapped for a K8s adapter. The harness side is no longer the blocker; only the K8s chart + adapter remain.</p>
 
 <p>Two open questions are recorded explicitly:</p>
 

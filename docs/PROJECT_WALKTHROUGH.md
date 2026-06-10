@@ -4371,9 +4371,13 @@ The git SHA is embedded in the filename (`eval_results_<8-char-sha>.csv`), and `
 
 **What it doesn't do:** it does not retrain. It is purely an evaluation harness; the policies under test are loaded from disk (PPO via `policy.zip`) or instantiated stateless (round_robin, least_connections, random_shadow). This is why it can be run in CI without paying training cost.
 
-### 8.16 The system-level bench harness: `experiments/baseline-vs-smartload/`
+### 8.16 The system-level bench harnesses: `experiments/baseline-vs-smartload/` + `experiments/adaptive-bench/`
 
-The offline eval covers RQ2 from SOT §33.1. The other three research questions are answered by the system-level harness under `experiments/baseline-vs-smartload/`. Files:
+The offline eval covers RQ2 from SOT §33.1. The other three research questions are answered by two complementary system-level harnesses. The split is intentional: the baseline-vs-smartload harness runs the same workload against two stack configurations (same pool, decision plane on vs off) to isolate the routing layer's effect; the adaptive-bench harness runs a single workload but actively exercises the autoscaler's `provision()`/`decommission()` lifecycle so the pool itself moves during the run.
+
+#### 8.16.1 Static-pool comparison: `experiments/baseline-vs-smartload/` (#148, v1.0.7r)
+
+Answers RQ1 + RQ3 + part of RQ4 by running two configurations of the same stack against the same workload.
 
 | File | Purpose |
 |---|---|
@@ -4387,6 +4391,69 @@ The offline eval covers RQ2 from SOT §33.1. The other three research questions 
 The two anomaly mechanisms — persistent heterogeneity (backend-1 at +15 ms baseline) and the latency-spike anomaly (backend-1 at +200 ms during phase B) — are described in SOT §33.4. The orchestrator drives them via `docker exec` against backend-1's in-container `/_admin/delay` endpoint.
 
 The `MSYS_NO_PATHCONV=1` quirk on the Locust `docker run` step exists because Git Bash on Windows translates `/path/to/dir` to `C:/path/to/dir` and breaks the volume mounts. The setting disables that translation for the single command. SOT §22 v1.0.7r records this for the next operator who hits it.
+
+#### 8.16.2 Dynamic-pool harness: `experiments/adaptive-bench/` (#155 R1 + #156 R2 + #157 R3, v1.0.7v + v1.0.7x)
+
+Answers RQ4 quantitatively by capturing how fast the forecast → autoscaler → lb-sidecar chain responds to load shape changes. Shipped in three rounds; the lineage:
+
+| Round | Issue | Release | What landed |
+|---|---|---|---|
+| R1 | #155 | v1.0.7v | Autoscaler `provision()`/`decommission()` via Docker SDK + lb-sidecar dynamic backend discovery + NGINX DNS pre-flight. Behind `AUTOSCALER_PROVISIONING_ENABLED`. |
+| R2 | #156 | v1.0.7x | The bench harness itself — orchestrator + collectors + 5-phase Locust shape + phase-D anomaly injector + e2e `--short` test. |
+| R3 | #157 | v1.0.7x | The analysis pipeline — `join_run.py` + `plot_results.py` + 4 plots + auto-generated SUMMARY.md. |
+
+**Layout:**
+
+```
+experiments/adaptive-bench/
+├── run.py                       Round 2 orchestrator (asyncio main)
+├── anomaly_injector.py          Phase-D delay + isolate publisher
+├── locust/locustfile.py         FivePhaseShape (A_bootstrap → E_steady)
+├── collectors/
+│   ├── prom_collector.py        1 Hz Prometheus poll → parquet
+│   ├── sse_collector.py         BFF /api/ui/engines/stream → JSONL
+│   └── upstream_watcher.py      2 s docker exec cat upstream.conf → JSONL
+├── scripts/
+│   ├── join_run.py              Round 3 join pipeline → run.parquet
+│   └── plot_results.py          Round 3 4 PNGs + SUMMARY.md
+├── requirements-bench.txt       aiohttp / pyarrow / pandas / matplotlib / locust
+└── results/<TIMESTAMP>/         One subdir per run
+```
+
+**The 5-phase shape (R2 contract):**
+
+| Phase | Window | Users (target) | What it tests |
+|---|---|---|---|
+| `A_bootstrap` | 0 → 60 s | 0 → 20 ramp | RQ4 first forecast |
+| `B_forecast_burst` | 60 → 90 s | spike to 200 | Autoscaler grows pool 1 → ~4 |
+| `C_sustain` | 90 → 240 s | hold 200 | Larger pool sustains the load |
+| `D_anomaly_scale_down` | 240 → 300 s | drop to 30 + anomaly | Anomaly reroute + scale-in concurrent |
+| `E_steady` | 300 → 360 s | hold 30 | Stabilisation, no oscillation |
+
+The orchestrator's pre-flight does three things before phase A starts: waits for `/api/v1/status` overall ≠ down, pushes a temporary policy override setting `autoscaler_cooldown_seconds=10` (so the Phase-B 30 s spike can fire more than one decision), and flips `AUTOSCALER_PROVISIONING_ENABLED=true` via env-file + `force-recreate autoscaler`. Post-flight in a `finally:` block restores every one of those + tears down any leftover `smartload.dynamic=true` containers, so a partial run can't leave the stack dirty.
+
+**The R3 analysis pipeline.** `join_run.py` reads the eight R2 artefacts and produces:
+
+- `run.parquet` — per-second timeline keyed on Locust history; latest forecast + latest pool state + latest routing mode joined via `pandas.merge_asof(direction="backward")`. ~336 rows for a 360 s run, ~19 columns.
+- `forecasts.parquet` / `anomalies.parquet` / `scalings.parquet` / `routings.parquet` — one row per envelope per channel with payload columns flattened.
+- `upstream_changes.parquet` / `scaling_audit.parquet` — one row per snapshot.
+
+The trick that keeps the timestamps sane: every input stream's time column is normalised to UTC-aware `datetime[ns, UTC]` before any merge runs. The SSE backlog filter (drop envelopes with `captured_at` before the Locust bench start) is what stops residue from a previous run's incomplete collector close from polluting today's join.
+
+`plot_results.py` reads the parquets + the manifest + the static `pre_status.json` and emits four PNGs:
+
+| Plot | Reads | Shows |
+|---|---|---|
+| `plot_pool_size.png` | `run.parquet` + `scaling_audit.parquet` | Pool size over time + scaling event markers + phase boundaries |
+| `plot_time_to_react.png` | `forecasts.parquet` + `scaling_audit.parquet` | Per-forecast bar of seconds to next autoscaler action |
+| `plot_upstream_timeline.png` | `run.parquet` + `upstream_changes.parquet` | Per-second p50/p95 + upstream.conf rewrite markers |
+| `plot_anomaly_recovery.png` | `run.parquet` + `scaling_audit.parquet` + manifest injection log | Phase-D close-up: latency + pool size + anomaly inject/recover + scaling markers |
+
+Plus `SUMMARY.md` with per-phase RPS/p95/pool stats, time-to-react table, anomaly window record, action counts, and three explicit acceptance-gate evaluations (pool grew during B, pool shrank during D, anomaly isolation ≤ 2 s).
+
+**The Agg backend pin.** `plot_results.py` sets `matplotlib.use("Agg")` *before* the first `pyplot` import. The order matters — calling `matplotlib.use()` after pyplot is imported emits a warning and may silently keep the previous backend. We comply with the contract by having `import matplotlib.pyplot as plt` annotated `# noqa: E402` directly under the `use("Agg")` line.
+
+**The honest finding from the first real run.** Captured in SOT §34.6 and replicated in `SUMMARY.md`: the autoscaler made 2 real decisions during the bench, the SSE collector captured 197 envelopes, the time-to-react ranged from 1.2 s (when a forecast crossed the capacity threshold cleanly) to 121.5 s (when a forecast landed inside the cooldown). But `upstream.conf` saw 0 rewrites and the pool-size column reads 5..5 across every phase — because the lb-sidecar doesn't subscribe to `smartload.scale` (issue #164). Combined with the silent-thread bug surfaced on the first attempt (#163), the bench is the first SmartLoad artefact whose `SUMMARY.md` explicitly names two architectural gaps as gating its own acceptance-gate strings. The harness itself works; rerun under #163 + #164 fixed produces the affirmative gates.
 
 ### 8.17 Reading these files for thesis context
 
@@ -4407,7 +4474,8 @@ The map below cross-references each implementation file to the SOT section a the
 | `services/rl-engine/training/reward.py` | §8.13 | §32.4 (reward function design) |
 | `services/rl-engine/training/train_ppo.py` | §8.14 | §32.4 (training recipe + canary gates) |
 | `services/rl-engine/training/eval_harness.py` | §8.15 | §33.5 (offline metrics taxonomy) + §33.6 (reproducibility recipe) |
-| `experiments/baseline-vs-smartload/` | §8.16 | §33 (full methodology) + §34 (results) |
+| `experiments/baseline-vs-smartload/` | §8.16.1 | §33 (full methodology) + §34 (results) |
+| `experiments/adaptive-bench/` | §8.16.2 | §33.1 RQ4 row + §34.6 (first end-to-end run) |
 
 ---
 
