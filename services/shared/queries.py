@@ -141,6 +141,26 @@ INSERT INTO scaling_events (time, action, instance_count, reason)
 VALUES (%s, %s, %s, %s);
 """
 
+# ── forecasting persist write ─────────────────────────────────────────────────
+# One row per inference cycle, regardless of safe_mode. Closes the SOT §35.8
+# gap: prior to #159 forecasts were only published to Redis, leaving the
+# Grafana predicted-vs-actual overlay sparse and forcing the autoscaler's
+# reason text to be the durable record of what was predicted.
+#
+# Parameters (in order):
+#   $1 time             — TIMESTAMPTZ, the publish moment (UTC)
+#   $2 horizon_minutes  — INT, the forecast horizon
+#   $3 predicted_rps    — FLOAT, the point estimate
+#   $4 confidence_lower — FLOAT or NULL, lower bound if engine supplies one
+#   $5 confidence_upper — FLOAT or NULL, upper bound if engine supplies one
+#   $6 model_name       — TEXT, e.g. "moving_average", "arima"
+#   $7 model_version    — TEXT or NULL, engine artifact version for trained models
+FORECASTS_INSERT = """
+INSERT INTO forecasts
+    (time, horizon_minutes, predicted_rps, confidence_lower, confidence_upper, model_name, model_version)
+VALUES (%s, %s, %s, %s, %s, %s, %s);
+"""
+
 # ── policy-manager audit write ────────────────────────────────────────────────
 # One row per changed field per successful POST. old_value / new_value are
 # JSON-encoded at the call site so the column can store any field type
@@ -184,7 +204,7 @@ WHERE table_schema = 'public'
   AND table_name = ANY(%s);
 """
 
-REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events", "policy_changes"]
+REQUIRED_TABLES = ["metrics", "backend_health", "scaling_events", "policy_changes", "forecasts"]
 
 # ── canonical defaults for ANOMALY_QUERY callers ──────────────────────────────
 # Engines should pass these as the third bind parameter unless they have a

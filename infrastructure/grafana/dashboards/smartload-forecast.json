@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Forecast-vs-actual view per SOT §17.2 line 3288 ('Predicted vs actual request rate (overlay)'). Predicted RPS is currently only persisted as part of the autoscaler's reason text in `scaling_events` — the forecasting service publishes ForecastResult envelopes to `smartload.forecast` but those don't write to TimescaleDB. The overlay panel here renders both series on the same axis when forecast-triggered scaling decisions land; until a forecasts hypertable is added, the predicted series will be sparse (only one point per autoscaler decision). The autoscaler decisions table is the durable record of what was predicted at decision time.",
+  "description": "Forecast-vs-actual view per SOT §17.2 line 3288 ('Predicted vs actual request rate (overlay)'). Predicted RPS is now persisted to the `forecasts` hypertable on every inference cycle (closing SOT §35.8 via #159) — the overlay below renders both series on the same axis with the predicted line dense at decision moments instead of sparse-on-scale-events. The autoscaler decisions table at the bottom remains the durable record of what was predicted at the moment each scaling decision fired.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -22,7 +22,7 @@
   "panels": [
     {
       "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
-      "description": "Actual aggregate RPS from the metrics hypertable, overlaid with predicted RPS extracted from scaling_events.reason via regex. Predicted points appear only at moments when the autoscaler made a decision — see the gap notice in the dashboard description. The two series sharing an axis is the SOT-mandated overlay.",
+      "description": "Actual aggregate RPS from the metrics hypertable overlaid with predicted RPS from the forecasts hypertable. Both series are dense at the dashboard's bucket interval, so the predicted line tracks the actual line across the whole window — divergence between the two reads as engine error in real time. The two series sharing an axis is the SOT-mandated overlay.",
       "fieldConfig": {
         "defaults": {
           "color": {"mode": "palette-classic"},
@@ -54,9 +54,9 @@
             "matcher": {"id": "byName", "options": "predicted"},
             "properties": [
               {"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}},
-              {"id": "custom.drawStyle", "value": "points"},
-              {"id": "custom.pointSize", "value": 10},
-              {"id": "custom.lineWidth", "value": 0}
+              {"id": "custom.drawStyle", "value": "line"},
+              {"id": "custom.lineWidth", "value": 2},
+              {"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [10, 10]}}
             ]
           },
           {
@@ -87,7 +87,7 @@
           "refId": "B",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  time AS \"time\",\n  'predicted' AS metric,\n  (regexp_match(reason, 'predicted (\\d+(?:\\.\\d+)?) rps'))[1]::float AS value\nFROM scaling_events\nWHERE $__timeFilter(time)\n  AND reason LIKE 'forecast predicted%'\nORDER BY time",
+          "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  'predicted' AS metric,\n  AVG(predicted_rps) AS value\nFROM forecasts\nWHERE $__timeFilter(time)\nGROUP BY 1\nORDER BY 1",
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]

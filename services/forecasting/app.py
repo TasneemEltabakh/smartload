@@ -46,11 +46,12 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         sys.path.insert(0, _cand)
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
-from shared.queries import FORECAST_QUERY                      # noqa: E402
+from shared.queries import FORECAST_QUERY, FORECASTS_INSERT    # noqa: E402
 
 from runloop import (                                          # noqa: E402
     EnginePolicy,
     bootstrap_engine,
+    build_forecast_row,
     build_history_from_rows,
     forecast_to_event_payload,
     policy_from_payload,
@@ -160,8 +161,15 @@ def _inference_cycle(db_conn, redis_client) -> int:
         return 0
 
     payload = forecast_to_event_payload(forecast, model_id)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     publish = should_publish(policy)
+
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute(FORECASTS_INSERT, build_forecast_row(forecast, model_id, now=now))
+    except Exception as exc:                                # noqa: BLE001
+        print(f"[{SERVICE_NAME}] forecasts insert failed: {exc}", flush=True)
 
     if publish:
         publish_envelope(

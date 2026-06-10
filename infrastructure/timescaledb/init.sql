@@ -49,6 +49,31 @@ CREATE TABLE IF NOT EXISTS scaling_events (
 
 SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);
 
+-- ── forecasts ────────────────────────────────────────────────────────────────
+-- Written by the forecasting service once per inference cycle, before the
+-- ForecastResult envelope is published to smartload.forecast. One row per
+-- cycle regardless of safe_mode (safe_mode gates the publish, not the
+-- observational write — operators still need to see what the engine would
+-- have predicted).
+--
+-- Read by: Grafana Forecast dashboard (predicted-vs-actual overlay),
+-- adaptive-bench R2 prom_collector (forecast-quality joins on time),
+-- post-hoc evaluation scripts.
+CREATE TABLE IF NOT EXISTS forecasts (
+    time             TIMESTAMPTZ      NOT NULL,
+    horizon_minutes  INT              NOT NULL,
+    predicted_rps    DOUBLE PRECISION NOT NULL,
+    confidence_lower DOUBLE PRECISION,
+    confidence_upper DOUBLE PRECISION,
+    model_name       TEXT             NOT NULL,   -- "moving_average" | "arima" | ...
+    model_version    TEXT                         -- engine artifact version; NULL for untyped baselines
+);
+
+SELECT create_hypertable('forecasts', 'time', if_not_exists => TRUE);
+
+CREATE INDEX IF NOT EXISTS idx_forecasts_model
+    ON forecasts (model_name, time DESC);
+
 -- ── policy_changes ───────────────────────────────────────────────────────────
 -- Written by policy-manager on each successful POST /api/v1/policy that
 -- changes at least one field. One row per changed field — operators can
@@ -77,6 +102,7 @@ SELECT add_retention_policy('metrics',         INTERVAL '7 days',  if_not_exists
 SELECT add_retention_policy('backend_health',  INTERVAL '30 days', if_not_exists => TRUE);
 SELECT add_retention_policy('scaling_events',  INTERVAL '90 days', if_not_exists => TRUE);
 SELECT add_retention_policy('policy_changes',  INTERVAL '90 days', if_not_exists => TRUE);
+SELECT add_retention_policy('forecasts',       INTERVAL '30 days', if_not_exists => TRUE);
 
 -- ── continuous aggregate: metrics_1min ───────────────────────────────────────
 -- Per-minute roll-up over the canonical long-format `metrics` table.

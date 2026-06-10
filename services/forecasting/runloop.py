@@ -23,6 +23,7 @@ import os
 import sys
 import time
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 
 # Make engine_base + plugin folders importable when this file is loaded from
 # /app (container) or from services/forecasting/ (dev).
@@ -186,6 +187,34 @@ def forecast_to_event_payload(forecast: Forecast, model_id: str) -> dict:
         "confidence_upper": forecast.confidence_upper,
         "model_id":         model_id,
     }
+
+
+def build_forecast_row(
+    forecast: Forecast,
+    model_id: str,
+    *,
+    now: datetime | None = None,
+    model_version: str | None = None,
+) -> tuple:
+    """Build the bind-parameter tuple for FORECASTS_INSERT.
+
+    Order matches the parameter docstring on FORECASTS_INSERT:
+      (time, horizon_minutes, predicted_rps,
+       confidence_lower, confidence_upper, model_name, model_version)
+
+    `now` is injectable so tests can pin the timestamp; production callers
+    pass datetime.now(timezone.utc) once per cycle.
+    """
+    when = now if now is not None else datetime.now(timezone.utc)
+    return (
+        when,
+        forecast.horizon_minutes,
+        forecast.predicted_rps,
+        forecast.confidence_lower,
+        forecast.confidence_upper,
+        model_id,
+        model_version,
+    )
 
 
 # ── /api/v1/engine/state serialisation ───────────────────────────────────────

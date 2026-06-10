@@ -35,6 +35,7 @@ from runloop import (                            # noqa: E402
     DEFAULT_WINDOW_SAMPLES,
     EnginePolicy,
     bootstrap_engine,
+    build_forecast_row,
     build_history_from_rows,
     forecast_to_event_payload,
     policy_from_payload,
@@ -217,6 +218,67 @@ def test_engine_policy_defaults():
     assert p.window_samples == DEFAULT_WINDOW_SAMPLES
     assert p.safe_mode is False
     assert p.policy_version == 0
+
+
+# ── build_forecast_row (FORECASTS_INSERT bind tuple) ──────────────────────────
+
+def _sample_forecast():
+    return Forecast(
+        horizon_minutes=5,
+        predicted_rps=42.5,
+        confidence_lower=35.0,
+        confidence_upper=50.0,
+    )
+
+
+def test_build_forecast_row_shape_and_order():
+    """The tuple must match FORECASTS_INSERT's parameter order exactly:
+    (time, horizon_minutes, predicted_rps, confidence_lower, confidence_upper,
+     model_name, model_version)."""
+    now = dt.datetime(2026, 6, 10, 12, 0, tzinfo=dt.timezone.utc)
+    row = build_forecast_row(_sample_forecast(), "moving_average", now=now)
+    assert row == (now, 5, 42.5, 35.0, 50.0, "moving_average", None)
+
+
+def test_build_forecast_row_uses_provided_now():
+    pinned = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+    row = build_forecast_row(_sample_forecast(), "moving_average", now=pinned)
+    assert row[0] is pinned
+
+
+def test_build_forecast_row_defaults_now_to_utc():
+    """Default `now` is UTC and within a tight window of test execution."""
+    before = dt.datetime.now(dt.timezone.utc)
+    row = build_forecast_row(_sample_forecast(), "moving_average")
+    after = dt.datetime.now(dt.timezone.utc)
+    assert row[0].tzinfo is dt.timezone.utc
+    assert before <= row[0] <= after
+
+
+def test_build_forecast_row_carries_model_id_as_model_name():
+    row = build_forecast_row(_sample_forecast(), "arima",
+                             now=dt.datetime(2026, 6, 10, tzinfo=dt.timezone.utc))
+    # model_name slot is index 5, model_version slot is index 6
+    assert row[5] == "arima"
+    assert row[6] is None
+
+
+def test_build_forecast_row_propagates_model_version():
+    row = build_forecast_row(_sample_forecast(), "arima",
+                             now=dt.datetime(2026, 6, 10, tzinfo=dt.timezone.utc),
+                             model_version="v1.0.7i")
+    assert row[6] == "v1.0.7i"
+
+
+def test_build_forecast_row_preserves_confidence_bounds():
+    """Lower/upper confidence flow through verbatim, including None when the
+    engine produces a point estimate with no interval."""
+    f = Forecast(horizon_minutes=5, predicted_rps=10.0,
+                 confidence_lower=None, confidence_upper=None)
+    row = build_forecast_row(f, "moving_average",
+                             now=dt.datetime(2026, 6, 10, tzinfo=dt.timezone.utc))
+    assert row[3] is None
+    assert row[4] is None
 
 
 # ── end-to-end: bootstrap → forecast → payload ────────────────────────────────
