@@ -161,12 +161,12 @@ class FivePhaseShape(LoadTestShape):
 @events.test_start.add_listener
 def _on_start(environment, **_kwargs) -> None:
     print(
-        f"[locust] adaptive-bench shape — "
-        f"A({PHASE_A_END_SECS}s, 0→{A_USERS}u) | "
-        f"B({PHASE_A_END_SECS}→{PHASE_B_END_SECS}s, spike {B_USERS}u) | "
-        f"C({PHASE_B_END_SECS}→{PHASE_C_END_SECS}s, hold {C_USERS}u) | "
-        f"D({PHASE_C_END_SECS}→{PHASE_D_END_SECS}s, drop {D_USERS}u + anomaly) | "
-        f"E({PHASE_D_END_SECS}→{PHASE_E_END_SECS}s, hold {E_USERS}u) "
+        f"[locust] adaptive-bench shape -- "
+        f"A({PHASE_A_END_SECS}s, 0->{A_USERS}u) | "
+        f"B({PHASE_A_END_SECS}->{PHASE_B_END_SECS}s, spike {B_USERS}u) | "
+        f"C({PHASE_B_END_SECS}->{PHASE_C_END_SECS}s, hold {C_USERS}u) | "
+        f"D({PHASE_C_END_SECS}->{PHASE_D_END_SECS}s, drop {D_USERS}u + anomaly) | "
+        f"E({PHASE_D_END_SECS}->{PHASE_E_END_SECS}s, hold {E_USERS}u) "
         f"(target={AdaptiveBenchUser.host})",
         flush=True,
     )
@@ -174,4 +174,4 @@ def _on_start(environment, **_kwargs) -> None:
 
 @events.test_stop.add_listener
 def _on_stop(environment, **_kwargs) -> None:
-    print(f"[locust] adaptive-bench complete — final phase was {_CURRENT_PHASE}", flush=True)
+    print(f"[locust] adaptive-bench complete -- final phase was {_CURRENT_PHASE}", flush=True)

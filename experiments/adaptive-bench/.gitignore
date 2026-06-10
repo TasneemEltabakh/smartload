@@ -1,0 +1,4 @@
+# Transient env-file flipped by run.py's pre-flight / post-flight.
+# Tracked content lives in docker-compose.yml's environment block; this
+# file is bench-time scratch only.
+.env.bench

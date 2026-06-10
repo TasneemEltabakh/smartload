@@ -54,6 +54,16 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Windows console defaults to cp1252 which can't encode UTF-8 from locust's
+# stdout (em-dashes, U+FFFD replacements) or our own ASCII arrows. Reconfigure
+# to UTF-8 with replacement so a stray non-ASCII char in a status message
+# never sinks the orchestrator. No-op on systems already on UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        pass
+
 from collectors import prom_collector, sse_collector, upstream_watcher
 import anomaly_injector
 
@@ -485,7 +495,7 @@ def main() -> int:
             print(f"[post-flight] stopped {stopped}/{len(leftovers)} leftover dynamic backends", flush=True)
 
         _write_manifest(run_dir, phases=phases, short=args.short, injection_log=injection_log)
-        print(f"[post-flight] manifest written → {run_dir / 'MANIFEST.json'}", flush=True)
+        print(f"[post-flight] manifest written -> {run_dir / 'MANIFEST.json'}", flush=True)
 
     return 0 if locust_rc == 0 else 1
 
