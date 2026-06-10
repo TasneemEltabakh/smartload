@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7y Decision-plane catch-all + /health liveness check closes #163; adaptive-bench gates now only blocked on #164</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7z lb-sidecar subscribes to smartload.scale (#164); adaptive-bench gates fully unblocked, next run produces affirmative pool-growth + pool-shrink strings</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5590,6 +5590,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7z — 2026-06-10 — lb-sidecar subscribes to smartload.scale; adaptive-bench gates fully unblocked (#164)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>lb-sidecar subscribes to <code>smartload.scale</code></strong></td>
+      <td><code>services/lb-sidecar/app.py</code> — new <code>SCALE_CHANNEL = "smartload.scale"</code> constant; <code>_open_redis_pubsub()</code> now subscribes to all four channels (<code>routing</code>, <code>anomaly</code>, <code>policy</code>, <code>scale</code>). New <code>elif channel == SCALE_CHANNEL</code> dispatch case calls <code>handle_scale()</code> after re-querying live backends via <code>discover_all_backends</code>; on apply, logs <code>[lb-sidecar] scale: pool now N backends (scale_out [provision])</code> with the mechanism tag from #155's ScalingEvent forward-compat field.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>New <code>handle_scale()</code> in <code>runloop.py</code></strong></td>
+      <td>Pure-Python handler returns a new <code>ScaleOutcome</code> dataclass (<code>applied</code>, <code>backend_count</code>, <code>action</code>, <code>mechanism</code>, <code>error</code>). Synthesises an equal-weight upstream map from <code>live_backends</code> and calls <code>adapter.set_upstream_weights(weights)</code>. The adapter's existing idempotency (<code>if backend_weights == self._weights: return</code>) means a scale event whose resulting pool matches <code>upstream.conf</code> becomes a free check &mdash; no double-rewrite, no spurious <code>nginx -s reload</code>. Anomaly-excluded backends in <code>live_backends</code> stay rendered as <code>server ... down;</code> via the adapter's existing exclusion path. Refuses to write an empty <code>upstream.conf</code> as the safety pin: if the docker query came back empty (daemon unreachable), the previous adapter state stands. Reads only <code>action</code> + <code>mechanism</code> from the payload &mdash; <em>not</em> <code>instance_count</code>: the canonical truth is the running-container query, not the autoscaler's intent.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tests</strong></td>
+      <td>Eight new unit tests in <code>tests/unit/lb-sidecar/test_runloop.py</code> covering <code>handle_scale</code>: scale_out grows the weights map across the full live pool, scale_in shrinks it, every mechanism string (<code>start</code> / <code>provision</code> / <code>stop</code> / <code>decommission</code>) flows through the outcome unchanged, empty <code>live_backends</code> refuses to write (safety pin), adapter idempotent no-op still reports <code>applied=True</code> (the instruction was delivered), adapter exception is captured in <code>outcome.error</code>, action is normalised to lowercase, missing mechanism field yields <code>None</code> (forward-compat with older publishers). Total lb-sidecar unit suite: <strong>32 &rarr; 40</strong>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Adaptive-bench gates fully unblocked</strong></td>
+      <td>The §34.6 acceptance gates "Pool grew during B" + "Pool shrank during D" were blocked by two issues: <strong>#163</strong> (decision-plane silent thread death, closed in v1.0.7y) and <strong>#164</strong> (this release). With both closed, the next adaptive-bench run produces affirmative gate strings (<code>"yes &mdash; pool grew N&rarr;M during B"</code>) without manual restarts. The R3 <code>SUMMARY.md</code>'s "blocked by #164" caveat language flips to a clean gate evaluation on the next <code>python plot_results.py</code> run against fresh artefacts. The harness side of RQ4 evidence is now complete; the only remaining binding constraint is the §34.7 PPO retraining workstream (Rghda).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Doc sync</strong></td>
+      <td><code>docs/PROJECT_WALKTHROUGH.md</code> §4.4 (lb-sidecar) gains a "Scale handler" subsection describing the dispatch path + the equal-weight rationale. <code>docs/features/forecast-autoscale.md</code> status block notes the closed-loop scale &rarr; LB coordination. <code>docs/features/adaptive-bench.md</code> status checklist flips the "Re-run after #163 + #164 land" row from pending to "ready (both closed)" with a pointer to the §34.6 numbers and the §34.7 remaining binding constraint. Status badge bumped to v1.0.7z.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7y — 2026-06-10 — Decision-plane catch-all + /health liveness close §35.8-adjacent silent-thread bug (#163)</h3>
 <table>

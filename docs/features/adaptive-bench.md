@@ -1,6 +1,6 @@
 # Adaptive-bench
 
-> **Slice status — shipped (R1 + R2 + R3), with two named gaps blocking the RQ4 narrative from being fully closed.** Three-round programme: R1 (#155, v1.0.7v) delivered the dynamic-pool autoscaler foundation; R2 (#156) delivered the asyncio orchestrator + three async collectors + 5-phase Locust shape + phase-D anomaly injector; R3 (#157, v1.0.7x — this release) delivered `join_run.py` + `plot_results.py` + four PNGs + `SUMMARY.md`. The first end-to-end run on 2026-06-10 produced real data and surfaced two architectural gaps: **#163** (decision-plane run loops die silently after multi-day uptime) and **#164** (lb-sidecar doesn't subscribe to `smartload.scale`). Both gates close together once those land; the harness itself is shippable as-is.
+> **Slice status — shipped (R1 + R2 + R3), with both gating bugs closed in v1.0.7y + v1.0.7z.** Three-round programme: R1 (#155, v1.0.7v) delivered the dynamic-pool autoscaler foundation; R2 (#156) delivered the asyncio orchestrator + three async collectors + 5-phase Locust shape + phase-D anomaly injector; R3 (#157, v1.0.7x) delivered `join_run.py` + `plot_results.py` + four PNGs + `SUMMARY.md`. The first end-to-end run on 2026-06-10 produced real data and surfaced two architectural gaps; **both now closed**: **#163** decision-plane silent thread death (catch-all + /health liveness, v1.0.7y) + **#164** lb-sidecar `smartload.scale` subscription (handle_scale handler, v1.0.7z). The next adaptive-bench re-run produces the affirmative "pool grew N→M during B" + "pool shrank N→M during D" gate strings without manual restarts.
 
 ## What this slice delivers
 
@@ -38,7 +38,8 @@ A single repeatable command that drives the SmartLoad stack through a 5-phase lo
 - [x] E2E test under `tests/e2e/adaptive-bench/` (5-min CI budget)
 - [x] SOT §22 / §18 / §25.10 / §33 / §34 sync (this release)
 - [x] PROJECT_WALKTHROUGH §8.16 expansion (this release)
-- [ ] **Re-run after #163 + #164 land** — the gates "pool grew during B" and "pool shrank during D" both depend on lb-sidecar processing scale events
+- [x] **#163 + #164 both landed (v1.0.7y + v1.0.7z, 2026-06-10)** — the gates "pool grew during B" and "pool shrank during D" will produce affirmative strings on the next bench run; the harness itself needs no further changes
+- [ ] **Next bench run on the unblocked stack** — drives the freshly-cleared chain end-to-end, captures the affirmative gate strings, updates §34.6 with the new numbers
 - [ ] Multi-run batching with per-metric CIs (#160 — separate workstream)
 
 ## Non-goals (R1-R3 phase)
