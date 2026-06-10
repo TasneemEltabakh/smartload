@@ -81,6 +81,12 @@ NGINX_CONTAINER       = os.environ.get("NGINX_CONTAINER", "smartload-load-balanc
 NGINX_CONF_PATH       = os.environ.get("NGINX_CONF_PATH", "/nginx-conf/upstream.conf")
 LB_ADAPTER            = os.environ.get("LB_ADAPTER", "nginx")
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+
+# Liveness threshold for /health (#163). If the loop hasn't ticked in this
+# many seconds, /health flips to degraded so the silent-thread-death pattern
+# becomes visible to docker healthcheck + /api/v1/status consumers.
+LIVENESS_STALE_SECONDS         = 5 * POLL_INTERVAL_SECONDS
+LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
 # Window passed to BACKEND_HEALTH_QUERY on startup hydration. The query
 # returns the latest row per backend within the window, so it should be
 # wider than the anomaly-detector publish interval but tight enough that
@@ -122,6 +128,11 @@ _REDIS_RECONNECT_BACKOFF_SECONDS = 2.0
 _state_lock = threading.Lock()
 _sidecar_ready: bool = False
 _last_routing_monotonic: float | None = None
+# #163 liveness signal — updated at the top of every run-loop iteration
+# (regardless of which channel fired or whether the cycle hit a redis
+# disconnect), so /health can detect a silent daemon-thread death even on
+# a quiet bench shape where no routing rewrites are applied.
+_last_loop_tick_monotonic: float | None = None
 _excluded_backends: set[str] = set()
 _policy_state: PolicyState = PolicyState()
 
@@ -268,6 +279,12 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
     try:
         while not stop_event.is_set():
             try:
+                # #163 liveness signal — updated at the top of every
+                # iteration so /health can detect a silent loop death.
+                with _state_lock:
+                    global _last_loop_tick_monotonic
+                    _last_loop_tick_monotonic = time.monotonic()
+
                 message = pubsub.get_message(ignore_subscribe_messages=True,
                                              timeout=POLL_INTERVAL_SECONDS)
             except redis_lib.exceptions.ConnectionError as exc:
@@ -294,90 +311,101 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
             if message is None or message.get("type") != "message":
                 continue
 
-            channel = message.get("channel", b"")
-            if isinstance(channel, bytes):
-                channel = channel.decode()
+            # #163 catch-all — anything that escapes the per-message dispatch
+            # path (parse error, adapter exception, docker SDK timeout, etc.)
+            # must NOT kill the daemon thread. Log + back off + continue.
+            try:
+                channel = message.get("channel", b"")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
 
-            raw = message.get("data")
-            parsed = parse_envelope(raw, channel=channel)
-            if parsed is None:
-                continue
-            payload, _meta = parsed
+                raw = message.get("data")
+                parsed = parse_envelope(raw, channel=channel)
+                if parsed is None:
+                    continue
+                payload, _meta = parsed
 
-            # #155 — invalidate the backend-discovery cache on every message so
-            # a freshly-provisioned backend appears in the next routing /
-            # policy decision. Cache rebuilds on the next discover() call;
-            # the 2 s TTL caps the per-burst Docker-query rate.
-            invalidate_backend_discovery_cache()
+                # #155 — invalidate the backend-discovery cache on every
+                # message so a freshly-provisioned backend appears in the
+                # next routing / policy decision. Cache rebuilds on the
+                # next discover() call; the 2 s TTL caps the per-burst
+                # Docker-query rate.
+                invalidate_backend_discovery_cache()
 
-            if channel == ROUTING_CHANNEL:
-                with _state_lock:
-                    threshold = _policy_state.rl_confidence_threshold
-                live_backends = discover_all_backends(
-                    docker_client, seed_backends=ALL_BACKENDS_SEED,
-                )
-                outcome = handle_routing(
-                    payload, registry, adapter, live_backends,
-                    confidence_threshold=threshold,
-                )
-                if outcome.applied:
+                if channel == ROUTING_CHANNEL:
                     with _state_lock:
-                        _last_routing_monotonic = time.monotonic()
-                        _excluded_backends = set(adapter.current_state().excluded_backends)
-                    print(f"[{SERVICE_NAME}] routing applied "
-                          f"({outcome.weight_count} backends, "
-                          f"confidence={outcome.confidence:.3f})", flush=True)
-                elif outcome.rejected_below_threshold:
-                    # SOT §13 line 3128 — confidence gate fired.
-                    print(f"[{SERVICE_NAME}] routing rejected "
-                          f"(confidence={outcome.confidence:.3f} < "
-                          f"threshold={threshold:.3f}); using previous weights",
-                          flush=True)
-                elif outcome.mode == "shadow":
-                    # SOT v1.0.6 line 5703 — shadow envelopes are received
-                    # but not applied. Log so operators can confirm the
-                    # gate is firing.
-                    print(f"[{SERVICE_NAME}] routing shadow — not applied "
-                          f"({outcome.weight_count} rankings)", flush=True)
-                elif outcome.error:
-                    print(f"[{SERVICE_NAME}] routing error: {outcome.error}",
-                          flush=True)
+                        threshold = _policy_state.rl_confidence_threshold
+                    live_backends = discover_all_backends(
+                        docker_client, seed_backends=ALL_BACKENDS_SEED,
+                    )
+                    outcome = handle_routing(
+                        payload, registry, adapter, live_backends,
+                        confidence_threshold=threshold,
+                    )
+                    if outcome.applied:
+                        with _state_lock:
+                            _last_routing_monotonic = time.monotonic()
+                            _excluded_backends = set(adapter.current_state().excluded_backends)
+                        print(f"[{SERVICE_NAME}] routing applied "
+                              f"({outcome.weight_count} backends, "
+                              f"confidence={outcome.confidence:.3f})", flush=True)
+                    elif outcome.rejected_below_threshold:
+                        # SOT §13 line 3128 — confidence gate fired.
+                        print(f"[{SERVICE_NAME}] routing rejected "
+                              f"(confidence={outcome.confidence:.3f} < "
+                              f"threshold={threshold:.3f}); using previous weights",
+                              flush=True)
+                    elif outcome.mode == "shadow":
+                        # SOT v1.0.6 line 5703 — shadow envelopes are
+                        # received but not applied. Log so operators can
+                        # confirm the gate is firing.
+                        print(f"[{SERVICE_NAME}] routing shadow — not applied "
+                              f"({outcome.weight_count} rankings)", flush=True)
+                    elif outcome.error:
+                        print(f"[{SERVICE_NAME}] routing error: {outcome.error}",
+                              flush=True)
 
-            elif channel == ANOMALY_CHANNEL:
-                outcome = handle_anomaly(payload, registry, adapter)
-                if outcome.applied:
-                    with _state_lock:
-                        _excluded_backends = set(adapter.current_state().excluded_backends)
-                    print(f"[{SERVICE_NAME}] anomaly: {outcome.action} "
-                          f"{outcome.backend_id}", flush=True)
-                elif outcome.error:
-                    print(f"[{SERVICE_NAME}] anomaly error: {outcome.error}",
-                          flush=True)
+                elif channel == ANOMALY_CHANNEL:
+                    outcome = handle_anomaly(payload, registry, adapter)
+                    if outcome.applied:
+                        with _state_lock:
+                            _excluded_backends = set(adapter.current_state().excluded_backends)
+                        print(f"[{SERVICE_NAME}] anomaly: {outcome.action} "
+                              f"{outcome.backend_id}", flush=True)
+                    elif outcome.error:
+                        print(f"[{SERVICE_NAME}] anomaly error: {outcome.error}",
+                              flush=True)
 
-            elif channel == POLICY_CHANNEL:
-                with _state_lock:
-                    policy_state_ref = _policy_state
-                live_backends = discover_all_backends(
-                    docker_client, seed_backends=ALL_BACKENDS_SEED,
-                )
-                outcome = handle_policy(payload, adapter, live_backends,
-                                        policy_state=policy_state_ref)
-                if outcome.applied:
+                elif channel == POLICY_CHANNEL:
                     with _state_lock:
-                        _last_routing_monotonic = time.monotonic()
-                        _excluded_backends = set(adapter.current_state().excluded_backends)
-                    print(f"[{SERVICE_NAME}] safe_mode active — "
-                          f"reverted to equal weights", flush=True)
-                elif outcome.error:
-                    print(f"[{SERVICE_NAME}] policy error: {outcome.error}",
-                          flush=True)
-                else:
-                    # Policy changes that don't trigger a rewrite still
-                    # update PolicyState (rl_confidence_threshold, etc).
-                    print(f"[{SERVICE_NAME}] policy snapshot updated "
-                          f"(safe_mode={outcome.safe_mode}, "
-                          f"rl_confidence_threshold={outcome.rl_confidence_threshold:.3f})",
-                          flush=True)
+                        policy_state_ref = _policy_state
+                    live_backends = discover_all_backends(
+                        docker_client, seed_backends=ALL_BACKENDS_SEED,
+                    )
+                    outcome = handle_policy(payload, adapter, live_backends,
+                                            policy_state=policy_state_ref)
+                    if outcome.applied:
+                        with _state_lock:
+                            _last_routing_monotonic = time.monotonic()
+                            _excluded_backends = set(adapter.current_state().excluded_backends)
+                        print(f"[{SERVICE_NAME}] safe_mode active — "
+                              f"reverted to equal weights", flush=True)
+                    elif outcome.error:
+                        print(f"[{SERVICE_NAME}] policy error: {outcome.error}",
+                              flush=True)
+                    else:
+                        # Policy changes that don't trigger a rewrite still
+                        # update PolicyState (rl_confidence_threshold, etc).
+                        print(f"[{SERVICE_NAME}] policy snapshot updated "
+                              f"(safe_mode={outcome.safe_mode}, "
+                              f"rl_confidence_threshold={outcome.rl_confidence_threshold:.3f})",
+                              flush=True)
+            except Exception as exc:                # noqa: BLE001
+                print(f"[{SERVICE_NAME}] dispatch raised "
+                      f"{type(exc).__name__}: {exc}; continuing after "
+                      f"{LOOP_RECOVERY_BACKOFF_SECONDS}s backoff", flush=True)
+                if stop_event.wait(timeout=LOOP_RECOVERY_BACKOFF_SECONDS):
+                    break
     finally:
         try:
             pubsub.close()
@@ -403,6 +431,7 @@ def health():
         with _state_lock:
             ready = _sidecar_ready
             last = _last_routing_monotonic
+            last_tick = _last_loop_tick_monotonic
             excluded = sorted(_excluded_backends)
             safe_mode = _policy_state.safe_mode
             rl_threshold = _policy_state.rl_confidence_threshold
@@ -410,11 +439,25 @@ def health():
         body["last_routing_age_seconds"] = (
             None if last is None else round(time.monotonic() - last, 2)
         )
+        last_tick_age = None if last_tick is None else round(time.monotonic() - last_tick, 2)
+        body["last_loop_tick_age_seconds"] = last_tick_age
         body["excluded_backends"] = excluded
         body["policy_safe_mode"] = safe_mode
         body["rl_confidence_threshold"] = rl_threshold
-    if redis_err:
-        body["errors"] = [redis_err]
+        # #163 liveness check.
+        if last_tick_age is not None and last_tick_age > LIVENESS_STALE_SECONDS:
+            status = "degraded"
+            code = 503
+            body["status"] = status
+            body["loop_stale"] = True
+    errors = [redis_err] if redis_err else []
+    if body.get("loop_stale"):
+        errors.append(
+            f"run loop has not ticked in {body['last_loop_tick_age_seconds']:.0f}s "
+            f"(threshold {LIVENESS_STALE_SECONDS:.0f}s)"
+        )
+    if errors:
+        body["errors"] = errors
     return jsonify(body), code
 
 

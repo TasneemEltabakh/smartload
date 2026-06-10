@@ -88,6 +88,12 @@ RL_MODE               = os.environ.get("RL_MODE", "shadow")
 RL_SERVICE            = os.environ.get("RL_SERVICE", "load-balancer")
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 WINDOW_SECONDS        = int(os.environ.get("RL_WINDOW_SECONDS", "30"))
+
+# Liveness threshold for /health (#163). If the loop hasn't ticked in this
+# many seconds, /health flips to degraded so the silent-thread-death pattern
+# becomes visible.
+LIVENESS_STALE_SECONDS         = 5 * POLL_INTERVAL_SECONDS
+LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
 POLICY_MANAGER_URL    = os.environ.get("POLICY_MANAGER_URL", "http://policy-manager:8086")
 
 ROUTING_CHANNEL = "smartload.routing"
@@ -365,39 +371,49 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
     try:
         while not stop_event.is_set():
-            # Drain one message per iteration — never block longer than 1 s
-            # so we don't drift the poll cadence.
-            message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if message is not None and message.get("type") == "message":
-                channel = message.get("channel")
-                if isinstance(channel, bytes):
-                    channel = channel.decode()
-                if channel == POLICY_CHANNEL:
-                    _handle_policy_message(message["data"])
-                elif channel == ANOMALY_CHANNEL:
-                    _handle_anomaly_message(message["data"])
+            try:
+                # Drain one message per iteration — never block longer than
+                # 1 s so we don't drift the poll cadence.
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message is not None and message.get("type") == "message":
+                    channel = message.get("channel")
+                    if isinstance(channel, bytes):
+                        channel = channel.decode()
+                    if channel == POLICY_CHANNEL:
+                        _handle_policy_message(message["data"])
+                    elif channel == ANOMALY_CHANNEL:
+                        _handle_anomaly_message(message["data"])
 
-            now = time.monotonic()
-            if now >= next_tick:
-                published, db_ok = _inference_cycle(db_conn, redis_client)
-                if published:
-                    print(f"[{SERVICE_NAME}] published routing recommendation "
-                          f"(policy={_policy_name})", flush=True)
-                if not db_ok:
-                    # OperationalError on the cycle — drop the dead connection
-                    # and try a fresh one. Skip the next tick to give the DB
-                    # a moment to come back without hot-looping.
-                    try:
-                        db_conn.close()
-                    except Exception:                       # noqa: BLE001
-                        pass
-                    try:
-                        db_conn = _open_db_connection()
-                        print(f"[{SERVICE_NAME}] DB connection rebuilt", flush=True)
-                    except Exception as exc:                # noqa: BLE001
-                        print(f"[{SERVICE_NAME}] DB reconnect failed: {exc}; "
-                              "retrying next tick", flush=True)
-                next_tick = now + POLL_INTERVAL_SECONDS
+                now = time.monotonic()
+                if now >= next_tick:
+                    published, db_ok = _inference_cycle(db_conn, redis_client)
+                    if published:
+                        print(f"[{SERVICE_NAME}] published routing recommendation "
+                              f"(policy={_policy_name})", flush=True)
+                    if not db_ok:
+                        # OperationalError on the cycle — drop the dead
+                        # connection and try a fresh one. Skip the next
+                        # tick to give the DB a moment to come back without
+                        # hot-looping.
+                        try:
+                            db_conn.close()
+                        except Exception:                   # noqa: BLE001
+                            pass
+                        try:
+                            db_conn = _open_db_connection()
+                            print(f"[{SERVICE_NAME}] DB connection rebuilt", flush=True)
+                        except Exception as exc:            # noqa: BLE001
+                            print(f"[{SERVICE_NAME}] DB reconnect failed: {exc}; "
+                                  "retrying next tick", flush=True)
+                    next_tick = now + POLL_INTERVAL_SECONDS
+            except Exception as exc:                        # noqa: BLE001
+                # #163: an unexpected exception in the iteration body must
+                # not kill the daemon thread. Log + back off + continue.
+                print(f"[{SERVICE_NAME}] loop iteration raised "
+                      f"{type(exc).__name__}: {exc}; continuing after "
+                      f"{LOOP_RECOVERY_BACKOFF_SECONDS}s backoff", flush=True)
+                if stop_event.wait(timeout=LOOP_RECOVERY_BACKOFF_SECONDS):
+                    break
     finally:
         # Best-effort drain on shutdown — we don't propagate errors here
         # because we're already on the way out.
@@ -435,9 +451,18 @@ def health():
             body["policy_type"]      = _policy_name
             body["policy_requested"] = _policy_requested
             body["policy_ready"]     = _policy_ready
-        body["last_inference_age_seconds"] = (
-            None if last is None else round(time.monotonic() - last, 2)
-        )
+        last_age = None if last is None else round(time.monotonic() - last, 2)
+        body["last_inference_age_seconds"] = last_age
+        # #163 liveness check.
+        if last_age is not None and last_age > LIVENESS_STALE_SECONDS:
+            status = "degraded"
+            code = 503
+            body["status"] = status
+            body["loop_stale"] = True
+            errors.append(
+                f"run loop has not ticked in {last_age:.0f}s "
+                f"(threshold {LIVENESS_STALE_SECONDS:.0f}s)"
+            )
     if errors:
         body["errors"] = errors
     return jsonify(body), code

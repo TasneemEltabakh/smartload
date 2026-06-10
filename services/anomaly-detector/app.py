@@ -79,6 +79,12 @@ POLL_INTERVAL_SECONDS   = float(os.environ.get("POLL_INTERVAL_SECONDS", "10"))
 WINDOW_SECONDS          = int(os.environ.get("ANOMALY_WINDOW_SECONDS", "60"))
 TELEMETRY_SERVICE       = os.environ.get("ANOMALY_TELEMETRY_SERVICE", ANOMALY_DEFAULT_SERVICE)
 
+# Liveness threshold for /health (#163). If the loop hasn't ticked in this
+# many seconds, /health flips to degraded so the silent-thread-death pattern
+# becomes visible.
+LIVENESS_STALE_SECONDS         = 5 * POLL_INTERVAL_SECONDS
+LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
+
 ANOMALY_CHANNEL = "smartload.anomaly"
 POLICY_CHANNEL  = "smartload.policy"
 
@@ -232,6 +238,13 @@ def _refresh_engine_under_lock(new_policy: EnginePolicy) -> None:
 # ── run loop ──────────────────────────────────────────────────────────────────
 
 def _run_loop(stop_event: threading.Event | None = None) -> None:
+    """Anomaly-detector daemon thread.
+
+    #163 invariant: a single iteration's unexpected exception must NOT kill
+    the loop. The outer try/except catches every Exception, logs it, sleeps
+    for `LOOP_RECOVERY_BACKOFF_SECONDS`, and continues. The thread can only
+    exit via the stop_event path.
+    """
     print(f"[{SERVICE_NAME}] run loop starting "
           f"(engine={_engine_name} ready={_engine_ready} "
           f"interval={POLL_INTERVAL_SECONDS}s)", flush=True)
@@ -249,22 +262,33 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
         if stop_event is not None and stop_event.is_set():
             break
 
-        # Drain any policy messages that arrived since the last tick — never
-        # block longer than 1 s so we don't drift the poll cadence.
-        message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-        if message is not None and message.get("type") == "message":
-            channel = message.get("channel")
-            if isinstance(channel, bytes):
-                channel = channel.decode()
-            if channel == POLICY_CHANNEL:
-                _handle_policy_message(message["data"])
+        try:
+            # Drain any policy messages that arrived since the last tick —
+            # never block longer than 1 s so we don't drift the poll cadence.
+            message = pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message is not None and message.get("type") == "message":
+                channel = message.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
+                if channel == POLICY_CHANNEL:
+                    _handle_policy_message(message["data"])
 
-        now = time.monotonic()
-        if now >= next_tick:
-            published = _inference_cycle(db_conn, redis_client)
-            if published:
-                print(f"[{SERVICE_NAME}] published {published} anomaly events", flush=True)
-            next_tick = now + POLL_INTERVAL_SECONDS
+            now = time.monotonic()
+            if now >= next_tick:
+                published = _inference_cycle(db_conn, redis_client)
+                if published:
+                    print(f"[{SERVICE_NAME}] published {published} anomaly events", flush=True)
+                next_tick = now + POLL_INTERVAL_SECONDS
+        except Exception as exc:                            # noqa: BLE001
+            # #163: an unexpected exception in the iteration body must not
+            # kill the daemon thread. Log + back off + continue.
+            print(f"[{SERVICE_NAME}] loop iteration raised {type(exc).__name__}: "
+                  f"{exc}; continuing after {LOOP_RECOVERY_BACKOFF_SECONDS}s "
+                  f"backoff", flush=True)
+            if stop_event is not None and stop_event.wait(timeout=LOOP_RECOVERY_BACKOFF_SECONDS):
+                break
+            elif stop_event is None:
+                time.sleep(LOOP_RECOVERY_BACKOFF_SECONDS)
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
@@ -289,9 +313,18 @@ def health():
             body["engine_type"]     = _engine_name
             body["engine_ready"]    = _engine_ready
             body["engine_requested"] = _engine_requested
-        body["last_inference_age_seconds"] = (
-            None if last is None else round(time.monotonic() - last, 2)
-        )
+        last_age = None if last is None else round(time.monotonic() - last, 2)
+        body["last_inference_age_seconds"] = last_age
+        # #163 liveness check.
+        if last_age is not None and last_age > LIVENESS_STALE_SECONDS:
+            status = "degraded"
+            code = 503
+            body["status"] = status
+            body["loop_stale"] = True
+            errors.append(
+                f"run loop has not ticked in {last_age:.0f}s "
+                f"(threshold {LIVENESS_STALE_SECONDS:.0f}s)"
+            )
     if errors:
         body["errors"] = errors
     return jsonify(body), code

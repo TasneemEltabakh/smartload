@@ -108,6 +108,12 @@ PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS = int(os.environ.get(
 # window, we check whether to fall back on observed RPS.
 LOOP_TICK_SECONDS = float(os.environ.get("LOOP_TICK_SECONDS", "5.0"))
 
+# Liveness threshold for /health (#163). If the loop hasn't ticked in this
+# many seconds, /health flips to degraded so the silent-thread-death pattern
+# becomes visible.
+LIVENESS_STALE_SECONDS         = 5 * LOOP_TICK_SECONDS
+LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
+
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s [autoscaler] %(levelname)s %(message)s",
@@ -142,6 +148,10 @@ _policy_version: int     = 0
 _last_action_monotonic: float | None = None
 _last_forecast_monotonic: float | None = None
 _last_forecast_horizon_min: int        = 5
+# #163 liveness signal — updated at the top of every control-loop iteration
+# (whether a message arrived or not) so /health can detect a silent daemon-
+# thread death regardless of forecast cadence.
+_last_loop_tick_monotonic: float | None = None
 _actions_total           = 0
 _actions_scale_out       = 0
 _actions_scale_in        = 0
@@ -321,25 +331,45 @@ def control_loop(stop_event: threading.Event | None = None) -> None:
         if stop_event is not None and stop_event.is_set():
             break
 
-        message = pubsub.get_message(
-            ignore_subscribe_messages=True,
-            timeout=LOOP_TICK_SECONDS,
-        )
+        try:
+            # #163 liveness signal — record that the loop iteration is
+            # happening, regardless of whether a message arrived or the
+            # reactive fallback fired.
+            with _state_lock:
+                global _last_loop_tick_monotonic
+                _last_loop_tick_monotonic = time.monotonic()
 
-        if message is not None and message.get("type") == "message":
-            channel = message.get("channel")
-            if isinstance(channel, bytes):
-                channel = channel.decode()
-            if channel == FORECAST_CHANNEL:
-                _handle_forecast_message(message["data"], cluster, db_conn, redis_client)
-            elif channel == POLICY_CHANNEL:
-                _handle_policy_message(message["data"])
-            else:
-                log.warning("unexpected channel: %s", channel)
-            continue
+            message = pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=LOOP_TICK_SECONDS,
+            )
 
-        # No forecast arrived this tick — consider reactive fallback.
-        _maybe_reactive_fallback(cluster, db_conn, redis_client)
+            if message is not None and message.get("type") == "message":
+                channel = message.get("channel")
+                if isinstance(channel, bytes):
+                    channel = channel.decode()
+                if channel == FORECAST_CHANNEL:
+                    _handle_forecast_message(message["data"], cluster, db_conn, redis_client)
+                elif channel == POLICY_CHANNEL:
+                    _handle_policy_message(message["data"])
+                else:
+                    log.warning("unexpected channel: %s", channel)
+                continue
+
+            # No forecast arrived this tick — consider reactive fallback.
+            _maybe_reactive_fallback(cluster, db_conn, redis_client)
+        except Exception as exc:                            # noqa: BLE001
+            # #163: an unexpected exception in the iteration body must not
+            # kill the daemon thread. Log + back off + continue. Operators
+            # see the staleness via /health's last_loop_tick_age_seconds.
+            log.exception(
+                "control loop iteration raised %s: continuing after %.1fs backoff",
+                type(exc).__name__, LOOP_RECOVERY_BACKOFF_SECONDS,
+            )
+            if stop_event is not None and stop_event.wait(timeout=LOOP_RECOVERY_BACKOFF_SECONDS):
+                break
+            elif stop_event is None:
+                time.sleep(LOOP_RECOVERY_BACKOFF_SECONDS)
 
 
 def _handle_forecast_message(raw, cluster, db_conn, redis_client) -> None:
@@ -470,18 +500,35 @@ def health():
     status = "ok" if ok else "degraded"
     code   = 200 if ok else 503  # SOT §11
     with _state_lock:
-        policy_snapshot = asdict(_policy)
-        version_snapshot = _policy_version
-    return jsonify({
-        "status":         status,
-        "service":        SERVICE_NAME,
-        "redis":          redis_ok,
-        "timescaledb":    db_ok,
-        "policy":         policy_snapshot,
-        "policy_version": version_snapshot,
-        "stats":          _stats_snapshot(),
-        **({"errors": errors} if errors else {}),
-    }), code
+        policy_snapshot   = asdict(_policy)
+        version_snapshot  = _policy_version
+        last_tick         = _last_loop_tick_monotonic
+    last_tick_age = None if last_tick is None else round(time.monotonic() - last_tick, 2)
+    # #163 liveness check.
+    loop_stale = (
+        last_tick_age is not None
+        and last_tick_age > LIVENESS_STALE_SECONDS
+    )
+    if loop_stale:
+        status = "degraded"
+        code = 503
+        errors.append(
+            f"control loop has not ticked in {last_tick_age:.0f}s "
+            f"(threshold {LIVENESS_STALE_SECONDS:.0f}s)"
+        )
+    body = {
+        "status":                       status,
+        "service":                      SERVICE_NAME,
+        "redis":                        redis_ok,
+        "timescaledb":                  db_ok,
+        "policy":                       policy_snapshot,
+        "policy_version":               version_snapshot,
+        "stats":                        _stats_snapshot(),
+        "last_loop_tick_age_seconds":   last_tick_age,
+        **({"loop_stale": True}    if loop_stale else {}),
+        **({"errors":     errors}  if errors     else {}),
+    }
+    return jsonify(body), code
 
 
 @app.route("/")
