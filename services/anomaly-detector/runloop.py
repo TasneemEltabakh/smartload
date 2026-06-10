@@ -170,6 +170,7 @@ def build_features_from_rows(rows: list[tuple]) -> list[BackendFeatures]:
             latency_rolling_mean_ms=latency.get("avg", 0.0),
             error_rate=errors.get("avg", 0.0),
             sample_count=sample_count,
+            latency_rolling_std_ms=latency.get("std", 0.0),
         ))
     return features
 

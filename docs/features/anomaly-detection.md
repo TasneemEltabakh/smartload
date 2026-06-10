@@ -39,7 +39,7 @@ Customers running SmartLoad in front of a backend pool stop having to write thei
 - [x] UI surface — Live Engines anomaly tile + activity feed (#121 session 1)
 - [x] Grafana Anomaly dashboard (v1.0.7d)
 - [x] Manual operator override — `POST /api/v1/isolate` (slice #3, #123)
-- [ ] Isolation Forest model artifact (`isolation_forest.pkl`) — N2.1, blocked on model handoff from Nada (#101)
+- [x] Isolation Forest model artifact (`isolation_forest.pkl`) — N2.1. Trained on SMD (Server Machine Dataset, machine-1-1 + machine-1-6), test F1=0.8012 > 0.80. See `engines/isolation_forest/README.md` and `tools/anomaly-training/training_log.json`.
 - [ ] Persistence to `backend_health` — anomaly-detector should write every verdict so lb-sidecar startup hydration has data; currently the table only fills under specific test paths
 - [ ] Auto-recovery cool-down — engine should not flicker between HEALTHY and DEGRADED on a single noisy sample
 - [ ] SDK method — `client.subscribe_anomaly(callback)`
