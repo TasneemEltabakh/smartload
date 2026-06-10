@@ -1,0 +1,19 @@
+# experiments/adaptive-bench/requirements-bench.txt
+# Pinned dependencies for the adaptive-bench harness (Round 2, #156).
+#
+# Why pinned: the harness writes parquet via pyarrow's incremental writer and
+# drives an asyncio orchestrator on Windows — both surfaces are sensitive to
+# minor version drift. Pin major+minor; let patch float so security fixes
+# arrive automatically.
+#
+# Install into the bench environment, not the service images:
+#   python -m pip install -r experiments/adaptive-bench/requirements-bench.txt
+#
+# Service images already ship the runtime deps they need; this file is for
+# the host-side orchestrator.
+
+aiohttp~=3.9
+pyarrow~=15.0
+pandas~=2.2
+matplotlib~=3.8
+locust~=2.24

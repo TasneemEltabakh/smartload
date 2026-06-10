@@ -1,0 +1,6 @@
+# Adaptive-bench run outputs — locally generated artefacts, not committed.
+# Each run writes to results/<TIMESTAMP>/ — they accumulate fast (parquet,
+# JSONL, locust CSVs). Keep this .gitignore tracked so the results/ folder
+# exists in git but its contents stay out.
+*
+!.gitignore
