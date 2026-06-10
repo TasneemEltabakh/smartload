@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7x Adaptive-bench R2 + R3 ship (#156 + #157); first real run on 2026-06-10 surfaces #163 + #164 as the binding constraint to clean RQ4 evidence</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7y Decision-plane catch-all + /health liveness check closes #163; adaptive-bench gates now only blocked on #164</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5590,6 +5590,36 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7y — 2026-06-10 — Decision-plane catch-all + /health liveness close §35.8-adjacent silent-thread bug (#163)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Catch-all wraps every decision-plane run loop's iteration body</strong></td>
+      <td>Five services touched: <code>services/forecasting/app.py</code>, <code>services/anomaly-detector/app.py</code>, <code>services/rl-engine/app.py</code>, <code>services/autoscaler/app.py</code>, <code>services/lb-sidecar/app.py</code>. Each <code>_run_loop</code> / <code>control_loop</code> now wraps its <code>while not stop_event.is_set():</code> body in <code>try: ... except Exception as exc: log + stop_event.wait(LOOP_RECOVERY_BACKOFF_SECONDS) + continue</code>. A single iteration's unexpected exception (psycopg2 OperationalError outside the inner try, Redis dropping mid-message, Docker SDK timeout, parse error) can no longer kill the daemon thread. The <code>stop_event.wait()</code> instead of <code>time.sleep()</code> means SIGTERM during the back-off still terminates the loop cleanly.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>/health flips to degraded when the loop has not ticked recently</strong></td>
+      <td>New <code>LIVENESS_STALE_SECONDS = 5 &times; POLL_INTERVAL_SECONDS</code> constant per service. <code>/health</code> reads the latest "loop ticked" monotonic value; if older than the threshold, the response flips to <code>{status: "degraded", code: 503, loop_stale: true, errors: [...]}</code> regardless of whether Redis + TimescaleDB ping pass. Three services reuse their existing <code>_last_inference_monotonic</code>; autoscaler + lb-sidecar gain a new <code>_last_loop_tick_monotonic</code> updated at the top of every iteration (their existing per-action / per-routing-applied monotonics only update on real decisions and aren't liveness signals).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tests</strong></td>
+      <td>Seventeen new integration tests under <code>tests/integration/</code>:<br>
+        <code>test_loop_liveness.py</code> — 15 tests, 5 services &times; 3 scenarios (stale &rarr; degraded 503, fresh &rarr; ok 200, startup-None &rarr; not flagged). Uses a sys.modules-flushing import helper to isolate the five service apps in one pytest session despite the shared <code>app</code> / <code>engine_base</code> module names.<br>
+        <code>test_loop_catchall.py</code> — 2 tests, forecasting as the representative pattern. Drives <code>_run_loop</code> against a raising <code>_inference_cycle</code> + a fake pubsub/redis/conn stack, asserts the loop runs at least twice (first iteration raises, second succeeds) and that stop_event still terminates cleanly. The second test covers the persistent-failure case (every iteration raises) and asserts &ge;5 iterations under a 1 s window with 0.05 s backoff.
+      </td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Adaptive-bench narrative impact</strong></td>
+      <td>The two acceptance gates blocked-by-#163 in §34.6 ("Pool grew during B", "Pool shrank during D") now have half the binding constraint cleared. With #163 closed, a re-run no longer requires a pre-flight <code>docker compose restart</code> dance to wake up the decision plane &mdash; the catch-all keeps the loops alive past any transient failure, and the liveness check makes a true death visible immediately. The second blocker (<strong>#164</strong>) is independent and still S5 high; once both close, the adaptive-bench produces affirmative gate strings on the next run.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7x — 2026-06-10 — Adaptive-bench R2 + R3 ship; first real run + two gaps surfaced (#156 + #157)</h3>
 <table>
