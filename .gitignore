@@ -234,3 +234,5 @@ data/
 
 # optional npm cache
 .npmdocs/notes/
+
+datasets/

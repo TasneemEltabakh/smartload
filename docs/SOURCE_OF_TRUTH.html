@@ -2800,7 +2800,7 @@ cur.execute(ANOMALY_QUERY,
   <thead><tr><th>Tier</th><th>Sprint</th><th>Approach</th><th>Owner</th></tr></thead>
   <tbody>
     <tr><td>Phase 1A (skeleton)</td><td>S2 — N1.1</td><td>Threshold: every 5 s, query last 60 s of latency + error rate; if <code>latency &gt; multiplier × rolling_mean</code> OR <code>error_rate &gt; threshold</code> → DEGRADED/UNHEALTHY.</td><td>Nada</td></tr>
-    <tr><td>Phase 2 (real model)</td><td>S4 — N2.1</td><td>Isolation Forest (scikit-learn) trained on NAB + Yahoo SMD. Features: <code>latency, error_rate, latency_rolling_mean, latency_rolling_std</code>. Saved to <code>services/anomaly-detector/models/isolation_forest.pkl</code>. Falls back to threshold if model file missing.</td><td>Nada</td></tr>
+    <tr><td>Phase 2 (real model)</td><td>S4 — N2.1</td><td>Isolation Forest (scikit-learn) trained on NAB + Yahoo SMD. Features: <code>latency, error_rate, latency_rolling_mean, latency_rolling_std</code>. Saved to <code>services/anomaly-detector/models/isolation_forest.pkl</code>. Falls back to threshold if model file missing. <strong>Implemented on SMD only</strong> (not NAB+SMD): NAB's univariate format doesn't map onto the 4-feature <code>BackendFeatures</code> schema, so <code>tools/anomaly-training/train_smd.py</code> trains and validates against SMD's real <code>test_label/</code> alone; the SMD dim→feature mapping, machine selection, and rationale are documented in <code>engines/isolation_forest/README.md</code>.</td><td>Nada</td></tr>
   </tbody>
 </table>
 <h4>Inputs / Outputs</h4>
@@ -5209,7 +5209,7 @@ flowchart LR
     <tr><td>Borg gsutil download fails / slow</td><td>Med/Med</td><td>Fall back to PlanetLab CPU traces (HTTP)</td><td>Rghda</td></tr>
     <tr><td>T1.1 delayed (no live metrics for N1.1 testing)</td><td>Low/High</td><td>Seed <code>metrics</code> with synthetic data via S2 day-1 script</td><td>Tasneem</td></tr>
     <tr><td>NGINX upstream reload causes request drops</td><td>Med/Med</td><td>Use <code>nginx -s reload</code> (graceful); test &lt; 1% error rate</td><td>Tasneem</td></tr>
-    <tr><td>Isolation Forest F1 &lt; 0.80</td><td>Med/Med</td><td>Add LSTM autoencoder (N2.1 ext) or tune contamination</td><td>Nada</td></tr>
+    <tr><td><s>Isolation Forest F1 &lt; 0.80</s> &mdash; resolved 2026-06-10</td><td>Med/Med</td><td>SMD dim/rolling-window/contamination search (<code>tools/anomaly-training/train_smd.py</code>) found machine-1-1+machine-1-6, dim1&rarr;latency family, dim15&rarr;error_rate, contamination=0.005 &rarr; <code>test_f1=0.8012</code> (precision=0.8681, recall=0.7439) against real SMD <code>test_label</code>; gate passed, LSTM-AE deferred (§35.6).</td><td>Nada</td></tr>
     <tr><td>Integration test env flaky under Docker</td><td>Med/Med</td><td>Use <code>healthcheck</code> waits in compose; <code>--timeout</code> per test</td><td>Rghda</td></tr>
   </tbody>
 </table>
@@ -8746,7 +8746,7 @@ SELECT create_hypertable('policy_changes', 'time');</code></pre>
   <thead><tr><th>Technique</th><th>Reference</th><th>Why it fits routing telemetry</th></tr></thead>
   <tbody>
     <tr><td><strong>Static thresholding</strong></td><td>Industry standard (Cloud Monitoring rules, PagerDuty alerts, Datadog monitors).</td><td>Cheap, explainable, ships before any model. Used as SmartLoad's baseline anomaly engine (§8.3).</td></tr>
-    <tr><td><strong>Isolation Forest</strong></td><td>Liu, Ting, Zhou &mdash; ICDM 2008 / TKDD 2012.</td><td>Per-point unsupervised scoring; isolates anomalies via random recursive partitioning &mdash; anomalous points are isolated in fewer splits than normal points. Linear training cost; no labels needed. Strong fit for SmartLoad: the NAB and Yahoo SMD reference traces have no clean labels.</td></tr>
+    <tr><td><strong>Isolation Forest</strong></td><td>Liu, Ting, Zhou &mdash; ICDM 2008 / TKDD 2012.</td><td>Per-point unsupervised scoring; isolates anomalies via random recursive partitioning &mdash; anomalous points are isolated in fewer splits than normal points. Linear training cost; the model itself is fit without labels. Strong fit for SmartLoad: Yahoo SMD's <code>test_label/</code> provides real per-timestep anomaly labels, used (not for training, only for evaluation) to validate F1 against the SOT's &gt;0.80 gate (§8.3).</td></tr>
     <tr><td><strong>LSTM autoencoder</strong></td><td>Malhotra, Vig, Shroff, Agarwal &mdash; ESANN 2015. Extended by Park et al. (2018) and Hundman et al. (KDD 2018 &mdash; NASA telemetry).</td><td>Reconstruction error on a learned sequential model; catches contextual anomalies that point-based methods miss. Heavier to train and deploy; SmartLoad treats it as a deferred upgrade path (§35.6).</td></tr>
     <tr><td><strong>Robust statistics (EWMA / median absolute deviation)</strong></td><td>Hochenbaum et al. &mdash; arXiv:1704.07706, 2017 (Twitter's <em>AnomalyDetection</em> R package).</td><td>Resists outliers in the training window. Considered but not adopted &mdash; the threshold engine + rolling mean is the simpler baseline and the Isolation Forest upgrade path covers contextual cases.</td></tr>
   </tbody>

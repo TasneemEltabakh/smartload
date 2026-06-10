@@ -1,0 +1,10 @@
+# Training-only deps for the Isolation Forest anomaly model. NOT in the
+# anomaly-detector runtime image (which only needs scikit-learn + joblib
+# to load the pkl) — keep these here so the service stays slim. Promote
+# the trained .pkl to services/anomaly-detector/models/ after running
+# train.py.
+
+pandas==2.0.3
+numpy==1.24.4
+scikit-learn==1.3.2
+joblib==1.1.1

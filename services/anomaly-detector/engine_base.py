@@ -37,6 +37,7 @@ class BackendFeatures:
     latency_rolling_mean_ms: float
     error_rate: float
     sample_count: int
+    latency_rolling_std_ms: float = 0.0
 
 
 @dataclass
