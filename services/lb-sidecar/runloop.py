@@ -332,6 +332,16 @@ class PolicyOutcome:
     error: Optional[str] = None
 
 
+@dataclass
+class ScaleOutcome:
+    """Result of processing one smartload.scale message (#164)."""
+    applied: bool = False
+    backend_count: int = 0
+    action: str = ""                       # "scale_out" | "scale_in"
+    mechanism: Optional[str] = None        # "start" | "provision" | "stop" | "decommission"
+    error: Optional[str] = None
+
+
 # Floor weight assigned to known backends that aren't in the RL ranking
 # (because the policy filtered them out as unhealthy/unknown). They still
 # need to appear in upstream.conf so the adapter can render them — either
@@ -443,6 +453,77 @@ def handle_anomaly(
             return AnomalyOutcome(applied=True, backend_id=backend_name, action="include")
     except Exception as exc:  # noqa: BLE001
         return AnomalyOutcome(applied=False, backend_id=raw_backend_id, error=str(exc))
+
+
+def handle_scale(
+    payload: dict,
+    adapter,
+    live_backends: list[str],
+) -> ScaleOutcome:
+    """Process a ScalingEvent payload (#164 — closes the gap surfaced by
+    the first adaptive-bench R2 run).
+
+    Synthesises an equal-weight upstream map from the current
+    `live_backends` list (which is the most recent docker-label query
+    from `discover_all_backends`, with anomaly-excluded backends still
+    present — the adapter renders them as ``server ... down;`` regardless
+    of weight). Calls ``adapter.set_upstream_weights(weights)``; the
+    adapter short-circuits when the weights already match, so a scale
+    event whose resulting pool already matches `upstream.conf` becomes a
+    free check.
+
+    The handler does **not** read `instance_count` from the payload — the
+    canonical truth is the running-container query, not the autoscaler's
+    intent. This means a scale_out whose Docker container failed its
+    healthcheck (so it never appeared as `status=running`) will not be
+    added to `upstream.conf`, which is the right behaviour: NGINX should
+    only route to backends that are actually running.
+
+    Why equal weights and not the prior weight map: scaling is about
+    pool *membership*, not preferred routing. Weight rewriting comes
+    from routing envelopes (still shadow today). A scale event resetting
+    weights to 1 is safe because:
+      - Anomaly-excluded backends stay excluded (rendered as `down;`).
+      - Active routing envelopes will overwrite the equal-weight map on
+        their next arrival.
+      - In shadow mode (today's default) equal weights ARE the steady
+        state — round-robin across the live pool.
+
+    Returns a ScaleOutcome:
+      applied=True  — the adapter was called with the new weights
+                      (whether it actually wrote or no-op'd is an
+                      implementation detail; the outcome's
+                      `backend_count` reflects what was instructed).
+      applied=False — no live backends to write (empty `live_backends`),
+                      or the adapter raised.
+    """
+    action = (payload.get("action") or "").lower()
+    mechanism = payload.get("mechanism")
+
+    if not live_backends:
+        return ScaleOutcome(
+            applied=False,
+            action=action,
+            mechanism=mechanism,
+            error="no live backends available — refusing to write empty upstream.conf",
+        )
+
+    try:
+        weights = {b: 1 for b in live_backends}
+        adapter.set_upstream_weights(weights)
+        return ScaleOutcome(
+            applied=True,
+            backend_count=len(live_backends),
+            action=action,
+            mechanism=mechanism,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return ScaleOutcome(
+            applied=False,
+            action=action,
+            mechanism=mechanism,
+            error=str(exc),
+        )
 
 
 def handle_policy(

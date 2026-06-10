@@ -32,9 +32,11 @@ from runloop import (  # noqa: E402
     PolicyOutcome,
     PolicyState,
     RoutingOutcome,
+    ScaleOutcome,
     handle_anomaly,
     handle_policy,
     handle_routing,
+    handle_scale,
     scores_to_weights,
 )
 
@@ -447,3 +449,125 @@ def test_handle_policy_malformed_threshold_falls_back():
     )
     assert state.rl_confidence_threshold == 0.5
     assert outcome.rl_confidence_threshold == 0.5
+
+
+# ── handle_scale (#164) ───────────────────────────────────────────────────────
+
+def test_handle_scale_out_writes_equal_weights_across_live_pool():
+    """A scale_out event grows the pool from 3 to 4 backends; the handler
+    writes an equal-weight upstream map covering the new live pool so the
+    new backend enters NGINX's upstream block."""
+    adapter = MagicMock()
+    outcome = handle_scale(
+        {"action": "scale_out", "instance_count": 4, "mechanism": "provision"},
+        adapter,
+        ["smartload-test-backend-1:8080",
+         "smartload-test-backend-2:8080",
+         "smartload-test-backend-3:8080",
+         "smartload-test-backend-4:8080"],
+    )
+    assert outcome.applied is True
+    assert outcome.backend_count == 4
+    assert outcome.action == "scale_out"
+    assert outcome.mechanism == "provision"
+    applied = adapter.set_upstream_weights.call_args[0][0]
+    assert set(applied) == {
+        "smartload-test-backend-1:8080",
+        "smartload-test-backend-2:8080",
+        "smartload-test-backend-3:8080",
+        "smartload-test-backend-4:8080",
+    }
+    assert all(w == 1 for w in applied.values())
+
+
+def test_handle_scale_in_shrinks_upstream_map():
+    """A scale_in event removes a backend from the live pool; the handler
+    writes the smaller map so the stopped container leaves upstream.conf."""
+    adapter = MagicMock()
+    outcome = handle_scale(
+        {"action": "scale_in", "instance_count": 2, "mechanism": "stop"},
+        adapter,
+        ["smartload-test-backend-1:8080",
+         "smartload-test-backend-2:8080"],
+    )
+    assert outcome.applied is True
+    assert outcome.backend_count == 2
+    applied = adapter.set_upstream_weights.call_args[0][0]
+    assert set(applied) == {
+        "smartload-test-backend-1:8080",
+        "smartload-test-backend-2:8080",
+    }
+
+
+def test_handle_scale_passes_mechanism_through_outcome():
+    """The outcome carries the mechanism field unchanged so app.py can
+    log the lifecycle path (start | provision | stop | decommission)."""
+    adapter = MagicMock()
+    for mech in ("start", "provision", "stop", "decommission"):
+        outcome = handle_scale(
+            {"action": "scale_out", "mechanism": mech},
+            adapter,
+            ["b:8080"],
+        )
+        assert outcome.mechanism == mech
+
+
+def test_handle_scale_empty_live_backends_refuses_to_write():
+    """Refusing to write an empty upstream block is the safety pin: if the
+    docker query came back empty (daemon unreachable, transient hiccup),
+    we DON'T want to leave NGINX with no upstreams."""
+    adapter = MagicMock()
+    outcome = handle_scale(
+        {"action": "scale_in"}, adapter, [],
+    )
+    assert outcome.applied is False
+    assert outcome.error is not None
+    assert "no live backends" in outcome.error
+    adapter.set_upstream_weights.assert_not_called()
+
+
+def test_handle_scale_adapter_idempotent_no_op_still_applied():
+    """The adapter short-circuits when the new weights match the current
+    upstream map. handle_scale still reports applied=True because the
+    instruction was successfully delivered — whether the adapter wrote
+    or no-op'd is an implementation detail beyond this layer."""
+    adapter = MagicMock()
+    # Even when set_upstream_weights raises nothing, the outcome is applied.
+    outcome = handle_scale(
+        {"action": "scale_out"},
+        adapter, ["b:8080"],
+    )
+    assert outcome.applied is True
+    adapter.set_upstream_weights.assert_called_once_with({"b:8080": 1})
+
+
+def test_handle_scale_adapter_error_captured():
+    adapter = MagicMock()
+    adapter.set_upstream_weights.side_effect = RuntimeError("docker reload failed")
+    outcome = handle_scale(
+        {"action": "scale_out"}, adapter, ["b:8080"],
+    )
+    assert outcome.applied is False
+    assert outcome.error is not None
+    assert "docker reload failed" in outcome.error
+
+
+def test_handle_scale_normalises_action_lowercase():
+    """ScalingEvent.action is canonically lowercase but the handler is
+    defensive against wire variants. The outcome.action mirrors what was
+    received, normalised to lowercase."""
+    adapter = MagicMock()
+    outcome = handle_scale(
+        {"action": "SCALE_OUT"}, adapter, ["b:8080"],
+    )
+    assert outcome.action == "scale_out"
+
+
+def test_handle_scale_missing_mechanism_yields_none():
+    """Older publishers without #155's mechanism field still parse
+    cleanly — the outcome's mechanism is None rather than KeyError."""
+    adapter = MagicMock()
+    outcome = handle_scale(
+        {"action": "scale_out"}, adapter, ["b:8080"],
+    )
+    assert outcome.mechanism is None

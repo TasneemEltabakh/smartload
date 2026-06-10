@@ -65,6 +65,7 @@ from runloop import (  # noqa: E402
     handle_anomaly,
     handle_policy,
     handle_routing,
+    handle_scale,
     invalidate_backend_discovery_cache,
 )
 
@@ -117,6 +118,7 @@ RUNLOOP_ENABLED = os.environ.get("LB_SIDECAR_RUNLOOP_ENABLED", "false").lower() 
 ROUTING_CHANNEL = "smartload.routing"
 ANOMALY_CHANNEL = "smartload.anomaly"
 POLICY_CHANNEL  = "smartload.policy"
+SCALE_CHANNEL   = "smartload.scale"      # #164
 
 # How long to back off after a Redis disconnect before reconnecting.
 # Short enough to recover quickly; long enough to avoid hot-looping.
@@ -229,14 +231,20 @@ def check_redis() -> tuple[bool, str | None]:
 # ── run loop ──────────────────────────────────────────────────────────────────
 
 def _open_redis_pubsub():
-    """Build a fresh Redis pubsub + subscribe to the three sidecar channels.
+    """Build a fresh Redis pubsub + subscribe to the four sidecar channels.
 
     Isolated so the run loop's reconnect path can call the same constructor
     after a redis.ConnectionError without inlining the wiring.
+
+    #164: `smartload.scale` is in the subscription set so the autoscaler's
+    pool changes drive an `upstream.conf` rewrite. Without this, NGINX
+    relies on its passive `max_fails` check to handle stopped backends and
+    never learns about freshly-provisioned ones — defeating the #155
+    dynamic-pool path.
     """
     client = redis_lib.from_url(REDIS_URL)
     pubsub = client.pubsub()
-    pubsub.subscribe(ROUTING_CHANNEL, ANOMALY_CHANNEL, POLICY_CHANNEL)
+    pubsub.subscribe(ROUTING_CHANNEL, ANOMALY_CHANNEL, POLICY_CHANNEL, SCALE_CHANNEL)
     return client, pubsub
 
 
@@ -399,6 +407,29 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                         print(f"[{SERVICE_NAME}] policy snapshot updated "
                               f"(safe_mode={outcome.safe_mode}, "
                               f"rl_confidence_threshold={outcome.rl_confidence_threshold:.3f})",
+                              flush=True)
+
+                elif channel == SCALE_CHANNEL:
+                    # #164: autoscaler scaling events drive upstream.conf
+                    # rewrites so the dynamic-pool path (#155) actually
+                    # reaches NGINX. live_backends is the most-recent
+                    # docker-label query; the handler synthesises an
+                    # equal-weight map across them, leaving anomaly-
+                    # excluded backends rendered as `down;`.
+                    live_backends = discover_all_backends(
+                        docker_client, seed_backends=ALL_BACKENDS_SEED,
+                    )
+                    outcome = handle_scale(payload, adapter, live_backends)
+                    if outcome.applied:
+                        with _state_lock:
+                            _last_routing_monotonic = time.monotonic()
+                            _excluded_backends = set(adapter.current_state().excluded_backends)
+                        mech_tag = f"[{outcome.mechanism}]" if outcome.mechanism else ""
+                        print(f"[{SERVICE_NAME}] scale: pool now "
+                              f"{outcome.backend_count} backends "
+                              f"({outcome.action} {mech_tag})".rstrip(), flush=True)
+                    elif outcome.error:
+                        print(f"[{SERVICE_NAME}] scale error: {outcome.error}",
                               flush=True)
             except Exception as exc:                # noqa: BLE001
                 print(f"[{SERVICE_NAME}] dispatch raised "
