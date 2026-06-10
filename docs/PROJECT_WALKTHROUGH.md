@@ -1508,6 +1508,32 @@ The tests cover:
 - empty history → zero prediction, no crash
 - variance → confidence band widens
 
+#### Forecast persistence (v1.0.7w, #159 — closes SOT §35.8)
+
+Before v1.0.7w, every cycle's `Forecast` was published only to Redis (`smartload.forecast`); nothing wrote it to TimescaleDB. The Grafana Forecast dashboard reconstructed predicted-RPS by regex-matching `scaling_events.reason` text, which produced one point per *autoscaler decision* rather than per *forecast* — the predicted line was sparse where the actual line was dense.
+
+The forecasting service now writes one row per inference cycle to a `forecasts` hypertable:
+
+```sql
+forecasts (
+  time             TIMESTAMPTZ,
+  horizon_minutes  INT,
+  predicted_rps    DOUBLE PRECISION,
+  confidence_lower DOUBLE PRECISION,
+  confidence_upper DOUBLE PRECISION,
+  model_name       TEXT,
+  model_version    TEXT
+)
+```
+
+Three properties worth knowing:
+
+1. **The insert runs before the publish.** That ordering means a Redis hiccup doesn't lose the row.
+2. **The insert runs regardless of `safe_mode`.** Persistence is observational — operators need to see what the engine *would* have predicted even when control flow is paused. `safe_mode` still gates the Redis publish (the control-flow effect); only the database write is unconditional.
+3. **Insert failures are logged and swallowed.** The publish remains the primary path; the cycle does not bail because the DB hiccupped.
+
+The pure helper `runloop.build_forecast_row(forecast, model_id, now, model_version)` returns the bind tuple for `shared.queries.FORECASTS_INSERT`, which makes the construction step unit-testable without a DB connection (tests at `tests/unit/forecasting/test_runloop.py::test_build_forecast_row_*`). The end-to-end behaviour is covered by `tests/integration/test_forecasts_insert.py` — including the safe-mode-still-persists and insert-failure-does-not-block-publish cases.
+
 ### 4.3 `rl-engine` (plugin-per-policy)
 
 > **Framing (v1.0.7 amendment, 2026-05-28):** The trained policy is a **contextual bandit** optimised with MaskablePPO on logged Alibaba traces — the offline simulator replays trace windows independently of the agent's action, so there are no environment dynamics to learn. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX `max_fails`, anomaly-detector exclusions, autoscaler reactivity). Canonical `operating_mode` set is now `{shadow, hybrid}` (`learning` kept as a backwards-compat alias for `hybrid`). Serving uses argmax-dominant weighting (chosen backend → 0.7, remainder split evenly across other eligibles) instead of softmax of logits. `PPOPolicy.reload(**kwargs)` is a real in-place update hook — policy republishes no longer reload `policy.zip` from disk. New `HEALTH_UNKNOWN` state excludes silent backends (no telemetry in the query window) from routing. Anomaly-health verdicts evict on a TTL so the dict stays bounded under backend churn. Full delta in SOT §22 v1.0.7.

@@ -1,6 +1,6 @@
 # Forecast + Autoscale
 
-> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **Trained ARIMA artifact landed v1.0.7i** (25.0% test MAPE; ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI). Remaining work: tighten ARIMA MAPE, `forecasts` hypertable for continuous predicted-RPS history (Forecast dashboard follow-up), SDK `subscribe_forecast`, e2e + scenario, webhook fan-out (#130).
+> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **Trained ARIMA artifact landed v1.0.7i** (25.0% test MAPE; ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI). **Forecasts hypertable landed v1.0.7w** — the Forecast dashboard's predicted line is now dense across the bucket interval (#159, closes §35.8). Remaining work: tighten ARIMA MAPE, SDK `subscribe_forecast`, e2e + scenario, webhook fan-out (#130).
 
 ## What this slice delivers
 
@@ -26,8 +26,8 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 - ARIMA engine: `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, 25.0% test MAPE — landed v1.0.7i, closes #102, supersedes stale PR #144). Training pipeline at `tools/forecasting-training/`.
 - Autoscaler: `services/autoscaler/{app,decisions,cluster_client}.py` — Forecast subscriber + Docker SDK + cooldown + reactive fallback when forecast stream goes stale. `cluster_client.py` exposes two lifecycle pairs: `start()`/`stop()` toggle compose-provisioned containers (the default, used by the #148 routing bench), and `provision()`/`decommission()` create/destroy dynamic containers via Docker SDK (gated by `AUTOSCALER_PROVISIONING_ENABLED=true`, used by the #155 adaptive bench). `scale_out()` and `scale_in()` return `(name, mechanism)` so the published `ScalingEvent.mechanism` field records which path actuated.
 - Envelopes: `services/shared/contracts.py::ForecastResult`, `::ScalingEvent`
-- SQL: `services/shared/queries.py::FORECAST_QUERY` (forecaster) + `::SCALING_AUDIT_QUERY` + `::OBSERVED_RPS_QUERY` (autoscaler reactive fallback)
-- Storage: `scaling_events` hypertable (TimescaleDB)
+- SQL: `services/shared/queries.py::FORECAST_QUERY` (forecaster reads) + `::FORECASTS_INSERT` (forecaster writes per cycle, v1.0.7w) + `::SCALING_AUDIT_QUERY` + `::OBSERVED_RPS_QUERY` (autoscaler reactive fallback)
+- Storage: `scaling_events` hypertable + `forecasts` hypertable (TimescaleDB; both 30-day retention)
 - UI: `services/operator-ui/web/src/pages/LiveEngines.tsx` (forecast tile) + `services/operator-ui/web/src/pages/Audit.tsx` (scaling decisions)
 - Grafana: `infrastructure/grafana/dashboards/{smartload-forecast,smartload-scaling}.json`
 
@@ -46,7 +46,7 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 - [x] Grafana Forecast dashboard (v1.0.7f)
 - [x] SDK `client.scale(target_count, actor)` operator method
 - [x] ARIMA model artifact (`arima_model.pkl`) — N2.2 shipped v1.0.7i (extracted from PR #144 kernel; 25.0% test MAPE — ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI per §17.4)
-- [ ] Continuous `forecasts` hypertable — forecasting service should persist every publish so the Forecast Grafana dashboard's predicted line is continuous instead of sparse-at-decision-moments. Documented as the v1.0.7f follow-up.
+- [x] Continuous `forecasts` hypertable — forecasting service persists every publish; the Forecast Grafana dashboard's predicted line is dense across the bucket interval (v1.0.7w, #159, closes SOT §35.8). 6 new unit tests + 4 integration tests.
 - [ ] SDK method — `client.subscribe_forecast(callback)`
 - [ ] Webhook fan-out for scaling events (#130)
 - [ ] Scenario script `examples/scenarios/forecast-autoscale/forecast_walk.py`

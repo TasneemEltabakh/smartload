@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S4 — Phase 2 — v1.0.7v Adaptive-bench foundation (#155 R1) — provision/decommission + dynamic discovery + DNS pre-flight</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7w Forecasts hypertable closes §35.8 (#159) — forecasts persisted per cycle + dense Grafana overlay</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5268,7 +5268,7 @@ flowchart LR
     <tr><td>OTel Collector config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/otel-collector/otelcol-config.yaml</code></td><td>—</td></tr>
     <tr><td>Redis config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/redis/redis.conf</code></td><td>—</td></tr>
     <tr><td>Prometheus config</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>infrastructure/prometheus/prometheus.yml</code></td><td>—</td></tr>
-    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + all 5 dashboards (T2.2 complete)</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview + RL Routing + Anomaly + Scaling + Forecast shipped (v1.0.7c–v1.0.7f, 2026-05-29). T2.2 complete. Forecast follow-up: persist predicted RPS to a <code>forecasts</code> hypertable so the predicted line is continuous instead of sparse-at-decision-moments.</td></tr>
+    <tr><td>Grafana provisioning</td><td>Tasneem</td><td><span class="pill pill-done">Datasources + all 5 dashboards (T2.2 complete; Forecast hypertable closed v1.0.7w)</span></td><td><code>infrastructure/grafana/{provisioning,dashboards}/</code></td><td>Overview + RL Routing + Anomaly + Scaling + Forecast shipped (v1.0.7c–v1.0.7f, 2026-05-29). T2.2 complete. Forecast follow-up landed v1.0.7w (#159): forecasts now persisted to a <code>forecasts</code> hypertable; the dashboard's predicted line is dense across the bucket interval.</td></tr>
     <tr><td>Operator UI</td><td>Tasneem</td><td><span class="pill pill-done">Home + Policy + Audit + Actions + Live Engines shipped (slices #1, #2, #3; #121 session 1 — backend + UI demoable, acceptance close-out pending)</span></td><td><code>services/operator-ui/{bff,web}/</code> · port 8090</td><td>Flask BFF + React/Vite SPA. Remaining pages: Embedded metrics (#131), Logs (#124, optional). #121 SDK / e2e / scenario / manifest pending session 2. Auth (#125, OUI.7) deferred to Phase 2 SaaS.</td></tr>
     <tr><td>config/.env.example</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/.env.example</code></td><td>—</td></tr>
     <tr><td>config/policy.yaml</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>config/policy.yaml</code></td><td>Real defaults populated (T1.5)</td></tr>
@@ -5590,6 +5590,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7w — 2026-06-10 — Forecasts hypertable closes §35.8 (#159)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>New <code>forecasts</code> hypertable in <code>init.sql</code></strong></td>
+      <td><code>infrastructure/timescaledb/init.sql</code> gains a <code>forecasts</code> hypertable with columns <code>(time TIMESTAMPTZ, horizon_minutes INT, predicted_rps DOUBLE PRECISION, confidence_lower DOUBLE PRECISION, confidence_upper DOUBLE PRECISION, model_name TEXT, model_version TEXT)</code>, a secondary index on <code>(model_name, time DESC)</code>, and a 30-day retention policy. Closes the §35.8 gap "Forecast persistence (predicted_rps over time)" recorded in the v1.0.7f Forecast-dashboard ship as a follow-up. <code>REQUIRED_TABLES</code> in <code>services/shared/queries.py</code> updated so schema-verification tests fail loudly if the table is missing.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Forecasting service writes one row per inference cycle</strong></td>
+      <td><code>services/forecasting/runloop.py</code> exposes a pure helper <code>build_forecast_row(forecast, model_id, now, model_version)</code> that returns the bind tuple for the new canonical <code>FORECASTS_INSERT</code> constant in <code>services/shared/queries.py</code>. <code>services/forecasting/app.py::_inference_cycle</code> executes the insert before <code>publish_envelope()</code> so the row survives a Redis publish failure, and the insert runs <em>regardless of <code>safe_mode</code></em> — safe_mode gates the publish (control flow) but persistence is observational (operators still need to see what the engine would have predicted). The insert is wrapped in a single <code>try/except</code> that logs the failure and continues; the publish remains the primary path.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Grafana Forecast dashboard swaps regex-on-<code>scaling_events</code> for the hypertable</strong></td>
+      <td><code>infrastructure/grafana/dashboards/smartload-forecast.json</code> — Panel 1 ("Predicted vs actual RPS"): the predicted-series target query goes from a <code>regexp_match(reason, 'predicted (\d+) rps')</code> scan over <code>scaling_events</code> to <code>SELECT time_bucket('$__interval', time), AVG(predicted_rps) FROM forecasts</code>, and the override flips the visual from scattered points (<code>drawStyle: "points"</code>, <code>pointSize: 10</code>) to a dashed purple line (<code>drawStyle: "line"</code>, <code>lineWidth: 2</code>, <code>lineStyle: {fill: "dash", dash: [10, 10]}</code>). Dashboard- and panel-level descriptions rewritten to remove the "until a forecasts hypertable is added" caveat. Panel 3 (forecast accuracy table at decision moments) and Panel 4 (recent forecast-driven decisions) intentionally retain their <code>scaling_events</code>-based queries — they serve a specific accuracy-at-scaling-decisions purpose rather than the dense-overlay purpose Panel 1 covers.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tests</strong></td>
+      <td>Six new unit tests in <code>tests/unit/forecasting/test_runloop.py</code> covering <code>build_forecast_row</code>: tuple-shape-and-order, provided-<code>now</code> honoured, default-<code>now</code> is UTC-aware, model_id maps to model_name, model_version propagates, confidence bounds (incl. None) preserved. New <code>tests/integration/test_forecasts_insert.py</code> with four scenarios driving <code>_inference_cycle</code> with mocked db_conn + publish_envelope: cycle writes exactly one <code>FORECASTS_INSERT</code> with the right params; row count grows linearly across cycles; safe_mode-enabled cycles still persist but skip publish; DB insert failure logs and continues without blocking publish. Unit suite: <strong>25 → 31</strong>. Full unit-test suite still green (verified locally — collection errors on adjacent test packages are pre-existing sys.path collisions, unrelated to this change).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>§35.8 / §18 / §22 v1.0.7f sync</strong></td>
+      <td>§35.8 Operational-maturity-gaps row for "Forecast persistence" flipped from "Would need a forecasts hypertable" to "Closed by #159 (v1.0.7w)" with the post-close mechanics. §18 Build Status row for Grafana provisioning updated to mark the Forecast follow-up landed. §22 v1.0.7f "Follow-up: forecast persistence" row's Resolved-by column now points at this release.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7v — 2026-06-09 — Adaptive-bench dynamic-pool foundation (#155 Round 1)</h3>
 <table>
@@ -6152,7 +6184,7 @@ docker compose logs -f anomaly-detector</code></pre>
     <tr>
       <td><strong>Follow-up: forecast persistence</strong></td>
       <td>A small change to the forecasting service to write each <code>ForecastResult</code> to a new <code>forecasts</code> hypertable would let the Forecast dashboard show a continuous predicted line instead of sparse-at-decision-moments. ~30 lines of code + a hypertable definition in <code>infrastructure/timescaledb/init.sql</code>. Filed as a follow-up; not blocking T2.2.</td>
-      <td>—</td>
+      <td>Closed by #159 in v1.0.7w &mdash; see §35.8 for the post-close status.</td>
     </tr>
   </tbody>
 </table>
@@ -9385,7 +9417,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
     <tr><td>Webhook dispatcher</td><td>Placeholder service. Issue #130 lands the implementation; <code>docs/planned/webhook-dispatcher.md</code> is the tracking doc.</td></tr>
     <tr><td>Embedded metrics page in operator UI</td><td>Issue #131 (OUI.x).</td></tr>
     <tr><td>Logs page in operator UI</td><td>Issue #124, optional.</td></tr>
-    <tr><td>Forecast persistence (predicted_rps over time)</td><td>Forecast values published to Redis but not persisted; Grafana's "predicted RPS" panel is therefore sparse-at-decision-moments. Would need a <code>forecasts</code> hypertable.</td></tr>
+    <tr><td>Forecast persistence (predicted_rps over time)</td><td>Closed by #159 (v1.0.7w). The forecasting service now writes one row per inference cycle to a <code>forecasts</code> hypertable (<code>init.sql</code>), and the Grafana Forecast dashboard's predicted line reads from it directly &mdash; the predicted series is dense across the dashboard's bucket interval instead of sparse-at-decision-moments. The persistence runs regardless of <code>safe_mode</code> (observational, not control-flow).</td></tr>
     <tr><td>Request correlation ID propagation</td><td>Issue #143 &mdash; tracking ID flows through every service so audit replay is deterministic.</td></tr>
     <tr><td>Test reorganisation (PEP 420 namespace packages)</td><td>Issue #140 &mdash; in progress.</td></tr>
     <tr><td>Structural lint flip from permissive to strict</td><td>Issue #139 &mdash; lint rules ship in permissive mode today; the flip to fail-on-violation gates the strict CI mode.</td></tr>
