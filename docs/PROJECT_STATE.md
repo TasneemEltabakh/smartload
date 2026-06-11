@@ -1,10 +1,12 @@
 # SmartLoad — State of the project
 
 **Audit date:** 2026-06-09 (last full audit) · **Refreshed:** 2026-06-11 (delta-only)
-**Baseline commit:** `c40a741` (v1.0.7z — #164 lb-sidecar scale subscription + walkthrough/README sync)
+**Baseline commit:** `e95997d` (v1.0.7ab — #101 N2.1 Isolation Forest engine landed + review fixes)
 **Audit method:** four parallel structured audits, one per architectural layer (decision plane, data plane + telemetry, control plane + UI + integration, infra + tests + docs + benchmarks); each layer's actual code verified against SOT §18 Build Status claims; reports synthesised into this document.
 
-**Delta since 2026-06-09 full audit:** v1.0.7w (#159 forecasts hypertable, b3b985f) · v1.0.7x (#156 R2 + #157 R3 adaptive-bench + first run, 49614c0/def8ab0/649ef13) · v1.0.7y (#163 decision-plane catch-all + liveness, 974c56d) · v1.0.7z (#164 lb-sidecar `smartload.scale` subscription closing the autoscaler → NGINX loop, 15922f7) · **v1.0.7aa (#103 T2.3 closed-loop integration tests landing as the executable spec for the four-channel dispatch)**. The five releases together close S5's high-priority items and unblock RQ4 quantitative measurement.
+**Delta since 2026-06-09 full audit:** v1.0.7w (#159 forecasts hypertable, b3b985f) · v1.0.7x (#156 R2 + #157 R3 adaptive-bench + first run, 49614c0/def8ab0/649ef13) · v1.0.7y (#163 decision-plane catch-all + liveness, 974c56d) · v1.0.7z (#164 lb-sidecar `smartload.scale` subscription closing the autoscaler → NGINX loop, 15922f7) · v1.0.7aa (#103 T2.3 closed-loop integration tests landing as the executable spec for the four-channel dispatch) · **v1.0.7ab (#101 N2.1 Isolation Forest engine shipped, F1=0.8012 > 0.80 SMD-holdout gate, c1a8c1d + e95997d review fixes — `threshold` remains the compose default pending the empirical calibration finding below)**. The six releases together close S5's high-priority items and unblock RQ4 quantitative measurement.
+
+**Empirical finding from v1.0.7ab `anomaly-engine-bench`:** on a synthetic 12×12 sweep of `(latency_ms ∈ [10, 600], error_rate ∈ [0, 0.20])`, the trained Isolation Forest engine agreed with the threshold baseline on only **25% of cells** (36/144). The asymmetry is one-sided: the model said `healthy` on 107 of 108 cells where the threshold rule said `unhealthy`. This is the **domain-adaptation gap** the engine's README (`engines/isolation_forest/README.md`) flagged at PR time, now with numbers: the `production_scaler` (fit on MST-2021 features as a proxy for live telemetry) maps real-millisecond latency into a space where the SMD-trained model's outlier boundary doesn't trigger. The model passes its own training-distribution gate (F1=0.8012 on SMD holdout) but is currently **under-reacting at production scales**. Re-tuning is a follow-up tracked under SOT §35.6 (LSTM-AE deferred + production-scale anomaly retrain).
 
 > This document is a **point-in-time snapshot** of completeness. It is **not** the canonical product spec — that is [`SOURCE_OF_TRUTH.html`](SOURCE_OF_TRUTH.html). This doc tells you *where the project stands today*; the SOT tells you *what the project is supposed to be*. When the two disagree, the SOT wins as the design authority; this doc gets updated to reflect the new reality.
 
@@ -183,8 +185,8 @@ If you only count what is *currently shipped against the current-phase scope*, S
 | S1 | Feb 1 – Apr 24 | Phase 0 | 0 | DONE |
 | S2 | Apr 28 – May 9 | Phase 1A | 0 | DONE |
 | S3 | May 10 – May 23 | Phase 1B | 0 | DONE |
-| S4 | May 24 – Jun 6 | Phase 2 | **6** | Carry-forward Rghda + Nada workstreams (#7 NAB/Yahoo SMD, #98, #99, #101, #104, #118) |
-| S5 | Jun 7 – Jun 20 | Phase 3A | **3** | Active — #103 T2.3 integration tests + #117 acceptance pattern + #116 Redis exporter (#159 / #163 / #164 closed mid-sprint) |
+| S4 | May 24 – Jun 6 | Phase 2 | **5** | Carry-forward Rghda + Nada workstreams (#7 NAB/Yahoo SMD partial, #98, #99, #104, #118; #101 closed v1.0.7ab) |
+| S5 | Jun 7 – Jun 20 | Phase 3A | **2** | Active — #117 acceptance pattern + #116 Redis exporter (#101 closed v1.0.7ab; #103 closed v1.0.7aa; #159 / #163 / #164 closed mid-sprint) |
 | S6 | Jun 21 – Jun 30 | Phase 3B (impl) | **24** | Implementation & release hardening — feature delivery (#130 webhooks, #131 OUI.8, #133 Helm, #124/#125 OUI.6/.7, #56 auth model), production maturity (#139 strict lint, #140 test reorg, #141 migrations, #143 correlation IDs, #161 /metrics, #134 versioning + deprecation, #142 backup runbook), integration adoptions (#145/#146/#147/#150), regression + release (#37, #42, #43, #46, #126), final bench + multi-run CIs (#39, #160) |
 | S7 | TBD (follows S6) | Phase 3C (docs) | **7** | Final report & presentation — pure prose deliverables (#16, #21, #40, #44, #45, #162) + demo script & slides (#41). Split out from legacy S6 on 2026-06-11 so 0% on S7 with S6 done = code complete, writeup remaining |
 

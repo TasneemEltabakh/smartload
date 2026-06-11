@@ -1440,9 +1440,15 @@ def test_healthy_when_rolling_mean_zero():        assert score.status == "health
 
 A `_features` builder is the only fixture — every test constructs the input it cares about and asserts the status. Branch-coverage in five lines.
 
-#### `engines/isolation_forest/` (stub)
+#### `engines/isolation_forest/` (v1.0.7ab, #101 N2.1)
 
-`__init__.py` is empty; `README.md` documents the planned implementation. The factory in `engine_base.py` already references this module — when the implementation lands, no rewiring is needed in `app.py` or the factory.
+Trained `scikit-learn IsolationForest` — replaces the Phase-1 threshold baseline when `ANOMALY_ENGINE=isolation_forest`. The `.pkl` at `services/anomaly-detector/models/isolation_forest.pkl` is a **bundle dict**, not a bare model: `{model, smd_scaler, production_scaler, feature_order, thresholds, metadata}`. The bundle's `feature_order` is validated against the engine's `FEATURE_ORDER` constant on load; mismatches raise `ValueError` so `bootstrap_engine()` falls back to `threshold` (the same path that handles a missing `.pkl`). Trained by `tools/anomaly-training/train_smd.py` on the Server Machine Dataset (SMD / OmniAnomaly) — search over machine sets, SMD dim → feature mappings, rolling windows, and contamination picked `machine-1-1 + machine-1-6`, dim1 → latency family, dim15 → error_rate, window=5, contamination=0.005 → **test F1 = 0.8012** on a held-out SMD split, PASS of the SOT > 0.80 N2.1 KPI gate. Sklearn version pinned to `==1.3.2` in the runtime `requirements.txt` to match the training environment — joblib / pickle is sensitive to sklearn's internal tree representation, and the artifact smoke test at `tests/integration/test_isolation_forest_artifact.py` catches drift at CI time.
+
+**Two new executable specs ship alongside the engine** (v1.0.7ab):
+
+- **`tests/integration/test_isolation_forest_live_stack.py`** — end-to-end closed-loop test (`@pytest.mark.slow`). With the compose stack up AND `ANOMALY_ENGINE=isolation_forest`, injects 400 ms latency on a single backend via `docker exec ... /_admin/delay`, drives 30 s of traffic, asserts the engine publishes `UNHEALTHY` on `smartload.anomaly` within two further monitoring cycles. Skipped with explicit reason when the stack is configured with a different engine — this is the test that catches whether the trained model actually reroutes anything in practice.
+
+- **`experiments/anomaly-engine-bench/run.py`** — comparison harness, sweeps a synthetic `(latency_ms × error_rate)` grid and scores each cell with both engines. **First run (12×12 sweep, results checked into `experiments/anomaly-engine-bench/results/`):** agreement rate = **25%** (36 / 144 cells); the trained model said `healthy` on **107 of 108 cells** where the threshold rule said `unhealthy`. This quantifies the domain-adaptation caveat the model's own README documents: the `production_scaler` (fit on MST-2021 features as a proxy for live telemetry) maps real-millisecond latency into a region where the SMD-trained outlier boundary doesn't trigger. **The model passes its training-distribution gate (F1=0.8012 on SMD holdout) but is currently under-reacting at production scales.** Recommendation: `ANOMALY_ENGINE=threshold` remains the compose default until a production-scale re-calibration of `production_scaler` raises the agreement rate (target: ≥80% on the same sweep). Tracked under SOT §35.6 as a follow-up, not a regression — the infrastructure ships, the trained weights need a second pass.
 
 ### 4.2 `forecasting` (plugin-per-engine)
 
