@@ -232,7 +232,7 @@ A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TR
 |---|---|---|---|
 | `load-balancer` | NGINX | 8080 | wired |
 | `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
-| `lb-sidecar` | Python | 8087 | T2.1 shipped — subscribes to `smartload.routing` + `smartload.anomaly` + `smartload.policy`, dynamically rewrites `upstream.conf`, `nginx -s reload` via Docker exec |
+| `lb-sidecar` | Python | 8087 | T2.1 shipped — subscribes to `smartload.routing` + `smartload.anomaly` + `smartload.policy` + `smartload.scale` (v1.0.7z, #164: closed-loop autoscale → NGINX), dynamically rewrites `upstream.conf`, `nginx -s reload` via Docker exec |
 | `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
 | `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=true` default since v1.0.7g) + `/api/v1/isolate` (slice #3, #123) |
 | `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=true` default since v1.0.7g) |

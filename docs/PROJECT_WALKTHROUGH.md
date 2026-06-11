@@ -641,6 +641,41 @@ server {
 
 The static `location = /health` was added 2026-05-22 to fix a long-standing operator-UI bug: without it, the BFF's health probe at `/health` fell through to the proxy, got round-robin'd to a test-backend, and returned the Express convention `{"status":"healthy"}` instead of SmartLoad's canonical `{"status":"ok"}`. The Home page rendered the load-balancer pill red as a result. The static location reports on NGINX itself; backend-pool health is a separate concern carried by `smartload.anomaly`. `access_log off;` keeps the BFF's 10-s poll from flooding the JSON log + shipper sidecar's OTLP stream.
 
+#### The T2.1 `lb-sidecar` — four-channel dispatch + closed-loop scale (v1.0.7z)
+
+The static `nginx.conf` above is what NGINX boots with. Everything after the first decision-plane envelope is written by the **lb-sidecar**, a Python service running alongside NGINX that subscribes to Redis pub/sub and rewrites `/etc/nginx/conf.d/upstream.conf` in place — then sends NGINX a `SIGHUP` (`nginx -s reload`) to swap the upstream block live, without dropping in-flight connections.
+
+It subscribes to **four channels**, each handled by a pure function in `services/lb-sidecar/runloop.py`:
+
+| Channel | Handler | What it does |
+| --- | --- | --- |
+| `smartload.routing` | `handle_routing` | RL/baseline policy publishes rankings + a mode (`shadow` / `active`). If `active` and `confidence ≥ rl_confidence_threshold`, convert rankings → integer NGINX weights and rewrite. |
+| `smartload.anomaly` | `handle_anomaly` | Anomaly-detector publishes an excluded-backend set. Adapter renders those rows as `server backend-X:8080 down;` so NGINX skips them without removing them from the pool. |
+| `smartload.policy` | `handle_policy` | Policy-manager publishes config changes (e.g. `operating_mode`, thresholds). Hot-reloads runtime knobs without restart. |
+| `smartload.scale` | `handle_scale` | **New in v1.0.7z (#164).** Autoscaler publishes `ScalingEvent` after `provision()` / `decommission()` succeeds. Re-queries the live Docker pool, regenerates an equal-weight upstream map, and writes. |
+
+**Why the scale channel matters — the closed-loop story.** Before v1.0.7z, the autoscaler could grow the test-backend pool from 5 → 7 containers, but NGINX still only knew about the 5 names baked into the static `upstream` block (or whatever the last routing-driven rewrite said). The two new backends took traffic only if a routing event happened to fire and the policy happened to include them. There was no guarantee they'd ever be reached — which is why the adaptive-bench gates "pool grew during B" and "pool shrank during D" couldn't produce affirmative strings on the first end-to-end run. The autoscaler was acting; NGINX wasn't listening.
+
+`handle_scale` closes that loop. Every scaling event triggers a fresh `discover_all_backends()` query against the Docker daemon, the live container set becomes the new upstream weights map, and within the same NGINX reload cycle (~10 ms) the new pool is taking traffic.
+
+**Why re-query Docker instead of trusting the payload.** The `ScalingEvent` envelope carries `instance_count`, but the canonical truth is the running container set, not the autoscaler's *intent*. A `provision()` call can fail at the Docker layer (image pull error, port collision, daemon unreachable) and the autoscaler's "we tried to scale to 7" doesn't mean there are 7 healthy containers. So `handle_scale` reads only `action` (`scale_out` / `scale_in`) and `mechanism` (`start` / `provision` / `stop` / `decommission`) from the payload — for logging — and gets the actual pool from Docker.
+
+**Safety pin: refuses to write an empty `upstream.conf`.** If the Docker query returns zero backends (daemon unreachable, network partition), the handler returns `applied=False` with an error and **leaves the previous adapter state intact**. NGINX keeps serving the last known good pool. Without this pin, a transient Docker outage during a scale event would hand NGINX a zero-backend upstream block and every request would 502.
+
+**Idempotency comes free from the adapter.** `NginxFileAdapter.set_upstream_weights(weights)` already short-circuits when `weights == self._weights` — same map in, no rewrite, no SIGHUP. So if a scale event's resulting pool exactly matches what's already in `upstream.conf` (common: the routing handler just rewrote the same backends a second earlier), `handle_scale` becomes a free no-op. No double-rewrite churn, no spurious NGINX reload.
+
+**Interaction with anomaly exclusions.** Anomaly-excluded backends still appear in `live_backends` (they're running containers; they're just unhealthy). The adapter's existing exclusion path renders them as `server backend-X:8080 down;` regardless of which handler triggered the rewrite. So a scale event that grows the pool while one existing backend is anomaly-excluded produces an `upstream.conf` with the new backends plus the existing-but-down one — exactly the desired state.
+
+**Unit tests** (`tests/unit/lb-sidecar/test_runloop.py`, 8 new tests for a total of 40):
+- scale_out grows the weights map across the full live pool
+- scale_in shrinks it
+- all four `mechanism` strings flow through the outcome unchanged
+- empty `live_backends` triggers the safety pin (no write, `applied=False`)
+- adapter idempotent no-op still reports `applied=True` (the instruction was delivered, even if the map didn't change)
+- adapter exception is captured in `outcome.error` (handler never crashes the dispatch loop)
+- action is normalised to lowercase
+- missing `mechanism` field yields `None` (forward-compat with older publishers)
+
 ### 3.2 `lb-otel-shipper` — log tail → OTLP
 
 #### What it is
@@ -1623,7 +1658,7 @@ class RoutingPolicy(ABC):
     def reload(self) -> None: ...
 ```
 
-Two named types reflect the RL contract: `state → act → action`. State is a list (one entry per backend), action is a ranking and a mode. The shape is what the T2.1 LB sidecar consumes today (shipped 2026-05-23) — `services/lb-sidecar/runloop.py:handle_routing` parses the rankings into NGINX weights, with `confidence = max(scores)` gated by `rl_confidence_threshold` per SOT §13 (v1.0.7b).
+Two named types reflect the RL contract: `state → act → action`. State is a list (one entry per backend), action is a ranking and a mode. The shape is what the T2.1 LB sidecar consumes today (shipped 2026-05-23) — `services/lb-sidecar/runloop.py:handle_routing` is one of four channel handlers (the others are `handle_anomaly`, `handle_policy`, and v1.0.7z's `handle_scale` — see §3.1 for the full four-channel dispatch story). It parses the rankings into NGINX weights, with `confidence = max(scores)` gated by `rl_confidence_threshold` per SOT §13 (v1.0.7b).
 
 #### `policies/random_shadow/policy.py`
 
