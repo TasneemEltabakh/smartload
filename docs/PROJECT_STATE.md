@@ -185,7 +185,7 @@ If you only count what is *currently shipped against the current-phase scope*, S
 | S1 | Feb 1 – Apr 24 | Phase 0 | 0 | DONE |
 | S2 | Apr 28 – May 9 | Phase 1A | 0 | DONE |
 | S3 | May 10 – May 23 | Phase 1B | 0 | DONE |
-| S4 | May 24 – Jun 6 | Phase 2 | **5** | Carry-forward Rghda + Nada workstreams (#7 NAB/Yahoo SMD partial, #98, #99, #104, #118; #101 closed v1.0.7ab) |
+| S4 | May 24 – Jun 6 | Phase 2 | **4** | Carry-forward Rghda + Nada workstreams (#98, #99, #104, #118; #101 closed v1.0.7ab, #7 closed-with-rationale 2026-06-11 — SMD acquired + NAB rejected as unfit per PR #158, datasets gitignored by design rather than committed) |
 | S5 | Jun 7 – Jun 20 | Phase 3A | **1** | Active — #117 acceptance pattern (#116 closed v1.0.7ac; #101 closed v1.0.7ab; #103 closed v1.0.7aa; #159 / #163 / #164 closed mid-sprint) |
 | S6 | Jun 21 – Jun 30 | Phase 3B (impl) | **24** | Implementation & release hardening — feature delivery (#130 webhooks, #131 OUI.8, #133 Helm, #124/#125 OUI.6/.7, #56 auth model), production maturity (#139 strict lint, #140 test reorg, #141 migrations, #143 correlation IDs, #161 /metrics, #134 versioning + deprecation, #142 backup runbook), integration adoptions (#145/#146/#147/#150), regression + release (#37, #42, #43, #46, #126), final bench + multi-run CIs (#39, #160) |
 | S7 | TBD (follows S6) | Phase 3C (docs) | **7** | Final report & presentation — pure prose deliverables (#16, #21, #40, #44, #45, #162) + demo script & slides (#41). Split out from legacy S6 on 2026-06-11 so 0% on S7 with S6 done = code complete, writeup remaining |
