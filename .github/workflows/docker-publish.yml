@@ -315,6 +315,14 @@ jobs:
         # fidelity — the Approach B proof point).
         run: pytest tests/integration/test_lb_otel_shipper.py -v
 
+      - name: Run T2.3 closed-loop tests against live stack (#103)
+        # Two of three scenarios run by default: anomaly-reroute and
+        # safe-mode. The forecast-driven scale-out scenario is marked
+        # @pytest.mark.slow (~3 min wall-time, needs provisioning
+        # enabled) and is deselected here. Operators run it locally
+        # against an adaptive-bench-configured stack with `-m slow`.
+        run: pytest tests/integration/test_t23_control_loop.py -v -m "not slow"
+
       - name: Dump service logs on failure
         if: failure()
         run: |
