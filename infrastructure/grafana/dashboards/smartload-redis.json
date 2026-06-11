@@ -1,0 +1,256 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Redis control-bus health (#116). Surfaces the five questions an operator asks when something on smartload.* feels slow: how many subscribers are connected, what's the command rate, how much memory the broker holds, what's the keyspace cache hit ratio, and how many pub/sub channels are open. All metrics from oliver006/redis_exporter scraped by the prometheus job `redis_exporter`.",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Total clients connected to Redis right now (lb-sidecar, the four decision-plane services, operator-ui BFF, this dashboard's exporter). Spikes above the normal floor suggest a leaked client somewhere.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 20},
+              {"color": "red", "value": 50}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "redis_connected_clients",
+          "refId": "A"
+        }
+      ],
+      "title": "Connected clients",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Memory Redis is holding in RAM. SmartLoad uses Redis as a pub/sub bus (channel-only configuration in infrastructure/redis/redis.conf), so this should hover near the baseline overhead — a steady climb means a client is creating keys it shouldn't.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 52428800},
+              {"color": "red", "value": 104857600}
+            ]
+          },
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "redis_memory_used_bytes",
+          "refId": "A"
+        }
+      ],
+      "title": "Memory used",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Open pub/sub channels right now (smartload.routing, .anomaly, .policy, .scale, .forecast). Expect ~5 in normal operation; a drop means a subscriber died, a climb means a client is opening channels and not closing them.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "yellow", "value": null},
+              {"color": "green", "value": 4},
+              {"color": "yellow", "value": 10}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "redis_pubsub_channels",
+          "refId": "A"
+        }
+      ],
+      "title": "Pub/Sub channels",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Uptime since Redis last restarted. If this resets unexpectedly the broker crashed; check `docker compose logs redis`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"]},
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "redis_uptime_in_seconds",
+          "refId": "A"
+        }
+      ],
+      "title": "Uptime",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Commands per second processed by Redis. The control-bus busiest moment is when a routing publish + a policy publish + a scale publish all land in the same second; sustained rate above the §8.10 SOT cap means the bus is saturated and subscribers may be dropping envelopes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none"},
+            "axisLabel": "",
+            "axisPlacement": "auto"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 5,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "rate(redis_commands_processed_total[1m])",
+          "legendFormat": "commands/sec",
+          "refId": "A"
+        }
+      ],
+      "title": "Command rate (per second, 1-min average)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Keyspace hits vs misses. SmartLoad doesn't read keys (pure pub/sub usage), so both should sit near zero. A misses spike means a service is doing GET / EXISTS against a key that doesn't exist — usually a bug.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {"mode": "none"},
+            "axisLabel": "",
+            "axisPlacement": "auto"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "id": 6,
+      "options": {
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "rate(redis_keyspace_hits_total[1m])",
+          "legendFormat": "hits/sec",
+          "refId": "A"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "rate(redis_keyspace_misses_total[1m])",
+          "legendFormat": "misses/sec",
+          "refId": "B"
+        }
+      ],
+      "title": "Keyspace hits / misses",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["smartload", "infra"],
+  "templating": {"list": []},
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "SmartLoad — Redis (control bus health)",
+  "uid": "smartload-redis",
+  "version": 1,
+  "weekStart": ""
+}

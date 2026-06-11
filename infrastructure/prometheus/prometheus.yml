@@ -10,6 +10,14 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector:8889"]
 
+  # #116 Redis exporter — control-bus health (connected_clients, ops/sec,
+  # memory_used_bytes, keyspace_hits/misses, per-channel pub/sub depth via
+  # redis_pubsub_channels / redis_pubsub_patterns). Default scrape interval
+  # is fine; Redis stats update faster than 15s anyway.
+  - job_name: redis_exporter
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
   # SmartLoad AI services — each exposes /metrics via Flask (future)
   # For now Prometheus scrapes /health as a connectivity check
   - job_name: telemetry

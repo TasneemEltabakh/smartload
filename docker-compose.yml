@@ -42,6 +42,25 @@ services:
       - smartload-net
     restart: unless-stopped
 
+  # #116 Redis exporter — surfaces connected_clients, ops/sec, memory used,
+  # keyspace hits, and (via -check-keys / -check-streams) per-channel
+  # pub/sub depth to Prometheus on :9121. Scraped by prometheus.yml's
+  # `redis_exporter` job. Lets us see the control bus's health without
+  # exec'ing `redis-cli info` from the host every time.
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0-alpine
+    command:
+      - "--redis.addr=redis://redis:6379"
+      - "--log-format=json"
+    ports:
+      - "9121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
     volumes:
