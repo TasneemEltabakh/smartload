@@ -68,7 +68,7 @@ COMPOSE_BACKENDS = [
 # ── pubsub helpers ────────────────────────────────────────────────────────────
 
 def _subscribe(channel: str):
-    """Return a pubsub subscribed to `channel`, fully registered with Redis.
+    """Return (client, pubsub) subscribed to `channel`, fully registered.
 
     Redis pubsub is fire-and-forget: a publish that lands before our
     SUBSCRIBE command is processed by the server is lost forever — there
@@ -76,18 +76,23 @@ def _subscribe(channel: str):
     but does not block on the server-side ack; if we POST immediately
     after, the publisher's envelope can fly past before we're routed in.
 
-    We block 300 ms after subscribing so the Redis round-trip completes,
-    then drain any envelopes that arrived during the wait (e.g. a periodic
-    forecast publish on a high-traffic channel). The drain is unbounded by
-    sleep — get_message with a short timeout returns None as soon as the
-    buffer empties — so a quiet channel costs only the 300 ms registration."""
-    r = redis_lib.from_url(REDIS_URL, decode_responses=True)
-    ps = r.pubsub(ignore_subscribe_messages=True)
-    ps.subscribe(channel)
-    time.sleep(0.3)
-    while ps.get_message(timeout=0.05) is not None:
-        pass
-    return ps
+    Follows the proven pattern from tests/integration/test_autoscaler.py:
+    no decode_responses on the client (decode bytes manually on read), and
+    pass ignore_subscribe_messages to each get_message call rather than
+    to the constructor — redis-py 5.0.4 has subtle quirks with the
+    constructor-level flag + decode_responses interaction that caused
+    envelopes to be silently dropped in the v1.0.7aa first attempt.
+
+    Returns the client too so the caller can keep it alive while reading
+    from the pubsub — letting it go out of scope can close the connection."""
+    client = redis_lib.from_url(REDIS_URL)
+    pubsub = client.pubsub()
+    pubsub.subscribe(channel)
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1) is None:
+            break
+    return client, pubsub
 
 
 def _wait_for_envelope(pubsub, predicate, timeout: float):
@@ -96,14 +101,21 @@ def _wait_for_envelope(pubsub, predicate, timeout: float):
     Returns the matching payload dict or None on timeout. The predicate
     is what makes the wait specific: a callable like
     `lambda p: p["safe_mode"] is True` keeps the test from being satisfied
-    by an unrelated envelope on the same channel."""
+    by an unrelated envelope on the same channel.
+
+    Data arrives as bytes (decode_responses=False); we decode locally."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        msg = pubsub.get_message(timeout=0.5)
+        msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5)
         if msg is None:
             continue
+        data = msg.get("data")
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        if not isinstance(data, str):
+            continue
         try:
-            envelope = json.loads(msg["data"])
+            envelope = json.loads(data)
             payload = envelope.get("payload", {})
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
@@ -187,7 +199,7 @@ def test_anomaly_reroute_excludes_then_recovers(stack_ready):
         f"up the prior run before re-running this test."
     )
 
-    ps = _subscribe(ANOMALY_CHANNEL)
+    client_a, ps = _subscribe(ANOMALY_CHANNEL)
 
     try:
         # Publish the UNHEALTHY signal.
@@ -223,7 +235,7 @@ def test_anomaly_reroute_excludes_then_recovers(stack_ready):
         )
 
         # Recovery: publish HEALTHY and assert the exclusion clears.
-        ps_recovery = _subscribe(ANOMALY_CHANNEL)
+        client_r, ps_recovery = _subscribe(ANOMALY_CHANNEL)
         r = requests.post(
             f"{SERVICE_URLS['anomaly-detector']}/api/v1/isolate",
             json={
@@ -255,6 +267,12 @@ def test_anomaly_reroute_excludes_then_recovers(stack_ready):
         )
     finally:
         ps.close()
+        client_a.close()
+        try:
+            ps_recovery.close()
+            client_r.close()
+        except (NameError, UnboundLocalError):
+            pass
         # Belt-and-braces: even if an assertion above failed, push one more
         # HEALTHY publish so the next test starts from a clean exclusion set.
         try:
@@ -289,7 +307,7 @@ def test_safe_mode_publishes_envelope_and_resets_weights(stack_ready):
         "running this test so we can assert the false → true transition."
     )
 
-    ps_on = _subscribe(POLICY_CHANNEL)
+    client_on, ps_on = _subscribe(POLICY_CHANNEL)
     try:
         _post_policy({"safe_mode": True})
 
@@ -317,10 +335,11 @@ def test_safe_mode_publishes_envelope_and_resets_weights(stack_ready):
         )
     finally:
         ps_on.close()
+        client_on.close()
 
     # Restore — and assert the off-transition publishes too, so a future
     # safe_mode toggle isn't silently broken by a stale on-disk state.
-    ps_off = _subscribe(POLICY_CHANNEL)
+    client_off, ps_off = _subscribe(POLICY_CHANNEL)
     try:
         _post_policy({"safe_mode": False})
         off_payload = _wait_for_envelope(
@@ -333,6 +352,7 @@ def test_safe_mode_publishes_envelope_and_resets_weights(stack_ready):
         )
     finally:
         ps_off.close()
+        client_off.close()
 
 
 # ── scenario 2: forecast-driven scale-out  (slow) ─────────────────────────────
