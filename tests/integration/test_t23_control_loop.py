@@ -68,19 +68,25 @@ COMPOSE_BACKENDS = [
 # ── pubsub helpers ────────────────────────────────────────────────────────────
 
 def _subscribe(channel: str):
-    """Return a pubsub subscribed to `channel` with the receive buffer drained.
+    """Return a pubsub subscribed to `channel`, fully registered with Redis.
 
-    Draining matters: a stale envelope from a previous test or from the
-    service's warm-up could satisfy the assertion in the next test and mask
-    a real regression. We block until either a real message arrives or the
-    drain timeout elapses with no messages — whichever comes first."""
+    Redis pubsub is fire-and-forget: a publish that lands before our
+    SUBSCRIBE command is processed by the server is lost forever — there
+    is no buffer for late subscribers. `ps.subscribe()` queues the command
+    but does not block on the server-side ack; if we POST immediately
+    after, the publisher's envelope can fly past before we're routed in.
+
+    We block 300 ms after subscribing so the Redis round-trip completes,
+    then drain any envelopes that arrived during the wait (e.g. a periodic
+    forecast publish on a high-traffic channel). The drain is unbounded by
+    sleep — get_message with a short timeout returns None as soon as the
+    buffer empties — so a quiet channel costs only the 300 ms registration."""
     r = redis_lib.from_url(REDIS_URL, decode_responses=True)
     ps = r.pubsub(ignore_subscribe_messages=True)
     ps.subscribe(channel)
-    drain_deadline = time.monotonic() + 1.0
-    while time.monotonic() < drain_deadline:
-        if ps.get_message(timeout=0.1) is None:
-            break
+    time.sleep(0.3)
+    while ps.get_message(timeout=0.05) is not None:
+        pass
     return ps
 
 
