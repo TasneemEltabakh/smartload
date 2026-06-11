@@ -210,10 +210,12 @@ smartload/
 ├── docs/
 │   ├── SOURCE_OF_TRUTH.html          # canonical spec (read first)
 │   ├── PROJECT_WALKTHROUGH.md        # narrative walkthrough
+│   ├── PROJECT_STATE.md              # point-in-time audit of where the project stands
 │   ├── features/                     # per-feature manifests
 │   ├── architecture/                 # control / data plane, multi-tenancy, failure modes
 │   ├── openapi/                      # smartload-v1.yaml
 │   ├── planned/                      # placeholder docs for unimplemented services
+│   ├── academic-assessment.md        # project provenance + thesis / poster / presentation lift table
 │   └── redis-channels.md             # canonical channel registry
 ├── scripts/                          # lint-*.py, seed-metrics.py, download-datasets.sh
 ├── config/                           # policy.yaml + .env.example
