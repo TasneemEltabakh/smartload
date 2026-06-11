@@ -127,14 +127,14 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
 | `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
 | `anomaly-detector` | Python | 8082 | Threshold baseline (default) + trained Isolation Forest (opt-in via `ANOMALY_ENGINE=isolation_forest`) |
-| `forecasting` | Python | 8083 | Moving-average baseline + ARIMA plugin slot |
+| `forecasting` | Python | 8083 | Moving-average baseline (default) + trained ARIMA(3,0,1) (opt-in via `FORECAST_ENGINE=arima`, MAPE ~25% vs SOT KPI <20% — tuning continues) |
 | `rl-engine` | Python | 8084 | Random-shadow baseline + PPO policy with `shadow`/`active` mode pin |
 | `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback |
 | `policy-manager` | Python | 8086 | Operating policy REST API + audit + Redis publish on change |
 | `operator-ui` | Flask + React | 8090 | BFF + web transparency / override surface |
 | `webhook-dispatcher` | — | — | Outbound HMAC-signed HTTP events (planned) |
 
-Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
+Infrastructure: TimescaleDB · Redis · `redis-exporter` (control-bus health, v1.0.7ac) · OTel Collector · Prometheus · Grafana (6 dashboards including the new `smartload-redis.json` for control-bus observability) — all configured under `infrastructure/`.
 
 ### Plugin model
 
@@ -217,6 +217,15 @@ smartload/
 │   ├── planned/                      # placeholder docs for unimplemented services
 │   ├── academic-assessment.md        # project provenance + thesis / poster / presentation lift table
 │   └── redis-channels.md             # canonical channel registry
+├── experiments/                      # bench harnesses (canonical benchmark location)
+│   ├── baseline-vs-smartload/        # NGINX baseline vs. SmartLoad full plane
+│   ├── adaptive-bench/               # 5-phase forecast → autoscale closed loop
+│   └── anomaly-engine-bench/         # threshold vs. isolation_forest sweep
+├── tools/                            # dev utilities (not shipped middleware)
+│   ├── anomaly-training/             # SMD-based IsolationForest training pipeline
+│   ├── forecasting-training/         # ARIMA training pipeline
+│   ├── demo-ui/                      # scenario injection + chaos + SSE feed (:8091)
+│   └── traffic-simulator/            # Locust UI (:8089)
 ├── scripts/                          # lint-*.py, seed-metrics.py, download-datasets.sh
 ├── config/                           # policy.yaml + .env.example
 ├── datasets/                         # public training data; fetched, gitignored
@@ -237,6 +246,10 @@ docker compose up -d && pytest tests/e2e/             # feature-level via SDK
 pytest tests/conformance/                             # interface conformance (per plugin)
 docker compose up traffic-simulator                   # Locust at :8089
 ```
+
+Per-task acceptance-test pattern + starter template + slow-marker convention: [`tests/README.md`](tests/README.md). Reference implementations to copy from when writing a new acceptance test are listed there.
+
+Benchmarks live under [`experiments/`](experiments/) — three harnesses cover the steady-state baseline (`baseline-vs-smartload/`), the closed-loop adaptive workload (`adaptive-bench/`), and the per-engine comparison sweep (`anomaly-engine-bench/`). Each emits JSON / CSV + SUMMARY.md artefacts under a timestamped `results/` dir.
 
 Structural lints (permissive today; strict mode planned):
 
@@ -301,6 +314,7 @@ Issues and pull requests welcome. A few conventions worth knowing before you ope
 - Every new feature ships its own `docs/features/<feature>.md` manifest + `tests/e2e/<feature>/` suite + `examples/scenarios/<feature>/` runnable demo. The three structural lints enforce this.
 - Architectural decisions go in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html); narrative implementation context goes in [`docs/PROJECT_WALKTHROUGH.md`](docs/PROJECT_WALKTHROUGH.md). The two stay in sync.
 - Run `pytest tests/unit/` before pushing; `compose-test` runs the full e2e + integration suite in CI.
+- Per-task acceptance-test pattern lives in [`tests/README.md`](tests/README.md); copy [`tests/integration/_template_acceptance.py`](tests/integration/_template_acceptance.py) when adding a new task's acceptance test. The repo's [`.github/pull_request_template.md`](.github/pull_request_template.md) carries the checklist GitHub renders for every PR.
 
 For substantial features, open an issue first so we can shape the slice together.
 

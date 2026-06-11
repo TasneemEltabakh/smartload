@@ -1870,7 +1870,8 @@ flowchart TB
             SHP["lb-otel-shipper<br/>(sidecar, tails NGINX log)"]
             OT["OTel Collector"]
             TS["Telemetry Service"]
-            DB[("TimescaleDB<br/>metrics · backend_health · scaling_events")]
+            DB[("TimescaleDB<br/>metrics · backend_health<br/>· scaling_events · forecasts · policy_changes")]
+            RX["redis-exporter<br/>(v1.0.7ac, #116)"]
             PR["Prometheus"]
             GF["Grafana"]
         end
@@ -1902,13 +1903,18 @@ flowchart TB
     PM --> BUS
     BUS --> SC
     BUS --> AS
+    AS --> BUS
+    BUS -. "redis INFO" .-> RX
+    RX -. "/metrics" .-> PR
+    OT --> PR
+    PR --> GF
     SC ==> |"writes nginx.conf<br/>nginx -s reload"| NG
 
     classDef dataplane fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
     classDef ctrl fill:#f5f3ff,color:#0f172a,stroke:#6d28d9,stroke-width:1px;
     classDef bridge fill:#ecfdf5,color:#0f172a,stroke:#047857,stroke-width:2px;
     class NG,BE dataplane
-    class SHP,OT,TS,DB,PR,GF,AD,FE,RL,BUS,AS,PM ctrl
+    class SHP,OT,TS,DB,RX,PR,GF,AD,FE,RL,BUS,AS,PM ctrl
     class SC bridge
 </pre>
   <figcaption><strong>Figure 5.2 — Layer Diagram.</strong> The two execution surfaces. <em>Data plane</em> (top, blue) serves traffic; <em>control plane</em> (bottom, purple) decides how traffic is served. The <strong>LB Sidecar</strong> (green) is the only process that crosses the boundary — it lives in the control plane and writes <code>nginx.conf</code> into the data plane via <code>nginx -s reload</code>. No engine touches NGINX directly. The <strong>lb-otel-shipper</strong> sidecar tails NGINX's JSON access log over a shared volume and emits OTLP/HTTP-JSON to the OTel Collector — one data point per request, preserving per-request fidelity for the AI engines' <code>STDDEV</code>/<code>MAX</code> queries.</figcaption>
@@ -1971,7 +1977,7 @@ flowchart TB
     <tr><td>Anomaly Detector</td><td><code>smartload.anomaly</code></td><td>LB sidecar</td><td>~5 s</td></tr>
     <tr><td>Forecasting Engine</td><td><code>smartload.forecast</code></td><td>Autoscaler</td><td>~60 s</td></tr>
     <tr><td>RL Engine</td><td><code>smartload.routing</code></td><td>LB sidecar</td><td>~5 s</td></tr>
-    <tr><td>Autoscaler</td><td><code>smartload.scale</code></td><td>Policy Manager (audit)</td><td>on action</td></tr>
+    <tr><td>Autoscaler</td><td><code>smartload.scale</code></td><td>LB sidecar (v1.0.7z #164) + operator-ui (audit) + webhook-dispatcher (planned #130)</td><td>on action</td></tr>
     <tr><td>Policy Manager</td><td><code>smartload.policy</code></td><td>All AI services + LB sidecar</td><td>on change</td></tr>
   </tbody>
 </table>
@@ -2089,7 +2095,7 @@ flowchart TB
   <p>This directory is the <em>map</em>, not the architecture. It enumerates every container in the wired stack and links to the canonical design contract for each. Use it to find a module quickly; use §8 (Deep Dives) to understand what each module is supposed to be.</p>
 </div>
 
-<p>The wired stack is <strong>14 containers</strong>: 8 SmartLoad services (load-balancer + lb-otel-shipper sidecar + 6 internal services) + 5 infrastructure (TimescaleDB, Redis, OTel Collector, Prometheus, Grafana) + test-backend (scaled) + traffic-simulator (Locust). All SmartLoad services share <code>services/shared/contracts.py</code> and <code>services/shared/queries.py</code> — these are the only cross-service imports allowed (principle 11).</p>
+<p>The wired stack is <strong>~16 containers</strong> (modulo test-backend scaling): 10 SmartLoad services (load-balancer + lb-otel-shipper + lb-sidecar + telemetry + anomaly-detector + forecasting + rl-engine + autoscaler + policy-manager + operator-ui) + 6 infrastructure (TimescaleDB, Redis, <strong>redis-exporter</strong> v1.0.7ac, OTel Collector, Prometheus, Grafana) + test-backend (scaled, default 5 replicas) + traffic-simulator (Locust). All SmartLoad services share <code>services/shared/contracts.py</code> and <code>services/shared/queries.py</code> — these are the only cross-service imports allowed (principle 11).</p>
 
 <div class="card-grid">
 
@@ -2217,7 +2223,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">docker-compose</span></div>
     <h4>Deployment Layer</h4>
     <div class="role">DevOps · Tasneem / Rghda</div>
-    <p class="small">Single <code>docker-compose.yml</code> brings up all 14 containers. CI/CD via GitHub Actions. Kubernetes / cloud deployment is a stretch goal.</p>
+    <p class="small">Single <code>docker-compose.yml</code> brings up all 16 containers (modulo test-backend scaling). CI/CD via GitHub Actions. Kubernetes / cloud deployment is a stretch goal.</p>
     <div class="deeplink"><a href="#mod-deployment">→ Deep dive</a></div>
   </article>
 
@@ -2687,6 +2693,7 @@ flowchart TB
     backend_health[("<b>backend_health</b><br/>hypertable<br/>retention 30 d")]
     scaling_events[("<b>scaling_events</b><br/>hypertable<br/>retention 90 d")]
     policy_changes[("<b>policy_changes</b><br/>hypertable<br/>retention 90 d")]
+    forecasts[("<b>forecasts</b><br/>hypertable<br/>retention 30 d<br/>v1.0.7w #159")]
 
     AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
     ASL ==>|"SCALING_EVENT_INSERT"| scaling_events
@@ -2707,17 +2714,19 @@ flowchart TB
     backend_health --> GRF
     scaling_events --> GRF
     policy_changes --> GRF
+    FCT ==>|"FORECAST_INSERT"| forecasts
+    forecasts --> GRF
 
     classDef table fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
     classDef cagg fill:#f5f3ff,color:#0f172a,stroke:#7c3aed,stroke-width:2px,stroke-dasharray:4 2;
     classDef writer fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef reader fill:#ecfdf5,color:#0f172a,stroke:#047857;
-    class metrics,backend_health,scaling_events,policy_changes table
+    class metrics,backend_health,scaling_events,policy_changes,forecasts table
     class metrics_1min cagg
-    class OTel,AND,ASL,PM writer
+    class OTel,AND,ASL,PM,FCT writer
     class FCT,RL,SC,GRF reader
 </pre>
-  <figcaption><strong>Figure 8.4 — Metrics DB ownership &amp; flow.</strong> Three hypertables and one continuous aggregate, all defined in <code>infrastructure/timescaledb/init.sql</code>. Solid double arrows are <em>writes</em>; each table has exactly one writer service (single-writer ownership, principle 8). Dashed arrow is the <code>metrics_1min</code> continuous aggregate refresh (every 1 min, materialised window <code>[-1 h, -2 m]</code>). Thin arrows are reads via the canonical SQL constants in <code>services/shared/queries.py</code>. Autoscaler is shown as a writer only — its input is the <code>smartload.forecast</code> Redis channel, not the metrics table.</figcaption>
+  <figcaption><strong>Figure 8.4 — Metrics DB ownership &amp; flow.</strong> Four hypertables and one continuous aggregate, all defined in <code>infrastructure/timescaledb/init.sql</code>. Solid double arrows are <em>writes</em>; each table has exactly one writer service (single-writer ownership, principle 8). Dashed arrow is the <code>metrics_1min</code> continuous aggregate refresh (every 1 min, materialised window <code>[-1 h, -2 m]</code>). Thin arrows are reads via the canonical SQL constants in <code>services/shared/queries.py</code>. The Forecasting Engine is both a reader (of <code>metrics</code>) and a writer (of <code>forecasts</code>, v1.0.7w #159 — closes the §35.8 Grafana sparse-line gap). Autoscaler is shown as a writer only — its input is the <code>smartload.forecast</code> Redis channel, not the metrics table.</figcaption>
 </figure>
 
 <details>
@@ -3228,7 +3237,7 @@ class RoutingRecommendation:
     <tr><td><code>smartload.anomaly</code></td><td>anomaly-detector</td><td>load-balancer sidecar</td></tr>
     <tr><td><code>smartload.forecast</code></td><td>forecasting</td><td>autoscaler</td></tr>
     <tr><td><code>smartload.routing</code></td><td>rl-engine</td><td>load-balancer sidecar</td></tr>
-    <tr><td><code>smartload.scale</code></td><td>autoscaler</td><td>policy-manager (audit)</td></tr>
+    <tr><td><code>smartload.scale</code></td><td>autoscaler</td><td>lb-sidecar (v1.0.7z #164) + operator-ui (audit) + webhook-dispatcher (planned #130)</td></tr>
     <tr><td><code>smartload.policy</code></td><td>policy-manager</td><td>all AI services + sidecar</td></tr>
   </tbody>
 </table>
@@ -3572,7 +3581,7 @@ pytest tests/integration/ -v</code></pre>
     <div class="dc-row"><div class="key">Why it exists</div><div class="val">A documented architecture is only useful if there's a one-command path to a green stack. <code>docker-compose up --build -d</code> is that path for the prototype.</div></div>
     <div class="dc-row"><div class="key">Owned responsibilities</div><div class="val">
       <ul>
-        <li>Single <code>docker-compose.yml</code> orchestrating 14 containers.</li>
+        <li>Single <code>docker-compose.yml</code> orchestrating 16 containers (modulo test-backend scaling).</li>
         <li>One <code>Dockerfile</code> per service, each reproducible from <code>requirements.txt</code> + Python 3.x base image.</li>
         <li>Private bridge network <code>smartload-net</code>; healthchecks on TimescaleDB + Redis as startup dependencies.</li>
         <li>CI/CD via GitHub Actions: lint, unit tests, build images on push.</li>
@@ -3995,8 +4004,8 @@ SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists =>
     <tr>
       <td><code>smartload.scale</code></td>
       <td>Autoscaler</td>
-      <td>Policy Manager (audit)</td>
-      <td><code>action, instance_count, reason, timestamp</code></td>
+      <td>LB sidecar (v1.0.7z #164 — re-queries Docker pool + rewrites <code>upstream.conf</code>) + operator-ui (Live Engines audit) + webhook-dispatcher (planned #130)</td>
+      <td><code>action, instance_count, reason, mechanism, timestamp</code></td>
       <td><code>forecast_event_id</code> (provenance — joins back to triggering ForecastResult)</td>
       <td>on action</td>
     </tr>
@@ -4250,20 +4259,22 @@ flowchart TB
         SHP["lb-otel-shipper"]
         OTC["otel-collector"]
         TLM["telemetry :8081"]
-        TDB[("TimescaleDB")]
+        TDB[("TimescaleDB<br/>metrics · backend_health<br/>scaling_events · forecasts<br/>policy_changes")]
+        RX["redis-exporter :9121<br/>(v1.0.7ac #116)"]
+        PRM["prometheus :9090"]
     end
 
     subgraph AI["Decision Intelligence"]
-        AND["anomaly :8082"]
-        FCT["forecasting :8083"]
-        RLE["rl-engine :8084"]
+        AND["anomaly :8082<br/>threshold · isolation_forest"]
+        FCT["forecasting :8083<br/>moving_avg · arima"]
+        RLE["rl-engine :8084<br/>round_robin · least_conn<br/>random_shadow · ppo"]
     end
 
     subgraph Ctrl["Control"]
         RDS(["redis :6379"])
         ASL["autoscaler :8085"]
         POL["policy :8086"]
-        SDC["lb-sidecar"]
+        SDC["lb-sidecar :8087"]
         OUI["operator-ui :8090<br/>(BFF + web)"]
         WHD["webhook-dispatcher<br/>(planned #130)"]
     end
@@ -4284,6 +4295,11 @@ flowchart TB
     RDS --> ASL
     RDS --> SDC
     RDS --> WHD
+    ASL --> RDS
+    RDS -. "redis INFO" .-> RX
+    RX -. "/metrics" .-> PRM
+    OTC --> PRM
+    PRM --> GRF
     WHD -. HMAC-signed POST .-> CUS
     SDC ==> |"reload"| NGINX
     TDB --> GRF
@@ -4299,12 +4315,12 @@ flowchart TB
     classDef planned fill:#f3f4f6,color:#475569,stroke:#94a3b8,stroke-dasharray:4 2;
     class WHD,CUS planned;
     class NGINX,BE,Client data
-    class SHP,OTC,TLM,TDB,GRF telemetry
+    class SHP,OTC,TLM,TDB,RX,PRM,GRF telemetry
     class AND,FCT,RLE ai
-    class RDS,ASL,POL ctrl
+    class RDS,ASL,POL,OUI ctrl
     class SDC bridge
 </pre>
-  <figcaption><strong>Figure 12.1 — System Design.</strong> All 14 containers grouped by plane. Ports shown match <code>docker-compose.yml</code>. The LB Sidecar is the only writer of <code>nginx.conf</code>; NGINX picks up changes on graceful reload. The <strong>lb-otel-shipper</strong> sidecar tails NGINX's JSON access log (shared volume) and emits one OTLP/HTTP-JSON gauge data point per request to the collector — fire-and-forget, never on the request path. NGINX never connects to the collector itself.</figcaption>
+  <figcaption><strong>Figure 12.1 — System Design.</strong> All 16 containers grouped by plane (10 SmartLoad services + 6 infrastructure: TimescaleDB, Redis, redis-exporter, OTel Collector, Prometheus, Grafana). Ports shown match <code>docker-compose.yml</code>. The LB Sidecar is the only writer of <code>nginx.conf</code>; NGINX picks up changes on graceful reload. The <strong>lb-otel-shipper</strong> sidecar tails NGINX's JSON access log (shared volume) and emits one OTLP/HTTP-JSON gauge data point per request to the collector — fire-and-forget, never on the request path. NGINX never connects to the collector itself. The <strong>redis-exporter</strong> sidecar (v1.0.7ac, #116) scrapes Redis's <code>INFO</code> command and exposes Prometheus-format metrics on :9121 so the control-bus health is visible alongside data-plane telemetry.</figcaption>
 </figure>
 </article>
 
@@ -4320,24 +4336,36 @@ flowchart LR
     AS["Autoscaler"]
     PM["Policy<br/>Manager"]
     SC["LB Sidecar"]
+    OUI["Operator UI<br/>(Live Engines)"]
+    WHD["Webhook<br/>Dispatcher<br/>(planned #130)"]
 
     AD ==>|"smartload.anomaly"| SC
+    AD -.->|"smartload.anomaly"| OUI
+    AD -.->|"smartload.anomaly"| WHD
     FE ==>|"smartload.forecast"| AS
+    FE -.->|"smartload.forecast"| OUI
     RL ==>|"smartload.routing"| SC
-    AS ==>|"smartload.scale"| PM
+    RL -.->|"smartload.routing"| OUI
+    AS ==>|"smartload.scale"| SC
+    AS -.->|"smartload.scale"| OUI
+    AS -.->|"smartload.scale"| WHD
     PM ==>|"smartload.policy"| AD
     PM ==> FE
     PM ==> RL
     PM ==> SC
+    PM ==> AS
+    PM -.-> OUI
 
     classDef pub fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef sub fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
     classDef pmgr fill:#f5f3ff,color:#0f172a,stroke:#6d28d9;
+    classDef planned fill:#f3f4f6,color:#475569,stroke:#94a3b8,stroke-dasharray:4 2;
     class AD,FE,RL,AS pub
-    class SC sub
+    class SC,OUI sub
     class PM pmgr
+    class WHD planned
 </pre>
-  <figcaption><strong>Figure 12.2 — Communications Channels.</strong> Five Redis channels, each with exactly one publisher. The detail of each channel (cycle, TTL, payload fields, dedup behavior) is in the table below — kept out of the diagram so the topology stays readable.</figcaption>
+  <figcaption><strong>Figure 12.2 — Communications Channels.</strong> Five Redis channels, each with exactly one publisher. Solid arrows show subscribers that <em>act</em> on the envelope (LB Sidecar rewrites <code>upstream.conf</code>, Autoscaler scales the pool); dashed arrows show subscribers that observe (Operator UI Live Engines page, planned webhook-dispatcher). v1.0.7z added the <code>smartload.scale → LB Sidecar</code> path (#164) so the autoscaler-driven pool changes actually reach NGINX. The detail of each channel (cycle, TTL, payload fields, dedup behavior) is in the table below — kept out of the diagram so the topology stays readable.</figcaption>
 </figure>
 
 <table>
@@ -4389,6 +4417,7 @@ flowchart LR
         NG["NGINX + Backends"]
         TLM["Telemetry Service"]
         AND["Anomaly Detector"]
+        FCT["Forecasting Engine"]
         ASL["Autoscaler"]
         POL["Policy Manager"]
     end
@@ -4397,6 +4426,8 @@ flowchart LR
         T1[("metrics")]
         T2[("backend_health")]
         T3[("scaling_events")]
+        T4[("forecasts<br/>v1.0.7w #159")]
+        T5[("policy_changes")]
         F1["policy.yaml"]
     end
 
@@ -4409,7 +4440,9 @@ flowchart LR
     NG -- "JSON log → shipper → OTLP" --> TLM
     TLM -- "writes" --> T1
     AND -- "writes" --> T2
+    FCT -- "writes" --> T4
     ASL -- "writes" --> T3
+    POL -- "writes audit" --> T5
     POL -- "owns" --> F1
 
     T1 -- "queries" --> Engines
@@ -4418,15 +4451,17 @@ flowchart LR
     T1 --> GRF
     T2 --> GRF
     T3 --> GRF
+    T4 --> GRF
+    T5 --> GRF
 
     classDef src fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef store fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
     classDef cons fill:#ecfdf5,color:#0f172a,stroke:#047857;
-    class NG,TLM,AND,ASL,POL src
-    class T1,T2,T3,F1 store
+    class NG,TLM,AND,FCT,ASL,POL src
+    class T1,T2,T3,T4,T5,F1 store
     class Engines,SC,GRF cons
 </pre>
-  <figcaption><strong>Figure 12.3 — Data Flow (persistent state).</strong> Each table has exactly one authoritative writer. Readers go through the canonical SQL constants in <code>services/shared/queries.py</code>. The Redis control-bus flow (ephemeral signals) is shown separately in Figure 12.2.</figcaption>
+  <figcaption><strong>Figure 12.3 — Data Flow (persistent state).</strong> Five hypertables + one YAML file. Each table has exactly one authoritative writer. Readers go through the canonical SQL constants in <code>services/shared/queries.py</code>. The <code>forecasts</code> hypertable (v1.0.7w #159) closes the §35.8 Grafana sparse-line gap; the <code>policy_changes</code> hypertable is the audit trail for every accepted policy edit. The Redis control-bus flow (ephemeral signals) is shown separately in Figure 12.2.</figcaption>
 </figure>
 </article>
 
@@ -4542,6 +4577,7 @@ flowchart LR
     subgraph InfNS["Infrastructure"]
         TDB[("timescaledb :5432<br/>healthcheck")]
         RDS(["redis :6379<br/>healthcheck"])
+        RX["redis-exporter :9121<br/>(v1.0.7ac, #116)"]
         OTC["otel-collector"]
         PRM["prometheus"]
         GRF["grafana :3000"]
@@ -4560,35 +4596,41 @@ flowchart LR
     classDef vol fill:#f1f5f9,color:#475569,stroke:#94a3b8,stroke-dasharray:4 4;
     class NGINX,BE data
     class SHP,TLM,AND,FCT,RLE,ASL,POL,SDC ctrl
-    class TDB,RDS,OTC,PRM,GRF infra
+    class TDB,RDS,RX,OTC,PRM,GRF infra
     class Vols vol
 </pre>
-  <figcaption><strong>Figure 12.6 — Deployment.</strong> All 14 containers on the <code>smartload-net</code> bridge in <code>docker-compose</code>. TimescaleDB and Redis are gated by healthchecks. Volumes carry <code>.env</code>, <code>policy.yaml</code>, ML model artifacts, the persistent TimescaleDB data directory, and the new <code>nginx-logs</code> volume shared between NGINX (rw) and lb-otel-shipper (ro). The design is portable to Kubernetes without code changes — each container becomes a Deployment + Service; the shipper would run as a sidecar in the NGINX Pod.</figcaption>
+  <figcaption><strong>Figure 12.6 — Deployment.</strong> All 16 containers on the <code>smartload-net</code> bridge in <code>docker-compose</code> (10 SmartLoad services + 6 infrastructure including <code>redis-exporter</code> as the bus-health sidecar). TimescaleDB, Redis, and redis-exporter are gated by their healthchecks. Volumes carry <code>.env</code>, <code>policy.yaml</code>, ML model artifacts, the persistent TimescaleDB data directory, and the <code>nginx-logs</code> volume shared between NGINX (rw) and lb-otel-shipper (ro). The design is portable to Kubernetes without code changes — each container becomes a Deployment + Service; the shipper would run as a sidecar in the NGINX Pod; the redis-exporter pairs with the Redis StatefulSet.</figcaption>
 </figure>
 </article>
 
 <article id="diag-schema">
-<h3>Canonical Schema (3-table TimescaleDB)</h3>
+<h3>Canonical Schema (5-table TimescaleDB)</h3>
 <figure>
 <pre class="mermaid">
 flowchart LR
     TLM["Telemetry Service"]
     AND["Anomaly Detector"]
+    FCT["Forecasting Engine"]
     AS["Autoscaler"]
+    PM_W["Policy Manager"]
 
     metrics[("<b>metrics</b><br/>time · service · instance<br/>metric_name · value")]
     metrics_1min[("<b>metrics_1min</b><br/>continuous aggregate<br/>(1-min roll-up)")]
     backend_health[("<b>backend_health</b><br/>time · backend_id<br/>status · score")]
-    scaling_events[("<b>scaling_events</b><br/>time · action<br/>instance_count · reason")]
+    scaling_events[("<b>scaling_events</b><br/>time · action<br/>instance_count · reason · mechanism")]
+    forecasts[("<b>forecasts</b><br/>time · horizon_minutes<br/>predicted_rps · model_version<br/>v1.0.7w #159")]
+    policy_changes[("<b>policy_changes</b><br/>time · field · old · new<br/>actor · version")]
 
     Engines["AI Engines<br/>(anomaly · forecast · RL)"]
     SC["LB Sidecar"]
-    PM["Policy Manager"]
+    PM["Policy Manager (audit reader)"]
     GRF["Grafana"]
 
     TLM ==>|"METRICS_INSERT"| metrics
     AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
+    FCT ==>|"FORECAST_INSERT"| forecasts
     AS ==>|"SCALING_EVENT_INSERT"| scaling_events
+    PM_W ==>|"POLICY_CHANGE_INSERT"| policy_changes
 
     metrics -.->|"refresh 1 min"| metrics_1min
     metrics --> Engines
@@ -4599,17 +4641,19 @@ flowchart LR
     backend_health --> Engines
     scaling_events --> PM
     scaling_events --> GRF
+    forecasts --> GRF
+    policy_changes --> GRF
 
     classDef table fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
     classDef cagg fill:#f5f3ff,color:#0f172a,stroke:#7c3aed,stroke-width:2px,stroke-dasharray:4 2;
     classDef writer fill:#fffbeb,color:#0f172a,stroke:#b45309;
     classDef reader fill:#ecfdf5,color:#0f172a,stroke:#047857;
-    class metrics,backend_health,scaling_events table
+    class metrics,backend_health,scaling_events,forecasts,policy_changes table
     class metrics_1min cagg
-    class TLM,AND,AS writer
+    class TLM,AND,FCT,AS,PM_W writer
     class Engines,SC,PM,GRF reader
 </pre>
-  <figcaption><strong>Figure 12.7 — Canonical Schema.</strong> Three TimescaleDB hypertables plus the <code>metrics_1min</code> continuous aggregate. Each base table has exactly one authoritative writer service. The <code>metrics</code> table uses a <em>wide-narrow</em> shape — one row per metric reading rather than one column per metric — so adding new metric kinds does not require ALTER TABLE. <code>metrics_1min</code> is materialised every minute over the <code>[-1 h, -2 m]</code> window for cheap minute-resolution queries; engines that need sub-minute resolution still read raw <code>metrics</code>. All cross-service SQL access goes through the named query constants in <code>services/shared/queries.py</code>. Indexes: <code>(service, instance, time DESC)</code> and <code>(metric_name, time DESC)</code> on metrics; <code>(backend_id, time DESC)</code> on backend_health. The richer V1 6-table schema is preserved in §24 as a future-iteration draft.</figcaption>
+  <figcaption><strong>Figure 12.7 — Canonical Schema.</strong> Five TimescaleDB hypertables plus the <code>metrics_1min</code> continuous aggregate. Each base table has exactly one authoritative writer service. The <code>metrics</code> table uses a <em>wide-narrow</em> shape — one row per metric reading rather than one column per metric — so adding new metric kinds does not require ALTER TABLE. <code>metrics_1min</code> is materialised every minute over the <code>[-1 h, -2 m]</code> window for cheap minute-resolution queries; engines that need sub-minute resolution still read raw <code>metrics</code>. The <code>forecasts</code> hypertable (v1.0.7w #159) is the persistence layer for predicted-RPS time series — closes the §35.8 Grafana sparse-line gap by giving the Forecast dashboard a continuous backing series instead of decision-moment-only data. The <code>policy_changes</code> hypertable is the audit trail for every accepted policy edit (one row per changed field). All cross-service SQL access goes through the named query constants in <code>services/shared/queries.py</code>. Indexes: <code>(service, instance, time DESC)</code> and <code>(metric_name, time DESC)</code> on metrics; <code>(backend_id, time DESC)</code> on backend_health. The richer V1 6-table schema is preserved in §24 as a future-iteration draft.</figcaption>
 </figure>
 </article>
 
@@ -4726,6 +4770,7 @@ flowchart TB
     subgraph Stateful["Stateful (StatefulSet or external Service)"]
         TS[("TimescaleDB")]
         RDS[("Redis")]
+        RX["redis-exporter<br/>(sidecar / paired Deployment)"]
     end
 
     subgraph Observability["Observability (Deployments)"]
@@ -4755,6 +4800,8 @@ flowchart TB
     OUI <--> AS
     WH <--> RDS
     PROM --> OTC
+    RDS -.INFO.-> RX
+    RX -. /metrics .-> PROM
     GRF --> PROM
     GRF --> TS
 
@@ -4769,7 +4816,7 @@ flowchart TB
     classDef obs    fill:#ecfdf5,color:#0f172a,stroke:#047857;
     class ING,LB,SHIPPER,BE edge
     class PM,AS,TEL,AD,FC,RL,OUI,WH ctl
-    class TS,RDS state
+    class TS,RDS,RX state
     class OTC,PROM,GRF obs
 </pre>
   <figcaption><strong>Figure 12.10 — Helm / Kubernetes deployment topology (target).</strong> The Helm chart at <code>infrastructure/helm/smartload/</code> deploys every service as a Kubernetes Deployment; TimescaleDB and Redis are StatefulSets in the default chart or external managed services via <code>values.yaml</code>. <code>policy.yaml</code> ships as a ConfigMap; DB password and API-key signing secret as Kubernetes Secrets. The Horizontal Pod Autoscaler scales <code>test-backend</code> as a mirror of what the SmartLoad autoscaler does in Compose mode — when both are present, HPA wins per K8s semantics. ServiceMonitor (Prometheus Operator) provisioned when detected. Figure 12.6 documents the Compose-equivalent topology; this figure supersedes it for K8s deployments.</figcaption>
@@ -4856,19 +4903,19 @@ flowchart LR
     <tr><td><strong>Load Balancer</strong></td><td>NGINX</td><td><span class="pill pill-done">Implemented</span></td><td>Was Go (with Node.js fallback) in old plan; NGINX is the wired choice. <span class="badge badge-historical">Go superseded</span></td></tr>
     <tr><td><strong>Test backend</strong></td><td>Node.js Express</td><td><span class="pill pill-done">Implemented</span></td><td>Multiple instances scaled via compose.</td></tr>
     <tr><td><strong>AI services runtime</strong></td><td>Python 3.11-slim + Flask 3.0.3</td><td><span class="pill pill-done">Implemented</span></td><td>Per-service Dockerfile; <code>psycopg2-binary 2.9.9</code> + <code>redis 5.0.4</code>.</td></tr>
-    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td>Threshold rule first; LSTM-AE as backup if F1 &lt; 0.80.</td></tr>
+    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. Production-scale calibration tracked as #165 (currently 25% bench agreement &mdash; under-reacting at real-ms scales). LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
     <tr><td><strong>Forecasting model</strong></td><td>ARIMA (statsmodels)</td><td><span class="pill pill-done">v1.0.7i (N2.2) — ships behind <code>FORECAST_ENGINE=arima</code> until MAPE&lt;20%</span></td><td>Moving average remains the default; ARIMA(3,0,1) ships with 25.0% test MAPE (+22.77% vs baseline). Tightening pass needed to cross the SOT KPI.</td></tr>
     <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-done">N2.3–N2.5 code complete</span></td><td>Custom Gym env <code>SmartLoadEnv</code> + <code>obs_builder.py</code> (shared train/serve); <code>PPOPolicy</code> serving plugin; <code>MaskablePPO</code> training script with 50k-step canary gate; <code>round_robin</code> + <code>least_connections</code> baselines; reproducible eval harness (<code>eval_seed_bank.json</code>). DQN fallback (<code>train_dqn.py</code>) ready. <strong>Pending:</strong> ~7-day training run to generate <code>policy.zip</code>.</td></tr>
     <tr><td><strong>Metrics DB</strong></td><td>TimescaleDB (PostgreSQL 16)</td><td><span class="pill pill-done">Implemented</span></td><td>Hypertables + continuous aggregates planned in V1 redesign (draft).</td></tr>
     <tr><td><strong>Control bus</strong></td><td>Redis 7-alpine Pub/Sub</td><td><span class="pill pill-done">Implemented</span></td><td>In-memory only; <code>allkeys-lru</code>.</td></tr>
     <tr><td><strong>Telemetry SDK</strong></td><td>OpenTelemetry SDK</td><td><span class="pill pill-done">Implemented</span></td><td>OTel Collector batches OTLP → Prometheus + (Phase 1) TimescaleDB.</td></tr>
     <tr><td><strong>Telemetry pipeline</strong></td><td>OTel Collector + Prometheus</td><td><span class="pill pill-done">Implemented</span></td><td>OTLP receivers (gRPC 4317, HTTP 4318); Prometheus exporter on 8889.</td></tr>
-    <tr><td><strong>Dashboards</strong></td><td>Grafana 10+</td><td><span class="pill pill-done">Provisioning done</span></td><td>Overview shipped (S2 demo); Anomaly / Forecast / RL / Scaling pending T2.2 (S4).</td></tr>
+    <tr><td><strong>Dashboards</strong></td><td>Grafana 10+</td><td><span class="pill pill-done">Shipped (6 dashboards)</span></td><td>All five product dashboards shipped: Overview (S2), Anomaly / Forecast / RL / Scaling (v1.0.7d, 2026-05-29). <strong>Redis (control-bus health)</strong> shipped v1.0.7ac (#116) &mdash; surfaces connected clients, command rate, pub/sub channel count, keyspace hits/misses, memory used.</td></tr>
     <tr><td><strong>Workload simulator</strong></td><td>Locust</td><td><span class="pill pill-done">Implemented</span></td><td>Web UI on 8089; headless mode for benchmarks.</td></tr>
     <tr><td><strong>Container orchestration</strong></td><td>Docker Compose</td><td><span class="pill pill-done">Implemented</span></td><td>Kubernetes is stretch (out of scope for prototype).</td></tr>
     <tr><td><strong>CI / CD</strong></td><td>GitHub Actions</td><td><span class="pill pill-done">Implemented</span></td><td>Lint + unit + build images on push.</td></tr>
     <tr><td><strong>Policy distribution</strong></td><td>YAML file + REST + Redis publish</td><td><span class="pill pill-active">T1.4 next</span></td><td>Stretch: full policy service with auth.</td></tr>
-    <tr><td><strong>Operator UI</strong></td><td>Grafana dashboards (no custom UI)</td><td><span class="pill pill-active">T2.2</span></td><td>Custom React/Flask UI deferred (future extension).</td></tr>
+    <tr><td><strong>Operator UI</strong></td><td>Flask BFF + React/Vite SPA on port 8090 (Grafana embedded for charts)</td><td><span class="pill pill-done">Five pages shipped</span></td><td>Home + Policy + Audit + Actions + Live Engines all live (slices #1, #2, #3, #121 session 1). BFF aggregates <code>/api/ui/{health,policy,audit,scale,isolate,engines/{snapshot,stream}}</code>; Live Engines page consumes <code>smartload.{anomaly,forecast,routing,scale}</code> via a daemon subscriber + per-client SSE fan-out. Remaining: Embedded metrics page (#131), Logs page (#124 optional), authentication (#125, Phase 2 SaaS).</td></tr>
   </tbody>
 </table>
 
@@ -5306,7 +5353,7 @@ flowchart LR
     <tr><td>Yahoo SMD dataset</td><td>Rghda</td><td><span class="pill pill-upcoming">Phase 2 (R2.1)</span></td><td><code>datasets/yahoo-smd/</code></td><td>Yahoo registration</td></tr>
     <tr><td>Data preprocessors</td><td>Rghda</td><td><span class="pill pill-active">S4 (R1.1, R1.2) — carried from S3</span></td><td><code>datasets/&lt;name&gt;/preprocess.py</code></td><td>—</td></tr>
     <tr><td>Data loader utilities</td><td>Rghda</td><td><span class="pill pill-active">S4 (R1.4) — carried from S3</span></td><td><code>datasets/loaders.py</code> (target) · <code>services/rl-engine/training/dataset.py::TraceReplayDataset</code> (informal landing today)</td><td>S4 close-out (Jun 6)</td></tr>
-    <tr><td>Anomaly detection model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.1)</span></td><td><code>services/anomaly-detector/models/</code></td><td>—</td></tr>
+    <tr><td>Anomaly detection model</td><td>Nada</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td><code>services/anomaly-detector/models/isolation_forest.pkl</code></td><td>Production-scale calibration (#165) outstanding; <code>threshold</code> remains compose default.</td></tr>
     <tr><td>Forecasting model</td><td>Nada</td><td><span class="pill pill-upcoming">Phase 2 (N2.2)</span></td><td><code>services/forecasting/models/</code></td><td>—</td></tr>
     <tr><td>RL training environment (N2.3)</td><td>Nada</td><td><span class="pill pill-done">Code complete</span></td><td><code>services/rl-engine/training/env.py</code> — <code>SmartLoadEnv</code> (Gymnasium); <code>obs_builder.py</code> shared train/serve layer; <code>TraceReplayDataset</code>, <code>BackendSimulator</code>, <code>RewardCalculator</code>; 77 unit tests green; <code>check_env</code> passes.</td><td>—</td></tr>
     <tr><td>RL training scripts + baselines (N2.4)</td><td>Nada</td><td><span class="pill pill-done">Complete</span></td><td><code>train_ppo.py</code> (MaskablePPO, 2M steps, ~75 min CPU), <code>train_dqn.py</code> (fallback); <code>round_robin</code> + <code>least_connections</code> policies; <code>eval_harness.py</code> + <code>eval_seed_bank.json</code>. <strong>Artifact:</strong> <code>services/rl-engine/models/policy.zip</code> (156 KB, <code>latency_scale=100.0</code>). <strong>Eval result (20 held-out episodes):</strong> PPO mean_reward&nbsp;=&nbsp;-0.0056 (ties round_robin, best baseline); beats least_connections by 4.8e-2. SLO violation rate 0 for all policies. Homogeneous Alibaba backend latencies (~9.7 ms) mean any balanced policy achieves the same p95; PPO learned round-robin equivalence from offline traces.</td><td>—</td></tr>
@@ -5428,7 +5475,7 @@ TestTimescaleDBSchema::test_timescaledb_extension_enabled         PASSED
 <table>
   <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
   <tbody>
-    <tr><td>Docker Desktop</td><td>Runs all 14 containers</td></tr>
+    <tr><td>Docker Desktop</td><td>Runs all 16 containers (modulo test-backend scaling)</td></tr>
     <tr><td>Git</td><td>Version control</td></tr>
     <tr><td>Python 3.11+</td><td>Local scripts and venv</td></tr>
     <tr><td>curl / Postman</td><td>Manual endpoint testing</td></tr>
@@ -9657,7 +9704,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
 <table>
   <thead><tr><th>Deployment shape</th><th>Status</th><th>Notes</th></tr></thead>
   <tbody>
-    <tr><td>Docker Compose self-host (single host)</td><td><span class="pill pill-done">Shipped</span></td><td>The canonical prototype deployment. <code>docker-compose.yml</code> at repo root; 14 containers, full stack.</td></tr>
+    <tr><td>Docker Compose self-host (single host)</td><td><span class="pill pill-done">Shipped</span></td><td>The canonical prototype deployment. <code>docker-compose.yml</code> at repo root; 16 containers, full stack.</td></tr>
     <tr><td>Helm chart for Kubernetes</td><td><span class="pill pill-active">Scaffold</span></td><td><code>infrastructure/helm/smartload/</code> has Chart.yaml + values.yaml + an empty <code>templates/</code> directory. Issue #133 lands the Deployments, StatefulSets, ConfigMap+Secret, HPA, optional Ingress + ServiceMonitor.</td></tr>
     <tr><td>Raw K8s manifests</td><td><span class="pill pill-upcoming">Placeholder</span></td><td><code>infrastructure/k8s/</code> only has <code>.gitkeep</code>. Intended for cluster-wide CRDs, namespaces, RBAC that don't fit into Helm.</td></tr>
     <tr><td>Managed SaaS shape</td><td><span class="pill pill-upcoming">Phase 2 deferred</span></td><td>Multi-tenant control plane (§25.1). Out of scope this phase.</td></tr>
@@ -9771,7 +9818,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
     <tr><td>3</td><td>Redis channels: <code>smartload.&lt;t&gt;</code> vs <code>smartload.&lt;t&gt;.v1</code></td><td><strong>Unsuffixed canonical</strong> (wired in contracts.py).</td></tr>
     <tr><td>4</td><td>LB language: Go primary vs NGINX</td><td><strong>NGINX canonical</strong> (wired).</td></tr>
     <tr><td>5</td><td>Routing controller: NGINX reload vs dynamic upstream vs adapter</td><td><strong>NGINX reload + sidecar canonical</strong> (default per S4 plan).</td></tr>
-    <tr><td>6</td><td>Operator UI: Grafana vs custom React/Flask</td><td><strong>Grafana canonical</strong>; custom UI = future extension.</td></tr>
+    <tr><td>6</td><td>Operator UI: Grafana vs custom React/Flask</td><td><strong>Both shipped.</strong> Custom Flask BFF + React/Vite SPA at <code>services/operator-ui/</code> (5 pages, port 8090) carries policy editing / audit / manual actions / live engine signals. Grafana embedded inside the operator UI for charts (does not rebuild charting). Original "Grafana canonical, custom UI future" decision superseded by slice #1 onwards.</td></tr>
     <tr><td>7</td><td>RL simulation: CloudSim/Mininet vs custom Gym</td><td><strong>Custom <code>SmartLoadEnv</code> canonical</strong> (per PLAN_CHANGELOG).</td></tr>
     <tr><td>8</td><td>Service count: 8 vs 14</td><td>Both consistent: <strong>8 SmartLoad services</strong> (incl. lb-otel-shipper sidecar) + 5 infra + test-backend + Locust = <strong>14 containers</strong>.</td></tr>
     <tr><td>9</td><td>Naming variants (e.g., "Anomaly Detector" vs "Anomaly Detection Engine")</td><td><strong>Lower-case kebab service names</strong> (e.g., <code>anomaly-detector</code>) for code; PascalCase for prose. Aligned throughout HTML.</td></tr>

@@ -92,7 +92,7 @@ Example payload:
 
 ### `smartload.scale`
 - **Publisher**: `autoscaler`
-- **Subscribers**: operator-ui (live-engines feed + audit), future webhook-dispatcher
+- **Subscribers**: `lb-sidecar` (v1.0.7z #164 — re-queries Docker pool + rewrites `upstream.conf`), `operator-ui` (live-engines feed + audit), future `webhook-dispatcher`
 - **Envelope**: `ScaleEvent`
 - **Publish frequency**: on action (event-driven, not periodic)
 - **Retention**: pub/sub + bounded ring buffer (planned via #121)
