@@ -1,6 +1,6 @@
 # Anomaly Detection
 
-> **Slice status — partial.** The wiring layer (Phase-1 run loop, threshold-engine baseline, Redis publish, lb-sidecar exclude/include, Live Engines UI surfacing, Grafana Anomaly dashboard) all ship today. The remaining work is the trained Isolation Forest model artifact (N2.1) plus the SDK / scenario / e2e / webhook layers. This manifest is the canonical place to track what's done and what's pending.
+> **Slice status — partial.** The wiring layer (Phase-1 run loop, threshold-engine baseline, Redis publish, lb-sidecar exclude/include, Live Engines UI surfacing, Grafana Anomaly dashboard) ships today. The **trained Isolation Forest plugin landed v1.0.7ab (#101)** — F1=0.8012 on SMD holdout (PASS of the >0.80 KPI gate) — but is **currently under-reacting at production scales** (25% bench agreement with threshold; production_scaler domain-adaptation gap, tracked as **#165**). Compose default remains `ANOMALY_ENGINE=threshold` until #165's re-calibration lands. Remaining work for full slice closure: #165, plus the SDK / scenario / webhook layers below. This manifest is the canonical place to track what's done and what's pending.
 
 ## What this slice delivers
 
@@ -21,7 +21,7 @@ Customers running SmartLoad in front of a backend pool stop having to write thei
 
 - Service: `services/anomaly-detector/{app,runloop,engine_base}.py` + plugin folders under `engines/`
 - Baseline engine: `services/anomaly-detector/engines/threshold/engine.py` — wired against `ANOMALY_QUERY`; classifies on latency > 200 ms (DEGRADED) and error_rate > 5% (UNHEALTHY)
-- Model handoff target: `services/anomaly-detector/engines/isolation_forest/engine.py` + `services/anomaly-detector/models/isolation_forest.pkl` (N2.1, Nada — engine plugin folder + README already exist)
+- Trained engine: `services/anomaly-detector/engines/isolation_forest/engine.py` + `services/anomaly-detector/models/isolation_forest.pkl` (N2.1, shipped v1.0.7ab via #101 — Nada); training pipeline at `tools/anomaly-training/train_smd.py`. Comparison bench: `experiments/anomaly-engine-bench/`. Live-stack test: `tests/integration/test_isolation_forest_live_stack.py` (`@pytest.mark.slow`, requires `ANOMALY_ENGINE=isolation_forest`). Artifact smoke tests: `tests/integration/test_isolation_forest_artifact.py`.
 - Envelope: `services/shared/contracts.py::AnomalyEvent`
 - SQL: `services/shared/queries.py::ANOMALY_QUERY` (parameterised on `window`, `service`, `metric_names`)
 - Storage: `backend_health` hypertable (TimescaleDB) — written by the anomaly-detector when persistence lands; read by lb-sidecar startup hydration (v1.0.7b G2)

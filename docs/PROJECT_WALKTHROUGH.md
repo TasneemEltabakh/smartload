@@ -1281,7 +1281,7 @@ The endpoint always returns 200 — `runloop_enabled=false` is a state the UI su
 
 #### What it is
 
-Classifies each backend as `healthy` / `degraded` / `unhealthy` from latency + error-rate features. Publishes `AnomalyEvent` envelopes to `smartload.anomaly`. As of #138 round 1, the service runs a real inference loop (behind `ANOMALY_RUNLOOP_ENABLED=true`) using the configured engine; the threshold baseline ships today, and the Isolation Forest plugin scaffold awaits the trained model from #101.
+Classifies each backend as `healthy` / `degraded` / `unhealthy` from latency + error-rate features. Publishes `AnomalyEvent` envelopes to `smartload.anomaly`. As of #138 round 1, the service runs a real inference loop (behind `ANOMALY_RUNLOOP_ENABLED=true`) using the configured engine. **Two engines ship**: the threshold baseline (compose default, deterministic rule-based) and the trained Isolation Forest model (`ANOMALY_ENGINE=isolation_forest`, F1=0.8012 on SMD holdout, landed v1.0.7ab via #101). The Isolation Forest engine is **currently under-reacting at production scales** per the comparison bench — see the dedicated subsection below and #165. The threshold engine remains the compose default until #165's production_scaler re-calibration lands.
 
 Also serves `POST /api/v1/isolate` (slice #3, #123 — manual operator override). The endpoint bypasses the run loop, publishes a synthetic `AnomalyEvent` envelope tagged `model_version="manual:<actor>"`, and writes a `backend_health` row directly. Useful for demoing anomaly-driven routing without inducing real failure.
 
@@ -1305,8 +1305,12 @@ services/anomaly-detector/
     │   └── README.md
     └── isolation_forest/
         ├── __init__.py
-        └── README.md        (stub — planned per issue #101)
+        ├── engine.py         (trained sklearn IsolationForest, v1.0.7ab)
+        ├── test_engine.py    (11 unit tests w/ synthetic bundle)
+        └── README.md         (training methodology + domain-adaptation caveat)
 ```
+
+The `.pkl` bundle itself lives at `services/anomaly-detector/models/isolation_forest.pkl` (2 MB), trained by `tools/anomaly-training/train_smd.py`.
 
 #### `app.py` — Phase 0 health stub
 
@@ -4077,17 +4081,17 @@ Three observations:
 - **No training, no model file.** This is also why it is the canonical fallback path: every other engine can fail to load gracefully, and the threshold rule will still produce a classification.
 - **The score is bounded.** Both the `unhealthy` and `degraded` paths cap the score at 1.0. The downstream consumer (the LB sidecar) doesn't need to defensively clamp.
 
-### 8.3 `services/anomaly-detector/engines/isolation_forest/` — scaffolded
+### 8.3 `services/anomaly-detector/engines/isolation_forest/` — shipped (v1.0.7ab, #101)
 
-Only `README.md` and `__init__.py` today. The factory in `engine_base.py` references the module so registering a new engine name is a one-line change once `engine.py` lands.
+Trained `scikit-learn IsolationForest` with strict bundle-shape validation and graceful fallback. The `.pkl` is a **bundle dict** at `services/anomaly-detector/models/isolation_forest.pkl` containing `{model, smd_scaler, production_scaler, feature_order, thresholds, metadata}`; the engine's `__init__` validates the dict shape + `feature_order` match on load and raises `ValueError` on mismatch so `bootstrap_engine()` falls back to the threshold baseline (same path that handles a missing file). Trained by `tools/anomaly-training/train_smd.py` on the Server Machine Dataset (SMD / OmniAnomaly) — search over machine sets, SMD dim → feature mappings, rolling windows, and contamination picked `machine-1-1 + machine-1-6`, dim1 → latency family, dim15 → error_rate, window=5, contamination=0.005 → **F1=0.8012** on holdout (PASS of the >0.80 KPI gate).
 
-Planned files (recorded in the folder README):
+Ships with three test layers:
 
-- `engine.py` — `IsolationForestEngine(AnomalyEngine)` that loads `.pkl` on init and falls back to threshold logic if the file is missing.
-- `models/isolation_forest.pkl` — the trained artifact, living at the service-level `models/` directory.
-- `test_engine.py` — fixture-based tests against a known-anomalous trace.
+- **Unit** — `test_engine.py` (11 tests) uses a synthetic inline bundle, no dataset dependency.
+- **Artifact smoke** — `tests/integration/test_isolation_forest_artifact.py` loads the REAL shipped `.pkl` and catches sklearn-version drift between the runtime pin (`scikit-learn==1.3.2`) and the training pin (also `==1.3.2`) — joblib / pickle is sensitive to sklearn's internal tree representation across versions.
+- **Live-stack** — `tests/integration/test_isolation_forest_live_stack.py` (`@pytest.mark.slow`) injects 400 ms latency on one backend via `docker exec ... /_admin/delay` and asserts the engine publishes UNHEALTHY on `smartload.anomaly` within two monitor intervals. Skipped unless the stack is configured with `ANOMALY_ENGINE=isolation_forest`.
 
-The scaffolding pattern is the convention used by every plugin folder: the folder exists with a README the day the contract is agreed; the implementation lands when the model is trained. This makes the plugin contract visible to the team before the work is done.
+**Production-scale calibration is the open follow-up (#165):** the comparison bench at `experiments/anomaly-engine-bench/` shows the model agrees with the threshold baseline on only 25% of cells (107/108 cells the threshold says UNHEALTHY get classed `healthy` by the model). Root cause: the SMD-trained model lives in standardised-SMD coordinates and `production_scaler` puts inputs into standardised-MST coordinates — two unrelated mean-0/std-1 spaces, so standardisation pulls every production input toward the origin and the model classes it `healthy` regardless of severity. See §4.1 above (or the issue body of #165) for the full root-cause analysis. Compose default remains `ANOMALY_ENGINE=threshold` until #165 lands.
 
 ### 8.4 `services/forecasting/engines/moving_average/engine.py` — windowed mean
 

@@ -126,7 +126,7 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | `lb-otel-shipper` | Python | sidecar | Tails NGINX log, ships OTLP/HTTP-JSON |
 | `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
 | `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
-| `anomaly-detector` | Python | 8082 | Threshold baseline + Isolation Forest plugin slot |
+| `anomaly-detector` | Python | 8082 | Threshold baseline (default) + trained Isolation Forest (opt-in via `ANOMALY_ENGINE=isolation_forest`) |
 | `forecasting` | Python | 8083 | Moving-average baseline + ARIMA plugin slot |
 | `rl-engine` | Python | 8084 | Random-shadow baseline + PPO policy with `shadow`/`active` mode pin |
 | `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback |

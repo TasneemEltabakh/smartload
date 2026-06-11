@@ -45,7 +45,7 @@ Four services, all wired:
 
 | Service | State |
 |---|---|
-| **anomaly-detector** | Threshold engine ships as baseline; Phase-1 run loop enabled by default; `/api/v1/isolate` manual endpoint (slice #3) wired. Isolation Forest plugin folder scaffolded but model artifact + `engine.py` not yet present (#101). |
+| **anomaly-detector** | Threshold engine ships as baseline (compose default); Phase-1 run loop enabled by default; `/api/v1/isolate` manual endpoint (slice #3) wired. **Isolation Forest plugin shipped v1.0.7ab** (#101) — trained on SMD with F1=0.8012 on holdout (PASS of >0.80 KPI gate), but the comparison bench at `experiments/anomaly-engine-bench/` shows only 25% agreement with threshold at production scales (production_scaler domain-adaptation gap — root cause: SMD-trained model lives in a different mean-0/std-1 coordinate system than the one production_scaler maps real-ms inputs into). Re-calibration tracked as **#165**; threshold remains compose default until that lands. |
 | **forecasting** | Moving-average baseline + ARIMA(3,0,1) artifact (36.9 MB `arima_model.pkl`) both shipped. ARIMA currently measures **25 % MAPE** — the SOT KPI is **< 20 %**; `moving_average` therefore remains the default until tuning closes the gap (§35.2). |
 | **rl-engine** | Random-shadow baseline + PPO policy (`policy.zip`, 156 KB) + four classical baselines (round_robin, least_connections, random_shadow). Anomaly-aware action-space filtering wired; `RL_MODE=shadow` is the safety pin (operator must explicitly opt in to `active`). Offline eval shows PPO ties round_robin on homogeneous Alibaba traces; v1.0.7t bench confirms the same on the heterogeneous workload. |
 | **autoscaler** | T1.3 + T1.4 wired (forecast subscriber + Docker SDK scale + cooldown + reactive fallback + policy live reload + `/api/v1/audit/scaling` + `/api/v1/scale` manual). **v1.0.7v added** `provision()` / `decommission()` lifecycle pair behind `AUTOSCALER_PROVISIONING_ENABLED` feature flag (OFF by default; #156 will flip it ON for the adaptive bench). |
@@ -98,7 +98,6 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 
 | Item | Where | Status |
 |---|---|---|
-| Isolation Forest anomaly engine | `services/anomaly-detector/engines/isolation_forest/` | Folder + README + `__init__.py` only; trained `.pkl` + `engine.py` pending #101 |
 | ALB load-balancer adapter | `services/shared/lb_adapters/alb/` | 22-line `NotImplementedError` stub on every method |
 | Envoy load-balancer adapter | `services/shared/lb_adapters/envoy/` | 22-line `NotImplementedError` stub |
 | HAProxy load-balancer adapter | `services/shared/lb_adapters/haproxy/` | 22-line `NotImplementedError` stub (issue #147) |
@@ -113,6 +112,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 |---|---|---|
 | **ARIMA forecaster** | 25 % MAPE vs KPI < 20 %; `moving_average` stays default | Hyperparameter tuning + extended training window (Nada; §35.2) |
 | **PPO routing policy** | Trained on homogeneous Alibaba; ties RR on the v1.0.7t heterogeneous bench | Retraining on heterogeneous traces (Rghda; §34.6 binding constraint) |
+| **Isolation Forest anomaly engine** | F1=0.8012 on SMD holdout (PASS) but 25% bench agreement at production scales — model is in standardised-SMD coordinates, inputs arrive in standardised-MST coordinates, two unrelated mean-0/std-1 spaces (#101 shipped infra, calibration is the gap) | Re-calibrate `production_scaler` on real production telemetry or re-fit IF on production-shape features directly (#165 — acceptance: ≥80% bench agreement + live-stack test passes with `ANOMALY_ENGINE=isolation_forest`) |
 | **Baseline-vs-SmartLoad bench (#148)** | Only SHORT-mode runs (~2 min/side); full-length (~6 min/side) on retrained PPO owed | Re-run after retraining + multi-run batching with CIs (§35.3 — #160) |
 | **Anomaly + Forecast scenario walks** | Manifests + e2e tests exist; standalone `examples/scenarios/<feature>/` walk scripts do not | 1–2 hours each |
 
