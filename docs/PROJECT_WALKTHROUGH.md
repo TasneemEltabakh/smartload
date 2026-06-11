@@ -4492,9 +4492,9 @@ Plus `SUMMARY.md` with per-phase RPS/p95/pool stats, time-to-react table, anomal
 
 **The honest finding from the first real run.** Captured in SOT §34.6 and replicated in `SUMMARY.md`: the autoscaler made 2 real decisions during the bench, the SSE collector captured 197 envelopes, the time-to-react ranged from 1.2 s (when a forecast crossed the capacity threshold cleanly) to 121.5 s (when a forecast landed inside the cooldown). But `upstream.conf` saw 0 rewrites and the pool-size column reads 5..5 across every phase — because the lb-sidecar doesn't subscribe to `smartload.scale` (issue #164). Combined with the silent-thread bug surfaced on the first attempt (#163), the bench is the first SmartLoad artefact whose `SUMMARY.md` explicitly names two architectural gaps as gating its own acceptance-gate strings. The harness itself works; rerun under #163 + #164 fixed produces the affirmative gates.
 
-### 8.17 Reading these files for thesis context
+### 8.17 Cross-reference: implementation files → SOT design intent
 
-The map below cross-references each implementation file to the SOT section a thesis chapter would draw from. The walkthrough section explains the file; the SOT section explains the design intent and the rationale.
+The map below cross-references each implementation file to the SOT section that documents its design intent. The walkthrough section explains how the file works; the SOT section explains why it was built that way.
 
 | Implementation file | Walkthrough §  | SOT § (design + theory) |
 |---|---|---|
