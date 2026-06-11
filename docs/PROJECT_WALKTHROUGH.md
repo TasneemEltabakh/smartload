@@ -654,6 +654,67 @@ It subscribes to **four channels**, each handled by a pure function in `services
 | `smartload.policy` | `handle_policy` | Policy-manager publishes config changes (e.g. `operating_mode`, thresholds). Hot-reloads runtime knobs without restart. |
 | `smartload.scale` | `handle_scale` | **New in v1.0.7z (#164).** Autoscaler publishes `ScalingEvent` after `provision()` / `decommission()` succeeds. Re-queries the live Docker pool, regenerates an equal-weight upstream map, and writes. |
 
+The dispatch path inside `_run_loop` is a single `elif` chain on the channel name. Every handler returns a typed `Outcome` dataclass; the loop logs the result and updates the shared `_excluded_backends` snapshot under the state lock. Visualising one cycle:
+
+```mermaid
+flowchart LR
+  subgraph Publishers["Publishers"]
+    RL["rl-engine"]
+    AD["anomaly-detector"]
+    PM["policy-manager"]
+    AS["autoscaler"]
+  end
+
+  subgraph Channels["Redis pub/sub"]
+    C1(["smartload.routing"])
+    C2(["smartload.anomaly"])
+    C3(["smartload.policy"])
+    C4(["smartload.scale<br/>v1.0.7z #164"])
+  end
+
+  subgraph Sidecar["lb-sidecar _run_loop"]
+    DOCKER[["discover_all_backends()<br/>(re-queried per envelope)"]]
+    H1["handle_routing<br/>scores → weights"]
+    H2["handle_anomaly<br/>exclude / include"]
+    H3["handle_policy<br/>safe_mode → reset weights<br/>policy snapshot update"]
+    H4["handle_scale<br/>pool → equal-weight map"]
+    ADAPT[["NginxFileAdapter<br/>.set_upstream_weights()<br/>(idempotent on identical map)"]]
+  end
+
+  subgraph Effect["Effect on NGINX"]
+    CONF[["/etc/nginx/conf.d/<br/>upstream.conf"]]
+    NGX[["NGINX worker<br/>nginx -s reload"]]
+  end
+
+  RL ==> C1 ==> H1
+  AD ==> C2 ==> H2
+  PM ==> C3 ==> H3
+  AS ==> C4 ==> H4
+
+  DOCKER -. live pool .-> H1
+  DOCKER -. live pool .-> H2
+  DOCKER -. live pool .-> H3
+  DOCKER -. live pool .-> H4
+
+  H1 --> ADAPT
+  H2 --> ADAPT
+  H3 --> ADAPT
+  H4 --> ADAPT
+
+  ADAPT ==> CONF ==> NGX
+
+  classDef pub fill:#fffbeb,color:#0f172a,stroke:#b45309;
+  classDef chan fill:#f5f3ff,color:#0f172a,stroke:#7c3aed;
+  classDef handler fill:#ecfdf5,color:#0f172a,stroke:#047857;
+  classDef sink fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
+  class RL,AD,PM,AS pub
+  class C1,C2,C3,C4 chan
+  class H1,H2,H3,H4 handler
+  class CONF,NGX sink
+```
+
+The `discover_all_backends()` re-query before each handler is what makes the system closed-loop: every NGINX rewrite reflects the live container set, not whatever the publisher's `instance_count` claimed.
+
 **Why the scale channel matters — the closed-loop story.** Before v1.0.7z, the autoscaler could grow the test-backend pool from 5 → 7 containers, but NGINX still only knew about the 5 names baked into the static `upstream` block (or whatever the last routing-driven rewrite said). The two new backends took traffic only if a routing event happened to fire and the policy happened to include them. There was no guarantee they'd ever be reached — which is why the adaptive-bench gates "pool grew during B" and "pool shrank during D" couldn't produce affirmative strings on the first end-to-end run. The autoscaler was acting; NGINX wasn't listening.
 
 `handle_scale` closes that loop. Every scaling event triggers a fresh `discover_all_backends()` query against the Docker daemon, the live container set becomes the new upstream weights map, and within the same NGINX reload cycle (~10 ms) the new pool is taking traffic.
@@ -1129,10 +1190,10 @@ flowchart TB
     C3["rl-engine<br/>round 3 ✓"]
   end
 
-  subgraph MODELS["Model handoffs (all unblocked)"]
-    M1["isolation_forest.pkl<br/>#101"]
-    M2["arima.pkl<br/>#102 / PR #144"]
-    M3["ppo policy.zip<br/>#27"]
+  subgraph MODELS["Model handoffs (all shipped)"]
+    M1["isolation_forest.pkl<br/>#101 ✓ v1.0.7ab<br/>F1=0.8012 on SMD;<br/>#165 production calibration"]
+    M2["arima.pkl<br/>#102 / PR #144 ✓ v1.0.7i<br/>MAPE 25%; tuning continues"]
+    M3["ppo policy.zip<br/>#27 ✓ shipped<br/>ties RR on v1.0.7t bench;<br/>retraining = §34.7 binding"]
   end
 
   SCAFFOLD --> CUTOVER
@@ -1141,9 +1202,9 @@ flowchart TB
   C3 -.unblocks.-> M3
 
   classDef done fill:#3fb95033,stroke:#3fb950,color:#fff
-  classDef pending fill:#d2992233,stroke:#d29922,color:#fff
+  classDef partial fill:#d2992233,stroke:#d29922,color:#fff
   class S1,S2,S3,C1,C2,C3 done
-  class M1,M2,M3 pending
+  class M1,M2,M3 partial
 ```
 
 ### Engine bootstrap (per service, identical shape)
@@ -4093,6 +4154,61 @@ Ships with three test layers:
 
 **Production-scale calibration is the open follow-up (#165):** the comparison bench at `experiments/anomaly-engine-bench/` shows the model agrees with the threshold baseline on only 25% of cells (107/108 cells the threshold says UNHEALTHY get classed `healthy` by the model). Root cause: the SMD-trained model lives in standardised-SMD coordinates and `production_scaler` puts inputs into standardised-MST coordinates — two unrelated mean-0/std-1 spaces, so standardisation pulls every production input toward the origin and the model classes it `healthy` regardless of severity. See §4.1 above (or the issue body of #165) for the full root-cause analysis. Compose default remains `ANOMALY_ENGINE=threshold` until #165 lands.
 
+#### Scoring pipeline + coordinate-system bridge
+
+The bundle's two-scaler design is the heart of #165. Train-time and infer-time live in different coordinate systems:
+
+```mermaid
+flowchart TB
+  subgraph TRAIN["TRAIN TIME — tools/anomaly-training/train_smd.py"]
+    SMD[("SMD .txt files<br/>per-machine [0,1] normalised<br/>+ real test_label")]
+    SMD --> SS1["smd_scaler<br/>(StandardScaler)<br/>fit on SMD features"]
+    SS1 --> MFIT["IsolationForest.fit()<br/>contamination=0.005<br/>n_estimators=200"]
+    SMD -. test split .-> SS2["smd_scaler.transform()"]
+    SS2 --> DF1["model.decision_function()"]
+    DF1 --> THR["derive thresholds<br/>(healthy_above, unhealthy_below,<br/>unhealthy_score_scale)"]
+    MST[("MST-2021 CSVs<br/>real-ms features")]
+    MST --> PS_FIT["production_scaler<br/>(StandardScaler)<br/>fit on MST features"]
+
+    MFIT --> BUNDLE["bundle dict {<br/>model, smd_scaler,<br/>production_scaler,<br/>feature_order, thresholds,<br/>metadata}"]
+    SS1 --> BUNDLE
+    PS_FIT --> BUNDLE
+    THR --> BUNDLE
+    BUNDLE --> PKL[("isolation_forest.pkl<br/>(joblib serialised)")]
+  end
+
+  subgraph INFER["INFER TIME — engine.score(features)"]
+    GATE{{"sample_count<br/>>= min_sample_count?"}}
+    SCALE["production_scaler.transform(raw)<br/>maps real-ms → standardised-MST"]
+    DF2["model.decision_function(x)<br/>asks: outlier vs standardised-SMD?"]
+    CLASS{"raw vs thresholds"}
+    H["AnomalyScore<br/>healthy / 0.0"]
+    D["AnomalyScore<br/>degraded / 0.5"]
+    U["AnomalyScore<br/>unhealthy / scaled"]
+
+    GATE -- no --> H
+    GATE -- yes --> SCALE
+    SCALE --> DF2 --> CLASS
+    CLASS -- "raw > healthy_above" --> H
+    CLASS -- "raw in [unhealthy_below, healthy_above]" --> D
+    CLASS -- "raw < unhealthy_below" --> U
+  end
+
+  PKL -. loaded into engine at bootstrap .-> SCALE
+  PKL -. loaded into engine at bootstrap .-> DF2
+  PKL -. loaded into engine at bootstrap .-> CLASS
+
+  classDef train fill:#fef3c7,color:#0f172a,stroke:#b45309;
+  classDef infer fill:#ecfdf5,color:#0f172a,stroke:#047857;
+  classDef artifact fill:#eff6ff,color:#0f172a,stroke:#1d4ed8,stroke-width:2px;
+  classDef warn fill:#fee2e2,color:#0f172a,stroke:#dc2626;
+  class SMD,MST,SS1,SS2,MFIT,DF1,THR,PS_FIT,BUNDLE train
+  class GATE,SCALE,DF2,CLASS,H,D,U infer
+  class PKL artifact
+```
+
+**Where #165 lives in this diagram.** The model is fit on `smd_scaler.transform(SMD)` — outliers carry meaning *in standardised-SMD coordinates*. At inference, inputs go through `production_scaler.transform()` and arrive in *standardised-MST coordinates*. Both spaces have mean 0 and std 1 by construction, but they're different spaces. The model checks "is this an outlier in standardised-SMD coordinates?" against an input that's in standardised-MST coordinates — and almost always says "no" because standardisation already pulled the input toward its own space's origin. That's why 107 of 108 clearly-anomalous bench cells score `healthy`. #165's job is to bring train-time and infer-time into the same coordinate system, either by re-fitting `production_scaler` on real SmartLoad telemetry or by re-training the model on production-shape features directly.
+
 ### 8.4 `services/forecasting/engines/moving_average/engine.py` — windowed mean
 
 43 lines. The complete forecast cycle:
@@ -4418,7 +4534,57 @@ The git SHA is embedded in the filename (`eval_results_<8-char-sha>.csv`), and `
 
 **What it doesn't do:** it does not retrain. It is purely an evaluation harness; the policies under test are loaded from disk (PPO via `policy.zip`) or instantiated stateless (round_robin, least_connections, random_shadow). This is why it can be run in CI without paying training cost.
 
-### 8.16 The system-level bench harnesses: `experiments/baseline-vs-smartload/` + `experiments/adaptive-bench/`
+### 8.16 Test layers — how unit / integration / e2e / conformance fit together
+
+Before walking through the system-level benches, the four pytest layers the suite is organised into. Each answers a different question; the pattern is documented in [`tests/README.md`](../tests/README.md) and the canonical starter is at `tests/integration/_template_acceptance.py` (v1.0.7ad, #117).
+
+```mermaid
+flowchart TB
+  subgraph Pyramid["Test pyramid (count is order of magnitude, not exact)"]
+    direction TB
+    UNIT["tests/unit/&lt;service&gt;/<br/>+ engines/&lt;name&gt;/test_engine.py<br/>~hundreds — pure-Python, fast"]
+    INT["tests/integration/<br/>~dozens — assume docker compose up -d"]
+    E2E["tests/e2e/&lt;feature&gt;/<br/>~handful — feature surface via the SDK"]
+    CON["tests/conformance/<br/>~one suite per plugin contract<br/>(lb_adapter today)"]
+    SLOW["@pytest.mark.slow<br/>(forecast scale-out, IF live-stack)"]
+  end
+
+  subgraph Answers["What each layer answers"]
+    Q1["Does this pure function / handler<br/>contract behave?"]
+    Q2["Does service-pair / wire-protocol<br/>contract hold against a live stack?"]
+    Q3["Does the customer-facing surface<br/>do what the docs say<br/>(via the Python SDK)?"]
+    Q4["Does this plugin implementation<br/>satisfy the ABC's invariants<br/>regardless of which one it is?"]
+  end
+
+  subgraph CI["CI compose-test runs"]
+    PIPE["pytest tests/integration/<br/>-m 'not slow'<br/>+ named e2e suites"]
+  end
+
+  UNIT --> Q1
+  INT --> Q2
+  E2E --> Q3
+  CON --> Q4
+  INT -.-> SLOW
+  INT --> PIPE
+  E2E --> PIPE
+
+  classDef unit fill:#ecfdf5,color:#0f172a,stroke:#047857;
+  classDef int fill:#eff6ff,color:#0f172a,stroke:#1d4ed8;
+  classDef e2e fill:#fef3c7,color:#0f172a,stroke:#b45309;
+  classDef con fill:#f5f3ff,color:#0f172a,stroke:#7c3aed;
+  classDef slow fill:#fee2e2,color:#0f172a,stroke:#dc2626,stroke-dasharray:4 2;
+  classDef q fill:#f1f5f9,color:#475569,stroke:#64748b;
+  class UNIT unit
+  class INT int
+  class E2E e2e
+  class CON con
+  class SLOW slow
+  class Q1,Q2,Q3,Q4,PIPE q
+```
+
+The per-task acceptance discipline (#117) is: every product task ships **one unit test for the contract** + **one live-stack acceptance test that cites the SOT section it maps to**. The two layers exist for different consumers — unit tests give the author a fast feedback loop while iterating; the live-stack test gives the reviewer (and the next person to touch the code) a checkable claim against the spec. `experiments/` carries the bench harnesses described in the next subsection — those answer "how well does it work" rather than "does it work", and aren't gated by CI.
+
+### 8.16b The system-level bench harnesses: `experiments/baseline-vs-smartload/` + `experiments/adaptive-bench/` + `experiments/anomaly-engine-bench/`
 
 The offline eval covers RQ2 from SOT §33.1. The other three research questions are answered by two complementary system-level harnesses. The split is intentional: the baseline-vs-smartload harness runs the same workload against two stack configurations (same pool, decision plane on vs off) to isolate the routing layer's effect; the adaptive-bench harness runs a single workload but actively exercises the autoscaler's `provision()`/`decommission()` lifecycle so the pool itself moves during the run.
 
