@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7z lb-sidecar subscribes to smartload.scale (#164); adaptive-bench gates fully unblocked, next run produces affirmative pool-growth + pool-shrink strings</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7aa T2.3 closed-loop integration tests land (#103): anomaly reroute + safe-mode + forecast scale-out scenarios against the live compose stack; CI wired</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5590,6 +5590,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7aa — 2026-06-11 — T2.3 closed-loop integration tests land (#103)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Three end-to-end integration tests for the closed control loop</strong></td>
+      <td>New <code>tests/integration/test_t23_control_loop.py</code> ships three scenarios against the live <code>docker compose</code> stack: <em>anomaly reroute</em> (POST <code>/api/v1/isolate</code> with status=unhealthy &rarr; assert lb-sidecar excludes the backend in <code>/api/v1/lb/state</code> within 5 s; HEALTHY recovery clears the exclusion), <em>safe-mode override</em> (POST <code>safe_mode=true</code> &rarr; assert <code>smartload.policy</code> envelope within 3 s + lb-sidecar resets all weights to 1 within 5 s; restore <code>safe_mode=false</code>), and <em>forecast-driven scale-out</em> (drive 200 RPS for 60 s &rarr; assert <code>scale_out</code> row in <code>scaling_events</code> + new dynamic container in the Docker pool within 120 s).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Slow-test marker convention</strong></td>
+      <td><code>pytest.ini</code> registers a new <code>slow</code> marker. The forecast scale-out scenario carries <code>@pytest.mark.slow</code> because of its ~3 min wall-time (60 s load + 120 s observation). CI's <code>compose-test</code> job selects <code>-m "not slow"</code> so the standard pipeline runs the anomaly + safe-mode tests only; the scale-out test runs locally against an adaptive-bench-configured stack via <code>pytest -m slow</code> or as part of <code>experiments/adaptive-bench/run.py</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Honest preconditions, not blind retries</strong></td>
+      <td>The scale-out scenario skips with an explicit reason if (a) <code>max_backends &le; min_backends</code>, (b) the current pool exceeds <code>min_backends</code> (a saturated pool can't scale out further in 2 min), or (c) the autoscaler's <code>/health</code> reports <code>provisioning_enabled=false</code>. This keeps the test from producing false negatives under default compose env while staying truthful about what it's measuring.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>CI wired</strong></td>
+      <td><code>.github/workflows/docker-publish.yml</code> compose-test job gains a "Run T2.3 closed-loop tests against live stack (#103)" step after the lb-otel-shipper step. Filters out <code>@slow</code> by default. Total CI compose-test surface: 5 integration files now run live (pipeline_health, s2_baseline, telemetry_ingest, lb_otel_shipper, t23_control_loop).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Doc sync</strong></td>
+      <td><code>docs/PROJECT_WALKTHROUGH.md</code> §3.1 (lb-sidecar) gets a one-paragraph "T2.3 integration tests" mention pointing readers at the test file as the executable spec for the four-channel dispatch. <code>docs/PROJECT_STATE.md</code> moves <strong>#103</strong> from "active S5" to "closed v1.0.7aa". README data-plane table notes T2.3 coverage. Status badge bumped to v1.0.7aa.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7z — 2026-06-10 — lb-sidecar subscribes to smartload.scale; adaptive-bench gates fully unblocked (#164)</h3>
 <table>

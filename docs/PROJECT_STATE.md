@@ -4,7 +4,7 @@
 **Baseline commit:** `c40a741` (v1.0.7z — #164 lb-sidecar scale subscription + walkthrough/README sync)
 **Audit method:** four parallel structured audits, one per architectural layer (decision plane, data plane + telemetry, control plane + UI + integration, infra + tests + docs + benchmarks); each layer's actual code verified against SOT §18 Build Status claims; reports synthesised into this document.
 
-**Delta since 2026-06-09 full audit:** v1.0.7w (#159 forecasts hypertable, b3b985f) · v1.0.7x (#156 R2 + #157 R3 adaptive-bench + first run, 49614c0/def8ab0/649ef13) · v1.0.7y (#163 decision-plane catch-all + liveness, 974c56d) · v1.0.7z (#164 lb-sidecar `smartload.scale` subscription closing the autoscaler → NGINX loop, 15922f7). The four releases together close S5's high-priority items and unblock RQ4 quantitative measurement.
+**Delta since 2026-06-09 full audit:** v1.0.7w (#159 forecasts hypertable, b3b985f) · v1.0.7x (#156 R2 + #157 R3 adaptive-bench + first run, 49614c0/def8ab0/649ef13) · v1.0.7y (#163 decision-plane catch-all + liveness, 974c56d) · v1.0.7z (#164 lb-sidecar `smartload.scale` subscription closing the autoscaler → NGINX loop, 15922f7) · **v1.0.7aa (#103 T2.3 closed-loop integration tests landing as the executable spec for the four-channel dispatch)**. The five releases together close S5's high-priority items and unblock RQ4 quantitative measurement.
 
 > This document is a **point-in-time snapshot** of completeness. It is **not** the canonical product spec — that is [`SOURCE_OF_TRUTH.html`](SOURCE_OF_TRUTH.html). This doc tells you *where the project stands today*; the SOT tells you *what the project is supposed to be*. When the two disagree, the SOT wins as the design authority; this doc gets updated to reflect the new reality.
 
@@ -184,7 +184,7 @@ If you only count what is *currently shipped against the current-phase scope*, S
 | S2 | Apr 28 – May 9 | Phase 1A | 0 | DONE |
 | S3 | May 10 – May 23 | Phase 1B | 0 | DONE |
 | S4 | May 24 – Jun 6 | Phase 2 | **5** | Carry-forward Rghda + Nada workstreams (#98, #99, #101, #104, #118) |
-| S5 | Jun 7 – Jun 20 | Phase 3A | **4** | Active — #103 T2.3 integration tests + #117 acceptance pattern + #7 NAB/Yahoo SMD + #116 Redis exporter (#159 closed v1.0.7w; #163 + #164 also landed mid-sprint) |
+| S5 | Jun 7 – Jun 20 | Phase 3A | **3** | Active — #117 acceptance pattern + #7 NAB/Yahoo SMD + #116 Redis exporter (#103 closed v1.0.7aa, #159 closed v1.0.7w; #163 + #164 also landed mid-sprint) |
 | S6 | Jun 21 – Jun 30 | Phase 3B | **18** | Final delivery — final benchmark runs, regression, release package, presentation polish (incl. #160 multi-run CIs + #161 /metrics + #162 architecture docs bundle) |
 
 Total open issues at audit time: **28** (24 carried from the 2026-06-09 triage + 4 filed 2026-06-10 to convert "unfiled" markers into tracked work: #159 / #160 / #161 / #162). At 2026-06-11 refresh: **46 open** (the higher number reflects pre-existing backlog items the original triage hadn't yet enumerated, not new work); three from the original 28 (#156, #157, #159) closed in v1.0.7w/x. Two further closures (#163, #164) also landed in v1.0.7y/z but were not part of the original triage.

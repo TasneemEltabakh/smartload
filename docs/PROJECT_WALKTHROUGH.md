@@ -676,6 +676,8 @@ It subscribes to **four channels**, each handled by a pure function in `services
 - action is normalised to lowercase
 - missing `mechanism` field yields `None` (forward-compat with older publishers)
 
+**Integration tests** (`tests/integration/test_t23_control_loop.py`, v1.0.7aa — closes #103 T2.3). Three scenarios run against the live `docker compose` stack and assert the closed loop end-to-end: (1) **anomaly reroute** — POST `/api/v1/isolate` with `status=unhealthy` for a known compose-seed backend, assert the lb-sidecar excludes it in `/api/v1/lb/state` within 5 s, then publish HEALTHY and assert the exclusion clears; (2) **safe-mode override** — POST `safe_mode=true` to policy-manager, assert the `smartload.policy` envelope arrives within 3 s and lb-sidecar resets all upstream weights to 1 within 5 s, then restore `safe_mode=false`; (3) **forecast-driven scale-out** (marked `@pytest.mark.slow`, ~3 min wall-time) — drive sustained traffic, assert a `scale_out` row in `scaling_events` AND a new dynamic container in the Docker pool within 120 s. The slow scenario skips with an explicit reason if `max_backends ≤ min_backends`, if the current pool is already at max, or if the autoscaler's `/health` reports `provisioning_enabled=false` — honest precondition checks, not blind retries. CI's `compose-test` job selects `-m "not slow"` so the fast two run every push; the slow scenario runs locally against an adaptive-bench-configured stack.
+
 ### 3.2 `lb-otel-shipper` — log tail → OTLP
 
 #### What it is
