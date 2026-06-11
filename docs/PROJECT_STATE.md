@@ -1,8 +1,10 @@
 # SmartLoad — State of the project
 
-**Audit date:** 2026-06-09
-**Baseline commit:** `96d1992` (v1.0.7v — adaptive-bench dynamic-pool foundation + SOT §§31–35)
+**Audit date:** 2026-06-09 (last full audit) · **Refreshed:** 2026-06-11 (delta-only)
+**Baseline commit:** `c40a741` (v1.0.7z — #164 lb-sidecar scale subscription + walkthrough/README sync)
 **Audit method:** four parallel structured audits, one per architectural layer (decision plane, data plane + telemetry, control plane + UI + integration, infra + tests + docs + benchmarks); each layer's actual code verified against SOT §18 Build Status claims; reports synthesised into this document.
+
+**Delta since 2026-06-09 full audit:** v1.0.7w (#159 forecasts hypertable, b3b985f) · v1.0.7x (#156 R2 + #157 R3 adaptive-bench + first run, 49614c0/def8ab0/649ef13) · v1.0.7y (#163 decision-plane catch-all + liveness, 974c56d) · v1.0.7z (#164 lb-sidecar `smartload.scale` subscription closing the autoscaler → NGINX loop, 15922f7). The four releases together close S5's high-priority items and unblock RQ4 quantitative measurement.
 
 > This document is a **point-in-time snapshot** of completeness. It is **not** the canonical product spec — that is [`SOURCE_OF_TRUTH.html`](SOURCE_OF_TRUTH.html). This doc tells you *where the project stands today*; the SOT tells you *what the project is supposed to be*. When the two disagree, the SOT wins as the design authority; this doc gets updated to reflect the new reality.
 
@@ -31,7 +33,7 @@
 
 ### Data plane + telemetry — 95 %
 
-NGINX serves traffic over the 5-backend test pool with `proxy_next_upstream` + `max_fails`. The lb-otel-shipper tails the JSON access log and POSTs OTLP/HTTP-JSON to the OTel Collector, which forwards to the telemetry service. Telemetry writes to TimescaleDB via the canonical `METRICS_INSERT` constant in `shared/queries.py`. The lb-sidecar consumes Redis envelopes (`smartload.routing` + `smartload.anomaly` + `smartload.policy`) and atomically rewrites `upstream.conf` + triggers `nginx -s reload`. **Per-request fidelity is verified** at every layer by an integration test asserting `STDDEV(request_latency_ms) > 0` on live traffic.
+NGINX serves traffic over the 5-backend test pool with `proxy_next_upstream` + `max_fails`. The lb-otel-shipper tails the JSON access log and POSTs OTLP/HTTP-JSON to the OTel Collector, which forwards to the telemetry service. Telemetry writes to TimescaleDB via the canonical `METRICS_INSERT` constant in `shared/queries.py`. The lb-sidecar consumes Redis envelopes across **four channels** — `smartload.routing` + `smartload.anomaly` + `smartload.policy` + `smartload.scale` (v1.0.7z, #164 closes the autoscaler → NGINX loop) — and atomically rewrites `upstream.conf` + triggers `nginx -s reload`. **Per-request fidelity is verified** at every layer by an integration test asserting `STDDEV(request_latency_ms) > 0` on live traffic.
 
 **One acknowledged gap:** AI services expose `/health` (JSON) only, not Prometheus `/metrics` (text format). Only the OTel Collector exposes scrapable Prometheus metrics on `:8889`. Operators rely on TimescaleDB-backed Grafana panels rather than Prometheus dashboards for service-internal observability.
 
@@ -64,11 +66,11 @@ Four services, all wired:
 
 ### Infra + tests + docs + benchmarks — 87 %
 
-All 5 Grafana dashboards (Overview + RL Routing + Anomaly + Scaling + Forecast) ship and load on stack-up. The Forecast dashboard's predicted-RPS line is sparse-at-decision-moments because forecasts aren't persisted to a hypertable — a follow-up gap (§35.8).
+All 5 Grafana dashboards (Overview + RL Routing + Anomaly + Scaling + Forecast) ship and load on stack-up. The Forecast dashboard's predicted-RPS sparse-line gap (§35.8) was **closed in v1.0.7w (#159)** — forecasts now land in a `forecasts` hypertable on every publish.
 
 Helm chart at `infrastructure/helm/smartload/` is scaffold-only: `Chart.yaml` + `values.yaml` are complete; `templates/` contains `.gitkeep` only. Raw K8s manifests at `infrastructure/k8s/` are placeholder.
 
-The **#148 baseline-vs-SmartLoad bench harness** at `experiments/baseline-vs-smartload/` ships with two SHORT-mode runs in `results/`. The full-length 6-min/side run on a retrained PPO model is the outstanding deliverable. The **adaptive bench** (`experiments/adaptive-bench/`) does **not yet exist** — Round 2 = #156, Round 3 = #157.
+The **#148 baseline-vs-SmartLoad bench harness** at `experiments/baseline-vs-smartload/` ships with two SHORT-mode runs in `results/`. The full-length 6-min/side run on a retrained PPO model is the outstanding deliverable. The **adaptive bench** (`experiments/adaptive-bench/`) **shipped end-to-end** in v1.0.7x: R1 dynamic-pool foundation (#155, 96d1992), R2 orchestrator + collectors + 5-phase Locust shape (#156, 49614c0), R3 analysis pipeline + 4 plots + SUMMARY.md (#157, def8ab0). First end-to-end run also recorded; the post-#163/#164 rerun will produce affirmative gate strings for "pool grew during B" / "pool shrank during D".
 
 CI shipping: lint + unit-tests + build-services matrix (8 services) + runtime-import-smoke + compose-test. Three structural lints (`lint-structure.py`, `lint-redis-channels.py`, `lint-openapi.py`) ship in permissive mode (#139 flips them to enforcing).
 
@@ -80,14 +82,15 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 
 | Item | Issue | Severity | Owner |
 |---|---|---|---|
-| Adaptive-bench Round 2 — Python orchestrator + 3 async collectors + 5-phase Locust shape | #156 | **High** — without this, RQ4 (forecast-driven scale-out vs reactive) has no quantitative answer | Tasneem |
-| Adaptive-bench Round 3 — joined `run.parquet` + 4 plots + SUMMARY.md + doc sync | #157 | **High** — same reason | Tasneem |
+| ~~Adaptive-bench Round 2~~ | ~~#156~~ | **CLOSED** v1.0.7x (49614c0) | — |
+| ~~Adaptive-bench Round 3~~ | ~~#157~~ | **CLOSED** v1.0.7x (def8ab0) | — |
 | Webhook dispatcher service | #130 | Medium — placeholder doc exists | — |
 | Helm chart templates | #133 | Medium — required for K8s HPA comparison | — |
 | Raw K8s manifests | — | Low — explicitly Phase 2 | — |
 | Redis exporter to Prometheus | #116 (moved to S5) | Low — operational maturity | — |
 | AI-service `/metrics` endpoints (Prometheus format) | #161 | Medium — closes observability gap | — |
 | Architecture docs: `lb-adapter.md`, `failure-modes.md`, `versioning-policy.md`, `multi-tenancy.md` | #162 | Low — incremental as features stabilise | — |
+| Multi-run bench batching with per-metric CIs | #160 | **High** — biggest mover for publishable-evidence lens; harness now unblocked | — |
 
 ## What's STUB ONLY (scaffolded, no implementation)
 
@@ -108,8 +111,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 |---|---|---|
 | **ARIMA forecaster** | 25 % MAPE vs KPI < 20 %; `moving_average` stays default | Hyperparameter tuning + extended training window (Nada; §35.2) |
 | **PPO routing policy** | Trained on homogeneous Alibaba; ties RR on the v1.0.7t heterogeneous bench | Retraining on heterogeneous traces (Rghda; §34.6 binding constraint) |
-| **Forecast Grafana dashboard** | Predicted-RPS line sparse-at-decision-moments (forecasts not persisted) | Create a `forecasts` hypertable, persist on every publish (§35.8 — #159) |
-| **Baseline-vs-SmartLoad bench (#148)** | Only SHORT-mode runs (~2 min/side); full-length (~6 min/side) on retrained PPO owed | Re-run after retraining + multi-run batching with CIs (§35.3) |
+| **Baseline-vs-SmartLoad bench (#148)** | Only SHORT-mode runs (~2 min/side); full-length (~6 min/side) on retrained PPO owed | Re-run after retraining + multi-run batching with CIs (§35.3 — #160) |
 | **Anomaly + Forecast scenario walks** | Manifests + e2e tests exist; standalone `examples/scenarios/<feature>/` walk scripts do not | 1–2 hours each |
 
 ## What's WRONG (incorrect implementation)
@@ -166,9 +168,9 @@ None of these change the architecture; all of them close measurable, named gaps.
 
 | If "the project" means… | Score | What gets you to 90 %+ |
 |---|---|---|
-| **The codebase** (services + tests + docs) | **85 %** | Finish #156 + #157 (adaptive-bench R2 + R3) — 90 % |
+| **The codebase** (services + tests + docs) | **~88 %** (was 85) | #156 / #157 / #159 / #163 / #164 all closed in v1.0.7w–z. Next: #103 T2.3 e2e tests + #160 multi-run CIs — 90 %+ |
 | **Production-ready middleware** | **70 %** | + own-metrics + #141 migrations + #143 correlation IDs + #139 strict lint + Helm templates — 85 % |
-| **Publishable evidence** | **50 %** | + retrained PPO + full-length rerun + multi-run CIs — 75 % |
+| **Publishable evidence** | **~55 %** (was 50) | Adaptive-bench harness shipped; needs the post-#163/#164 rerun + retrained PPO + multi-run CIs (#160) — 75 % |
 
 If you only count what is *currently shipped against the current-phase scope*, SmartLoad is a defensible product foundation. The known gaps are named, owned, and traceable to specific issues. There is no zombie surface area — every stub has either an issue number or an explicit Phase 2 deferral.
 
@@ -182,10 +184,10 @@ If you only count what is *currently shipped against the current-phase scope*, S
 | S2 | Apr 28 – May 9 | Phase 1A | 0 | DONE |
 | S3 | May 10 – May 23 | Phase 1B | 0 | DONE |
 | S4 | May 24 – Jun 6 | Phase 2 | **5** | Carry-forward Rghda + Nada workstreams (#98, #99, #101, #104, #118) |
-| S5 | Jun 7 – Jun 20 | Phase 3A | **5** | Active — #103 T2.3 integration tests + #117 acceptance pattern + #7 NAB/Yahoo SMD + #116 Redis exporter + #159 forecasts hypertable |
+| S5 | Jun 7 – Jun 20 | Phase 3A | **4** | Active — #103 T2.3 integration tests + #117 acceptance pattern + #7 NAB/Yahoo SMD + #116 Redis exporter (#159 closed v1.0.7w; #163 + #164 also landed mid-sprint) |
 | S6 | Jun 21 – Jun 30 | Phase 3B | **18** | Final delivery — final benchmark runs, regression, release package, presentation polish (incl. #160 multi-run CIs + #161 /metrics + #162 architecture docs bundle) |
 
-Total open issues across all sprints at audit time: **28** (24 carried from the 2026-06-09 triage + 4 filed 2026-06-10 to convert "unfiled" markers into tracked work: #159 / #160 / #161 / #162).
+Total open issues at audit time: **28** (24 carried from the 2026-06-09 triage + 4 filed 2026-06-10 to convert "unfiled" markers into tracked work: #159 / #160 / #161 / #162). At 2026-06-11 refresh: **46 open** (the higher number reflects pre-existing backlog items the original triage hadn't yet enumerated, not new work); three from the original 28 (#156, #157, #159) closed in v1.0.7w/x. Two further closures (#163, #164) also landed in v1.0.7y/z but were not part of the original triage.
 
 ---
 
