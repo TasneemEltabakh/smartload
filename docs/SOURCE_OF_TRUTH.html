@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7ab Isolation Forest engine shipped (#101, F1=0.8012 on SMD holdout) + bench surfaces production-scale calibration gap (25% agreement); threshold engine remains compose default pending production_scaler re-tuning</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7ac Redis exporter + Grafana control-bus dashboard ship (#116); SOT §8.10 carries per-channel publish-rate budgets and the aggregate saturation alert threshold</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -3246,12 +3246,24 @@ class RoutingRecommendation:
     <div class="dc-row"><div class="key">Scalability expectations</div><div class="val">Pub/sub fan-out is sub-millisecond. Memory-bounded with LRU eviction.</div></div>
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Redis exporter for Prometheus (memory, connections, pub/sub channel count). Log every publish at DEBUG with message size.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Trusted-network. <code>protected-mode no</code> in prototype is acceptable; production requires AUTH or network isolation.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Wired in Phase 0. Configured non-persistent, 256 MB cap, LRU eviction. All canonical channels in active use by skeleton publishers.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Wired in Phase 0. Configured non-persistent, 256 MB cap, LRU eviction. All canonical channels in active use by skeleton publishers. <strong>Observability shipped v1.0.7ac (#116):</strong> <code>oliver006/redis_exporter</code> runs as a compose service, scraped by Prometheus at <code>redis_exporter</code> job; Grafana surfaces connected clients, memory, command rate, pub/sub channel count, keyspace hits/misses, and uptime via the new <code>SmartLoad — Redis (control bus health)</code> dashboard at <code>infrastructure/grafana/dashboards/smartload-redis.json</code>.</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Same. The structural design is right; only the message <em>contents</em> mature as engines mature. Versioned envelope (<code>.v1</code>) is the long-term target — adopted only when a contract genuinely breaks.</div></div>
+    <div class="dc-row"><div class="key">Publish-rate budget</div><div class="val">
+      <p>Subscribers must keep up; Redis pub/sub has no buffer for late subscribers and a slow consumer drops envelopes silently. Per-channel budgets:</p>
+      <ul>
+        <li><code>smartload.routing</code> — RL engine cycle, default <code>POLL_INTERVAL_SECONDS=5</code>. Expected: <strong>~0.2 pub/sec</strong> per active engine. Cap: <strong>2 pub/sec</strong> sustained (10× headroom).</li>
+        <li><code>smartload.anomaly</code> — anomaly-detector cycle, default <code>POLL_INTERVAL_SECONDS=10</code>. Expected: <strong>~0.1 pub/sec</strong> per active engine. Cap: <strong>1 pub/sec</strong> sustained.</li>
+        <li><code>smartload.forecast</code> — forecasting cycle, default <code>POLL_INTERVAL_SECONDS=30</code>. Expected: <strong>~0.03 pub/sec</strong>. Cap: <strong>0.5 pub/sec</strong> sustained.</li>
+        <li><code>smartload.scale</code> — autoscaler decision (cooldown-gated). Expected: <strong>&lt; 0.02 pub/sec</strong>. Cap: <strong>0.2 pub/sec</strong> sustained.</li>
+        <li><code>smartload.policy</code> — operator-driven. Expected: <strong>&lt; 0.01 pub/sec</strong>. Cap: <strong>1 pub/sec</strong> sustained (operator burst).</li>
+      </ul>
+      <p><strong>Aggregate alert threshold:</strong> sustained <code>rate(redis_commands_processed_total[1m]) &gt; 50</code> means the bus is doing &gt; 10× its expected steady-state work — likely a stuck client or a misconfigured publisher. The dashboard's command-rate panel is the place to eyeball this; a formal Prometheus alert rule is a follow-up once we have empirical baseline measurements from an adaptive-bench run to anchor the threshold.</p>
+      <p><strong>Caveats.</strong> The numbers above are <em>design targets</em> derived from the configured poll intervals × number of services × an assumed 5-backend pool. They are not yet empirically validated. The first adaptive-bench run after #116 lands gives the baseline measurement; the alert rule lands with it (a follow-up issue captures that work if it doesn't ship in the same release).</p>
+    </div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
-        <li>Add Redis exporter to Prometheus.</li>
-        <li>Document max acceptable publish rate per channel.</li>
+        <li><s>Add Redis exporter to Prometheus.</s> <strong>Shipped v1.0.7ac (#116).</strong></li>
+        <li><s>Document max acceptable publish rate per channel.</s> <strong>Done (see "Publish-rate budget" row above; v1.0.7ac).</strong> Empirical baseline + Prometheus alert rule remain as a follow-up after the next adaptive-bench run.</li>
         <li>Decide on versioned envelope adoption trigger <span class="badge badge-confirm">Needs confirmation</span>.</li>
       </ul>
     </div></div>
@@ -5597,6 +5609,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7ac — 2026-06-11 — Redis exporter + control-bus dashboard + publish-rate budgets (#116)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Redis exporter in compose</strong></td>
+      <td>New <code>redis-exporter</code> service in <code>docker-compose.yml</code> (<code>oliver006/redis_exporter:v1.62.0-alpine</code>, pointed at <code>redis://redis:6379</code>, exposed on host port 9121). Waits on Redis's healthcheck so it doesn't race startup. JSON log format so the dump-on-failure step in CI is greppable.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Prometheus scrape job</strong></td>
+      <td><code>infrastructure/prometheus/prometheus.yml</code> gains a <code>redis_exporter</code> job targeting <code>redis-exporter:9121</code>. Default 15 s scrape interval is fine — Redis stats update faster than that anyway, and per-second resolution isn't needed for control-bus health monitoring.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Grafana dashboard</strong></td>
+      <td><code>infrastructure/grafana/dashboards/smartload-redis.json</code> &mdash; new "SmartLoad &mdash; Redis (control bus health)" dashboard, UID <code>smartload-redis</code>. Six panels: connected clients (stat with threshold-coloured), memory used (stat), pub/sub channel count (stat &mdash; should sit at ~5 for the canonical channels), Redis uptime (stat), command-rate time series (1-min average), keyspace hits/misses time series. Uses the existing <code>prometheus</code> datasource UID, so it picks up Prometheus auto-provisioning at compose-up.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Publish-rate budgets in &sect;8.10</strong></td>
+      <td>SOT &sect;8.10 (Control Bus) gains a new "Publish-rate budget" data-contract row enumerating expected steady-state and sustained-cap publish rates for each of the five canonical channels (<code>routing</code>, <code>anomaly</code>, <code>forecast</code>, <code>scale</code>, <code>policy</code>), derived from the configured <code>POLL_INTERVAL_SECONDS</code> &times; service count &times; assumed 5-backend pool. Aggregate saturation alert threshold: <code>rate(redis_commands_processed_total[1m]) &gt; 50</code>. Explicitly flagged as design targets, not empirically validated &mdash; the first adaptive-bench run after this release gives the baseline measurement; a formal Prometheus alert rule lands with that data.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Doc sync</strong></td>
+      <td>SOT &sect;8.10 "Current state" row notes the dashboard exists at <code>infrastructure/grafana/dashboards/smartload-redis.json</code>; "Gap to close" list strikes through the two #116 items (Redis exporter + publish-rate documentation). <code>docs/PROJECT_STATE.md</code> closes #116 in the sprint table (S5: 2 &rarr; 1, only #117 remaining). Status badge bumped to v1.0.7ac.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7ab — 2026-06-11 — Isolation Forest anomaly engine shipped (#101) + empirical calibration finding</h3>
 <table>
