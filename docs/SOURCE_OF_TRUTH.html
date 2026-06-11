@@ -1659,10 +1659,16 @@
       <td>Unit tests; 3 integration scenarios; performance benchmarks (B1 steady, B2 burst, B3 degraded backend).</td>
     </tr>
     <tr>
-      <td><strong>Phase 3B — Final delivery</strong></td>
+      <td><strong>Phase 3B — Implementation &amp; release hardening</strong></td>
       <td>Jun 21 – Jun 30, 2026</td>
       <td><span class="pill pill-upcoming">UPCOMING</span></td>
-      <td>Final report results, presentation, Grafana exports, repo tag <code>v1.0-final</code>.</td>
+      <td>Feature delivery + production maturity + integration adoptions + regression / release packaging. Code-complete gate.</td>
+    </tr>
+    <tr>
+      <td><strong>Phase 3C — Final report &amp; presentation</strong></td>
+      <td>TBD (follows Phase 3B)</td>
+      <td><span class="pill pill-upcoming">UPCOMING</span></td>
+      <td>Final report results, presentation, Grafana exports, repo tag <code>v1.0-final</code>. Docs-only deliverables tracked in S7.</td>
     </tr>
   </tbody>
 </table>
@@ -5148,7 +5154,8 @@ flowchart LR
     <tr><td><strong>S3</strong></td><td>May 10 – May 23</td><td>Phase 1B</td><td>Autoscaler skeleton (T1.3 ✓); Policy Manager REST API (T1.4 ✓). Data preprocessors (R1.1, R1.2), loader utilities (R1.4), and EDA carried to S4 — Rghda-owned, no Tasneem dependency to land them in S3.</td><td><span class="pill pill-done">DONE</span></td></tr>
     <tr><td><strong>S4</strong></td><td>May 24 – Jun 6</td><td>Phase 2</td><td>Real ML models; LB reads Redis signals; Grafana dashboards. <strong>Plus:</strong> R1.1 / R1.2 preprocessors + R1.4 data loaders + EDA carried from S3 (Rghda).</td><td><span class="pill pill-active">ACTIVE</span></td></tr>
     <tr><td><strong>S5</strong></td><td>Jun 7 – Jun 20</td><td>Phase 3A</td><td>Integration tests (3 scenarios); unit tests; performance benchmarks</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
-    <tr><td><strong>S6</strong></td><td>Jun 21 – Jun 30</td><td>Phase 3B</td><td>Final report results; documentation; presentation polish</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
+    <tr><td><strong>S6</strong></td><td>Jun 21 – Jun 30</td><td>Phase 3B (impl)</td><td>Implementation &amp; release hardening &mdash; feature delivery (webhooks, OUI.6/.7/.8, Helm), production maturity (correlation IDs, migrations, strict lint, /metrics, versioning), integration adoptions (smartload.yml, simulate, HAProxy, named-strategy), regression + release. Split out from legacy S6 on 2026-06-11.</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
+    <tr><td><strong>S7</strong></td><td>TBD (follows S6)</td><td>Phase 3C (docs)</td><td>Pure-prose deliverables &mdash; final report, user guide, presentation slides, dataset appendix, telemetry/anomaly docs, architecture docs bundle. 0% on S7 with S6 done = code complete, writeup remaining.</td><td><span class="pill pill-upcoming">UPCOMING</span></td></tr>
   </tbody>
 </table>
 
@@ -9483,7 +9490,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
 
 <h3>35.1 Scope limitations (current phase: single-tenant middleware)</h3>
 
-<p>The present-phase scope is single-tenant middleware. The following capabilities are explicitly out of scope for this phase and tracked as Phase 2 SaaS adaptations:</p>
+<p>The present-phase scope is single-tenant middleware. The following capabilities are explicitly out of scope for this phase and tracked as Phase 2 SaaS adaptations. Issues live under the dedicated <strong>"Phase 2 — SaaS adaptation"</strong> GitHub milestone (created 2026-06-11) so the deferral is explicit, not implicit via "no milestone":</p>
 
 <table>
   <thead><tr><th>Capability</th><th>Status</th><th>Deferred to</th></tr></thead>

@@ -183,11 +183,14 @@ If you only count what is *currently shipped against the current-phase scope*, S
 | S1 | Feb 1 – Apr 24 | Phase 0 | 0 | DONE |
 | S2 | Apr 28 – May 9 | Phase 1A | 0 | DONE |
 | S3 | May 10 – May 23 | Phase 1B | 0 | DONE |
-| S4 | May 24 – Jun 6 | Phase 2 | **5** | Carry-forward Rghda + Nada workstreams (#98, #99, #101, #104, #118) |
-| S5 | Jun 7 – Jun 20 | Phase 3A | **3** | Active — #117 acceptance pattern + #7 NAB/Yahoo SMD + #116 Redis exporter (#103 closed v1.0.7aa, #159 closed v1.0.7w; #163 + #164 also landed mid-sprint) |
-| S6 | Jun 21 – Jun 30 | Phase 3B | **18** | Final delivery — final benchmark runs, regression, release package, presentation polish (incl. #160 multi-run CIs + #161 /metrics + #162 architecture docs bundle) |
+| S4 | May 24 – Jun 6 | Phase 2 | **6** | Carry-forward Rghda + Nada workstreams (#7 NAB/Yahoo SMD, #98, #99, #101, #104, #118) |
+| S5 | Jun 7 – Jun 20 | Phase 3A | **3** | Active — #103 T2.3 integration tests + #117 acceptance pattern + #116 Redis exporter (#159 / #163 / #164 closed mid-sprint) |
+| S6 | Jun 21 – Jun 30 | Phase 3B (impl) | **24** | Implementation & release hardening — feature delivery (#130 webhooks, #131 OUI.8, #133 Helm, #124/#125 OUI.6/.7, #56 auth model), production maturity (#139 strict lint, #140 test reorg, #141 migrations, #143 correlation IDs, #161 /metrics, #134 versioning + deprecation, #142 backup runbook), integration adoptions (#145/#146/#147/#150), regression + release (#37, #42, #43, #46, #126), final bench + multi-run CIs (#39, #160) |
+| S7 | TBD (follows S6) | Phase 3C (docs) | **7** | Final report & presentation — pure prose deliverables (#16, #21, #40, #44, #45, #162) + demo script & slides (#41). Split out from legacy S6 on 2026-06-11 so 0% on S7 with S6 done = code complete, writeup remaining |
 
-Total open issues at audit time: **28** (24 carried from the 2026-06-09 triage + 4 filed 2026-06-10 to convert "unfiled" markers into tracked work: #159 / #160 / #161 / #162). At 2026-06-11 refresh: **46 open** (the higher number reflects pre-existing backlog items the original triage hadn't yet enumerated, not new work); three from the original 28 (#156, #157, #159) closed in v1.0.7w/x. Two further closures (#163, #164) also landed in v1.0.7y/z but were not part of the original triage.
+**Phase 2 — SaaS adaptation** (no sprint, explicit deferral per SOT §25): **3 open** — #129 multi-tenancy, #132 tenant API keys + RBAC, #135 rate limiting. Not counted against present-phase completeness; these are scope decisions, not gaps. Milestone created 2026-06-11 to make the deferral explicit (was previously implicit via "no milestone").
+
+Total open issues at 2026-06-11 refresh: **43** (6 S4 + 3 S5 + 24 S6 + 7 S7 + 3 Phase 2). The 2026-06-11 retriage moved 16 previously unmilestoned issues into buckets (13 → S6, 3 → new Phase 2 milestone) and split the legacy "Sprint 6 — Final Report & Presentation" into S6 (implementation & release hardening) + S7 (docs-only — 7 prose deliverables peeled off from the old S6) so docs progress no longer masks impl completion.
 
 ---
 
