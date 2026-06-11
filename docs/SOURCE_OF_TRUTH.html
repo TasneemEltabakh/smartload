@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — DONE — v1.0.7ad #117 acceptance-test pattern + tests/README.md + PR template land; #7 closed-with-rationale (SMD acquired, NAB rejected as unfit, datasets gitignored by design). All S5 high-priority items closed; S6 next</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — DONE — v1.0.7ae doc-completeness sweep: 8 SOT figures updated to cover redis-exporter + smartload.scale subscribers + forecasts/policy_changes hypertables; 3 new walkthrough Mermaid blocks (lb-sidecar four-channel dispatch, IF scoring + coordinate-system bridge, test-layer pyramid); §13 Tech Stack flipped from pending to shipped for Anomaly model / Dashboards / Operator UI. No hidden modules; S6 next</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5656,6 +5656,68 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7ae — 2026-06-11 — Doc-completeness sweep: SOT figures + walkthrough diagrams catch up with v1.0.7w–ad reality</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>SOT system-topology figures (4 updated)</strong></td>
+      <td>Figures <strong>5.2 (Layer)</strong>, <strong>12.1 (System Design)</strong>, <strong>12.6 (Deployment)</strong>, and <strong>12.10 (Helm/K8s)</strong> all gain the <code>redis-exporter</code> node + the Redis-INFO scrape arrow + the Prometheus-to-Grafana edge. Figure 12.1 also lists the actual engine variants per AI service (anomaly: <code>threshold</code> + <code>isolation_forest</code>; forecasting: <code>moving_avg</code> + <code>arima</code>; rl-engine: <code>round_robin</code> + <code>least_conn</code> + <code>random_shadow</code> + <code>ppo</code>). Captions updated from "14 containers" to "16 containers" with the 10-SmartLoad + 6-infrastructure breakdown.</td>
+      <td>This release (commit 1a12f88)</td>
+    </tr>
+    <tr>
+      <td><strong>SOT data-flow figures (3 updated)</strong></td>
+      <td>Figures <strong>8.4 (Metrics DB)</strong>, <strong>12.3 (Data Flow)</strong>, and <strong>12.7 (Canonical Schema)</strong> all gain the <code>forecasts</code> hypertable (v1.0.7w #159) + the <code>policy_changes</code> writer arrow. Figure 12.7 promoted from "3-table" to "5-table"; <code>scaling_events</code> row updated to include the v1.0.7v <code>mechanism</code> field. Forecasting Engine now correctly shown as both a reader (of <code>metrics</code>) and a writer (of <code>forecasts</code>).</td>
+      <td>This release (commit 1a12f88)</td>
+    </tr>
+    <tr>
+      <td><strong>SOT Figure 12.2 — Communications Channels</strong></td>
+      <td>Adds operator-ui (Live Engines) and webhook-dispatcher (planned) as additional subscribers across every channel. Critically fixes <code>smartload.scale</code> &mdash; was previously shown routing only to Policy Manager (audit); now correctly shows the <strong>lb-sidecar subscription (v1.0.7z #164)</strong> as the load-bearing edge. Solid vs dashed arrows distinguish acting subscribers (LB Sidecar rewrites <code>upstream.conf</code>; Autoscaler scales the pool) from observing ones (Operator UI, planned webhook-dispatcher).</td>
+      <td>This release (commit 1a12f88)</td>
+    </tr>
+    <tr>
+      <td><strong>SOT §13 Tech Stack table (3 stale rows flipped)</strong></td>
+      <td>Three rows still pinned with "pending" / "future" pills despite the underlying work having shipped: <strong>Anomaly model</strong> flipped from <code>Phase 2 (N2.1)</code> to <code>Shipped v1.0.7ab</code> with the F1=0.8012 + #165 calibration follow-up; <strong>Dashboards</strong> flipped from "Overview shipped; Anomaly/Forecast/RL/Scaling pending T2.2" to <code>Shipped (6 dashboards)</code> with the new Redis dashboard called out; <strong>Operator UI</strong> flipped from <code>T2.2 / Custom React/Flask UI deferred</code> to <code>Five pages shipped</code> with the BFF + SPA architecture summary. The §16 boundary-rule decision-table row 6 ("Operator UI Grafana vs custom") also updated from "Grafana canonical, custom UI future" to "both shipped" with slice attribution.</td>
+      <td>This release (commit 1a12f88)</td>
+    </tr>
+    <tr>
+      <td><strong>SOT envelope/channel tables — <code>smartload.scale</code> subscriber rows</strong></td>
+      <td>Three tables in §5 (channels-at-a-glance), §11 (envelope contract), and the redis-channels.md catalog all listed <code>smartload.scale</code>'s subscriber as "Policy Manager (audit)" or omitted lb-sidecar. All three brought into agreement with the actual subscriber set: <strong>lb-sidecar (v1.0.7z #164)</strong> + operator-ui (audit) + webhook-dispatcher (planned #130). The envelope payload row now includes the v1.0.7v <code>mechanism</code> field.</td>
+      <td>This release (commit 1a12f88)</td>
+    </tr>
+    <tr>
+      <td><strong>Walkthrough — stale cutover diagram fixed</strong></td>
+      <td>The #138 cutover progress flowchart at the top of §4 had its model-handoff nodes (<code>isolation_forest.pkl</code> #101, <code>arima.pkl</code> #102/PR #144, <code>ppo policy.zip</code> #27) colored as <em>pending</em> despite all three having shipped. Recoloured as <em>partial</em> (shipped + tracked follow-up) with the version they landed in and the named binding constraint per artefact (#165 production calibration, MAPE 25% tuning, §34.7 PPO retraining).</td>
+      <td>This release (commit b51135e)</td>
+    </tr>
+    <tr>
+      <td><strong>Walkthrough &mdash; new lb-sidecar dispatch diagram (§3.1)</strong></td>
+      <td>v1.0.7z's four-channel pattern was described in prose but had no visual. New Mermaid block shows publishers &rarr; Redis channels &rarr; <code>handle_routing/anomaly/policy/scale</code> &rarr; <code>discover_all_backends()</code> &rarr; <code>NginxFileAdapter</code> &rarr; <code>upstream.conf</code> &rarr; <code>nginx -s reload</code>. Makes the "re-query Docker on every envelope" invariant visible at a glance.</td>
+      <td>This release (commit b51135e)</td>
+    </tr>
+    <tr>
+      <td><strong>Walkthrough &mdash; new IF scoring + coordinate-system bridge diagram (§8.3)</strong></td>
+      <td>Two-half diagram covering TRAIN TIME (<code>smd_scaler</code> &rarr; <code>IsolationForest.fit()</code> &rarr; threshold derivation &rarr; bundle dict &rarr; <code>.pkl</code>) and INFER TIME (sample-count gate &rarr; <code>production_scaler.transform()</code> &rarr; <code>model.decision_function()</code> &rarr; threshold classifier). The cross-cutting #165 root cause &mdash; model trained in standardised-SMD coordinates but inference inputs arrive in standardised-MST coordinates &mdash; now visible in the diagram, not just prose.</td>
+      <td>This release (commit b51135e)</td>
+    </tr>
+    <tr>
+      <td><strong>Walkthrough &mdash; new test-layer pyramid (§8.16)</strong></td>
+      <td>Maps the four pytest layers (<code>unit/integration/e2e/conformance</code>) to the question each answers + which ones CI's <code>compose-test</code> job runs. Companion to <code>tests/README.md</code> and the #117 acceptance-test pattern. Existing bench-harness section renamed §8.16b and its title now lists all three harnesses (<code>baseline-vs-smartload</code> + <code>adaptive-bench</code> + <code>anomaly-engine-bench</code>).</td>
+      <td>This release (commit b51135e)</td>
+    </tr>
+    <tr>
+      <td><strong>README + redis-channels.md</strong></td>
+      <td>README service-table row for <code>forecasting</code> now mentions the ARIMA opt-in (was "plugin slot"). Infrastructure line lists <code>redis-exporter</code> + <code>smartload-redis</code> dashboard. Repository-structure tree gains <code>experiments/</code> (3 harnesses) and <code>tools/</code> (4 dev utilities) subtrees. Testing section links <code>tests/README.md</code> and points at <code>experiments/</code> as the canonical bench location. Contributing section links the template + <code>.github/pull_request_template.md</code>. <code>docs/redis-channels.md</code> subscriber list for <code>smartload.scale</code> includes <code>lb-sidecar</code>.</td>
+      <td>This release (commit 1a12f88)</td>
+    </tr>
+    <tr>
+      <td><strong>Audit confirmation</strong></td>
+      <td>Final pass confirms no doc says "scaffold" / "pending" / "future" / "model handoff awaiting" for anything that has shipped. Every shipped service / experiment / tool / dashboard appears in at least one Mermaid block. Cross-references between the SOT changelog (§22), PROJECT_STATE delta paragraph, and the walkthrough subsection for each release are consistent. Status badge bumped to v1.0.7ae with the "no hidden modules" marker.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7ad — 2026-06-11 — Acceptance-test pattern + tests/README.md + PR template (#117); S5 closes</h3>
 <table>
