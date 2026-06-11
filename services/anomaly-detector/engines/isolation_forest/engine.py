@@ -51,6 +51,14 @@ class IsolationForestEngine(AnomalyEngine):
         error_rate_threshold: float = 0.05,
         min_sample_count: int = 10,
     ):
+        # latency_multiplier and error_rate_threshold are accepted for
+        # select_engine(**policy.engine_kwargs()) compatibility with the
+        # threshold engine but are unused at inference here — the model's
+        # decision boundaries are the bundle's `thresholds.healthy_above`
+        # and `unhealthy_below`, baked in at training time. A policy.yaml
+        # change to either field will be silently ignored by this engine;
+        # retuning means re-running tools/anomaly-training/train_smd.py.
+        # min_sample_count remains a runtime knob (data-quality gate).
         self.latency_multiplier = latency_multiplier
         self.error_rate_threshold = error_rate_threshold
         self.min_sample_count = min_sample_count
