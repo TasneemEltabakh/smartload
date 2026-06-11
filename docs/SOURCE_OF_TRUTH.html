@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — v1.0.7ac Redis exporter + Grafana control-bus dashboard ship (#116); SOT §8.10 carries per-channel publish-rate budgets and the aggregate saturation alert threshold</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — DONE — v1.0.7ad #117 acceptance-test pattern + tests/README.md + PR template land; #7 closed-with-rationale (SMD acquired, NAB rejected as unfit, datasets gitignored by design). All S5 high-priority items closed; S6 next</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5609,6 +5609,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7ad — 2026-06-11 — Acceptance-test pattern + tests/README.md + PR template (#117); S5 closes</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Per-task acceptance-test pattern documented</strong></td>
+      <td><code>tests/README.md</code> defines the two-test-per-product-task pattern (one pure-Python unit test + one live-stack acceptance test that cites the SOT section it maps to) and lists ten reference implementations across the codebase that already follow it. Directory layout, layer-to-run-command map, slow-marker convention, pubsub race pattern, skip-with-reason discipline, compose-backend naming &mdash; all centralised so future PRs don't re-invent.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Working starter template</strong></td>
+      <td><code>tests/integration/_template_acceptance.py</code> &mdash; copyable file with module-docstring header, task-identity placeholders, precondition-check helper, arrange/act/wait/assert skeleton, and an optional slow-variant block. Leading underscore keeps it out of pytest's default sweep (verified empirically &mdash; <code>pytest tests/integration/</code> does not collect it); renaming to <code>test_&lt;feature&gt;.py</code> opts it in. Skips harmlessly with a clear reason if collected explicitly.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>PR template</strong></td>
+      <td><code>.github/pull_request_template.md</code> &mdash; thin checklist that asks PR authors to confirm unit + live-stack tests + SOT cross-reference + which of the three canonical docs they touched. Discipline reminder, not hook-enforced; the structural lints (<code>scripts/lint-structure.py</code>) carry the harder enforcement.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Benchmark harness scope clarified</strong></td>
+      <td>#117 originally asked for a <code>benchmarks/</code> directory + Locust wrapper + report-comparison script. That work is materially complete via three existing harnesses under <code>experiments/</code> (<code>baseline-vs-smartload/</code>, <code>adaptive-bench/</code>, <code>anomaly-engine-bench/</code>) which already emit JSON / CSV / SUMMARY.md artefacts. <code>tests/README.md</code> documents <code>experiments/</code> as the canonical bench location; a parallel <code>benchmarks/</code> tree would have duplicated existing infrastructure. The CI-bench-job piece (run on PR-to-main with regression alert) remains a follow-up &mdash; tracked informally under the next adaptive-bench measurement run and SOT &sect;35.3 multi-run CIs (#160).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>#7 closed-with-rationale (housekeeping)</strong></td>
+      <td>SMD acquired and used as the IF training corpus via PR #158; NAB investigated and explicitly rejected (univariate format doesn't fit the 4-feature schema). Strict criterion ("datasets committed under <code>/data/anomaly/</code>") deliberately not pursued &mdash; gitignored at <code>datasets/</code> is the right call for labeled corpora of this size. Full rationale on the closed issue.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>S5 sprint closes</strong></td>
+      <td>Active count 1 &rarr; 0 (#117 closed). Status badge bumped to v1.0.7ad with the S5 DONE marker. PROJECT_STATE sprint table reflects S5 = 0 open, S6 next. The seven v1.0.7w/x/y/z/aa/ab/ac/ad releases together close six S5 high-priority items (#159, #163, #164, #103, #101, #116, #117) plus the mid-sprint #156/#157 adaptive-bench landings and the v1.0.7ad #7 housekeeping closure.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7ac — 2026-06-11 — Redis exporter + control-bus dashboard + publish-rate budgets (#116)</h3>
 <table>
