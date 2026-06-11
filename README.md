@@ -1,6 +1,13 @@
 # SmartLoad
 
-**SmartLoad is middleware (and a candidate SaaS) for AI-driven load management.** It sits between client traffic and a pool of backend services and combines classical load balancing with telemetry-driven decision intelligence — anomaly detection, workload forecasting, and reinforcement-learning routing — to make adaptive routing and proactive autoscaling decisions while preserving deterministic safety fallbacks. Customers run it on-prem (Docker Compose / Helm) or, in the future, consume it via the managed control plane.
+> Intelligent middleware that puts a thinking layer between your clients and your backend pool: anomaly-aware routing, forecast-driven autoscaling, and reinforcement-learning load balancing — with deterministic safety fallbacks.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docker images](https://github.com/TasneemEltabakh/smartload/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/TasneemEltabakh/smartload/actions/workflows/docker-publish.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#roadmap)
+
+SmartLoad sits between client traffic and a pool of backend services. It combines a classical load balancer (NGINX today; HAProxy / Envoy / ALB plugins planned) with a decision plane that detects anomalies, forecasts demand, and learns routing policy from real traffic — all behind a `safe_mode` switch that pins every engine to its deterministic fallback when you need it to.
 
 ```
                  ┌────────────────────────────────────────────────┐
@@ -11,90 +18,45 @@
                  │        anomaly-detector · forecasting           │
                  │        rl-engine · autoscaler · policy-manager  │
                  │   └── operator-ui (BFF + web)                   │
-                 │   └── webhook-dispatcher  ─────────────────────► customer URL
+                 │   └── webhook-dispatcher  ─────────────────────► your URL
                  └────────────────────────────────────────────────┘
 ```
 
-> **Looking for the canonical spec?** Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html). The "Find what you need — by persona" panel at the top of the SOT routes you to the right section in under 10 seconds.
-
-## Documentation map — where to go
-
-Pick the section that matches what you're trying to do. Every link points into the canonical SOT (`docs/SOURCE_OF_TRUTH.html`).
-
-| You want to… | Go to |
-|---|---|
-| **Call the API** from a script or external system | [§26 API Integration Guide](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) — every endpoint, error model, four integration patterns, curl walkthrough |
-| **Use the Python SDK** | [§27 SDK Reference](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) — every method, examples, threading model |
-| **Use the operator UI** or understand its architecture | [§28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui) — pages, workflows, BFF endpoints, security |
-| **Receive webhooks** from SmartLoad | [§29 Webhooks Specification](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) — registration, HMAC signing, retry, verification |
-| **Design or query the database** | [§30 Database Design Consolidation](docs/SOURCE_OF_TRUTH.html#sec-30-database) — every table, index, retention, query catalog |
-| **Understand the architecture** | [§5 Big Picture](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [§16 Plane Split](docs/SOURCE_OF_TRUTH.html#sec-control-plane) |
-| **Self-host or deploy** | [§25 Distribution](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) + [§20 Deployment](docs/SOURCE_OF_TRUTH.html#sec-14-deploy) |
-| **Contribute to a service** | [§7 Service Directory](docs/SOURCE_OF_TRUTH.html#sec-5-directory) + [§8 Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) |
-| **Read for thesis / research** | [§2 Overview](docs/SOURCE_OF_TRUTH.html#sec-2-overview) → [§14 ML Foundations](docs/SOURCE_OF_TRUTH.html#sec-9-data) → [§15 Routing Authority](docs/SOURCE_OF_TRUTH.html#sec-10-routing) → [§22 Changelog](docs/SOURCE_OF_TRUTH.html#sec-15-changelog) → **[§31 Related Work](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) · [§32 Algorithm Foundations](docs/SOURCE_OF_TRUTH.html#sec-32-algorithms) · [§33 Methodology](docs/SOURCE_OF_TRUTH.html#sec-33-methodology) · [§34 Results & Discussion](docs/SOURCE_OF_TRUTH.html#sec-34-results) · [§35 Limitations & Future Work](docs/SOURCE_OF_TRUTH.html#sec-35-limitations)** |
-
----
-
-## What it does
+## Why SmartLoad
 
 - **Anomaly-aware routing.** A backend that starts misbehaving is excluded from the upstream pool before clients see the latency hit.
 - **Forecast-driven autoscaling.** The pool grows ahead of the spike, not in response to it.
 - **Reinforcement-learning routing.** Trained against real workload traces; switchable between `shadow` (observe-only) and `active` per policy.
 - **Operator-first overrides.** A `safe_mode` flag forces every engine to the deterministic fallback. Every change is audit-logged.
+- **Integrate with anything.** Redis pub/sub for sub-second decisions, HMAC-signed webhooks for cross-network HTTP delivery, Python SDK for everything else.
+- **Self-hostable.** Docker Compose today, Helm chart in progress. No vendor lock-in.
 
 ---
 
-## Writing about SmartLoad (thesis / poster / presentation)
-
-The three docs are designed to be the only source you need for a thesis, poster, or presentation — no repo reading required.
-
-| Artefact | Lift from |
-|---|---|
-| **Thesis — Introduction** | [SOT §2 Executive Overview](docs/SOURCE_OF_TRUTH.html#sec-2-overview) + [§3 Canonical Project Definition](docs/SOURCE_OF_TRUTH.html#sec-3-definition) |
-| **Thesis — Background / Related Work** | [SOT §31 Background & Related Work](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) (inline citations are lift-ready) |
-| **Thesis — System Design** | [SOT §4 Principles](docs/SOURCE_OF_TRUTH.html#sec-design-principles) + [§5 Big Picture](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [§8 Service Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) + [§12 Diagrams](docs/SOURCE_OF_TRUTH.html#sec-architecture-map) + [§15 Routing Authority](docs/SOURCE_OF_TRUTH.html#sec-10-routing) |
-| **Thesis — Algorithms / Methodology** | [SOT §32 Algorithm Foundations](docs/SOURCE_OF_TRUTH.html#sec-32-algorithms) + [§33 Evaluation Methodology](docs/SOURCE_OF_TRUTH.html#sec-33-methodology) + [Walkthrough §8 Algorithms & training procedure](docs/PROJECT_WALKTHROUGH.md#8-algorithms--training-procedure) |
-| **Thesis — Implementation** | [Walkthrough](docs/PROJECT_WALKTHROUGH.md) (file-by-file tour, code excerpts, §1–§8) |
-| **Thesis — Results / Discussion** | [SOT §34 Results & Discussion](docs/SOURCE_OF_TRUTH.html#sec-34-results) — synthesised honest finding; raw run-by-run numbers in [§22 Changelog](docs/SOURCE_OF_TRUTH.html#sec-15-changelog) v1.0.7r/s/t |
-| **Thesis — Limitations / Future Work** | [SOT §35 Limitations & Future Work](docs/SOURCE_OF_TRUTH.html#sec-35-limitations) |
-| **Thesis — Conclusion** | [SOT §31.7 Positioning in one paragraph](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) + [§34.5 What this confirms](docs/SOURCE_OF_TRUTH.html#sec-34-results) |
-| **Poster — Problem statement** | [SOT §2 Problem statement](docs/SOURCE_OF_TRUTH.html#sec-2-overview) (one paragraph, lift-ready) |
-| **Poster — System diagram** | [SOT §5 Figure 5.1 Context](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [Figure 5.2 Layer](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [Figure 5.3 MAPE Loop](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) (Mermaid sources) |
-| **Poster — Contribution** | [SOT §31.7 Positioning paragraph](docs/SOURCE_OF_TRUTH.html#sec-31-related-work) |
-| **Poster — Headline numbers** | [SOT §34.3 Per-phase p95 table](docs/SOURCE_OF_TRUTH.html#sec-34-results) (honest, including the +3 s max-latency cost) |
-| **Presentation — Story arc** | §2 (what / why) → §31 (where the field is) → §5 + §15 (the architecture) → §32 (how the engines work) → §33 (how we evaluate) → §34 (what we found) → §35 (what's next) |
-| **Presentation — Demo flow** | [SOT §28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui) (policy → audit → manual actions → status) + the demo-ui benchmark page from [Walkthrough §5.5](docs/PROJECT_WALKTHROUGH.md#55-toolsdemo-ui--developer-demo-harness) |
-| **Presentation — Honest read** | [SOT §34.3–§34.6](docs/SOURCE_OF_TRUTH.html#sec-34-results) — the harness works, the mechanism works, the trained policy needs retraining on heterogeneous traces; the binding constraint is named. |
-
-> Every cross-section reference inside the SOT is a working hash anchor — Ctrl-F by section number to jump.
-
----
-
-## Quick Start (Docker Compose)
+## Quick start
 
 ```bash
-git clone <repo-url> && cd smartload
+git clone https://github.com/TasneemEltabakh/smartload.git
+cd smartload
 cp config/.env.example .env             # fill in values
 docker compose up -d                    # 14 containers come up
 ```
 
-What you get:
-
 | Surface | URL | Notes |
 |---|---|---|
 | Client traffic ingress | `http://localhost:8080` | NGINX load balancer |
-| Operator UI | `http://localhost:8090` | Home page + Policy editor + API docs |
+| Operator UI | `http://localhost:8090` | Home + Policy editor + Audit + Actions |
 | API docs (Swagger UI) | `http://localhost:8090/api/docs` | Live from `docs/openapi/smartload-v1.yaml` |
-| Locust traffic simulator | `http://localhost:8089` | Run synthetic load |
-| Grafana | `http://localhost:3000` | Telemetry dashboards (admin / admin) |
+| Locust traffic simulator | `http://localhost:8089` | Synthetic load |
+| Grafana | `http://localhost:3000` | Telemetry dashboards (`admin` / `admin`) |
 | Prometheus | `http://localhost:9090` | Metrics |
 
 ---
 
-## Try it from Python (SDK)
+## Use it from Python
 
 ```bash
-pip install -e clients/python                                # editable install
+pip install -e clients/python
 python clients/python/examples/quickstart.py                 # prints current policy
 python examples/scenarios/policy-management/policy_walk.py   # end-to-end walkthrough
 ```
@@ -109,52 +71,98 @@ with SmartLoadClient(base_url="http://localhost:8086") as c:
     c.subscribe_policy(lambda payload, meta: print("policy changed:", payload))
 ```
 
-For full SDK reference (every method, exception type, threading model) see [SOT §27](docs/SOURCE_OF_TRUTH.html#sec-27-sdk). For working examples: [`clients/python/examples/`](clients/python/examples/).
+Full SDK reference (every method, exception type, threading model): [SOT §27](docs/SOURCE_OF_TRUTH.html#sec-27-sdk). Working examples: [`clients/python/examples/`](clients/python/examples/).
 
 ---
 
-## Integrate as external middleware
+## Integrate with anything
 
-SmartLoad publishes events over **two channels** so any integrator can consume them:
+SmartLoad publishes decisions over two channels — pick whichever fits your stack:
 
 | Channel | When to use | Reference |
 |---|---|---|
-| **Redis pub/sub** (sub-second latency, in-network) | You can run a Redis client, you need decisions within seconds. | SDK `subscribe_policy()` — [SOT §27.4](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
-| **Webhooks** (HMAC-signed HTTP POSTs, ~30s latency, public-internet friendly) | You speak HTTP, you can host a public endpoint, you want at-least-once delivery with retries. | [SOT §29 Webhooks](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) — registration, HMAC, retry, customer verification (Python + Node) |
+| **Redis pub/sub** (sub-second latency, in-network) | You can run a Redis client and need decisions within seconds. | SDK `subscribe_policy()` — [SOT §27.4](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
+| **Webhooks** (HMAC-signed HTTP POSTs, ~30s latency, public-internet friendly) | You speak HTTP, can host a public endpoint, want at-least-once delivery with retries. | [SOT §29 Webhooks](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) |
 
-The full integration patterns matrix (read-only console, synchronous operator, Redis listener, webhook consumer) is in [SOT §26.9](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide).
+Integration patterns matrix (read-only console, synchronous operator, Redis listener, webhook consumer): [SOT §26.9](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide).
 
 ---
 
 ## Operator UI
 
-The web UI at `http://localhost:8090` is the operator-facing transparency + override surface. Four pages shipped today:
+Web UI at `http://localhost:8090`:
 
-- **Home** — service-health grid for every SmartLoad service, polled every 10 s (slice #1)
-- **Policy** — read current policy · edit JSON · side-by-side diff preview · commit with audit trail (slice #1)
-- **Audit** — unified view over both audit streams (policy_changes + scaling_events) with kind / actor / action / limit filters, auto-refresh, colour-coded action badges (slice #2)
-- **Actions** — operator overrides: scale to N backends, isolate a backend, each with a confirmation modal that previews the state change; results feed of the last 10 actions; every action lands on the Audit page with a `manual:<actor>:` prefix (slice #3)
+- **Home** — service-health grid for every SmartLoad service, polled every 10 s
+- **Policy** — read / edit operating policy with diff preview and audit trail
+- **Audit** — unified view over policy changes + scaling events with kind / actor / action filters
+- **Actions** — operator overrides (scale to N backends, isolate a backend) with confirmation modals
+- **Live Engines** — SSE stream of decision-plane envelopes (anomaly / forecast / routing / scale)
 
-For workflow walkthroughs, BFF endpoint reference, configuration, security posture, and the roadmap to OUI.3 through OUI.8 see [SOT §28 Operator UI Guide](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui).
-
-Per the SOT lock (commit `6f89a13`), the operator UI is a **transparency + override layer**, not an admin panel — tenants integrate via the SDK / webhooks, not the UI.
+The operator UI is a **transparency + override surface**, not an admin panel — programmatic integrators use the SDK / webhooks, not the UI. Full guide: [SOT §28](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui).
 
 ---
 
-## Contracts (single source of truth per surface)
+## Architecture
+
+Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html) — the canonical spec, with hash anchors for every section.
+
+| You want to… | Go to |
+|---|---|
+| Understand the system at a glance | [§5 Big Picture](docs/SOURCE_OF_TRUTH.html#sec-4-architecture) + [§16 Plane Split](docs/SOURCE_OF_TRUTH.html#sec-control-plane) |
+| Call the API | [§26 API Guide](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) |
+| Use the SDK | [§27 SDK Reference](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
+| Receive webhooks | [§29 Webhooks](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) |
+| Self-host or deploy | [§25 Distribution](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) + [§20 Deployment](docs/SOURCE_OF_TRUTH.html#sec-14-deploy) |
+| Query the database | [§30 Database Design](docs/SOURCE_OF_TRUTH.html#sec-30-database) |
+| Write a plugin / contribute to a service | [§7 Service Directory](docs/SOURCE_OF_TRUTH.html#sec-5-directory) + [§8 Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) + [`docs/PROJECT_WALKTHROUGH.md`](docs/PROJECT_WALKTHROUGH.md) |
+
+---
+
+## Services
+
+| Service | Language | Port | Role |
+|---|---|---|---|
+| `load-balancer` | NGINX | 8080 | Client traffic ingress; reload-on-write of `upstream.conf` |
+| `lb-otel-shipper` | Python | sidecar | Tails NGINX log, ships OTLP/HTTP-JSON |
+| `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
+| `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
+| `anomaly-detector` | Python | 8082 | Threshold baseline + Isolation Forest plugin slot |
+| `forecasting` | Python | 8083 | Moving-average baseline + ARIMA plugin slot |
+| `rl-engine` | Python | 8084 | Random-shadow baseline + PPO policy with `shadow`/`active` mode pin |
+| `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback |
+| `policy-manager` | Python | 8086 | Operating policy REST API + audit + Redis publish on change |
+| `operator-ui` | Flask + React | 8090 | BFF + web transparency / override surface |
+| `webhook-dispatcher` | — | — | Outbound HMAC-signed HTTP events (planned) |
+
+Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
+
+### Plugin model
+
+All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share the same plugin shape. To add a new engine: drop `services/<svc>/models/<name>.pkl` (or `policy.zip` for RL), implement `engines/<name>/engine.py` (or `policies/<name>/policy.py`) subclassing the service ABC, register the name in the factory, set `<SVC>_ENGINE=<name>` (or `RL_POLICY`) — no service-shell changes. Falls back to the baseline automatically if the artifact is missing.
+
+Same shape for load-balancer adapters: `services/shared/lb_adapters/<name>/` implements the `LoadBalancerAdapter` ABC. NGINX ships; HAProxy / Envoy / ALB are stubbed.
+
+Run-loop knobs:
+- `anomaly-detector` — `ANOMALY_RUNLOOP_ENABLED`, `ANOMALY_ENGINE` (`threshold` | `isolation_forest`)
+- `forecasting` — `FORECAST_RUNLOOP_ENABLED`, `FORECAST_ENGINE` (`moving_average` | `arima`)
+- `rl-engine` — `RL_RUNLOOP_ENABLED`, `RL_POLICY` (`random_shadow` | `ppo`), `RL_MODE` (`shadow` | `active`)
+
+---
+
+## Contracts
+
+Every interface has a single source of truth:
 
 | Surface | Canonical contract | Reference |
 |---|---|---|
-| HTTP REST | [`docs/openapi/smartload-v1.yaml`](docs/openapi/smartload-v1.yaml) (OpenAPI 3.1) | [SOT §26 API Guide](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) (prose) |
-| Redis pub/sub | [`docs/redis-channels.md`](docs/redis-channels.md) | [SOT §11](docs/SOURCE_OF_TRUTH.html#sec-interface-authority) (envelope rules) |
-| Webhooks | inline in OpenAPI spec (planned #130) | [SOT §29 Webhooks](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) |
-| Python SDK | `clients/python/smartload_client/` | [SOT §27 SDK Reference](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
-| Database schema | [`infrastructure/timescaledb/init.sql`](infrastructure/timescaledb/init.sql) | [SOT §30 DB Design](docs/SOURCE_OF_TRUTH.html#sec-30-database) (consolidated) |
+| HTTP REST | [`docs/openapi/smartload-v1.yaml`](docs/openapi/smartload-v1.yaml) (OpenAPI 3.1) | [SOT §26](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) |
+| Redis pub/sub | [`docs/redis-channels.md`](docs/redis-channels.md) | [SOT §11](docs/SOURCE_OF_TRUTH.html#sec-interface-authority) |
+| Webhooks | inline in OpenAPI spec | [SOT §29](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) |
+| Python SDK | `clients/python/smartload_client/` | [SOT §27](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
+| Database schema | [`infrastructure/timescaledb/init.sql`](infrastructure/timescaledb/init.sql) | [SOT §30](docs/SOURCE_OF_TRUTH.html#sec-30-database) |
 | Per-feature manifests | [`docs/features/`](docs/features/) | one file per shipped feature |
-| Architecture (in-tree) | [`docs/architecture/`](docs/architecture/) | control / data plane, multi-tenancy, failure modes |
-| Whole-system | [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html) | single navigable reference for everything else |
 
-Three CI guardrails enforce the contracts:
+Three CI guardrails keep contracts honest:
 - `scripts/lint-redis-channels.py` — every Redis channel in source must appear in the registry
 - `scripts/lint-openapi.py` — every `/api/v1/*` route in source must appear in the OpenAPI spec
 - `scripts/lint-structure.py` — every `tests/e2e/<feature>/` must have a sibling `docs/features/<feature>.md` + `examples/scenarios/<feature>/`
@@ -163,14 +171,14 @@ Three CI guardrails enforce the contracts:
 
 ## Repository structure
 
-This repo follows a **role-based** organisation: services mirror deployment topology, plugins live one folder per implementation, and feature artefacts triangulate across `docs/features/` + `examples/scenarios/` + `tests/e2e/`.
+Role-based layout: services mirror deployment topology, plugins live one folder per implementation, feature artefacts triangulate across `docs/features/` + `examples/scenarios/` + `tests/e2e/`.
 
 ```
 smartload/
 ├── services/                         # one folder per deployable service
 │   ├── load-balancer/                # NGINX
 │   ├── lb-otel-shipper/              # NGINX log → OTLP shipper
-│   ├── lb-sidecar/                   # dynamic upstream rewriter (T2.1)
+│   ├── lb-sidecar/                   # dynamic upstream rewriter
 │   ├── telemetry/                    # OTLP ingress + read API
 │   ├── anomaly-detector/             # plugin-per-folder under engines/
 │   ├── forecasting/                  # plugin-per-folder under engines/
@@ -189,114 +197,46 @@ smartload/
 ├── infrastructure/
 │   ├── grafana/ otel-collector/ prometheus/ redis/ timescaledb/
 │   ├── k8s/                          # raw manifests
-│   └── helm/smartload/               # Chart.yaml + values.yaml (#133)
+│   └── helm/smartload/               # Chart.yaml + values.yaml (templates WIP)
 ├── tests/                            # PEP 420 namespace packages — no __init__.py
 │   ├── unit/<service>/               # pure-function tests per service
 │   ├── integration/                  # service-pair / contract tests
 │   ├── e2e/<feature>/                # feature-level tests via the SDK
 │   ├── conformance/lb_adapter/       # every adapter must pass these
 │   └── performance/                  # Locust
-├── tools/                            # dev-utility containers (NOT shipped middleware)
-│   ├── demo-ui/                      # scenario-injection + chaos + live SSE feed (8091)
-│   └── traffic-simulator/            # Locust UI for synthetic load (8089)
-├── experiments/                      # one-off integration / smoke run artifacts
-│   └── <feature>_<UTC-timestamp>/    # frozen by date; readable via git log
+├── tools/                            # dev-utility containers (not shipped middleware)
+│   ├── demo-ui/                      # scenario-injection + chaos + live SSE feed (:8091)
+│   └── traffic-simulator/            # Locust UI (:8089)
 ├── docs/
 │   ├── SOURCE_OF_TRUTH.html          # canonical spec (read first)
 │   ├── PROJECT_WALKTHROUGH.md        # narrative walkthrough
-│   ├── features/                     # per-feature manifests (+ SLICE_CHECKLIST.md)
-│   ├── architecture/                 # control/data plane, multi-tenancy, failure modes
+│   ├── features/                     # per-feature manifests
+│   ├── architecture/                 # control / data plane, multi-tenancy, failure modes
 │   ├── openapi/                      # smartload-v1.yaml
-│   ├── planned/                      # placeholder docs for unimplemented services (e.g. webhook-dispatcher)
-│   ├── ui-mockups/                   # operator-UI page mockups (PNG)
+│   ├── planned/                      # placeholder docs for unimplemented services
 │   └── redis-channels.md             # canonical channel registry
-├── scripts/
-│   ├── lint-structure.py             # per-service README + plugin layout + e2e/feature alignment
-│   ├── lint-redis-channels.py        # channel-registry anti-drift
-│   ├── lint-openapi.py               # spec anti-drift
-│   ├── seed-metrics.py               # synthetic telemetry seeder
-│   └── download-datasets.sh
+├── scripts/                          # lint-*.py, seed-metrics.py, download-datasets.sh
 ├── config/                           # policy.yaml + .env.example
-├── datasets/                         # public training data (Borg, Alibaba, NAB, Yahoo SMD); fetched, gitignored
+├── datasets/                         # public training data; fetched, gitignored
 ├── test-backends/                    # Node.js stubs the autoscaler scales
 └── docker-compose.yml
 ```
 
-A complete canonical tree with placement rules is in [SOT §7](docs/SOURCE_OF_TRUTH.html).
-
----
-
-## Services
-
-| Service | Language | Port | Status |
-|---|---|---|---|
-| `load-balancer` | NGINX | 8080 | wired |
-| `lb-otel-shipper` | Python | sidecar | T1.2 shipped |
-| `lb-sidecar` | Python | 8087 | T2.1 shipped — subscribes to `smartload.routing` + `smartload.anomaly` + `smartload.policy` + `smartload.scale` (v1.0.7z, #164: closed-loop autoscale → NGINX), dynamically rewrites `upstream.conf`, `nginx -s reload` via Docker exec |
-| `telemetry` | Python | 8081 | T1.1 shipped (OTLP ingest + read API) |
-| `anomaly-detector` | Python | 8082 | Phase-1 run loop wired (#138 round 1, `ANOMALY_RUNLOOP_ENABLED=true` default since v1.0.7g) + `/api/v1/isolate` (slice #3, #123) |
-| `forecasting` | Python | 8083 | Phase-1 run loop wired (#138 round 2, `FORECAST_RUNLOOP_ENABLED=true` default since v1.0.7g) |
-| `rl-engine` | Python | 8084 | Phase-1 run loop wired (#138 round 3, `RL_RUNLOOP_ENABLED=true` default since v1.0.7g; `RL_MODE=shadow` is the safety pin that keeps routing inert until an operator opts in); v1.0.7 review fixes (see SOT §22) |
-| `autoscaler` | Python | 8085 | T1.3 shipped + `/api/v1/audit/scaling` (slice #2) + `/api/v1/scale` (slice #3, #123) |
-| `policy-manager` | Python | 8086 | T1.4 shipped + `/api/v1/audit/policy` |
-| `operator-ui` | Flask + React | 8090 | Home + Policy + Audit + Actions pages (slices #1, #2, #3) |
-| `webhook-dispatcher` | — | — | placeholder; tracking doc lives at `docs/planned/webhook-dispatcher.md` until #130 lands the implementation |
-
-Infrastructure: TimescaleDB · Redis · OTel Collector · Prometheus · Grafana — all configured under `infrastructure/`.
-
-### Engine-wrapper foundation (#138 — cutover complete)
-
-All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share an identical run-loop shape: load an engine/policy via `select_engine()` / `select_policy()` with automatic fallback to a baseline, then per tick — drain `smartload.policy` (rebuild the engine on update), query TimescaleDB, run the engine, and publish an envelope. The pattern is split between `app.py` (Flask + thread) and `runloop.py` (pure-Python unit-testable pieces). Each service is enabled by default since v1.0.7g (`<SVC>_RUNLOOP_ENABLED=true` in `docker-compose.yml`) now that the smoke runs have shipped; an operator can still pin a service back to the Phase-0 stub by setting the flag to `false` in `.env`. The remaining safety is the `RL_MODE=shadow` pin on the rl-engine and the LB sidecar's `mode != "active"` gate — both still default safe, so RL publishes shadow envelopes the sidecar ignores until an operator opts in.
-
-- **anomaly-detector** — `ANOMALY_RUNLOOP_ENABLED` + `ANOMALY_ENGINE` (threshold | isolation_forest)
-- **forecasting** — `FORECAST_RUNLOOP_ENABLED` + `FORECAST_ENGINE` (moving_average | arima)
-- **rl-engine** — `RL_RUNLOOP_ENABLED` + `RL_POLICY` (random_shadow | ppo) + `RL_MODE` (shadow | active operator pin)
-
-Total 63 unit tests across the three services (18 + 19 + 26) cover bootstrap fallback, policy parsing, row pivot, publish gate, mode composition, health classification.
-
-Diagrams (engine bootstrap, run-loop cycle, RL mode composition, cutover progress): [SOT §25.6](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) and [PROJECT_WALKTHROUGH §4](docs/PROJECT_WALKTHROUGH.md#4-decision-plane).
-
-**Model handoff is now stable for all three:** drop `services/<svc>/models/<name>.pkl` (or `policy.zip` for RL), implement `engines/<name>/engine.py` (or `policies/<name>/policy.py`) subclassing the service ABC, register the name in the factory, and set `<SVC>_ENGINE=<name>` (or `RL_POLICY`). No service-shell changes. Falls back to baseline automatically if the artifact is missing.
-
----
-
-## Examples & scenarios
-
-Runnable Python scripts that exercise each shipped feature end-to-end. New features must add a script here before they are considered "done."
-
-| Feature | Scenario script | Status |
-|---|---|---|
-| Policy management | [`examples/scenarios/policy-management/policy_walk.py`](examples/scenarios/policy-management/policy_walk.py) | shipped |
-| Audit log viewer | [`examples/scenarios/audit-log/audit_walk.py`](examples/scenarios/audit-log/audit_walk.py) | shipped |
-| Manual actions | [`examples/scenarios/manual-actions/manual_actions_walk.py`](examples/scenarios/manual-actions/manual_actions_walk.py) | shipped |
-| Forecast burst → scale-out | `examples/scenarios/forecast-autoscale/` | planned |
-| Anomaly → reroute | `examples/scenarios/anomaly-routing/` | planned (depends on T2.1) |
-
-Reference deployments live under [`examples/deployments/`](examples/deployments/).
+Canonical tree with placement rules: [SOT §7](docs/SOURCE_OF_TRUTH.html).
 
 ---
 
 ## Testing
 
 ```bash
-# Pure-function tests (no live stack required)
-pytest tests/unit/
-
-# Service-pair / wire-protocol tests (need docker compose up -d)
-pytest tests/integration/
-
-# Feature-level end-to-end tests via the SDK
-pytest tests/e2e/
-
-# Interface conformance suites (one per plugin contract)
-pytest tests/conformance/
-
-# Load tests
-docker compose up traffic-simulator
-# open http://localhost:8089
+pytest tests/unit/                                    # pure-function (no live stack)
+docker compose up -d && pytest tests/integration/     # service-pair / wire-protocol
+docker compose up -d && pytest tests/e2e/             # feature-level via SDK
+pytest tests/conformance/                             # interface conformance (per plugin)
+docker compose up traffic-simulator                   # Locust at :8089
 ```
 
-CI structural lints (permissive today; strict mode tracked by #139):
+Structural lints (permissive today; strict mode planned):
 
 ```bash
 python scripts/lint-structure.py
@@ -308,7 +248,7 @@ python scripts/lint-openapi.py
 
 ## Datasets
 
-Public datasets used by the ML services. `scripts/download-datasets.sh` fetches them.
+Public datasets the ML services train and evaluate against. `scripts/download-datasets.sh` fetches them.
 
 | Dataset | Used by | License |
 |---|---|---|
@@ -325,40 +265,53 @@ Public datasets used by the ML services. `scripts/download-datasets.sh` fetches 
 - `config/.env.example` — template for required env vars (DB password, Redis URL, model paths). Copy to `.env` at the repo root.
 - Per-service runtime knobs read from env vars; see each service's `README.md`.
 
-API versioning: `/api/v1` is the current stable surface. Breaking changes follow path versioning + a `Sunset`/`Deprecation` header window (tracked by issue #134).
+---
+
+## Stability and versioning
+
+- **HTTP API** — path versioning (`/api/v1`, `/api/v2`). Breaking changes require a successor path + at least one quarter of overlap, with `Sunset` / `Deprecation` headers on the old surface.
+- **`policy.yaml` schema** — `schema_version` field is the migration anchor.
+- **Redis envelopes** — every envelope carries a `version` field; subscribers must tolerate unknown fields.
+- **Python SDK** — semver. Major bumps mirror API breaking changes.
 
 ---
 
-## CI/CD
+## Roadmap
 
-Pipeline defined in `.github/workflows/`. Triggers on push and PR to `main`.
+SmartLoad is currently a single-tenant self-hosted middleware. On deck:
 
-| Job | What it does |
+| Track | What's coming |
 |---|---|
-| `lint` | `ruff check` on all Python; three structural lints (`scripts/lint-*.py`) in permissive mode |
-| `unit-tests` | Pure-Python tests including the SDK suite |
-| `build-services` | Matrix build for every service; health-check each container |
-| `compose-test` | Spin up the full stack and run integration + e2e suites against it |
+| **Production hardening** | Helm chart templates, DB migrations folder, end-to-end correlation IDs, AI-service Prometheus `/metrics`, strict structural lint |
+| **Load-balancer plugins** | HAProxy, Envoy, AWS ALB adapters behind the existing `LoadBalancerAdapter` ABC |
+| **Webhook delivery** | Outbound HMAC-signed HTTP events with at-least-once retries |
+| **Operator UI** | Embedded metrics dashboards (no Grafana context switch), service log viewer, named-strategy aliases |
+| **Multi-tenant SaaS** | Per-tenant API keys + RBAC, rate limiting, tenant-scoped Redis namespacing — opt-in; single-tenant remains the default shape |
 
-The structural lints will flip from warnings to fail-on-violation once issue #139 closes.
-
----
-
-## Stability and Versioning
-
-- **HTTP API**: path versioning (`/api/v1`, `/api/v2`). Breaking changes require a successor path + at least one quarter of overlap.
-- **`policy.yaml` schema**: `schema_version` field is the migration anchor (planned via #134).
-- **Redis envelopes**: every envelope carries a `version` field; subscribers must tolerate unknown fields.
-- **SDK**: semver discipline; major bumps mirror API breaking changes.
+Detailed roadmap: [GitHub milestones](https://github.com/TasneemEltabakh/smartload/milestones) · current state: [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md).
 
 ---
 
-## Project provenance
+## Contributing
 
-Originally developed as a graduation project at Zewail City of Science, Technology, and Innovation (CIE 2025/2026, Team 09: Tasneem Muhammed, Nada Nabil, Rghda Salah; supervisors Dr. Tamer Ashour, Dr. Doaa Shawky). The canonical design history is in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html).
+Issues and pull requests welcome. A few conventions worth knowing before you open a PR:
+
+- Every new feature ships its own `docs/features/<feature>.md` manifest + `tests/e2e/<feature>/` suite + `examples/scenarios/<feature>/` runnable demo. The three structural lints enforce this.
+- Architectural decisions go in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html); narrative implementation context goes in [`docs/PROJECT_WALKTHROUGH.md`](docs/PROJECT_WALKTHROUGH.md). The two stay in sync.
+- Run `pytest tests/unit/` before pushing; `compose-test` runs the full e2e + integration suite in CI.
+
+For substantial features, open an issue first so we can shape the slice together.
+
+---
+
+## Getting help
+
+- **Documentation** — [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_OF_TRUTH.html) (canonical spec) · [`docs/PROJECT_WALKTHROUGH.md`](docs/PROJECT_WALKTHROUGH.md) (narrative tour) · [`docs/features/`](docs/features/) (per-feature manifests)
+- **Bug reports / feature requests** — [GitHub Issues](https://github.com/TasneemEltabakh/smartload/issues)
+- **Questions and discussion** — [GitHub Discussions](https://github.com/TasneemEltabakh/smartload/discussions)
 
 ---
 
 ## License
 
-See [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
