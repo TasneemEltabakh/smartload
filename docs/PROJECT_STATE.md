@@ -112,7 +112,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 |---|---|---|
 | **ARIMA forecaster** | 25 % MAPE vs KPI < 20 %; `moving_average` stays default | Hyperparameter tuning + extended training window (Nada; §35.2) |
 | **PPO routing policy** | Trained on homogeneous Alibaba; ties RR on the v1.0.7t heterogeneous bench | Retraining on heterogeneous traces (Rghda; §34.6 binding constraint) |
-| **Isolation Forest anomaly engine** | **Resolved v1.0.7ah (#165)** — re-fit in production-shape space (`train_production.py`), bench agreement 25% → **91.4%**, zero under-reactions, model reacts live. Residual: the literal live-stack test is blocked by a `backend_pool` backend-id-granularity mismatch (engine-independent), and the model isn't yet the compose default | Follow-up: resolve the per-backend vs `backend_pool` anomaly labeling, then flip the compose default to `isolation_forest` with a green compose-test |
+| **Isolation Forest anomaly engine** | **Resolved (#165)** — re-fit in production-shape space v1.0.7ah (`train_production.py`, bench 25% → **91.4%**, zero under-reactions); the v1.0.7ai lb-otel-shipper IP→container-name canonicalization closed the live-stack test (**all 5 acceptance criteria met**). Residual: the model isn't yet the compose default | Bonus follow-up: flip the compose default to `isolation_forest` once a full compose-test runs green |
 | **Baseline-vs-SmartLoad bench (#148)** | Only SHORT-mode runs (~2 min/side); full-length (~6 min/side) on retrained PPO owed | Re-run after retraining + multi-run batching with CIs (§35.3 — #160) |
 | **Anomaly + Forecast scenario walks** | Manifests + e2e tests exist; standalone `examples/scenarios/<feature>/` walk scripts do not | 1–2 hours each |
 

@@ -21,10 +21,13 @@ Per SOT §8.1.1 (LB OTel Shipper):
   - Resource attrs: service.name=load-balancer, service.instance.id=<hostname>
     (identifies the shipper process, used for debugging — not the upstream).
   - Per-datapoint attribute `instance` = NGINX `$upstream_addr` (the backend
-    that handled the request). The telemetry parser prefers this over the
-    resource attribute so the `metrics.instance` column carries the
-    per-request backend identity (required for the dashboard's "Active
-    backend instances" panel to count distinct backends, not shippers).
+    that handled the request), reverse-resolved from its IP to the canonical
+    `<container-name>:<port>` (#165 follow-up) so `metrics.instance` — and the
+    anomaly / RL backend_ids derived from it — match the lb-sidecar's seed
+    names instead of leaking Docker IPs. The telemetry parser prefers this over
+    the resource attribute so the column carries per-request backend identity
+    (required for the dashboard's "Active backend instances" panel to count
+    distinct backends, not shippers).
   - POST OTLP/HTTP-JSON to http://otel-collector:4318/v1/metrics with a
     strict timeout. On any error (timeout, conn refused, 5xx) → log + drop.
     Never raise into the tailing loop. Fire-and-forget at every hop.
@@ -37,6 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
 import sys
 import threading
@@ -58,6 +62,14 @@ POST_TIMEOUT_S  = float(os.environ.get("POST_TIMEOUT_S", "2.0"))
 FLUSH_INTERVAL  = float(os.environ.get("FLUSH_INTERVAL_S", "1.0"))
 FLUSH_BATCH_MAX = int(os.environ.get("FLUSH_BATCH_MAX", "500"))
 REOPEN_BACKOFF  = float(os.environ.get("REOPEN_BACKOFF_S", "1.0"))
+# Resolve NGINX's $upstream_addr (a backend IP:port) back to the canonical
+# container-name:port the rest of the system uses on every channel
+# (smartload-test-backend-1:8080), so the metrics.instance column — and the
+# anomaly / RL backend_ids derived from it — match the lb-sidecar's seed names
+# instead of leaking Docker IPs. Set RESOLVE_BACKEND_NAMES=false to ship raw.
+RESOLVE_BACKEND_NAMES = os.environ.get("RESOLVE_BACKEND_NAMES", "true").lower() == "true"
+RESOLVE_CACHE_TTL_S   = float(os.environ.get("RESOLVE_CACHE_TTL_S", "120"))
+RESOLVE_DNS_TIMEOUT_S = float(os.environ.get("RESOLVE_DNS_TIMEOUT_S", "1.0"))
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -99,6 +111,54 @@ def _stats_snapshot() -> dict:
         }
 
 
+# ── backend address → canonical container name ────────────────────────────────
+
+_IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+_name_cache: dict[str, tuple[str, float]] = {}   # ip → (name, expiry_monotonic)
+
+
+def _resolve_ip_to_name(ip: str) -> str:
+    """Reverse-resolve a backend IP to its container name via Docker DNS,
+    cached. On failure (or if reverse DNS is unavailable) returns the IP, so a
+    DNS hiccup degrades to today's behaviour rather than dropping the metric.
+
+    Docker's embedded resolver answers PTR for container IPs on a user-defined
+    network with the FQDN `<container>.<network>`; we keep the first label."""
+    now = time.monotonic()
+    hit = _name_cache.get(ip)
+    if hit is not None and hit[1] > now:
+        return hit[0]
+    name = ip
+    prev = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(RESOLVE_DNS_TIMEOUT_S)
+    try:
+        host, _aliases, _addrs = socket.gethostbyaddr(ip)
+        if host:
+            name = host.split(".")[0]
+    except (socket.herror, socket.gaierror, OSError):
+        pass
+    finally:
+        socket.setdefaulttimeout(prev)
+    _name_cache[ip] = (name, now + RESOLVE_CACHE_TTL_S)
+    return name
+
+
+def canonicalize_backend(addr: str) -> str:
+    """Map NGINX `$upstream_addr` to `<container-name>:<port>`.
+
+    Handles the retry case (`$upstream_addr` is comma-separated — take the last,
+    the address that actually served), the all-down sentinel (the upstream
+    block name `backend_pool`, no IP → returned unchanged), and `unknown`."""
+    if not RESOLVE_BACKEND_NAMES or not addr:
+        return addr or "unknown"
+    last = addr.split(",")[-1].strip()           # the upstream that served
+    host, sep, port = last.rpartition(":")
+    if not sep or not _IPV4_RE.match(host):       # not an ip:port (e.g. backend_pool)
+        return last
+    name = _resolve_ip_to_name(host)
+    return f"{name}:{port}" if name != host else last
+
+
 # ── log line → metric data points ─────────────────────────────────────────────
 
 def line_to_datapoints(line: str, now_ns: int) -> list[tuple[str, float, int, str]]:
@@ -127,7 +187,7 @@ def line_to_datapoints(line: str, now_ns: int) -> list[tuple[str, float, int, st
     except (TypeError, ValueError):
         return []
 
-    backend    = record.get("backend") or "unknown"
+    backend    = canonicalize_backend(record.get("backend") or "unknown")
     error_rate = 1.0 if status_int >= 500 else 0.0
     return [
         ("request_count",      1.0,        now_ns, backend),

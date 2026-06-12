@@ -232,3 +232,61 @@ class TestPerRequestFidelity:
         assert counts.get("request_count", 0)      >= 30
         assert counts.get("request_latency_ms", 0) >= 30
         assert counts.get("error_rate", 0)         >= 30
+
+
+class TestCanonicalizeBackend:
+    """`$upstream_addr` IP:port → canonical container-name:port (#165 follow-up).
+
+    Pure-Python — Docker reverse DNS is mocked, so this needs no live stack."""
+
+    @pytest.fixture(autouse=True)
+    def _reset(self, monkeypatch):
+        shipper._name_cache.clear()
+        monkeypatch.setattr(shipper, "RESOLVE_BACKEND_NAMES", True)
+        ptr = {
+            "172.18.0.5": "smartload-test-backend-1.smartload_smartload-net",
+            "172.18.0.6": "smartload-test-backend-2.smartload_smartload-net",
+        }
+        def fake(ip):
+            if ip in ptr:
+                return (ptr[ip], [], [ip])
+            raise OSError("no PTR")
+        monkeypatch.setattr(shipper.socket, "gethostbyaddr", fake)
+
+    def test_ip_resolves_to_container_name(self):
+        assert shipper.canonicalize_backend("172.18.0.5:8080") == "smartload-test-backend-1:8080"
+
+    def test_retry_addr_takes_the_one_that_served(self):
+        # $upstream_addr is comma-separated on retries; the last served.
+        assert shipper.canonicalize_backend("172.18.0.5:8080, 172.18.0.6:8080") == "smartload-test-backend-2:8080"
+
+    def test_pool_sentinel_passthrough(self):
+        # all-down upstream logs the block name, not an ip — leave it alone.
+        assert shipper.canonicalize_backend("backend_pool") == "backend_pool"
+
+    def test_unknown_passthrough(self):
+        assert shipper.canonicalize_backend("unknown") == "unknown"
+
+    def test_unresolvable_ip_falls_back_to_ip(self):
+        assert shipper.canonicalize_backend("10.0.0.99:8080") == "10.0.0.99:8080"
+
+    def test_already_a_name_is_untouched(self):
+        assert shipper.canonicalize_backend("test-backend:8080") == "test-backend:8080"
+
+    def test_cache_avoids_repeat_lookups(self):
+        calls = {"n": 0}
+        orig = shipper.socket.gethostbyaddr
+        def counting(ip):
+            calls["n"] += 1
+            return orig(ip)
+        shipper.socket.gethostbyaddr = counting
+        try:
+            shipper.canonicalize_backend("172.18.0.5:8080")
+            shipper.canonicalize_backend("172.18.0.5:8080")
+        finally:
+            shipper.socket.gethostbyaddr = orig
+        assert calls["n"] == 1   # second call served from cache
+
+    def test_disabled_returns_raw(self, monkeypatch):
+        monkeypatch.setattr(shipper, "RESOLVE_BACKEND_NAMES", False)
+        assert shipper.canonicalize_backend("172.18.0.5:8080") == "172.18.0.5:8080"

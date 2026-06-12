@@ -5657,6 +5657,23 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7ai — 2026-06-13 — lb-otel-shipper canonicalizes backend IPs → container names; closes #165 criterion #3 (live-stack test green)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>The <code>metrics.instance</code> column now carries canonical container names, not Docker IPs</strong></td>
+      <td>NGINX logs <code>$upstream_addr</code> as the backend IP (e.g. <code>172.18.0.5:8080</code>); the lb-otel-shipper now reverse-resolves it to the canonical <code>&lt;container-name&gt;:&lt;port&gt;</code> (<code>smartload-test-backend-1:8080</code>) via Docker's embedded PTR records, cached with a TTL and a safe fall-back to the raw IP on any DNS failure. This was the v1.0.7ah follow-up: the anomaly / RL backend_ids are derived from <code>metrics.instance</code>, so they were leaking IPs while the lb-sidecar and every channel use the seed container names — the impedance mismatch the demo-ui's <code>_ip_to_name_map</code> was working around. Handles the retry case (<code>$upstream_addr</code> comma-separated → the address that served) and the all-down sentinel (the upstream block name <code>backend_pool</code>, no IP → passed through).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>#165 criterion #3 now passes — full live-stack closed loop green</strong></td>
+      <td>With name-based labels, a 400 ms-injected <code>smartload-test-backend-1</code> drives the (re-calibrated) Isolation Forest engine to publish <code>unhealthy</code> for <code>backend_id="smartload-test-backend-1:8080"</code> — exactly what <code>test_isolation_forest_live_stack.py</code> asserts. The test passes (was: blocked by the <code>backend_pool</code> / IP labeling). <strong>All five #165 acceptance criteria are now met</strong> (bench 91.4%, zero under-reactions, live-stack green, artifact + engine unit tests green). 8 new shipper unit tests cover the canonicalizer (IP→name, retry-takes-last, sentinel/​unknown pass-through, unresolvable fall-back, cache, disable flag). The compose default stays <code>threshold</code>; flipping it to <code>isolation_forest</code> (the issue's bonus) is now unblocked pending a full compose-test run.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7ah — 2026-06-13 — Isolation Forest re-calibrated in production-shape space (#165): bench 25% → 91.4%, model now reacts</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
