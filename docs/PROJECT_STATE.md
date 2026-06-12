@@ -112,7 +112,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 |---|---|---|
 | **ARIMA forecaster** | 25 % MAPE vs KPI < 20 %; `moving_average` stays default | Hyperparameter tuning + extended training window (Nada; §35.2) |
 | **PPO routing policy** | Trained on homogeneous Alibaba; ties RR on the v1.0.7t heterogeneous bench | Retraining on heterogeneous traces (Rghda; §34.6 binding constraint) |
-| **Isolation Forest anomaly engine** | **Resolved (#165)** — re-fit in production-shape space v1.0.7ah (`train_production.py`, bench 25% → **91.4%**, zero under-reactions); the v1.0.7ai lb-otel-shipper IP→container-name canonicalization closed the live-stack test (**all 5 acceptance criteria met**). Residual: the model isn't yet the compose default | Bonus follow-up: flip the compose default to `isolation_forest` once a full compose-test runs green |
+| **Isolation Forest anomaly engine** | **Resolved (#165)** — re-fit in production-shape space v1.0.7ah (`train_production.py`, bench 25% → **91.4%**, zero under-reactions); the v1.0.7ai lb-otel-shipper IP→container-name canonicalization closed the live-stack test (**all 5 acceptance criteria met**); **v1.0.7aj flipped the compose default to `isolation_forest`** (the bonus). #165 fully closed | Residual: full e2e compose-test not run with the flipped default; revert via `ANOMALY_ENGINE=threshold` if it over-excludes under load |
 | **Baseline-vs-SmartLoad bench (#148)** | Only SHORT-mode runs (~2 min/side); full-length (~6 min/side) on retrained PPO owed | Re-run after retraining + multi-run batching with CIs (§35.3 — #160) |
 | **Anomaly + Forecast scenario walks** | Manifests + e2e tests exist; standalone `examples/scenarios/<feature>/` walk scripts do not | 1–2 hours each |
 

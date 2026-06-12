@@ -4903,7 +4903,7 @@ flowchart LR
     <tr><td><strong>Load Balancer</strong></td><td>NGINX</td><td><span class="pill pill-done">Implemented</span></td><td>Was Go (with Node.js fallback) in old plan; NGINX is the wired choice. <span class="badge badge-historical">Go superseded</span></td></tr>
     <tr><td><strong>Test backend</strong></td><td>Node.js Express</td><td><span class="pill pill-done">Implemented</span></td><td>Multiple instances scaled via compose.</td></tr>
     <tr><td><strong>AI services runtime</strong></td><td>Python 3.11-slim + Flask 3.0.3</td><td><span class="pill pill-done">Implemented</span></td><td>Per-service Dockerfile; <code>psycopg2-binary 2.9.9</code> + <code>redis 5.0.4</code>.</td></tr>
-    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. <strong>Re-calibrated in production-shape space v1.0.7ah (#165): bench agreement 25% &rarr; 91.4%, zero under-reactions, model reacts live.</strong> Default stays <code>threshold</code> pending the <code>backend_pool</code> backend-id-granularity follow-up before flipping. LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
+    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. <strong>Re-calibrated in production-shape space v1.0.7ah (#165): bench agreement 25% &rarr; 91.4%, zero under-reactions, model reacts live. Compose default since v1.0.7aj</strong> (after the v1.0.7ai backend-id canonicalization closed the live-stack test). LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
     <tr><td><strong>Forecasting model</strong></td><td>ARIMA (statsmodels)</td><td><span class="pill pill-done">v1.0.7i (N2.2) — ships behind <code>FORECAST_ENGINE=arima</code> until MAPE&lt;20%</span></td><td>Moving average remains the default; ARIMA(3,0,1) ships with 25.0% test MAPE (+22.77% vs baseline). Tightening pass needed to cross the SOT KPI.</td></tr>
     <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-done">N2.3–N2.5 code complete</span></td><td>Custom Gym env <code>SmartLoadEnv</code> + <code>obs_builder.py</code> (shared train/serve); <code>PPOPolicy</code> serving plugin; <code>MaskablePPO</code> training script with 50k-step canary gate; <code>round_robin</code> + <code>least_connections</code> baselines; reproducible eval harness (<code>eval_seed_bank.json</code>). DQN fallback (<code>train_dqn.py</code>) ready. <strong>Pending:</strong> ~7-day training run to generate <code>policy.zip</code>.</td></tr>
     <tr><td><strong>Metrics DB</strong></td><td>TimescaleDB (PostgreSQL 16)</td><td><span class="pill pill-done">Implemented</span></td><td>Hypertables + continuous aggregates planned in V1 redesign (draft).</td></tr>
@@ -5656,6 +5656,23 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7aj — 2026-06-13 — compose default flips to the Isolation Forest engine (#165 bonus)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong><code>ANOMALY_ENGINE</code> default: <code>threshold</code> → <code>isolation_forest</code></strong></td>
+      <td>With all five #165 acceptance criteria met (bench 91.4% agreement, zero under-reactions, live-stack green, artifact + engine unit tests green), the trained engine becomes the compose default — closing the issue's "lift the model from shipped-but-unused to compose default" intent. The model is <strong>stricter on absolute latency than the threshold rule</strong> (the value-add direction: it flags steady high latency / variance the simple rule misses), so it will exclude more aggressively under sustained load; <code>ANOMALY_ENGINE=threshold</code> reverts, and the engine still falls back to threshold automatically if the <code>.pkl</code> is missing or fails to load. Verified after the flip: the running stack is 7/7 healthy with <code>engine_type=isolation_forest, engine_ready=true</code>, and the live-stack test passes via the default path.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Caveat — full e2e compose-test not run here</strong></td>
+      <td>The bonus's literal acceptance ("a full compose-test run green") could not be exercised in this environment; validation covered the anomaly-specific suites (live-stack slow test, artifact, engine unit) + stack health, not the entire e2e/integration matrix. If a deployment finds the IF engine over-excludes, the one-line revert restores the prior behaviour.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7ai — 2026-06-13 — lb-otel-shipper canonicalizes backend IPs → container names; closes #165 criterion #3 (live-stack test green)</h3>
 <table>
