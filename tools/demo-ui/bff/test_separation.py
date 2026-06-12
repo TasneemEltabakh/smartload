@@ -69,6 +69,7 @@ DEMO_ROUTES = {
     "/api/ui/demo/bench/status",
     "/api/ui/demo/bench/start",
     "/api/ui/demo/bench/stop",
+    "/api/ui/demo/bench/history",
     "/api/ui/demo/benchmark/suites",
     "/api/ui/events",
 }
@@ -277,3 +278,20 @@ class TestDevConsoleSurface:
         assert cards["Run length"] == "356 s"
         assert "test-backend-4" in next(
             c["hint"] for c in _demo_mod._parse_adaptive_kpis(summary) if c["label"] == "Anomaly")
+
+    def test_bench_history_endpoint_returns_runs_key(self, demo_client):
+        resp = demo_client.get("/api/ui/demo/bench/history")
+        assert resp.status_code == 200
+        assert "runs" in resp.get_json()
+
+    def test_stale_run_reclassified(self):
+        # A "running" state whose last tick is older than the threshold is stale.
+        now = 1_000_000.0
+        fresh = {"status": "running", "last_tick": now - 2}
+        old   = {"status": "running", "last_tick": now - (_demo_mod.BENCH_STALE_SECS + 5)}
+        assert _demo_mod._mark_stale_if_needed(fresh, now=now)["status"] == "running"
+        assert _demo_mod._mark_stale_if_needed(old, now=now)["status"] == "stale"
+
+    def test_done_run_never_marked_stale(self):
+        done = {"status": "done", "last_tick": 0}
+        assert _demo_mod._mark_stale_if_needed(done, now=9_999_999.0)["status"] == "done"

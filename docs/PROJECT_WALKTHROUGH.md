@@ -3243,8 +3243,9 @@ GET  /api/ui/demo/livestats         one-shot RPS / p95 / pool-size sample (run m
 POST /api/ui/demo/degrade|recover|mode|traffic|chaos|reset|scenario|algorithm   manual ops
 GET  /api/ui/demo/metrics           last-5m latency snapshot from TimescaleDB
 GET  /api/ui/demo/bench/profiles                       list one-click load profiles
-GET  /api/ui/demo/bench/status                         current/last automated-run state
+GET  /api/ui/demo/bench/status                         current/last automated-run state (stale-aware)
 POST /api/ui/demo/bench/start|stop                     start / stop a load profile
+GET  /api/ui/demo/bench/history                        completed in-cluster runs + captured series
 GET  /api/ui/demo/benchmark/suites                     list result suites (adaptive/baseline)
 GET  /api/ui/demo/benchmark/<suite>/runs[/<ts>/...]    suite-scoped runs / summary / plot / manifest
 GET  /api/ui/demo/benchmark/runs[...]                  back-compat aliases → baseline suite
@@ -3255,6 +3256,8 @@ GET  /health                        own health check
 The benchmark surface is **suite-aware** (`SUITES` config): `adaptive` reads `ADAPTIVE_RESULTS_DIR` (`/adaptive-results`, a `:ro` mount of `experiments/adaptive-bench/results/`) and `baseline` reads `BENCHMARK_RESULTS_DIR` (`/benchmark-results`, the v1.0.7s mount of `experiments/baseline-vs-smartload/results/`). Each suite declares its own plot-key → filename map. Path-safety: `_safe_run_dir(suite, timestamp)` rejects any input containing `..`, path separators, or absolute paths, and verifies the resolved path lives strictly under that suite's root. `SUMMARY.md` is read with `errors="replace"` so older cp1252-written files don't 500 the endpoint.
 
 The **one-click load-profile runner** drives the traffic-simulator through a timed 5-phase shape over HTTP (the same `/admin/chaos` + `/api/v1/isolate` path the manual scenarios use for the phase-D anomaly) — no Docker socket, no host-side orchestrator. Because the BFF runs under a gunicorn worker pool, run state lives in Redis (`demo:bench:state` / `demo:bench:stop`) so any worker can answer `/bench/status`; the worker that accepts `/bench/start` runs the profile thread. The live autoscaler reacts within the compose pool (replicas 1..5), which the Run page's pool-size chart tracks live.
+
+The runner also samples `{pool, rps, p95}` each tick into a per-run series and, on completion (v1.0.7ag), pushes a compact record to a Redis list `demo:bench:history` (capped at 10). The Run page reads `/bench/history` into a **Recent runs** list and overlays the series of up to two selected runs (x-axis = seconds-into-run) for side-by-side compare — server-side, so it survives navigation. State writes stamp a `last_tick`; `_bench_get_state` reclassifies a `running` run with no tick in >12 s as `stale` (`_mark_stale_if_needed`), so a run whose worker died for any reason no longer leaves a ghost `running` state that blocks new starts — `/bench/start` treats `stale` as startable.
 
 The SSE generator polls with `get_message(timeout=15)` and emits heartbeat comments rather than relying on a blocking `listen()`, so an idle control bus no longer surfaces as a socket-read-timeout 500. The container runs gunicorn with **`gthread` workers** (`-k gthread --threads 8 --timeout 120`), not the default sync worker: the long-lived SSE response was tripping the sync worker's 30 s timeout (SIGKILL + reboot every ~30 s), which on a long run also killed the in-flight load-profile runner thread. Threaded workers keep their master heartbeat while streaming, so both the SSE stream and the runner thread survive.
 
@@ -3277,7 +3280,7 @@ Pages consume via `useDemo()`; no page sets up its own subscription (the Run pag
 |---|---|---|
 | `/` | **Dashboard** — big-picture watch | Stack-health grid (every watched service, role-tagged, polled 5 s) · Live Session Metrics from TimescaleDB · Current Decision card · Backend Pool Weights (recharts bar) |
 | `/benchmarks` | **Benchmarks** — results cockpit | Suite tabs (Adaptive-bench RQ4 / Baseline #148) · run list · per-run manifest KPI facts + SUMMARY.md + the suite's plots inline |
-| `/run` | **Run** — one-click automation | Load-profile picker (adaptive quick/standard, spike, anomaly-under-load) · phase progress bar · live RPS / pool-size / p95 line charts that accumulate while the run drives the stack |
+| `/run` | **Run** — one-click automation | Load-profile picker (adaptive quick/standard, spike, anomaly-under-load) · phase progress bar · live RPS / pool-size / p95 line charts that accumulate while the run drives the stack · **Recent runs** history with side-by-side compare (overlay two runs' series) · lost-run (stale) detection |
 | `/controls` | **Controls** — drive manually | Routing algorithm picker · scenarios (Backend Failure / Latency Spike / Recovery / High Traffic / AI Disabled) · manual ops (degrade · recover · safe-mode · traffic presets · chaos · reset-all) |
 | `/feed` | **Live Feed** — observe events | Full-page SSE stream coloured by channel (routing / anomaly / policy / scale) |
 

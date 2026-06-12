@@ -5657,6 +5657,28 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7ag — 2026-06-12 — Dev Console Run page: in-cluster run history + side-by-side compare + lost-run (stale) detection</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Run history captured server-side + side-by-side compare</strong></td>
+      <td>The load-profile runner now samples <code>{pool, rps, p95}</code> each tick into a per-run series and, on completion, pushes a compact record (profile, started-UTC, status, peak pool/rps/p95, full series) to a Redis list <code>demo:bench:history</code> (capped at 10, newest first; new <code>GET /api/ui/demo/bench/history</code>). The Run page gains a <strong>Recent runs</strong> list; clicking up to two runs overlays their pool / rps / p95 series (x-axis = seconds-into-run) so a change can be compared against a prior run — the core dev-iteration loop. Survives page navigation (the series is server-side, not the page-local live buffer).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Lost-run (stale) detection — robustness footgun from v1.0.7af closed</strong></td>
+      <td>Every state write stamps a <code>last_tick</code>; <code>_bench_get_state</code> reclassifies a <code>running</code> run whose last tick is &gt; <code>BENCH_STALE_SECS</code> (12 s) old as <code>stale</code> via the pure helper <code>_mark_stale_if_needed</code>. This means a run whose worker died for <em>any</em> reason (crash, redeploy, OOM — not just the gthread-fixed SSE timeout) no longer leaves a ghost <code>running</code> state that blocks new starts for the full hour TTL: <code>/bench/start</code> treats <code>stale</code> as startable, and the Run page surfaces "previous run lost (worker died) — safe to start a new one".</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>52 BFF contract tests pass (+4: history endpoint shape, stale-reclassify true/false, done-never-stale). Live: ran two profiles (spike + anomaly-under-load) back-to-back, confirmed both landed in <code>/bench/history</code> with their captured series, and the Run page's compare overlay renders both. Docs synced (this row, walkthrough §5.5, PROJECT_STATE).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7af — 2026-06-12 — demo-ui redesigned into a developer Dev Console: both benchmark suites + one-click in-cluster load automation + live monitor</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

@@ -55,6 +55,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 import httpx
 import redis as redis_lib
@@ -186,9 +187,12 @@ BENCH_PROFILES: list[dict] = [
     },
 ]
 
-BENCH_STATE_KEY = "demo:bench:state"
-BENCH_STOP_KEY  = "demo:bench:stop"
+BENCH_STATE_KEY   = "demo:bench:state"
+BENCH_STOP_KEY    = "demo:bench:stop"
+BENCH_HISTORY_KEY = "demo:bench:history"
 BENCH_ANOMALY_DELAY_MS = 200
+BENCH_HISTORY_MAX = 10     # keep the last N completed runs for compare
+BENCH_STALE_SECS  = 12     # a "running" run with no tick in this long is treated as lost
 
 WEB_DIST = os.environ.get(
     "WEB_DIST",
@@ -785,11 +789,25 @@ def _bench_redis():
     return redis_lib.from_url(REDIS_URL)
 
 
+def _mark_stale_if_needed(state: dict, now: float | None = None) -> dict:
+    """A run that says `running` but hasn't ticked within BENCH_STALE_SECS is
+    reclassified `stale` — the worker that owned its thread died (crash /
+    redeploy), so the run is effectively lost and a new one may start over it."""
+    if state.get("status") != "running":
+        return state
+    last = state.get("last_tick", 0)
+    now = time.time() if now is None else now
+    if last and (now - last) > BENCH_STALE_SECS:
+        return dict(state, status="stale")
+    return state
+
+
 def _bench_get_state() -> dict:
+    """Return the current run state, with staleness applied."""
     try:
         raw = _bench_redis().get(BENCH_STATE_KEY)
         if raw:
-            return json.loads(raw)
+            return _mark_stale_if_needed(json.loads(raw))
     except Exception:
         pass
     return {"status": "idle"}
@@ -797,7 +815,7 @@ def _bench_get_state() -> dict:
 
 def _bench_set_state(state: dict) -> None:
     try:
-        _bench_redis().set(BENCH_STATE_KEY, json.dumps(state), ex=3600)
+        _bench_redis().set(BENCH_STATE_KEY, json.dumps({**state, "last_tick": time.time()}), ex=3600)
     except Exception:
         log.warning("failed to persist bench state", exc_info=True)
 
@@ -807,6 +825,44 @@ def _bench_stop_requested() -> bool:
         return bool(_bench_redis().get(BENCH_STOP_KEY))
     except Exception:
         return False
+
+
+def _bench_history_push(record: dict) -> None:
+    """Persist one completed run (capped at BENCH_HISTORY_MAX, newest first)."""
+    try:
+        r = _bench_redis()
+        r.lpush(BENCH_HISTORY_KEY, json.dumps(record))
+        r.ltrim(BENCH_HISTORY_KEY, 0, BENCH_HISTORY_MAX - 1)
+    except Exception:
+        log.warning("failed to persist bench history", exc_info=True)
+
+
+def _bench_history_list() -> list[dict]:
+    try:
+        raw = _bench_redis().lrange(BENCH_HISTORY_KEY, 0, BENCH_HISTORY_MAX - 1)
+        out: list[dict] = []
+        for item in raw:
+            try:
+                out.append(json.loads(item))
+            except (TypeError, ValueError):
+                continue
+        return out
+    except Exception:
+        return []
+
+
+def _bench_sample() -> dict:
+    """One {rps, pool, p95} snapshot for the run's time-series. Best-effort —
+    a DB hiccup yields nulls rather than breaking the run loop."""
+    pool = _pool_size()
+    rps = p95 = None
+    if _psycopg2_available and TIMESCALEDB_URL:
+        try:
+            s = _query_live_sample(10)
+            rps, p95 = s.get("rps"), s.get("p95_latency_ms")
+        except Exception:
+            pass
+    return {"pool": pool, "rps": rps, "p95": p95}
 
 
 def _profile_by_id(profile_id: str) -> dict | None:
@@ -873,10 +929,12 @@ def _bench_runner(profile: dict, run_id: str) -> None:
         "elapsed_secs": 0,
         "anomaly_active": False,
     }
+    started_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _bench_set_state(base_state)
     anomaly_host: str | None = None
     elapsed = 0
     stopped = False
+    series: list[dict] = []
     try:
         for idx, phase in enumerate(phases):
             if _bench_stop_requested():
@@ -893,11 +951,14 @@ def _bench_runner(profile: dict, run_id: str) -> None:
                     break
                 time.sleep(1)
                 elapsed += 1
+                sample = _bench_sample()
+                series.append({"t": elapsed, **sample})
                 state = dict(base_state)
                 state.update({
                     "phase_index": idx, "phase": phase["name"],
                     "elapsed_secs": elapsed,
                     "anomaly_active": bool(phase.get("anomaly")),
+                    "pool_size": sample["pool"],
                 })
                 _bench_set_state(state)
             if phase.get("anomaly") and anomaly_host:
@@ -918,6 +979,21 @@ def _bench_runner(profile: dict, run_id: str) -> None:
             "anomaly_active": False,
         })
         _bench_set_state(final)
+        pools = [s["pool"] for s in series if s.get("pool") is not None]
+        rpss  = [s["rps"]  for s in series if s.get("rps")  is not None]
+        p95s  = [s["p95"]  for s in series if s.get("p95")  is not None]
+        _bench_history_push({
+            "run_id":        run_id,
+            "profile_id":    profile["id"],
+            "profile_label": profile["label"],
+            "started_utc":   started_utc,
+            "total_secs":    total_secs,
+            "status":        "stopped" if stopped else "done",
+            "peak_pool":     max(pools) if pools else None,
+            "peak_rps":      round(max(rpss), 1) if rpss else None,
+            "peak_p95":      max(p95s) if p95s else None,
+            "series":        series,
+        })
         try:
             _bench_redis().delete(BENCH_STOP_KEY)
         except Exception:
@@ -968,6 +1044,13 @@ def ui_bench_stop():
     except Exception as exc:
         return jsonify({"error": str(exc)}), 503
     return jsonify({"ok": True})
+
+
+@app.route("/api/ui/demo/bench/history", methods=["GET"])
+def ui_bench_history():
+    """Completed in-cluster runs (newest first) with their captured time-series,
+    for the Run page's history list + side-by-side compare."""
+    return jsonify({"runs": _bench_history_list()})
 
 
 # ── Benchmark surface — read-only over experiments/*/results/ ────────────────

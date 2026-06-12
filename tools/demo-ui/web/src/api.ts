@@ -121,7 +121,7 @@ export interface BenchProfile {
 }
 
 export interface BenchStatus {
-  status:        "idle" | "running" | "done" | "stopped";
+  status:        "idle" | "running" | "done" | "stopped" | "stale";
   run_id?:       string;
   profile_id?:   string;
   profile_label?: string;
@@ -131,6 +131,27 @@ export interface BenchStatus {
   phase?:        string;
   elapsed_secs?: number;
   anomaly_active?: boolean;
+  pool_size?:    number;
+}
+
+export interface BenchSeriesPoint {
+  t:    number;          // seconds into the run
+  pool: number | null;
+  rps:  number | null;
+  p95:  number | null;
+}
+
+export interface BenchHistoryRun {
+  run_id:        string;
+  profile_id:    string;
+  profile_label: string;
+  started_utc:   string;
+  total_secs:    number;
+  status:        "done" | "stopped";
+  peak_pool:     number | null;
+  peak_rps:      number | null;
+  peak_p95:      number | null;
+  series:        BenchSeriesPoint[];
 }
 
 // ── Benchmark surface (suite-aware harness consumer) ────────────────────────
@@ -262,6 +283,9 @@ export const api = {
     }),
 
   stopBench: () => _fetchJson<{ ok: boolean }>("/api/ui/demo/bench/stop", { method: "POST" }),
+
+  getBenchHistory: () =>
+    _fetchJson<{ runs: BenchHistoryRun[] }>("/api/ui/demo/bench/history"),
 
   // Benchmark surface — suite-aware. Plot images are fetched via <img src>
   // URLs (benchmarkPlotUrl), not through this wrapper (avoids PNGs in JS heap).
