@@ -11,6 +11,10 @@ COPY anomaly-detector/app.py          /app/app.py
 COPY anomaly-detector/runloop.py      /app/runloop.py
 COPY anomaly-detector/engine_base.py  /app/engine_base.py
 COPY anomaly-detector/engines         /app/engines
+# Ship the trained Isolation Forest bundle so ANOMALY_ENGINE=isolation_forest
+# can actually load it in the container — without this the engine silently
+# falls back to threshold (the model was shipped-but-unused). See issue #165.
+COPY anomaly-detector/models          /app/models
 COPY shared                           /app/shared
 
 ENV PORT=8082
