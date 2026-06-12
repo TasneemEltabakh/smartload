@@ -61,6 +61,75 @@ ANOMALY_LATENCY_MS = 400  # well above the 60 s rolling mean of an idle pool
 ANOMALY_DURATION_S = 30   # at least three poll intervals of slow traffic
 ASSERT_TIMEOUT_S = 35     # wait two more poll intervals past the load window
 
+# The lb-sidecar isn't in conftest.SERVICE_URLS (it has no AI-service role); its
+# weight/state API lives here.
+LB_SIDECAR_URL = "http://localhost:8087"
+# Raising rl_confidence_threshold to its ceiling makes the lb-sidecar REJECT
+# every RL routing envelope ("confidence < threshold → using previous weights"),
+# so the even weights we pin below actually stick — without flipping safe_mode
+# (which would force the anomaly engine back to threshold and defeat the test).
+# This makes the test independent of the live RL policy (active / shadow / a
+# freshly-retrained model), which otherwise might down-weight the target backend
+# to near zero and starve it of the samples the anomaly needs.
+PIN_CONFIDENCE_THRESHOLD = 1.0
+
+
+def _get_policy() -> dict:
+    try:
+        return requests.get(f"{SERVICE_URLS['policy-manager']}/api/v1/policy", timeout=5).json()
+    except (requests.RequestException, ValueError):
+        return {}
+
+
+def _set_policy(updates: dict) -> None:
+    try:
+        requests.post(
+            f"{SERVICE_URLS['policy-manager']}/api/v1/policy",
+            json=updates, headers={"X-Actor": "live-stack-test"}, timeout=5,
+        )
+    except requests.RequestException:
+        pass
+
+
+def _running_upstream_backends() -> list[str]:
+    """Backends currently in the NGINX upstream (lb-sidecar's view)."""
+    try:
+        state = requests.get(f"{LB_SIDECAR_URL}/api/v1/lb/state", timeout=5).json()
+        return list((state.get("upstream_weights") or {}).keys())
+    except (requests.RequestException, ValueError):
+        return list(COMPOSE_BACKENDS)
+
+
+def _set_even_weights(backends: list[str]) -> None:
+    try:
+        requests.post(f"{LB_SIDECAR_URL}/api/v1/lb/weights",
+                      json={b: 1 for b in backends}, timeout=5)
+    except requests.RequestException:
+        pass
+
+
+def _recover_backend(backend_id: str) -> None:
+    """Clear any stale exclusion on the target so it's in the upstream pool.
+    Publishes a `manual:` recovery — the test's predicate already filters those
+    out, so this can't satisfy the assertion by itself."""
+    try:
+        requests.post(
+            f"{SERVICE_URLS['anomaly-detector']}/api/v1/isolate",
+            json={"backend_id": backend_id, "status": "healthy",
+                  "actor": "live-stack-test", "reason": "clear stale exclusion"},
+            timeout=5,
+        )
+    except requests.RequestException:
+        pass
+
+
+def _ensure_container_running(container: str) -> None:
+    """Best-effort: start the target backend if the autoscaler scaled it out."""
+    try:
+        subprocess.run(["docker", "start", container], capture_output=True, timeout=15)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
 
 def _set_runtime_delay(container: str, ms: int) -> bool:
     """POST /_admin/delay {ms: <ms>} on `container` via `docker exec`.
@@ -130,14 +199,15 @@ def test_isolation_forest_flags_slow_backend_unhealthy(stack_ready):
     feeds production-shape BackendFeatures into the trained model and
     that the resulting AnomalyScore makes it onto the bus.
 
-    The most likely failure mode (if it fails) is the
-    production_scaler's domain adaptation: the model was trained on
-    SMD's per-machine [0,1] normalised features and the production
-    scaler was fit on MST-2021 derived features, with no labeled real
-    production telemetry to validate against. If a 400 ms backend in an
-    otherwise-idle pool doesn't score below `unhealthy_below`, that's
-    the calibration gap surfacing — file as a follow-up tuning issue,
-    not as a test fix."""
+    The engine was re-calibrated in production-shape space in v1.0.7ah
+    (#165) — model + scaler co-located in one real-ms coordinate system —
+    and the v1.0.7ai lb-otel-shipper IP→container-name fix makes the
+    published `backend_id` match `target_backend_id`. This test pins
+    routing itself (see the setup block) so it no longer depends on the
+    live RL policy keeping the target backend weighted up. If it fails
+    now, the realistic causes are a stuck runloop, a too-small SQL window,
+    or the target container being scaled out before injection — not the
+    model calibration."""
     engine = _engine_in_use()
     if engine != "isolation_forest":
         pytest.skip(
@@ -149,6 +219,24 @@ def test_isolation_forest_flags_slow_backend_unhealthy(stack_ready):
 
     target_container = "smartload-test-backend-1"
     target_backend_id = COMPOSE_BACKENDS[0]  # smartload-test-backend-1:8080
+
+    # ── pin routing so the target keeps receiving traffic ─────────────────────
+    # The engine only fires when the target's 60 s window holds enough slow
+    # samples; if the live RL policy down-weights the target (it can, and a
+    # retrained model will route differently again), it never gets them. Make
+    # the loop deterministic without touching safe_mode: reject RL routing (so
+    # our weights stick), ensure the target is running + un-excluded, then pin
+    # even weights across the live pool. Restored in `finally`.
+    original_threshold = float(_get_policy().get("rl_confidence_threshold", 0.6))
+    _ensure_container_running(target_container)
+    _set_policy({"rl_confidence_threshold": PIN_CONFIDENCE_THRESHOLD})
+    _recover_backend(target_backend_id)
+    time.sleep(2)  # let the policy + recovery envelopes reach the lb-sidecar
+    backends = _running_upstream_backends()
+    if target_backend_id not in backends:
+        backends.append(target_backend_id)
+    _set_even_weights(backends)
+    time.sleep(1)
 
     # Subscribe BEFORE injecting; pubsub doesn't buffer for late subscribers.
     client, ps = _subscribe(ANOMALY_CHANNEL)
@@ -202,5 +290,7 @@ def test_isolation_forest_flags_slow_backend_unhealthy(stack_ready):
         # Always restore the backend to its baseline latency, even on
         # assertion failure, so subsequent tests don't inherit poison.
         _set_runtime_delay(target_container, 0)
+        # Un-pin routing: hand control back to the RL engine.
+        _set_policy({"rl_confidence_threshold": original_threshold})
         ps.close()
         client.close()

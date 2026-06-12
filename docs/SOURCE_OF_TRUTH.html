@@ -5657,6 +5657,18 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7ak — 2026-06-13 — live-stack test pins routing itself (RL-policy independent)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong><code>test_isolation_forest_live_stack.py</code> no longer depends on the live RL routing policy</strong></td>
+      <td>The test flaked when RL (or a retrained model) down-weighted the target backend, starving it of the slow samples the anomaly needs. It now pins routing itself: raise <code>rl_confidence_threshold</code> to its ceiling so the lb-sidecar rejects RL routing envelopes (without flipping <code>safe_mode</code>, which would force the anomaly engine back to threshold), best-effort start the target container + clear any stale exclusion, then pin even weights across the live upstream; <code>finally</code> restores the threshold. Raising the confidence threshold is the only runtime, HTTP-only lever that neutralises RL while leaving the anomaly engine on <code>isolation_forest</code> (<code>RL_MODE=shadow</code> is env-only; <code>safe_mode</code> kills the engine). Validated under the adverse case (RL active, target starved at weight-0): the test passed twice and restored the threshold to 0.6 each time.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7aj — 2026-06-13 — compose default flips to the Isolation Forest engine (#165 bonus)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
