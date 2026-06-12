@@ -486,7 +486,10 @@ services:
       SERVICE_NAME: demo-ui
       POLICY_MANAGER_URL:   http://policy-manager:8086
       ANOMALY_DETECTOR_URL: http://anomaly-detector:8082
+      FORECASTING_URL:      http://forecasting:8083
       RL_ENGINE_URL:        http://rl-engine:8084
+      AUTOSCALER_URL:       http://autoscaler:8085
+      TELEMETRY_URL:        http://telemetry:8081
       LB_SIDECAR_URL:       http://lb-sidecar:8087
       REDIS_URL:            ${REDIS_URL:-redis://redis:6379}
       TIMESCALEDB_URL:      ${TIMESCALEDB_URL:-postgresql://postgres:changeme@timescaledb:5432/smartloaddb}
@@ -496,14 +499,16 @@ services:
         smartload-test-backend-1:8080,smartload-test-backend-2:8080,
         smartload-test-backend-3:8080,smartload-test-backend-4:8080,
         smartload-test-backend-5:8080
-      # Read-only path inside the container where the demo-ui BFF reads the
-      # baseline-vs-smartload benchmark run outputs (see Benchmark page).
-      # Mapped via the volume mount below from experiments/.../results/ on
-      # the host. Override with BENCHMARK_RESULTS_DIR if you want to serve
-      # a different cohort of runs from the same UI.
+      # Read-only paths inside the container where the demo-ui BFF reads the
+      # benchmark run outputs surfaced on the Benchmarks page. Each maps via a
+      # volume mount below from experiments/.../results/ on the host:
+      #   BENCHMARK_RESULTS_DIR — baseline-vs-smartload suite (#148)
+      #   ADAPTIVE_RESULTS_DIR  — adaptive-bench suite (#156/#157, RQ4)
       BENCHMARK_RESULTS_DIR: /benchmark-results
+      ADAPTIVE_RESULTS_DIR:  /adaptive-results
     volumes:
       - ./experiments/baseline-vs-smartload/results:/benchmark-results:ro
+      - ./experiments/adaptive-bench/results:/adaptive-results:ro
     depends_on:
       policy-manager:
         condition: service_started

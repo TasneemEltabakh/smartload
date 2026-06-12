@@ -1,9 +1,9 @@
 /**
  * tools/demo-ui/web/src/Layout.tsx
  * ─────────────────────────────────
- * App shell. Sidebar nav across the four demo-ui surfaces (Overview /
- * Controls / Feed / Benchmark) + a top bar with the live mode pill,
- * Start/Stop traffic shortcuts, and SSE-connected indicator. Renders
+ * App shell for the SmartLoad Dev Console. Sidebar nav across the five
+ * surfaces + a top bar with the live mode pill, a stack-health summary,
+ * Start/Stop traffic shortcuts, and the SSE-connected indicator. Renders
  * the routed page via <Outlet />.
  */
 
@@ -11,22 +11,29 @@ import { NavLink, Outlet } from "react-router-dom";
 
 import { api } from "./api";
 import { useDemo } from "./state/DemoStateContext";
-import { CLR_MUTED, CLR_OK, modeBadgeClass, modeLabel } from "./utils";
+import { CLR_BAD, CLR_MUTED, CLR_OK, CLR_WARN, modeBadgeClass, modeLabel } from "./utils";
 
 
 const NAV: { to: string; label: string; hint: string }[] = [
-  { to: "/",          label: "Overview",  hint: "Decision · weights · rankings · metrics" },
-  { to: "/controls",  label: "Controls",  hint: "Algorithm · scenarios · manual ops" },
-  { to: "/feed",      label: "Live Feed", hint: "SSE event stream (routing / anomaly / policy)" },
-  { to: "/benchmark", label: "Benchmark", hint: "Baseline-vs-SmartLoad results (#148)" },
+  { to: "/",           label: "Dashboard",  hint: "Stack health · live session metrics · current decision" },
+  { to: "/benchmarks", label: "Benchmarks", hint: "Adaptive-bench (RQ4) + baseline results — charts & summaries" },
+  { to: "/run",        label: "Run",        hint: "One-click load profiles + live monitor" },
+  { to: "/controls",   label: "Controls",   hint: "Algorithm · scenarios · manual fault injection" },
+  { to: "/feed",       label: "Live Feed",  hint: "SSE stream (routing / anomaly / policy / scale)" },
 ];
 
 
 export default function Layout() {
-  const { state, error, sseConnected, busy, action, toast } = useDemo();
+  const { state, services, error, sseConnected, busy, action, toast } = useDemo();
+
+  const healthColor =
+    services == null ? CLR_MUTED
+      : services.healthy === services.total ? CLR_OK
+      : services.healthy === 0 ? CLR_BAD
+      : CLR_WARN;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", minHeight: "100vh" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "210px 1fr", minHeight: "100vh" }}>
       {/* ── Sidebar ──────────────────────────────────────────────────────── */}
       <aside style={{
         borderRight: "1px solid var(--border)",
@@ -36,7 +43,7 @@ export default function Layout() {
       }}>
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontWeight: 700, fontSize: 16, color: "var(--text)" }}>SmartLoad</div>
-          <div className="muted" style={{ fontSize: 11 }}>Developer Demo</div>
+          <div className="muted" style={{ fontSize: 11 }}>Dev Console</div>
         </div>
 
         {NAV.map((item) => (
@@ -62,11 +69,14 @@ export default function Layout() {
         ))}
 
         <div style={{ marginTop: "auto", paddingTop: 16, fontSize: 11, color: CLR_MUTED, lineHeight: 1.5 }}>
-          <div style={{ color: sseConnected ? CLR_OK : CLR_MUTED }}>
-            {sseConnected ? "● Live" : "○ Polling"}
+          <div style={{ color: healthColor }}>
+            {services == null ? "○ stack —" : `● stack ${services.healthy}/${services.total}`}
+          </div>
+          <div style={{ color: sseConnected ? CLR_OK : CLR_MUTED, marginTop: 4 }}>
+            {sseConnected ? "● Live (SSE)" : "○ Polling"}
           </div>
           <div style={{ marginTop: 6 }}>
-            BFF :8091 — separate from the operator UI on :8090.
+            BFF :8091 — developer harness, separate from the operator UI on :8090.
           </div>
         </div>
       </aside>
@@ -74,7 +84,7 @@ export default function Layout() {
       {/* ── Main column ──────────────────────────────────────────────────── */}
       <div style={{ display: "flex", flexDirection: "column" }}>
 
-        {/* Top bar (mode pill + start/stop traffic shortcuts) */}
+        {/* Top bar (mode pill + health + start/stop traffic shortcuts) */}
         <header className="card" style={{
           margin: 0,
           borderRadius: 0,
@@ -92,12 +102,15 @@ export default function Layout() {
             <span className="muted" style={{ fontSize: 12 }}>
               Routing: {state?.algorithm ?? "round_robin"}
             </span>
+            <span style={{ fontSize: 12, color: healthColor }}>
+              {services == null ? "stack —" : `stack ${services.healthy}/${services.total} healthy`}
+            </span>
             <button
-              style={{ padding: "8px 20px", fontSize: 13, background: "var(--ok)", color: "#0d1117", fontWeight: 700 }}
+              style={{ padding: "8px 18px", fontSize: 13, background: "var(--ok)", color: "#0d1117", fontWeight: 700 }}
               disabled={busy}
               onClick={() => action("Start Traffic", () => api.demoTraffic(20, 5))}
             >
-              ▶ START DEMO
+              ▶ START TRAFFIC
             </button>
             <button
               className="secondary"

@@ -205,7 +205,7 @@ smartload/
 │   ├── conformance/lb_adapter/       # every adapter must pass these
 │   └── performance/                  # Locust
 ├── tools/                            # dev-utility containers (not shipped middleware)
-│   ├── demo-ui/                      # scenario-injection + chaos + live SSE feed (:8091)
+│   ├── demo-ui/                      # dev console: benchmarks + one-click load profiles + live monitor (:8091)
 │   └── traffic-simulator/            # Locust UI (:8089)
 ├── docs/
 │   ├── SOURCE_OF_TRUTH.html          # canonical spec (read first)
@@ -224,7 +224,7 @@ smartload/
 ├── tools/                            # dev utilities (not shipped middleware)
 │   ├── anomaly-training/             # SMD-based IsolationForest training pipeline
 │   ├── forecasting-training/         # ARIMA training pipeline
-│   ├── demo-ui/                      # scenario injection + chaos + SSE feed (:8091)
+│   ├── demo-ui/                      # dev console: benchmarks + automation + results (:8091)
 │   └── traffic-simulator/            # Locust UI (:8089)
 ├── scripts/                          # lint-*.py, seed-metrics.py, download-datasets.sh
 ├── config/                           # policy.yaml + .env.example

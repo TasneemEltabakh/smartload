@@ -5657,6 +5657,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7af — 2026-06-12 — demo-ui redesigned into a developer Dev Console: both benchmark suites + one-click in-cluster load automation + live monitor</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Five-page Dev Console replaces the decision-plane-centric demo</strong></td>
+      <td>The <code>tools/demo-ui/</code> SPA was redesigned from 4 RL/decision-centric pages into a developer cockpit for benchmarking, testing, automation, and results: <strong>Dashboard</strong> (stack-health grid across all 7 watched services + live session metrics + decision card), <strong>Benchmarks</strong> (suite-aware — see next row), <strong>Run</strong> (one-click load profiles + live monitor — see below), <strong>Controls</strong> (the prior manual ops), and <strong>Live Feed</strong> (SSE, now incl. <code>smartload.scale</code>). New pages <code>Dashboard.tsx</code> / <code>Benchmarks.tsx</code> / <code>Run.tsx</code> replace <code>Overview.tsx</code> / <code>Benchmark.tsx</code>; the hoisted context gains a 5 s <code>services</code> poll.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Benchmarks page surfaces BOTH harness suites (RQ4 evidence now visible)</strong></td>
+      <td>The benchmark surface is now suite-aware (<code>SUITES</code> config): a tab bar switches between <strong>Adaptive-bench (RQ4)</strong> — reading <code>experiments/adaptive-bench/results/</code> via a new <code>ADAPTIVE_RESULTS_DIR</code> mount — and <strong>Baseline vs. SmartLoad (#148)</strong>. Each suite declares its own plot-key→filename map (adaptive: pool_size / time_to_react / upstream_timeline / anomaly_recovery; baseline: the prior six). Per-run manifest facts render above a <strong>Headline-results KPI strip</strong> parsed server-side from the run's <code>SUMMARY.md</code> (<code>GET .../runs/&lt;ts&gt;/kpis</code> → pool min→max, scale-action counts, fastest forecast→action reaction, peak p95, peak load, anomaly target+recovery, run length) then the SUMMARY + plots. The parser keys off the labelled rows our own <code>plot_results.py</code> emits, not free prose. Legacy unscoped <code>/benchmark/runs[...]</code> routes are kept as baseline-suite aliases.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>One-click in-cluster load automation + live monitor</strong></td>
+      <td>The Run page offers named load profiles (adaptive quick 60s / standard 3m, spike, anomaly-under-load). A new BFF runner (<code>/api/ui/demo/bench/{profiles,status,start,stop}</code>) drives the traffic-simulator through the timed 5-phase shape over HTTP, injecting the phase-D anomaly via the existing <code>/admin/chaos</code> + <code>/api/v1/isolate</code> path — <strong>no Docker socket, no host-side orchestrator</strong>. The live autoscaler reacts within the compose pool (1..5); the page's RPS / pool-size / p95 line charts accumulate from a new <code>/api/ui/demo/livestats</code> poll. Run state lives in Redis (<code>demo:bench:state</code> / <code>demo:bench:stop</code>) so it is consistent across the gunicorn worker pool. The canonical publishable artefacts (SUMMARY + plots) still come from the host-side <code>run.py</code> and are surfaced read-only.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>BFF surface area + SSE robustness</strong></td>
+      <td>New routes: <code>/api/ui/demo/services</code> (health grid), <code>/api/ui/demo/livestats</code> (RPS/p95/pool sample), <code>/api/ui/demo/bench/*</code> (load-profile runner), <code>/api/ui/demo/benchmark/suites</code> + suite-scoped <code>/benchmark/&lt;suite&gt;/runs[/…]</code>. Path-safety extended to <code>_safe_run_dir(suite, timestamp)</code>. The SSE generator now polls with <code>get_message(timeout=15)</code> + heartbeat comments instead of a blocking <code>listen()</code>, fixing a recurring 500 (and broken Live-Feed indicator) when the control bus went idle. The demo-ui gunicorn CMD was switched from the default <strong>sync worker to <code>gthread</code></strong> (<code>-k gthread --threads 8 --timeout 120</code>): the long-lived SSE response was tripping the sync worker's 30 s timeout, getting the worker SIGKILLed every ~30 s — which on a long run also killed the in-flight load-profile runner thread (surfaced as a status frozen mid-run). Threaded workers keep their master heartbeat during streaming.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>Rebuilt <code>demo-ui</code> (Vite green). All new endpoints return 200 live (services 7/7 healthy; both suites; the just-generated adaptive run lists 4 plots + SUMMARY). Browser screenshots of all three new pages render clean with no console errors after the SSE fix. End-to-end: fired the <em>Adaptive · Quick</em> profile from the UI — observed the pool grow to 5 under load, the phase-D anomaly fire (<code>anom=True</code>), a visible p95 bump-and-recover, and the run complete + clean up. Contract tests extended to 46 (8 new dev-console cases: suite config, suite-scoped + legacy routes, profile shape, start-rejects-unknown, unknown-suite 404) — all pass.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Compose</strong></td>
+      <td><code>demo-ui</code> service gains <code>./experiments/adaptive-bench/results:/adaptive-results:ro</code> + <code>ADAPTIVE_RESULTS_DIR</code>, plus <code>FORECASTING_URL</code> / <code>AUTOSCALER_URL</code> / <code>TELEMETRY_URL</code> env for the health grid. Three-docs sync: README tree, PROJECT_STATE §demo-ui, and PROJECT_WALKTHROUGH §5.5 all updated to the five-page console.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7ae — 2026-06-11 — Doc-completeness sweep: SOT figures + walkthrough diagrams catch up with v1.0.7w–ad reality</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

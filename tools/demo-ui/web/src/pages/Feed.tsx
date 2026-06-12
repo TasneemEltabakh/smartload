@@ -28,7 +28,8 @@ export default function Feed() {
         <span className="muted" style={{ marginLeft: 12, fontSize: 11 }}>
           Channels: <span style={{ color: channelColor("smartload.routing") }}>routing</span> ·
           {" "}<span style={{ color: channelColor("smartload.anomaly") }}>anomaly</span> ·
-          {" "}<span style={{ color: channelColor("smartload.policy") }}>policy</span>
+          {" "}<span style={{ color: channelColor("smartload.policy") }}>policy</span> ·
+          {" "}<span style={{ color: channelColor("smartload.scale") }}>scale</span>
         </span>
       </div>
       {feed.length === 0 ? (

@@ -11,7 +11,9 @@ import type { BackendRanking, DemoState } from "./api";
 
 export const POLL_MS = 2_000;
 export const METRICS_POLL_MS = 5_000;
-export const FEED_MAX = 20;
+export const SERVICES_POLL_MS = 5_000;
+export const LIVESTATS_POLL_MS = 2_000;
+export const FEED_MAX = 50;
 
 export const CLR_OK = "#3fb950";
 export const CLR_WARN = "#d29922";
@@ -84,6 +86,7 @@ export function channelColor(channel: string): string {
   if (channel === "smartload.routing") return CLR_BLUE;
   if (channel === "smartload.anomaly") return CLR_WARN;
   if (channel === "smartload.policy") return "#a78bfa";
+  if (channel === "smartload.scale") return CLR_OK;
   return CLR_MUTED;
 }
 
@@ -101,6 +104,12 @@ export function feedSummary(channel: string, envelope: any): string {
   if (channel === "smartload.policy") {
     const fields = ((p.changed_fields ?? []) as string[]).join(", ") || "—";
     return `Policy v${p.policy_version ?? "?"}: ${fields}`;
+  }
+  if (channel === "smartload.scale") {
+    const action = p.action ?? p.mechanism ?? "scale";
+    const to = p.target_count ?? p.to ?? p.instance_count ?? "?";
+    const reason = p.reason ? ` — ${String(p.reason).slice(0, 60)}` : "";
+    return `Scale ${action} → ${to}${reason}`;
   }
   return channel;
 }

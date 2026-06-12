@@ -54,6 +54,8 @@ def _routes(flask_app) -> set[str]:
 
 DEMO_ROUTES = {
     "/api/ui/demo/state",
+    "/api/ui/demo/services",
+    "/api/ui/demo/livestats",
     "/api/ui/demo/degrade",
     "/api/ui/demo/recover",
     "/api/ui/demo/mode",
@@ -63,6 +65,11 @@ DEMO_ROUTES = {
     "/api/ui/demo/scenario",
     "/api/ui/demo/algorithm",
     "/api/ui/demo/metrics",
+    "/api/ui/demo/bench/profiles",
+    "/api/ui/demo/bench/status",
+    "/api/ui/demo/bench/start",
+    "/api/ui/demo/bench/stop",
+    "/api/ui/demo/benchmark/suites",
     "/api/ui/events",
 }
 
@@ -180,3 +187,93 @@ class TestImportCleanliness:
     def test_demo_bff_has_traffic_simulator_url(self):
         assert hasattr(_demo_mod, "TRAFFIC_SIMULATOR_URL"), \
             "demo-ui BFF must have TRAFFIC_SIMULATOR_URL for traffic control"
+
+
+# ── 4. Dev-console surface (benchmark suites + load profiles) ─────────────────
+
+class TestDevConsoleSurface:
+    """The redesigned dev console adds a suite-aware benchmark surface and an
+    in-cluster one-click load-profile runner. These checks exercise the pure
+    config + routing (no external services needed)."""
+
+    def test_both_result_suites_registered(self):
+        assert set(_demo_mod.SUITES.keys()) == {"adaptive", "baseline"}, \
+            "demo-ui must expose both the adaptive and baseline result suites"
+        for sid, cfg in _demo_mod.SUITES.items():
+            assert cfg["plots"], f"suite {sid} must declare at least one plot key"
+
+    def test_suite_scoped_benchmark_routes_present(self):
+        routes = _routes(demo_app)
+        for r in (
+            "/api/ui/demo/benchmark/<suite>/runs",
+            "/api/ui/demo/benchmark/<suite>/runs/<timestamp>/summary",
+            "/api/ui/demo/benchmark/<suite>/runs/<timestamp>/plot/<name>",
+            "/api/ui/demo/benchmark/<suite>/runs/<timestamp>/manifest",
+        ):
+            assert r in routes, f"missing suite-scoped route: {r}"
+
+    def test_legacy_benchmark_aliases_kept(self):
+        routes = _routes(demo_app)
+        assert "/api/ui/demo/benchmark/runs" in routes, \
+            "legacy unscoped benchmark route must remain as a baseline alias"
+
+    def test_load_profiles_have_valid_shape(self):
+        assert _demo_mod.BENCH_PROFILES, "at least one load profile must exist"
+        ids = [p["id"] for p in _demo_mod.BENCH_PROFILES]
+        assert len(ids) == len(set(ids)), "profile ids must be unique"
+        for p in _demo_mod.BENCH_PROFILES:
+            assert p["phases"], f"profile {p['id']} has no phases"
+            for ph in p["phases"]:
+                assert ph["secs"] > 0 and ph["users"] >= 0, \
+                    f"profile {p['id']} phase {ph['name']} has invalid timing"
+
+    def test_bench_profiles_endpoint_returns_catalog(self, demo_client):
+        resp = demo_client.get("/api/ui/demo/bench/profiles")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert len(body["profiles"]) == len(_demo_mod.BENCH_PROFILES)
+        first = body["profiles"][0]
+        assert {"id", "label", "description", "total_secs", "phases"} <= set(first)
+
+    def test_benchmark_suites_endpoint_returns_both(self, demo_client):
+        resp = demo_client.get("/api/ui/demo/benchmark/suites")
+        assert resp.status_code == 200
+        ids = {s["id"] for s in resp.get_json()["suites"]}
+        assert ids == {"adaptive", "baseline"}
+
+    def test_bench_start_rejects_unknown_profile(self, demo_client):
+        resp = demo_client.post("/api/ui/demo/bench/start", json={"profile_id": "nope"})
+        assert resp.status_code == 400
+
+    def test_unknown_suite_runs_404(self, demo_client):
+        resp = demo_client.get("/api/ui/demo/benchmark/bogus/runs")
+        assert resp.status_code == 404
+
+    def test_kpi_route_registered(self):
+        assert "/api/ui/demo/benchmark/<suite>/runs/<timestamp>/kpis" in _routes(demo_app)
+
+    def test_adaptive_kpi_parser_extracts_headline_cards(self):
+        summary = (
+            "Run anchor: **2026-06-12 16:23:49 UTC -> 16:29:45 UTC**  (356 s).\n\n"
+            "## Per-phase\n\n"
+            "| Phase | Window | Users | RPS | p95 | Pool |\n|---|---|---|---|---|---|\n"
+            "| `A_bootstrap` | w | 19 users | 49.7 | 10 | 1..1 |\n"
+            "| `C_sustain` | w | 200 users | 947.0 | 150 | 1..5 |\n"
+            "| `D_anomaly_scale_down` | w | 200 users | 203.0 | 200 | 3..6 |\n\n"
+            "## Time-to-react\n\n"
+            "| f0 | t | 29.0 | `scale_out` (ic=2) | t | 94.4s |\n"
+            "| f18 | t | 110.3 | `scale_out` (ic=2) | t | 0.6s |\n\n"
+            "## Autoscaler action counts (bench window)\n\n"
+            "- **scale_out**: 7\n- **scale_in**:  5\n- **total decisions in audit**: 12\n\n"
+            "## Phase-D anomaly window\n\n"
+            "| Target | Injected | Recovered | Window | Pool |\n|---|---|---|---|---|\n"
+            "| `smartload-test-backend-4` (dynamic=False) | 16:27:48 | 16:28:48 | 60s | 3 backends |\n"
+        )
+        cards = {c["label"]: c["value"] for c in _demo_mod._parse_adaptive_kpis(summary)}
+        assert cards["Pool size"] == "1 → 6"
+        assert cards["Scaling actions"] == "12"
+        assert cards["Fastest reaction"] == "0.6s"
+        assert cards["Peak p95"] == "200 ms"
+        assert cards["Run length"] == "356 s"
+        assert "test-backend-4" in next(
+            c["hint"] for c in _demo_mod._parse_adaptive_kpis(summary) if c["label"] == "Anomaly")

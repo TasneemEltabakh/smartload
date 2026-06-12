@@ -75,7 +75,65 @@ async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-// ── Benchmark surface (v1.0.7r harness consumer) ───────────────────────────
+// ── Service health grid ─────────────────────────────────────────────────────
+
+export interface ServiceHealth {
+  name:    string;
+  role:    string;
+  healthy: boolean;
+  status:  string;
+  detail:  string | null;
+}
+
+export interface ServicesResponse {
+  services: ServiceHealth[];
+  healthy:  number;
+  total:    number;
+}
+
+// ── Live sample (run monitor) ───────────────────────────────────────────────
+
+export interface LiveSample {
+  pool_size:          number;
+  rps?:               number;
+  p95_latency_ms?:    number | null;
+  mean_latency_ms?:   number | null;
+  slo_violation_pct?: number;
+  samples?:           number;
+  metrics_error?:     string;
+}
+
+// ── One-click load-profile runner ───────────────────────────────────────────
+
+export interface BenchProfilePhase {
+  name:    string;
+  secs:    number;
+  users:   number;
+  anomaly: boolean;
+}
+
+export interface BenchProfile {
+  id:          string;
+  label:       string;
+  description: string;
+  total_secs:  number;
+  phases:      BenchProfilePhase[];
+}
+
+export interface BenchStatus {
+  status:        "idle" | "running" | "done" | "stopped";
+  run_id?:       string;
+  profile_id?:   string;
+  profile_label?: string;
+  total_secs?:   number;
+  phase_names?:  string[];
+  phase_index?:  number;
+  phase?:        string;
+  elapsed_secs?: number;
+  anomaly_active?: boolean;
+}
+
+// ── Benchmark surface (suite-aware harness consumer) ────────────────────────
 
 export interface BenchmarkManifestKnobs {
   RAMP_USERS?: number;
@@ -91,22 +149,47 @@ export interface BenchmarkManifest {
   git_sha?: string;
   git_state?: string;
   sides?: string;
-  knobs?: BenchmarkManifestKnobs;
+  knobs?: BenchmarkManifestKnobs;       // baseline-vs-smartload
+  bench_version?: string;               // adaptive-bench
+  short?: boolean;                      // adaptive-bench
+  phases?: Record<string, number>;      // adaptive-bench phase timings
+  injections?: Array<Record<string, unknown>>;  // adaptive-bench anomaly trail
   parse_error?: boolean;
 }
 
 export interface BenchmarkRun {
   timestamp: string;
   manifest: BenchmarkManifest;
-  plots: string[];           // canonical plot keys (rps, p50_p95_p99, ...)
+  plots: string[];           // canonical plot keys for the suite
   has_summary: boolean;
-  sides_present: string[];   // ["baseline", "smartload"] when full
+  sides_present: string[];   // ["baseline", "smartload"] for the baseline suite
 }
 
 export interface BenchmarkRunListResponse {
+  suite?: string;
+  label?: string;
   results_dir: string;
   runs: BenchmarkRun[];
   note?: string;
+}
+
+export interface BenchSuitePlot {
+  key:   string;
+  label: string;
+}
+
+export interface BenchSuite {
+  id:      string;
+  label:   string;
+  harness: string;
+  plots:   BenchSuitePlot[];
+}
+
+export interface BenchKpi {
+  label: string;
+  value: string;
+  hint:  string;
+  tone:  "ok" | "warn" | "bad" | "muted";
 }
 
 
@@ -160,19 +243,49 @@ export const api = {
   getDemoMetrics: (window = "5 minutes") =>
     _fetchJson<DemoMetrics>(`/api/ui/demo/metrics?window=${encodeURIComponent(window)}`),
 
-  // Benchmark surface — list runs + fetch SUMMARY.md.
-  // Plot images are fetched via <img src="..."> URLs constructed by the page,
-  // not through this typed wrapper (avoids loading PNGs into JS memory).
-  listBenchmarkRuns: () =>
-    _fetchJson<BenchmarkRunListResponse>("/api/ui/demo/benchmark/runs"),
+  // Dashboard + run monitor.
+  getServices: () => _fetchJson<ServicesResponse>("/api/ui/demo/services"),
 
-  getBenchmarkSummary: async (timestamp: string): Promise<string> => {
-    const r = await fetch(`/api/ui/demo/benchmark/runs/${encodeURIComponent(timestamp)}/summary`);
+  getLiveStats: (windowSecs = 10) =>
+    _fetchJson<LiveSample>(`/api/ui/demo/livestats?window_secs=${windowSecs}`),
+
+  // One-click load-profile runner.
+  listBenchProfiles: () =>
+    _fetchJson<{ profiles: BenchProfile[] }>("/api/ui/demo/bench/profiles"),
+
+  getBenchStatus: () => _fetchJson<BenchStatus>("/api/ui/demo/bench/status"),
+
+  startBench: (profile_id: string) =>
+    _fetchJson<{ ok: boolean; run_id: string }>("/api/ui/demo/bench/start", {
+      method: "POST",
+      body: JSON.stringify({ profile_id }),
+    }),
+
+  stopBench: () => _fetchJson<{ ok: boolean }>("/api/ui/demo/bench/stop", { method: "POST" }),
+
+  // Benchmark surface — suite-aware. Plot images are fetched via <img src>
+  // URLs (benchmarkPlotUrl), not through this wrapper (avoids PNGs in JS heap).
+  listBenchSuites: () =>
+    _fetchJson<{ suites: BenchSuite[] }>("/api/ui/demo/benchmark/suites"),
+
+  listBenchmarkRuns: (suite: string) =>
+    _fetchJson<BenchmarkRunListResponse>(`/api/ui/demo/benchmark/${encodeURIComponent(suite)}/runs`),
+
+  getBenchmarkSummary: async (suite: string, timestamp: string): Promise<string> => {
+    const r = await fetch(
+      `/api/ui/demo/benchmark/${encodeURIComponent(suite)}/runs/${encodeURIComponent(timestamp)}/summary`,
+    );
     if (!r.ok) throw new Error(`summary fetch failed: HTTP ${r.status}`);
     return r.text();
   },
+
+  getBenchmarkKpis: (suite: string, timestamp: string) =>
+    _fetchJson<{ kpis: BenchKpi[] }>(
+      `/api/ui/demo/benchmark/${encodeURIComponent(suite)}/runs/${encodeURIComponent(timestamp)}/kpis`,
+    ),
 };
 
-export function benchmarkPlotUrl(timestamp: string, plotKey: string): string {
-  return `/api/ui/demo/benchmark/runs/${encodeURIComponent(timestamp)}/plot/${encodeURIComponent(plotKey)}`;
+export function benchmarkPlotUrl(suite: string, timestamp: string, plotKey: string): string {
+  return `/api/ui/demo/benchmark/${encodeURIComponent(suite)}/runs/${encodeURIComponent(timestamp)}`
+    + `/plot/${encodeURIComponent(plotKey)}`;
 }

@@ -20,11 +20,12 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, type DemoMetrics, type DemoState } from "../api";
+import { api, type DemoMetrics, type DemoState, type ServicesResponse } from "../api";
 import {
   FEED_MAX,
   METRICS_POLL_MS,
   POLL_MS,
+  SERVICES_POLL_MS,
   feedSummary,
   type FeedItem,
 } from "../utils";
@@ -38,6 +39,7 @@ interface ToastState {
 export interface DemoContextValue {
   state: DemoState | null;
   metrics: DemoMetrics | null;
+  services: ServicesResponse | null;
   feed: FeedItem[];
   sseConnected: boolean;
   error: string | null;
@@ -52,6 +54,7 @@ const Ctx = createContext<DemoContextValue | null>(null);
 export function DemoStateProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<DemoState | null>(null);
   const [metrics, setMetrics] = useState<DemoMetrics | null>(null);
+  const [services, setServices] = useState<ServicesResponse | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [sseConnected, setSseConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +91,22 @@ export function DemoStateProvider({ children }: { children: ReactNode }) {
     }
     fetchMetrics();
     const id = setInterval(fetchMetrics, METRICS_POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // ── Service health-grid polling ─────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchServices() {
+      try {
+        const s = await api.getServices();
+        if (!cancelled) setServices(s);
+      } catch {
+        // services endpoint unreachable — leave last value
+      }
+    }
+    fetchServices();
+    const id = setInterval(fetchServices, SERVICES_POLL_MS);
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
@@ -138,6 +157,7 @@ export function DemoStateProvider({ children }: { children: ReactNode }) {
   const value: DemoContextValue = {
     state,
     metrics,
+    services,
     feed,
     sseConnected,
     error,

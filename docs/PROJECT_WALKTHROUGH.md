@@ -3200,9 +3200,9 @@ Side-by-side diff (`splitView`) between the current policy and the draft. **This
 
 The audit table is a plain `<table>` rendering the last 20 rows with old/new values as `<code>JSON.stringify(...)</code>` so structured values render as their literal JSON form.
 
-### 5.5 `tools/demo-ui/` — developer demo harness
+### 5.5 `tools/demo-ui/` — developer Dev Console
 
-**Not a production service.** Lives under `tools/` for that reason — `services/` is for runtime components that operators run in production; `tools/` is for development-time affordances. Same multi-stage Flask BFF + Vite/React SPA shape as `operator-ui`, but the purpose is different: a stakeholder-facing surface for *showing* SmartLoad to people (chaos triggers, scenario buttons, live event feed, benchmark plots) rather than for operating it in real life.
+**Not a production service.** Lives under `tools/` for that reason — `services/` is for runtime components that operators run in production; `tools/` is for development-time affordances. Same multi-stage Flask BFF + Vite/React SPA shape as `operator-ui`, but the purpose is different: a **developer cockpit for benchmarking, testing, automation, and seeing the big-picture results** — not a surface for operating the system in production. As of **v1.0.7af** it was redesigned from a decision-plane-centric demo into a five-page Dev Console.
 
 Compose service on port `:8091`; `operator-ui` is on `:8090`. Both bind to `smartload_smartload-net` and proxy to the same back-end services.
 
@@ -3210,52 +3210,53 @@ Compose service on port `:8091`; `operator-ui` is on `:8090`. Both bind to `smar
 tools/demo-ui/
 ├── Dockerfile                       multi-stage (node build → python runtime)
 ├── bff/
-│   ├── app.py                       Flask BFF — 12 routes
+│   ├── app.py                       Flask BFF — suite-aware benchmarks + load-profile runner
+│   ├── test_separation.py           operator/demo separation + dev-console surface tests
 │   └── requirements.txt
 └── web/
     ├── package.json                 vite + react + recharts + react-router-dom
     ├── tsconfig.json / vite.config.ts
     └── src/
-        ├── App.tsx                  router shell (4 routes + fallback redirect)
-        ├── Layout.tsx               sidebar nav + top bar (live mode pill, Start/Stop)
+        ├── App.tsx                  router shell (5 routes + fallback redirect)
+        ├── Layout.tsx               sidebar nav + top bar (mode pill, stack-health, Start/Stop)
         ├── main.tsx                 BrowserRouter mount
         ├── api.ts                   typed BFF wrapper
         ├── utils.ts                 shared helpers + colour palette
         ├── state/
-        │   └── DemoStateContext.tsx polling + SSE + toast (hoisted)
+        │   └── DemoStateContext.tsx polling (state + metrics + services) + SSE + toast (hoisted)
         └── pages/
-            ├── Overview.tsx         decision card + charts + metrics + training table
+            ├── Dashboard.tsx        stack-health grid + live session metrics + decision card
+            ├── Benchmarks.tsx       suite-aware viewer (adaptive-bench + baseline)
+            ├── Run.tsx              one-click load profiles + live RPS/pool/p95 monitor
             ├── Controls.tsx         algorithm + scenarios + manual ops
-            ├── Feed.tsx             full-page SSE event stream
-            └── Benchmark.tsx        v1.0.7r baseline-vs-smartload run viewer
+            └── Feed.tsx             full-page SSE event stream
 ```
 
-#### `bff/app.py` — Flask BFF (12 routes)
+#### `bff/app.py` — Flask BFF
 
-The BFF aggregates upstream service state, proxies chaos / scenario / traffic actions, and forwards the operator-UI's Redis SSE stream. It also surfaces the v1.0.7r baseline-vs-smartload benchmark run outputs via a path-safe read-only file server.
+The BFF aggregates upstream service state, proxies chaos / scenario / traffic actions, runs in-cluster load profiles, forwards the Redis SSE stream, and surfaces **both** benchmark suites via a path-safe read-only file server.
 
 ```
 GET  /api/ui/demo/state             aggregated lb + rl + anomaly + policy state
-POST /api/ui/demo/degrade           mark a backend degraded/unhealthy
-POST /api/ui/demo/recover           restore a backend to healthy
-POST /api/ui/demo/mode              toggle safe_mode on the policy
-POST /api/ui/demo/traffic           start/stop Locust traffic load
-POST /api/ui/demo/chaos             inject latency/failure into a backend
-POST /api/ui/demo/reset             full orchestrated reset to baseline
-POST /api/ui/demo/scenario          run a named multi-step scenario
-POST /api/ui/demo/algorithm         pick the LB routing algorithm
+GET  /api/ui/demo/services          health grid across every watched service
+GET  /api/ui/demo/livestats         one-shot RPS / p95 / pool-size sample (run monitor)
+POST /api/ui/demo/degrade|recover|mode|traffic|chaos|reset|scenario|algorithm   manual ops
 GET  /api/ui/demo/metrics           last-5m latency snapshot from TimescaleDB
-GET  /api/ui/demo/benchmark/runs                       list baseline-vs-smartload runs
-GET  /api/ui/demo/benchmark/runs/<ts>/manifest         MANIFEST.json for one run
-GET  /api/ui/demo/benchmark/runs/<ts>/summary          SUMMARY.md for one run
-GET  /api/ui/demo/benchmark/runs/<ts>/plot/<name>      one of the six PNG plots
-GET  /api/ui/events                 SSE stream of smartload.routing/anomaly/policy
+GET  /api/ui/demo/bench/profiles                       list one-click load profiles
+GET  /api/ui/demo/bench/status                         current/last automated-run state
+POST /api/ui/demo/bench/start|stop                     start / stop a load profile
+GET  /api/ui/demo/benchmark/suites                     list result suites (adaptive/baseline)
+GET  /api/ui/demo/benchmark/<suite>/runs[/<ts>/...]    suite-scoped runs / summary / plot / manifest
+GET  /api/ui/demo/benchmark/runs[...]                  back-compat aliases → baseline suite
+GET  /api/ui/events                 SSE stream of routing / anomaly / policy / scale
 GET  /health                        own health check
 ```
 
-The benchmark surface reads from `BENCHMARK_RESULTS_DIR` (default `/benchmark-results`), which is a `:ro` bind-mount of `experiments/baseline-vs-smartload/results/` on the host. Path-safety: `_safe_run_dir(timestamp)` rejects any input containing `..`, path separators, or absolute paths, and verifies the resolved path lives strictly under the results root. Every endpoint that takes a `<timestamp>` goes through it.
+The benchmark surface is **suite-aware** (`SUITES` config): `adaptive` reads `ADAPTIVE_RESULTS_DIR` (`/adaptive-results`, a `:ro` mount of `experiments/adaptive-bench/results/`) and `baseline` reads `BENCHMARK_RESULTS_DIR` (`/benchmark-results`, the v1.0.7s mount of `experiments/baseline-vs-smartload/results/`). Each suite declares its own plot-key → filename map. Path-safety: `_safe_run_dir(suite, timestamp)` rejects any input containing `..`, path separators, or absolute paths, and verifies the resolved path lives strictly under that suite's root. `SUMMARY.md` is read with `errors="replace"` so older cp1252-written files don't 500 the endpoint.
 
-`SUMMARY.md` is read with `errors="replace"` so files written by older `plot_results.py` runs on Windows hosts (cp1252 default before the v1.0.7t UTF-8 fix) don't 500 the endpoint. New runs are pure UTF-8.
+The **one-click load-profile runner** drives the traffic-simulator through a timed 5-phase shape over HTTP (the same `/admin/chaos` + `/api/v1/isolate` path the manual scenarios use for the phase-D anomaly) — no Docker socket, no host-side orchestrator. Because the BFF runs under a gunicorn worker pool, run state lives in Redis (`demo:bench:state` / `demo:bench:stop`) so any worker can answer `/bench/status`; the worker that accepts `/bench/start` runs the profile thread. The live autoscaler reacts within the compose pool (replicas 1..5), which the Run page's pool-size chart tracks live.
+
+The SSE generator polls with `get_message(timeout=15)` and emits heartbeat comments rather than relying on a blocking `listen()`, so an idle control bus no longer surfaces as a socket-read-timeout 500. The container runs gunicorn with **`gthread` workers** (`-k gthread --threads 8 --timeout 120`), not the default sync worker: the long-lived SSE response was tripping the sync worker's 30 s timeout (SIGKILL + reboot every ~30 s), which on a long run also killed the in-flight load-profile runner thread. Threaded workers keep their master heartbeat while streaming, so both the SSE stream and the runner thread survive.
 
 #### `web/src/state/DemoStateContext.tsx` — hoisted polling + SSE + toast
 
@@ -3263,36 +3264,40 @@ The shared state lives once at the app root. Route changes don't reset:
 
 - `DemoState` polling (2 s interval) — current LB weights, RL rankings, mode, policy
 - `DemoMetrics` polling (5 s interval) — last-5m latency from TimescaleDB
-- SSE subscription to `/api/ui/events` — feeds a capped event ring (`FEED_MAX=20`)
+- `ServicesResponse` polling (5 s interval) — the stack-health grid for the Dashboard
+- SSE subscription to `/api/ui/events` — feeds a capped event ring (`FEED_MAX=50`)
 - Toast notifications (3.5 s auto-dismiss)
 - `action(label, fn)` helper that wraps a BFF call with busy state + toast feedback
 
-Pages consume via `useDemo()`; no page sets up its own subscription. This is the difference from the pre-v1.0.7s monolithic `Demo.tsx`: navigating between Overview and Feed used to reset the event history because both lived inside the same component lifecycle. Hoisting fixes that.
+Pages consume via `useDemo()`; no page sets up its own subscription (the Run page's livestats poll is page-local, since the rolling chart series only matters while that page is open).
 
-#### The four pages
+#### The five pages
 
 | Route | Purpose | Key affordances |
 |---|---|---|
-| `/` | **Overview** — read-only watch | Current Active Decision card · Backend Pool Weights (recharts bar) · RL Rankings (recharts bar) · Live Session Metrics from TimescaleDB · Training Evaluation Results table |
-| `/controls` | **Controls** — drive the demo | Routing algorithm picker (Round-Robin / Least Conn / Random / AI-PPO) · Demo scenarios (Backend Failure / Latency Spike / Recovery / High Traffic / AI Disabled) · Manual ops (degrade · recover · safe-mode toggle · traffic presets · chaos · reset-all) |
-| `/feed` | **Live Feed** — observe events | Full-page SSE stream coloured by channel (routing blue / anomaly orange / policy purple) |
-| `/benchmark` | **Benchmark** — v1.0.7r/t harness viewer | Lists historical runs (newest first, with run-type pill + plot completeness) · Selects show manifest + SUMMARY.md + 6 plot images inline |
+| `/` | **Dashboard** — big-picture watch | Stack-health grid (every watched service, role-tagged, polled 5 s) · Live Session Metrics from TimescaleDB · Current Decision card · Backend Pool Weights (recharts bar) |
+| `/benchmarks` | **Benchmarks** — results cockpit | Suite tabs (Adaptive-bench RQ4 / Baseline #148) · run list · per-run manifest KPI facts + SUMMARY.md + the suite's plots inline |
+| `/run` | **Run** — one-click automation | Load-profile picker (adaptive quick/standard, spike, anomaly-under-load) · phase progress bar · live RPS / pool-size / p95 line charts that accumulate while the run drives the stack |
+| `/controls` | **Controls** — drive manually | Routing algorithm picker · scenarios (Backend Failure / Latency Spike / Recovery / High Traffic / AI Disabled) · manual ops (degrade · recover · safe-mode · traffic presets · chaos · reset-all) |
+| `/feed` | **Live Feed** — observe events | Full-page SSE stream coloured by channel (routing / anomaly / policy / scale) |
 
-#### Benchmark page details
+#### Benchmarks page details
 
-Two-column layout. The left column lists every run dir under `BENCHMARK_RESULTS_DIR` (newest first), each entry showing the formatted UTC timestamp, run-type pill (`full` vs `SHORT`), sides completed (`2/2 sides`), and plot completeness (`6/6 plots`). Selecting a run loads its summary + plots into the right column.
+A suite tab bar over a two-column layout. Each suite tab fetches its run list; the left column lists every run dir under that suite's root (newest first) showing the formatted UTC timestamp, a `summary`/`no summary` flag, and plot completeness (`4/4` for adaptive, `6/6` for baseline). Selecting a run loads a manifest fact-row (the adaptive run shows bench version, full/short, duration, peak users, and the anomaly target; the baseline run shows ramp/sides), a **Headline-results KPI strip**, the full `SUMMARY.md`, and the suite's plots into the right column.
 
-The page is **read-only by design** — it surfaces existing benchmark outputs but doesn't trigger new runs. Generating a new run requires `bash experiments/baseline-vs-smartload/scripts/run_experiment.sh` from the repo root. A "trigger from UI" button would need docker-socket access mounted into the demo-ui container (the bash script shells out to `docker compose`), which is enough complexity to be deliberately out of scope. The empty-state on the page shows the exact command operators should run.
+The KPI strip is parsed **server-side** by `GET /api/ui/demo/benchmark/<suite>/runs/<ts>/kpis` (`_parse_adaptive_kpis`), which keys off the specific labelled rows our own `plot_results.py` emits in the SUMMARY — the Per-phase table (→ pool min→max, peak p95, peak users/RPS), the Time-to-react table (→ fastest forecast→action delay), the action-counts block (→ scale-out/scale-in/total), and the Phase-D anomaly row (→ target + recovery window) — rather than scraping free prose. The endpoint returns `[]` for suites without a parser (the strip then hides), so it degrades cleanly.
 
-Plots are fetched directly as `<img src="/api/ui/demo/benchmark/runs/<ts>/plot/<key>">` URLs — the SPA doesn't load PNG bytes through JS, the browser handles caching, and the path-key (`rps` / `p50_p95_p99` / `error_rate` / `total_requests` / `per_phase_p95` / `recovery_curve`) is stable even if the underlying filename changes.
+This page is read-only — it *surfaces* canonical harness outputs rather than producing them. The **Run page** provides the in-cluster one-click automation; for the canonical, publishable artefacts (`SUMMARY.md` + plots) the empty-state and the Run page both show the host-side command (`COMPOSE_PROJECT_NAME=smartload python experiments/adaptive-bench/run.py`). Driving the *full* host-side orchestrator from the container is still out of scope (it recreates containers and depends on host bind-mount paths); the in-cluster runner is the pragmatic, robust alternative.
+
+Plots are fetched directly as `<img src="/api/ui/demo/benchmark/<suite>/runs/<ts>/plot/<key>">` URLs — the SPA doesn't load PNG bytes through JS, the browser handles caching, and the path-key is stable per suite even if the underlying filename changes.
 
 #### Why this is separate from operator-ui
 
 | | Operator UI (`:8090`) | Demo UI (`:8091`) |
 |---|---|---|
 | **Audience** | Operators running SmartLoad in production | Stakeholders, reviewers, developers showing the system |
-| **Pages** | Home · Policy · Audit · Actions · Live Engines · EngineDetail | Overview · Controls · Live Feed · Benchmark |
-| **Action shape** | Policy diff preview + confirmation modals; audit trail mandatory | One-click chaos / scenario buttons; no audit on demo actions |
+| **Pages** | Home · Policy · Audit · Actions · Live Engines · EngineDetail | Dashboard · Benchmarks · Run · Controls · Live Feed |
+| **Action shape** | Policy diff preview + confirmation modals; audit trail mandatory | One-click load profiles / chaos / scenario buttons; no audit on demo actions |
 | **Where it lives** | `services/operator-ui/` (production) | `tools/demo-ui/` (development) |
 | **Deployment** | Ships with the Helm chart | Compose-only |
 
