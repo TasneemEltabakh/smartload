@@ -5325,8 +5325,8 @@ flowchart LR
     <tr><td>lb-otel-shipper (sidecar)</td><td>Tasneem</td><td><span class="pill pill-done">T1.2 wired</span></td><td><code>services/lb-otel-shipper/app.py</code></td><td>Tail-and-emit Python sidecar; OTLP/HTTP-JSON to collector — Approach B (issue #9)</td></tr>
     <tr><td>test-backends (Node.js)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>services/test-backend/</code></td><td>—</td></tr>
     <tr><td>Locust traffic simulator</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>tools/traffic-simulator/</code></td><td>—</td></tr>
-    <tr><td>Baseline vs SmartLoad benchmark harness</td><td>Tasneem</td><td><span class="pill pill-done">Harness shipped 2026-06-03 (v1.0.7r, #148) — SHORT validation clean; full-length run pending</span></td><td><code>experiments/baseline-vs-smartload/</code></td><td>Two env profiles (baseline vs smartload) + 3-phase Locust shape (ramp → pause-anomaly → sustain) + orchestration + plotting (6 PNGs + SUMMARY.md). Run with <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>; <code>SHORT=1</code> for ~5-min harness check.</td></tr>
-    <tr><td>Adaptive-bench (R1 + R2 + R3)</td><td>Tasneem</td><td><span class="pill pill-done">R1 + R2 + R3 shipped 2026-06-09 → 2026-06-10 (v1.0.7v + v1.0.7x; #155 + #156 + #157)</span></td><td><code>experiments/adaptive-bench/</code> · <code>services/autoscaler/cluster_client.py</code> · <code>services/lb-sidecar/runloop.py</code> · <code>services/shared/lb_adapters/nginx/__init__.py</code> · <code>tests/e2e/adaptive-bench/</code></td><td>R1 (v1.0.7v, #155): autoscaler <code>provision()</code>/<code>decommission()</code> via Docker SDK + lb-sidecar dynamic backend discovery + NGINX DNS pre-flight, behind <code>AUTOSCALER_PROVISIONING_ENABLED</code>. R2 (v1.0.7x, #156): asyncio orchestrator + three async collectors (Prometheus 1 Hz, BFF SSE, upstream.conf watcher) + 5-phase Locust shape + phase-D anomaly injector + <code>--short</code> e2e test. R3 (v1.0.7x, #157): <code>join_run.py</code> + <code>plot_results.py</code> + 4 plots + auto-generated <code>SUMMARY.md</code>. First end-to-end run on 2026-06-10 (<code>results/20260610T135509Z/</code>) produced 197 envelopes + 2 autoscaler decisions; numbers in §34.6. Acceptance gates "pool grew during B" + "pool shrank during D" blocked on <strong>#163</strong> (silent thread death) + <strong>#164</strong> (lb-sidecar missing scale subscription); same harness re-runs to affirmative gates once both close.</td></tr>
+    <tr><td>Baseline vs SmartLoad benchmark harness</td><td>Tasneem</td><td><span class="pill pill-done">Harness shipped 2026-06-03 (v1.0.7r, #148) — SHORT validation clean; full-length run pending</span></td><td><code>experiments/baseline-vs-smartload/</code></td><td>Two env profiles (baseline vs smartload) + 3-phase Locust shape (ramp → pause-anomaly → sustain) + orchestration + plotting (6 PNGs + SUMMARY.md). Run with <code>bash experiments/baseline-vs-smartload/scripts/run_experiment.sh</code>; <code>SHORT=1</code> for ~5-min harness check. <strong>v1.0.7am (#160):</strong> <code>RUNS=N</code>/<code>SEED_BASE</code> multi-run batching + <code>scripts/aggregate_runs.py</code> → per-metric mean &plusmn; CI (<code>summary.parquet</code> + <code>SUMMARY.md</code>) + CI-band plots; the plotter's Locust column lookups were also corrected (RPS/latency/error-rate plots had rendered empty).</td></tr>
+    <tr><td>Adaptive-bench (R1 + R2 + R3)</td><td>Tasneem</td><td><span class="pill pill-done">R1 + R2 + R3 shipped 2026-06-09 → 2026-06-10 (v1.0.7v + v1.0.7x; #155 + #156 + #157)</span></td><td><code>experiments/adaptive-bench/</code> · <code>services/autoscaler/cluster_client.py</code> · <code>services/lb-sidecar/runloop.py</code> · <code>services/shared/lb_adapters/nginx/__init__.py</code> · <code>tests/e2e/adaptive-bench/</code></td><td>R1 (v1.0.7v, #155): autoscaler <code>provision()</code>/<code>decommission()</code> via Docker SDK + lb-sidecar dynamic backend discovery + NGINX DNS pre-flight, behind <code>AUTOSCALER_PROVISIONING_ENABLED</code>. R2 (v1.0.7x, #156): asyncio orchestrator + three async collectors (Prometheus 1 Hz, BFF SSE, upstream.conf watcher) + 5-phase Locust shape + phase-D anomaly injector + <code>--short</code> e2e test. R3 (v1.0.7x, #157): <code>join_run.py</code> + <code>plot_results.py</code> + 4 plots + auto-generated <code>SUMMARY.md</code>. First end-to-end run on 2026-06-10 (<code>results/20260610T135509Z/</code>) produced 197 envelopes + 2 autoscaler decisions; numbers in §34.6. Acceptance gates "pool grew during B" + "pool shrank during D" blocked on <strong>#163</strong> (silent thread death) + <strong>#164</strong> (lb-sidecar missing scale subscription); same harness re-runs to affirmative gates once both close. <strong>v1.0.7am (#160):</strong> <code>run.py</code> gains <code>--runs N</code>/<code>--seed-base</code> multi-run batching (<code>run-NN/</code> per-run folders) + <code>scripts/aggregate_runs.py</code> → per-phase per-metric mean &plusmn; CI (<code>summary.parquet</code> + <code>SUMMARY.md</code>) + CI-band plots, sharing <code>_bench_common/bench_stats.py</code> with the baseline harness.</td></tr>
     <tr><td>CI/CD pipeline (GitHub Actions)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>.github/workflows/</code></td><td>—</td></tr>
     <tr><td>Repo structure + runbook</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docs/running-the-project.md</code></td><td>Phase 1+ updates</td></tr>
     <tr><td>docker-compose (full stack)</td><td>Tasneem</td><td><span class="pill pill-done">Implemented</span></td><td><code>docker-compose.yml</code></td><td>—</td></tr>
@@ -5656,6 +5656,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7am — 2026-06-13 — Multi-run bench batching with per-metric confidence intervals (#160, §35.3)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Both bench harnesses batch N seeded runs and report mean &plusmn; CI</strong></td>
+      <td>Closes the §35.3 "single run per side" gap. <code>adaptive-bench/run.py</code> gains <code>--runs N</code> (default 5) + <code>--seed-base S</code>, refactored into batch-preflight-once / per-run loop (<code>run-01 … run-NN/</code>) / batch-postflight-once. <code>baseline-vs-smartload/run_experiment.sh</code> gains <code>RUNS</code> / <code>SEED_BASE</code> knobs wrapping the per-side body. Each run launches Locust under an independent <code>BENCH_SEED</code> (both locustfiles seed <code>random</code> from it).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Shared CI maths + new <code>summary.parquet</code> artefact</strong></td>
+      <td>New <code>experiments/_bench_common/bench_stats.py</code> (<code>mean_ci</code> via Student's t <code>scipy.stats.t</code>, <code>summarize_runs</code> tidy aggregator, <code>format_mean_ci</code>) shared by both harnesses. Each harness's new <code>scripts/aggregate_runs.py</code> emits <code>summary.parquet</code> (tidy/long: <code>[side,] phase, metric, mean, std, ci_lower, ci_upper, half_width, n</code>) + a <code>SUMMARY.md</code> of per-phase per-metric <code>mean ± 95% CI</code> (baseline also prints the smartload−baseline delta). Metrics: latency p50/p95/p99, error-rate, rps (+ replica count for adaptive-bench). <code>scipy~=1.11</code> pinned into <code>requirements-bench.txt</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Error-band plots + a latent plotter bug fixed</strong></td>
+      <td>Both <code>plot_results.py</code> render mean lines with 95% CI bands (time series) and CI error bars (per-phase bars), degrading to single lines at <code>--runs 1</code>. En route, the baseline plotter's Locust column lookups were corrected — it had read non-existent columns (<code>current_rps</code>, <code>p50/p95/p99_response_time</code>), so its RPS / latency / error-rate plots had been rendering empty on any real run.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Honest seed scope</strong></td>
+      <td><code>BENCH_SEED</code> fixes only the Locust load-generation jitter. Run-to-run variance from cold caches, JIT warm-up and container start ordering is deliberately <em>not</em> seed-controlled — that residual spread is exactly what the per-metric CI quantifies. Documented in both READMEs.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>11 unit tests for <code>bench_stats</code> (<code>tests/unit/experiments/test_bench_stats.py</code>, no docker) pass. The adaptive-bench e2e (<code>test_compressed_run.py</code>) updated to <code>--runs 2 --short</code> with batch-layout + <code>summary.parquet</code> + <code>±</code> assertions. A live <code>--runs 2 --short</code> smoke against the running stack exercised the full orchestration (two seeded runs → per-run joins → <code>summary.parquet</code> 30 rows → <code>SUMMARY.md</code> → 5 plots → post-flight restore). <strong>Scope:</strong> the capability + smoke ship now; the publishable full-length batch is gated on the retrained PPO (§34.6 / §35.7).</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7al — 2026-06-13 — AI-service Prometheus /metrics own-metrics (#161)</h3>
 <table>
@@ -9654,13 +9686,13 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
 <table>
   <thead><tr><th>Threat</th><th>Mitigation / status</th></tr></thead>
   <tbody>
-    <tr><td>One run per side does not control for run-to-run variance from cold caches, JIT effects, container warm-up.</td><td>Acknowledged. Multi-run averaging is a deferred harness extension (§35.3).</td></tr>
+    <tr><td>One run per side does not control for run-to-run variance from cold caches, JIT effects, container warm-up.</td><td><strong>Closed (capability) v1.0.7am (#160).</strong> Both harnesses now batch N independently-seeded runs (<code>--runs</code> / <code>RUNS=N</code>, default 5) and report per-metric mean &plusmn; 95% CI (Student's t) via <code>aggregate_runs.py</code> &rarr; <code>summary.parquet</code> + <code>SUMMARY.md</code>. The publishable full-length batch is gated on the retrained PPO (§34.6 / §35.7).</td></tr>
   </tbody>
 </table>
 
 <h3>33.8 Statistical reporting</h3>
 
-<p>The harness today reports point estimates: per-phase p50/p95/p99, max, failure rate, RPS. No confidence intervals are computed across runs &mdash; each side is a single run. The SUMMARY.md surfaces the one-liner delta on aggregate p95; the six PNGs visualise the full distribution. This is appropriate for the current evaluation stage (harness validation + first honest read) but is explicitly insufficient for the final write-up. A run-of-N batching + per-metric CI computation is tracked under §35.3.</p>
+<p><strong>v1.0.7am (#160) closed the run-of-N gap.</strong> Both harnesses now accept <code>--runs N</code> / <code>RUNS=N</code> (default 5) and a <code>--seed-base</code> / <code>SEED_BASE</code>; each run launches Locust under an independent <code>BENCH_SEED</code>. <code>scripts/aggregate_runs.py</code> (sharing <code>experiments/_bench_common/bench_stats.py</code>) computes per-phase per-metric <strong>mean &plusmn; 95% CI</strong> (Student's t, df=N&minus;1) into <code>summary.parquet</code> + a <code>SUMMARY.md</code> table, and <code>plot_results.py</code> renders CI bands / error bars. The seed fixes only the load-generation jitter; the residual run-to-run variance (cold caches, JIT, container warm-up) is exactly what the CI quantifies. The <em>capability</em> is shipped and unit/e2e-tested; the publishable full-length batch still waits on the retrained PPO (§34.6 / §35.7).</p>
 
 <h3>33.9 Review checklist &mdash; evaluation</h3>
 
@@ -9827,7 +9859,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
 <ol>
   <li><strong>Retrain the PPO model on a heterogeneous-latency training distribution.</strong> The current artifact was trained on Alibaba traces where the backend-1 ≈ backend-2 ≈ ... ≈ backend-5 latency assumption holds. A retrained artifact on synthetic-injection traces (or a heterogeneous subset of Alibaba where backend identity correlates with latency) should produce a policy that learns to down-weight slow backends. This workstream is owned by Rghda Salah &mdash; the retraining track recorded in §22 v1.0.7i.</li>
   <li><strong>Re-run the full-length (6-min/side) harness</strong> after the retrained artifact lands. The SHORT-mode statistics in §34.2 / §34.3 are insufficient for the thesis-quality write-up; the full-length distributions are needed to make the per-phase deltas statistically defensible.</li>
-  <li><strong>Add multi-run batching with confidence intervals</strong> to the harness so the comparison reports CIs, not point estimates (§33.8 / §35.3 / #160).</li>
+  <li><s>Add multi-run batching with confidence intervals to the harness so the comparison reports CIs, not point estimates.</s> <strong>Done v1.0.7am (#160)</strong> — <code>--runs</code>/<code>RUNS=N</code> + <code>aggregate_runs.py</code> → per-metric mean &plusmn; CI (§33.8 / §35.3). Only items 1&ndash;2 (retrain PPO, full-length rerun) now remain on the critical path for the publishable comparison.</li>
   <li><strong>Land #163 + #164</strong> so the adaptive-bench (§34.6) re-runs with a live decision plane + scale-event-driven <code>upstream.conf</code> rewrites. Closes the §34.6 "5..5 pool" caveat and produces the affirmative pool-growth / pool-shrink gate strings.</li>
 </ol>
 
@@ -9905,7 +9937,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
 <table>
   <thead><tr><th>Limitation</th><th>Impact</th><th>What closes it</th></tr></thead>
   <tbody>
-    <tr><td>Single run per side</td><td>No confidence interval on the reported metrics. Run-to-run variance from JIT effects, cold caches, container warm-up is uncontrolled.</td><td>Multi-run batching (e.g. <code>RUNS=5 bash run_experiment.sh</code>) + per-metric CI computation in <code>plot_results.py</code>.</td></tr>
+    <tr><td><s>Single run per side</s> &mdash; <strong>closed (capability) v1.0.7am (#160)</strong></td><td>Run-to-run variance from JIT effects, cold caches, container warm-up is now <em>quantified</em> rather than uncontrolled: every metric carries a 95% CI across N seeded runs.</td><td><span class="pill pill-done">Shipped</span> Both harnesses: <code>--runs N</code> / <code>RUNS=5 bash run_experiment.sh</code> (default 5) + <code>scripts/aggregate_runs.py</code> → <code>summary.parquet</code> + mean &plusmn; CI <code>SUMMARY.md</code> + CI-band plots (shared <code>_bench_common/bench_stats.py</code>, Student's t). Publishable full-length batch gated on the retrained PPO (§34.6).</td></tr>
     <tr><td>SHORT-mode statistics in the published runs to date</td><td>p99/p99.99 distributions at SHORT scale are noisy. The 6× p99.99 delta in v1.0.7r is directional, not definitive.</td><td>Full-length 6-min/side run after the retrained PPO artifact lands.</td></tr>
     <tr><td>Single host class</td><td>Cross-host network behaviour (real jitter, packet loss, multi-AZ latency) not exercised.</td><td>K8s deployment evaluation (§35.5).</td></tr>
     <tr><td>Single backend image (Node.js stub)</td><td>Per-request CPU cost is uniform; queue-depth proxy holds. Real backends have mixed cost profiles.</td><td>Heterogeneous-backend harness extension &mdash; mix of CPU-bound + I/O-bound backends.</td></tr>
@@ -9962,7 +9994,7 @@ SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh # 2-min
     <tr><td>Full-length bench harness on the retrained PPO model</td><td>Whether the retrained policy beats RR on the heterogeneous workload (the open question from §34.3).</td><td>Blocked on the retraining workstream.</td></tr>
     <tr><td>Real-traffic shadow-mode run</td><td>Whether the production telemetry distribution matches the offline trace distribution closely enough that the trained policy generalises.</td><td>Requires a live integrator (Phase 2 customer or thesis demo environment).</td></tr>
     <tr><td>K8s HPA-vs-SmartLoad autoscaling comparison</td><td>Quantitative read on RQ4 (forecast-driven scale-out vs reactive HPA).</td><td>Blocked on the Helm chart (#133).</td></tr>
-    <tr><td>Multi-run batching with confidence intervals</td><td>Statistically defensible per-metric deltas.</td><td>Harness extension; small.</td></tr>
+    <tr><td>Multi-run batching with confidence intervals</td><td>Statistically defensible per-metric deltas.</td><td><span class="pill pill-done">Shipped v1.0.7am (#160)</span> — capability landed in both harnesses; the publishable full-length batch run still waits on the retrained PPO (§34.6).</td></tr>
     <tr><td>B1 / B2 / B3 benchmark scenarios from §17 (ALL.2)</td><td>Coverage of B1 steady, B2 burst, B3 degraded-backend cases beyond the single 3-phase Locust shape.</td><td>Phase 3A (S5).</td></tr>
     <tr><td>Phase 3A integration tests (3 scenarios, T2.3)</td><td>System-level test coverage beyond unit / contract layers.</td><td>Phase 3A (S5).</td></tr>
   </tbody>

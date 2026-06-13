@@ -35,10 +35,21 @@ Tuning knobs (env vars, all optional):
 from __future__ import annotations
 
 import os
+import random
 import time
 from typing import Optional
 
 from locust import HttpUser, LoadTestShape, between, events, task
+
+
+# ── deterministic load-gen RNG (multi-run batching, #160 / SOT §35.3) ─────────
+# Each run in a `RUNS=N` batch is launched with a distinct BENCH_SEED so the
+# Locust wait-time jitter follows an independent-but-reproducible path per run.
+# Caveat: this only fixes the *load-generation* RNG. Run-to-run variance from
+# cold caches, JIT warm-up and container start ordering is NOT controlled by
+# the seed — that residual spread is exactly what the per-metric confidence
+# interval the harness reports is meant to capture.
+random.seed(int(os.environ.get("BENCH_SEED", "0")))
 
 
 RAMP_USERS = int(os.environ.get("RAMP_USERS", "50"))

@@ -7,8 +7,9 @@ Three-round benchmark programme that quantitatively answers RQ4 (forecast-driven
 | R1 — Dynamic-pool foundation | #155 (shipped v1.0.7v) | Autoscaler `provision()`/`decommission()`; lb-sidecar dynamic discovery; NGINX DNS pre-flight. |
 | **R2 — Orchestrator + collectors + 5-phase Locust shape** | **#156 (this directory)** | **`run.py` + three async collectors + 5-phase Locust + phase-D anomaly injector → eight raw artefacts per run.** |
 | R3 — Analysis pipeline + plots + doc sync | #157 | Joined `run.parquet` via `pandas.merge_asof`; four plots; `SUMMARY.md`; SOT §§18/22/25.10/33/34 sync; walkthrough §8.16 expansion; `docs/features/adaptive-bench.md` slice manifest. |
+| **Multi-run batching + per-metric CIs** | **#160 (§35.3)** | **`--runs N`/`--seed-base S`; per-run folders + `scripts/aggregate_runs.py` → `summary.parquet` + per-phase `mean ± CI` `SUMMARY.md` + error-band plots.** |
 
-This README covers R2 only. R3 ships the analysis on top of these raw artefacts.
+R2 ships the raw artefacts; R3 the per-run analysis; #160 batches N independently-seeded runs and reports `mean ± confidence interval` so results survive a reviewer who discounts N=1.
 
 ## What R2 produces per run
 
@@ -46,12 +47,23 @@ python -m pip install -r experiments/adaptive-bench/requirements-bench.txt
 # Bring the stack up
 docker compose up -d
 
-# Run the full 6-minute bench (writes to results/<TIMESTAMP>/)
+# Run the default 5-run batch (writes to results/<TIMESTAMP>/run-01 .. run-05/,
+# then aggregates to results/<TIMESTAMP>/summary.parquet + SUMMARY.md + plots)
 python experiments/adaptive-bench/run.py --output-root experiments/adaptive-bench/results
 
-# Compressed 60-second run (for harness validation; same shape, 1/6th the wall-clock)
-python experiments/adaptive-bench/run.py --output-root experiments/adaptive-bench/results --short
+# Pick the run count + seed base explicitly
+python experiments/adaptive-bench/run.py --output-root experiments/adaptive-bench/results --runs 5 --seed-base 1337
+
+# Compressed batch (harness validation / CI; same shape, 1/6th the wall-clock per run)
+python experiments/adaptive-bench/run.py --output-root experiments/adaptive-bench/results --runs 2 --short
+
+# Re-aggregate an existing batch without re-running the load
+python experiments/adaptive-bench/scripts/aggregate_runs.py experiments/adaptive-bench/results/<TIMESTAMP>
 ```
+
+> **Running from a git worktree?** The stack hard-codes the Compose project name,
+> so prefix the command with `COMPOSE_PROJECT_NAME=smartload` (otherwise the
+> autoscaler recreate targets a fresh, empty project).
 
 The orchestrator is asyncio-based. Three collectors (Prometheus, BFF SSE, upstream.conf watcher) run concurrently with the Locust subprocess and the phase-D anomaly injector. Locust completion is the lifecycle signal; the orchestrator does post-flight cleanup (restores the temporary policy + env-file + tears down leftover dynamic backends) regardless of how the run exits.
 
@@ -78,6 +90,37 @@ post-flight (runs even on locust failure)
 ├── restore policy override (cooldown_seconds back to file value)
 └── tear down any leftover smartload.dynamic=true containers (defence-in-depth)
 ```
+
+## Multi-run batching & confidence intervals (#160, SOT §35.3)
+
+A single run is a point estimate; a reviewer rightly discounts N=1. `--runs N`
+(default **5**) repeats the whole 5-phase shape N times under independent seeds
+and reports per-metric **mean ± 95% confidence interval** (Student's t, df=N−1).
+
+**Layout.** Each batch is one timestamped folder:
+
+```
+results/<TIMESTAMP>/
+├── run-01/ … run-NN/        # the eight raw artefacts + per-run MANIFEST.json
+├── summary.parquet          # tidy/long: phase, metric, mean, std, ci_lower, ci_upper, half_width, n
+├── SUMMARY.md               # per-phase mean ± CI table
+├── plot_pool_size.png       # mean line + 95% CI band across runs
+├── plot_upstream_timeline.png   # per-second p50/p95 mean ± CI band
+├── plot_phase_latency_ci.png    # per-phase p50/p95/p99 bars with CI error bars
+├── plot_time_to_react.png       # run-01 representative (event-overlay plot)
+└── plot_anomaly_recovery.png    # run-01 representative
+```
+
+**Metrics** aggregated per phase: `latency_p50_ms`, `latency_p95_ms`,
+`latency_p99_ms`, `error_rate_pct` (delta-based `100·Δfail/Δreq`), `rps`, and
+`replica_count` (peak active pool — the forecast-driven scale-out signal).
+
+**Seeding.** Run *k* launches Locust with `BENCH_SEED = seed_base + (k−1)`; the
+locustfile seeds `random` from it. This fixes the **load-generation jitter** so
+each run's request cadence is reproducible. It deliberately does **not** control
+cold-cache / JIT / container-warm-up variance — that residual run-to-run spread
+is exactly what the CI quantifies. With `--runs 1` every cell reads `(n=1)` and
+no interval is defined.
 
 ## R2 acceptance — closed when
 

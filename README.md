@@ -249,7 +249,7 @@ docker compose up traffic-simulator                   # Locust at :8089
 
 Per-task acceptance-test pattern + starter template + slow-marker convention: [`tests/README.md`](tests/README.md). Reference implementations to copy from when writing a new acceptance test are listed there.
 
-Benchmarks live under [`experiments/`](experiments/) — three harnesses cover the steady-state baseline (`baseline-vs-smartload/`), the closed-loop adaptive workload (`adaptive-bench/`), and the per-engine comparison sweep (`anomaly-engine-bench/`). Each emits JSON / CSV + SUMMARY.md artefacts under a timestamped `results/` dir.
+Benchmarks live under [`experiments/`](experiments/) — three harnesses cover the steady-state baseline (`baseline-vs-smartload/`), the closed-loop adaptive workload (`adaptive-bench/`), and the per-engine comparison sweep (`anomaly-engine-bench/`). Each emits JSON / CSV + SUMMARY.md artefacts under a timestamped `results/` dir. The first two batch N independently-seeded runs (`--runs N` / `RUNS=N`, default 5) and report per-metric **mean ± 95% confidence interval** via `scripts/aggregate_runs.py` → `summary.parquet`, so reported deltas are statistically defensible rather than single-run point estimates.
 
 Structural lints (permissive today; strict mode planned):
 

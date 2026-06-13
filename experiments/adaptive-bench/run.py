@@ -1,40 +1,44 @@
 """
 experiments/adaptive-bench/run.py
 ──────────────────────────────────
-Round 2 orchestrator for the adaptive-bench programme (#156).
+Multi-run orchestrator for the adaptive-bench programme (#156/#157/#160).
 
-Lifecycle (strict order — post-flight runs even if mid-flight fails):
+A batch runs N independently-seeded copies of the 5-phase shape and lands them
+under one timestamped batch folder, then joins + aggregates them into per-metric
+mean ± confidence interval (SOT §35.3). Lifecycle:
 
-  pre-flight
-  ├── docker compose ps health check
-  ├── snapshot current policy.yaml (for restore)
+  batch pre-flight  (ONCE per batch)
+  ├── wait for /api/v1/status overall != down
+  ├── snapshot current policy (for restore)
   ├── push temporary policy override: autoscaler_cooldown_seconds=10
   │     (Risk-1 de-risk: the default 60 s cooldown blocks the
   │      Phase-B 30 s spike from firing more than one scale-out.)
   ├── set AUTOSCALER_PROVISIONING_ENABLED=true via .env file
   └── docker compose up -d --force-recreate autoscaler
-        (picks up the new env var so the dynamic-pool lifecycle is live)
 
-  concurrent
-  ├── prom_collector       (1 Hz Prometheus → prom_timeseries.parquet)
-  ├── sse_collector        (BFF SSE → decision_envelopes.jsonl)
-  ├── upstream_watcher     (2 s docker exec cat → upstream_changes.jsonl)
-  ├── anomaly_injector     (sleeps until phase-D start, then injects)
-  └── locust subprocess    (5-phase shape; --csv-full-history)
+  per run  (run-01 .. run-NN; each seeded seed_base + (k-1))
+  ├── tear down leftover dynamic backends (clean seed pool)
+  ├── snapshot /api/v1/status → run-NN/pre_status.json
+  ├── concurrent:
+  │   ├── prom_collector    (1 Hz Prometheus → prom_timeseries.parquet)
+  │   ├── sse_collector     (BFF SSE → decision_envelopes.jsonl)
+  │   ├── upstream_watcher  (2 s docker exec cat → upstream_changes.jsonl)
+  │   ├── anomaly_injector  (sleeps until phase-D start, then injects)
+  │   └── locust subprocess (5-phase shape; --csv-full-history; BENCH_SEED set)
+  └── snapshot status + scaling audit + per-run MANIFEST.json
 
-  post-flight  (runs in `finally:` so failure modes are caught)
-  ├── snapshot /api/v1/status → post_status.json
-  ├── snapshot /api/v1/audit/scaling?limit=200 → scaling_audit.json
-  ├── flip env-file back (AUTOSCALER_PROVISIONING_ENABLED=false)
-  ├── docker compose up -d --force-recreate autoscaler
+  batch post-flight  (ONCE, in `finally:` so failure modes are caught)
+  ├── flip env-file back (AUTOSCALER_PROVISIONING_ENABLED=false) + recreate
   ├── restore policy (cooldown_seconds back to file value)
   └── tear down any leftover smartload.dynamic=true containers
-        (defence-in-depth — the autoscaler's own scale-in path should
-         have done this already)
+
+  analysis  (best-effort)
+  └── join each run → aggregate → summary.parquet + SUMMARY.md + error-band plots
 
 Usage:
   python experiments/adaptive-bench/run.py --output-root experiments/adaptive-bench/results
-  python experiments/adaptive-bench/run.py --output-root /tmp/runs --short
+  python experiments/adaptive-bench/run.py --output-root /tmp/runs --runs 5 --seed-base 1337
+  python experiments/adaptive-bench/run.py --output-root /tmp/runs --runs 2 --short
 
 The --short flag compresses the 360 s shape into 60 s with the same
 five-phase structure — used by the CI e2e test
@@ -70,7 +74,7 @@ import anomaly_injector
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-BENCH_VERSION = "r2.0.0"   # bump when the artefact set or shape changes
+BENCH_VERSION = "r2.1.0"   # r2.1: multi-run batching + per-metric CIs (#160). Bump on artefact-set/shape change.
 
 # Phase boundaries — full-length defaults; --short overrides these
 FULL_PHASES = {
@@ -290,10 +294,13 @@ def _build_locust_cmd(run_dir: Path, *, phases: dict) -> list[str]:
     ]
 
 
-def _locust_env(phases: dict) -> dict:
-    """Environment for the locust subprocess — phase knobs + target host."""
+def _locust_env(phases: dict, *, seed: int) -> dict:
+    """Environment for the locust subprocess — phase knobs + target host +
+    the per-run RNG seed (the locustfile seeds `random` from BENCH_SEED so
+    each run in a batch follows an independent-but-reproducible jitter path)."""
     env = os.environ.copy()
     env["TARGET_HOST"] = LB_HOST_URL
+    env["BENCH_SEED"] = str(seed)
     for k, v in phases.items():
         env[k] = str(v)
     return env
@@ -305,6 +312,8 @@ async def _run_collectors_and_locust(
     run_dir: Path,
     phases: dict,
     injection_log: list[dict],
+    *,
+    seed: int,
 ) -> int:
     """Concurrent block. Returns the locust subprocess exit code."""
     stop_event = asyncio.Event()
@@ -312,7 +321,7 @@ async def _run_collectors_and_locust(
 
     locust_proc = await asyncio.create_subprocess_exec(
         *_build_locust_cmd(run_dir, phases=phases),
-        env=_locust_env(phases),
+        env=_locust_env(phases, seed=seed),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(REPO_ROOT),
@@ -376,14 +385,9 @@ async def _run_collectors_and_locust(
     return locust_proc.returncode if locust_proc.returncode is not None else -1
 
 
-def _make_run_dir(output_root: Path) -> Path:
-    timestamp = _utc_ts_tag()
-    run_dir = output_root / timestamp
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir
-
-
-def _write_manifest(run_dir: Path, *, phases: dict, short: bool, injection_log: list[dict]) -> None:
+def _write_manifest(run_dir: Path, *, phases: dict, short: bool, injection_log: list[dict],
+                    run_index: int, seed: int, runs_total: int, seed_base: int,
+                    batch_timestamp: str) -> None:
     sha, dirty = _git_sha()
     manifest = {
         "timestamp_utc":  _utc_ts_tag(),
@@ -391,6 +395,12 @@ def _write_manifest(run_dir: Path, *, phases: dict, short: bool, injection_log: 
         "git_sha":        sha,
         "git_state":      dirty,
         "short":          short,
+        # Multi-run batch metadata (#160 / SOT §35.3). run_index is 1-based.
+        "batch_timestamp": batch_timestamp,
+        "run_index":      run_index,
+        "runs_total":     runs_total,
+        "seed_base":      seed_base,
+        "seed":           seed,
         "phases":         phases,
         "service_urls": {
             "status":         STATUS_URL,
@@ -403,12 +413,127 @@ def _write_manifest(run_dir: Path, *, phases: dict, short: bool, injection_log: 
     (run_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2))
 
 
+def _batch_preflight(*, skip_preflight: bool) -> dict | None:
+    """Batch-level pre-flight — runs ONCE for the whole `--runs N` batch.
+
+    Snapshots the policy (for restore), pushes the temporary cooldown
+    override, enables autoscaler provisioning via the env-file, and recreates
+    the autoscaler so the dynamic-pool lifecycle is live for every run.
+    Returns the saved policy dict (or None if it couldn't be snapshotted)."""
+    print("[pre-flight] waiting for /api/v1/status overall != down...", flush=True)
+    overall = _wait_for_status(60.0)
+    print(f"[pre-flight] overall={overall}", flush=True)
+
+    saved_policy = _snapshot_policy()
+    if saved_policy is None:
+        print("[pre-flight] WARN — could not snapshot policy; will not be restored on teardown", flush=True)
+    else:
+        if not _push_policy_overrides({"autoscaler_cooldown_seconds": 10}):
+            print("[pre-flight] WARN — temporary cooldown override failed; continuing", flush=True)
+
+    _write_env_file(provisioning_enabled=True)
+    if not skip_preflight:
+        rc = _force_recreate_autoscaler()
+        if rc != 0:
+            print(f"[pre-flight] WARN — autoscaler recreate exit={rc}; continuing", flush=True)
+        # Re-wait for status; the autoscaler restart blips the status panel.
+        _wait_for_status(30.0)
+    return saved_policy
+
+
+def _batch_postflight(*, saved_policy: dict | None, skip_preflight: bool) -> None:
+    """Batch-level post-flight — runs ONCE in `finally:` regardless of how the
+    runs went. Disables provisioning, restores the policy, and tears down any
+    leftover dynamic backends."""
+    print("[post-flight] flip env-file back + recreate autoscaler...", flush=True)
+    _write_env_file(provisioning_enabled=False)
+    if not skip_preflight:
+        _force_recreate_autoscaler()
+
+    if saved_policy is not None:
+        # Restore only the field we touched — the policy POST is partial-update
+        # friendly, and re-posting the whole snapshot would log every field as
+        # a "change" in the audit.
+        restore_value = saved_policy.get("autoscaler_cooldown_seconds")
+        if restore_value is not None:
+            print(f"[post-flight] restoring autoscaler_cooldown_seconds={restore_value}", flush=True)
+            _push_policy_overrides({"autoscaler_cooldown_seconds": int(restore_value)})
+
+    leftovers = _list_dynamic_backends()
+    if leftovers:
+        stopped = _stop_containers(leftovers)
+        print(f"[post-flight] stopped {stopped}/{len(leftovers)} leftover dynamic backends", flush=True)
+
+
+def _single_run(run_dir: Path, *, phases: dict, short: bool, seed: int,
+                run_index: int, runs_total: int, seed_base: int,
+                batch_timestamp: str) -> int:
+    """Execute one run of the 5-phase shape into `run_dir`. Returns the locust
+    exit code. Each run starts from a clean seed pool (leftover dynamic
+    backends are torn down first) so runs are independent."""
+    # Clean baseline — drop any dynamic backends a previous run left running so
+    # this run's pool-growth measurement starts from the seed list.
+    leftovers = _list_dynamic_backends()
+    if leftovers:
+        stopped = _stop_containers(leftovers)
+        print(f"[run {run_index}/{runs_total}] cleared {stopped}/{len(leftovers)} leftover dynamic backends", flush=True)
+
+    pre_status = _http_get_json(STATUS_URL, timeout=5.0)
+    if pre_status is not None:
+        (run_dir / "pre_status.json").write_text(json.dumps(pre_status, indent=2))
+
+    injection_log: list[dict] = []
+    print(f"[run {run_index}/{runs_total}] launching locust ({phases['PHASE_E_END_SECS']}s, seed={seed}) "
+          f"+ 3 collectors + anomaly injector...", flush=True)
+    locust_rc = asyncio.run(_run_collectors_and_locust(run_dir, phases, injection_log, seed=seed))
+    print(f"[run {run_index}/{runs_total}] locust exit={locust_rc}", flush=True)
+
+    post_status = _http_get_json(STATUS_URL, timeout=5.0)
+    if post_status is not None:
+        (run_dir / "post_status.json").write_text(json.dumps(post_status, indent=2))
+    scaling_audit = _http_get_json(SCALING_AUDIT_URL, timeout=5.0)
+    if scaling_audit is not None:
+        (run_dir / "scaling_audit.json").write_text(json.dumps(scaling_audit, indent=2))
+
+    _write_manifest(run_dir, phases=phases, short=short, injection_log=injection_log,
+                    run_index=run_index, seed=seed, runs_total=runs_total,
+                    seed_base=seed_base, batch_timestamp=batch_timestamp)
+    print(f"[run {run_index}/{runs_total}] manifest -> {run_dir / 'MANIFEST.json'}", flush=True)
+    return locust_rc
+
+
+def _analyze_batch(batch_dir: Path) -> None:
+    """Best-effort batch analysis: join each run, aggregate to summary.parquet
+    + SUMMARY.md, render error-band plots. A failure here never sinks the run —
+    the raw per-run artefacts are already on disk and can be re-analysed with
+    `python scripts/aggregate_runs.py <batch_dir>`."""
+    try:
+        from scripts.aggregate_runs import analyze_batch
+        analyze_batch(batch_dir)
+    except Exception as exc:  # noqa: BLE001 — analysis is best-effort by design
+        print(f"[analyze] WARN — batch analysis failed: {exc!r}; "
+              f"re-run `python {Path(__file__).parent / 'scripts' / 'aggregate_runs.py'} {batch_dir}`",
+              flush=True)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="adaptive-bench Round 2 orchestrator (#156)")
+    parser = argparse.ArgumentParser(description="adaptive-bench multi-run orchestrator (#156/#157/#160)")
     parser.add_argument(
         "--output-root",
         required=True,
-        help="Parent directory under which to create the timestamped run folder.",
+        help="Parent directory under which to create the timestamped batch folder.",
+    )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=5,
+        help="Number of independently-seeded runs in the batch (default 5; §35.3 / #160).",
+    )
+    parser.add_argument(
+        "--seed-base",
+        type=int,
+        default=1337,
+        help="Base RNG seed; run k uses seed-base + (k-1) (default 1337).",
     )
     parser.add_argument(
         "--short",
@@ -422,82 +547,43 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.runs < 1:
+        parser.error("--runs must be >= 1")
+
     output_root = Path(args.output_root).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
     phases = SHORT_PHASES if args.short else FULL_PHASES
-    run_dir = _make_run_dir(output_root)
-    print(f"[run] adaptive-bench R2 — run_dir={run_dir} short={args.short}", flush=True)
+    batch_timestamp = _utc_ts_tag()
+    batch_dir = output_root / batch_timestamp
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[run] adaptive-bench batch — batch_dir={batch_dir} runs={args.runs} "
+          f"seed_base={args.seed_base} short={args.short}", flush=True)
 
-    # ── pre-flight ─────────────────────────────────────────────────────────
-    print("[pre-flight] waiting for /api/v1/status overall != down...", flush=True)
-    overall = _wait_for_status(60.0)
-    print(f"[pre-flight] overall={overall}", flush=True)
+    saved_policy = _batch_preflight(skip_preflight=args.skip_preflight)
 
-    saved_policy = _snapshot_policy()
-    if saved_policy is None:
-        print("[pre-flight] WARN — could not snapshot policy; will not be restored on teardown", flush=True)
-    else:
-        push_ok = _push_policy_overrides({"autoscaler_cooldown_seconds": 10})
-        if not push_ok:
-            print("[pre-flight] WARN — temporary cooldown override failed; continuing", flush=True)
-
-    _write_env_file(provisioning_enabled=True)
-    if not args.skip_preflight:
-        rc = _force_recreate_autoscaler()
-        if rc != 0:
-            print(f"[pre-flight] WARN — autoscaler recreate exit={rc}; continuing", flush=True)
-        # Re-wait for status; the autoscaler restart blips the operator-UI
-        # status panel briefly.
-        _wait_for_status(30.0)
-
-    # Pre-flight snapshot
-    pre_status = _http_get_json(STATUS_URL, timeout=5.0)
-    if pre_status is not None:
-        (run_dir / "pre_status.json").write_text(json.dumps(pre_status, indent=2))
-
-    injection_log: list[dict] = []
-    locust_rc = -1
-
+    run_codes: list[int] = []
     try:
-        # ── concurrent run ──────────────────────────────────────────────────
-        print(f"[run] launching locust ({phases['PHASE_E_END_SECS']}s) + 3 collectors + anomaly injector...", flush=True)
-        locust_rc = asyncio.run(_run_collectors_and_locust(run_dir, phases, injection_log))
-        print(f"[run] locust exit={locust_rc}", flush=True)
+        for k in range(1, args.runs + 1):
+            run_dir = batch_dir / f"run-{k:02d}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            rc = _single_run(
+                run_dir, phases=phases, short=args.short,
+                seed=args.seed_base + (k - 1),
+                run_index=k, runs_total=args.runs, seed_base=args.seed_base,
+                batch_timestamp=batch_timestamp,
+            )
+            run_codes.append(rc)
     finally:
-        # ── post-flight (runs even on failure) ──────────────────────────────
-        print("[post-flight] snapshot status + scaling audit...", flush=True)
-        post_status = _http_get_json(STATUS_URL, timeout=5.0)
-        if post_status is not None:
-            (run_dir / "post_status.json").write_text(json.dumps(post_status, indent=2))
+        _batch_postflight(saved_policy=saved_policy, skip_preflight=args.skip_preflight)
 
-        scaling_audit = _http_get_json(SCALING_AUDIT_URL, timeout=5.0)
-        if scaling_audit is not None:
-            (run_dir / "scaling_audit.json").write_text(json.dumps(scaling_audit, indent=2))
+    # ── analysis (join → aggregate → plot) ──────────────────────────────────
+    print(f"[analyze] joining {args.runs} run(s) + aggregating CIs -> summary.parquet ...", flush=True)
+    _analyze_batch(batch_dir)
 
-        print("[post-flight] flip env-file back + recreate autoscaler...", flush=True)
-        _write_env_file(provisioning_enabled=False)
-        if not args.skip_preflight:
-            _force_recreate_autoscaler()
-
-        if saved_policy is not None:
-            # Only restore the field we touched, not the whole snapshot — the
-            # policy-manager's POST is partial-update friendly, and posting the
-            # whole snapshot would log every field as a "change" in the audit.
-            restore_value = saved_policy.get("autoscaler_cooldown_seconds")
-            if restore_value is not None:
-                print(f"[post-flight] restoring autoscaler_cooldown_seconds={restore_value}", flush=True)
-                _push_policy_overrides({"autoscaler_cooldown_seconds": int(restore_value)})
-
-        leftovers = _list_dynamic_backends()
-        if leftovers:
-            stopped = _stop_containers(leftovers)
-            print(f"[post-flight] stopped {stopped}/{len(leftovers)} leftover dynamic backends", flush=True)
-
-        _write_manifest(run_dir, phases=phases, short=args.short, injection_log=injection_log)
-        print(f"[post-flight] manifest written -> {run_dir / 'MANIFEST.json'}", flush=True)
-
-    return 0 if locust_rc == 0 else 1
+    ok = all(rc == 0 for rc in run_codes) and len(run_codes) == args.runs
+    print(f"[run] batch complete — run exit codes={run_codes} ok={ok}", flush=True)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

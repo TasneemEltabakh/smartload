@@ -308,19 +308,9 @@ def _to_parquet_safe(df: pd.DataFrame, path: Path) -> None:
     out.to_parquet(path, index=False)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="adaptive-bench R3 join_run (#157)")
-    parser.add_argument("run_dir", help="A single bench run directory (results/<TIMESTAMP>/).")
-    args = parser.parse_args()
-
-    run_dir = Path(args.run_dir).resolve()
-    if not run_dir.is_dir():
-        print(f"ERROR: {run_dir} is not a directory", file=sys.stderr)
-        return 1
-
-    print(f"[join] {run_dir.name}")
-    tables = build_run(run_dir)
-
+def write_tables(run_dir: Path, tables: dict[str, pd.DataFrame]) -> None:
+    """Write each joined table to `<run_dir>/<name>.parquet`, skipping empties.
+    Shared by the CLI and the multi-run batch analyzer (#160)."""
     for name, df in tables.items():
         out = run_dir / f"{name}.parquet"
         if df.empty:
@@ -329,6 +319,26 @@ def main() -> int:
         _to_parquet_safe(df, out)
         print(f"[join] {name}: {len(df):>5} rows -> {out.name}")
 
+
+def join_run_dir(run_dir: Path) -> dict[str, pd.DataFrame]:
+    """Build + write the joined tables for one run directory; returns them."""
+    print(f"[join] {run_dir.name}")
+    tables = build_run(run_dir)
+    write_tables(run_dir, tables)
+    return tables
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="adaptive-bench R3 join_run (#157)")
+    parser.add_argument("run_dir", help="A single bench run directory (results/<TIMESTAMP>/ or a run-NN/).")
+    args = parser.parse_args()
+
+    run_dir = Path(args.run_dir).resolve()
+    if not run_dir.is_dir():
+        print(f"ERROR: {run_dir} is not a directory", file=sys.stderr)
+        return 1
+
+    join_run_dir(run_dir)
     return 0
 
 

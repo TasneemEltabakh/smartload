@@ -32,18 +32,23 @@ Total wall clock per side: ~6 minutes. Both sides → ~12 minutes + a few minute
 ## How to run
 
 ```bash
-# Full experiment (≈15 min total)
+# Default 5-run batch per side (≈15 min × 5) — statistically defensible
 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh
 
-# Shorter harness validation (≈4 min total) — proves the pipeline, low statistical power
-SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh
+# Pick the run count + seed base explicitly
+RUNS=5 SEED_BASE=1337 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh
+
+# Single fast pass for harness validation (low statistical power)
+RUNS=1 SHORT=1 bash experiments/baseline-vs-smartload/scripts/run_experiment.sh
 
 # Just one side (re-run smartload only after a model change)
 SIDES=smartload bash experiments/baseline-vs-smartload/scripts/run_experiment.sh
 
-# Generate plots from a completed run
-python experiments/baseline-vs-smartload/scripts/plot_results.py \
+# Aggregate an existing batch to summary.parquet + SUMMARY.md + error-band plots
+python experiments/baseline-vs-smartload/scripts/aggregate_runs.py \
     experiments/baseline-vs-smartload/results/<timestamp>
+
+# (the runner calls aggregate_runs.py automatically at the end of a batch)
 ```
 
 The script:
@@ -59,31 +64,32 @@ The script:
 
 ## Outputs
 
-Each run drops everything under `results/<UTC-timestamp>/`:
+Each batch drops everything under `results/<UTC-timestamp>/`, with one folder
+per run:
 
 ```
 results/<timestamp>/
-├── MANIFEST.json              # knobs + git SHA for reproducibility
-├── baseline/
-│   ├── locust_stats.csv       # final per-name stats
-│   ├── locust_stats_history.csv   # 2-second-interval time series
-│   ├── locust_failures.csv
-│   ├── locust_report.html     # locust's built-in report
-│   ├── pre_status.json        # /api/v1/status before load
-│   ├── post_status.json       # after load
-│   ├── pre_prom.json
-│   ├── post_prom.json
-│   ├── scaling_audit.json     # autoscaler's view of what it did
-│   └── run.log
-├── smartload/                 # same shape
-└── (after plot script:)
-    ├── plot_rps.png
+├── MANIFEST.json              # knobs (incl. RUNS, SEED_BASE) + git SHA
+├── run-01/ … run-NN/
+│   ├── baseline/
+│   │   ├── locust_stats.csv          # final per-name stats
+│   │   ├── locust_stats_history.csv  # interval time series
+│   │   ├── locust_failures.csv
+│   │   ├── locust_report.html
+│   │   ├── pre_status.json / post_status.json
+│   │   ├── pre_prom.json / post_prom.json
+│   │   ├── scaling_audit.json
+│   │   └── run.log
+│   └── smartload/                    # same shape
+└── (after aggregate_runs.py:)
+    ├── summary.parquet        # tidy/long: side, phase, metric, mean, std, ci_lower, ci_upper, half_width, n
+    ├── SUMMARY.md             # per-side per-phase mean ± CI + smartload−baseline delta
+    ├── plot_rps.png           # mean line + 95% CI band across runs, both sides
     ├── plot_p50_p95_p99.png
     ├── plot_error_rate.png
     ├── plot_total_requests.png
-    ├── plot_per_phase_p95.png
-    ├── plot_recovery_curve.png
-    └── SUMMARY.md
+    ├── plot_per_phase_p95.png # per-phase p95 bars with CI error bars
+    └── plot_recovery_curve.png
 ```
 
 ## Methodology notes
@@ -93,6 +99,7 @@ results/<timestamp>/
 - **Anomaly injection uses the existing `/api/v1/isolate` endpoint** (slice #3). The bad backend's NGINX upstream entry has its weight set to 0 in SmartLoad mode (via the `anomaly_response: auto-isolate` policy + the lb-sidecar). In baseline mode that path is silent and NGINX RR keeps including the bad backend in its rotation.
 - **No autoscaler container shutdowns during the run.** The autoscaler can still scale within `min_backends..max_backends`, but the test-backend pool is fixed at 5 in compose. Scale-out in SmartLoad mode is bounded by what's already provisioned; this is a known limitation — measuring actuation latency rather than capacity expansion.
 - **Each side runs serially, not concurrently.** Stack state is reset between sides via `docker compose up -d --force-recreate` on the relevant services. This sacrifices same-second comparability for clean isolation; the same workload is replayed identically on each side.
+- **Multi-run batching with confidence intervals (#160, §35.3).** `RUNS=N` (default 5) repeats the whole 3-phase shape per side under independent seeds (`BENCH_SEED = SEED_BASE + run−1`, seeding the locustfile's `random`). `aggregate_runs.py` then computes per-side per-phase **mean ± 95% CI** (Student's t) into `summary.parquet` + `SUMMARY.md`, and the plots render CI bands/error bars. Treat a smartload−baseline delta smaller than the two sides' CI half-widths as not yet significant at that run count. The seed fixes only the load-generation jitter — cold-cache / JIT / warm-up variance is the residual spread the CI is there to capture.
 
 ## Knobs
 
@@ -101,6 +108,8 @@ Override at the command line:
 | Var | Default | Meaning |
 |---|---|---|
 | `SIDES` | `baseline smartload` | Subset of sides to run |
+| `RUNS` | 5 | Independently-seeded repeats per side; aggregated to per-metric mean ± CI (§35.3) |
+| `SEED_BASE` | 1337 | Base RNG seed; run *k* uses `SEED_BASE + (k−1)` (load-gen jitter only) |
 | `RAMP_USERS` | 50 | Concurrent users at the top of phase A |
 | `RAMP_SECS` | 60 | Phase A duration |
 | `ANOMALY_AT_SECS` | 120 | Wall-clock seconds when phase B begins |
@@ -113,6 +122,7 @@ Override at the command line:
 - [ ] `bash run_experiment.sh` runs end-to-end on a clean machine in under 30 minutes
 - [ ] README publishable — a reviewer with no project context can read it and understand what was measured, how, and what the result was
 - [ ] Plots show a clear delta on at least three of the five metrics (p95, error rate during anomaly, time-to-recover)
+- [x] Multi-run batching with per-metric confidence intervals (#160, §35.3) — `RUNS=N` + `aggregate_runs.py` report `mean ± CI`, so reported deltas are statistically defensible rather than single-run point estimates
 
 ## Out of scope
 
@@ -126,10 +136,16 @@ Override at the command line:
 | Layer | Status |
 |---|---|
 | `env/{baseline,smartload}.env` | scaffolded |
-| `locust/locustfile.py` 3-phase shape | scaffolded |
-| `scripts/run_experiment.sh` orchestration | scaffolded |
-| `scripts/plot_results.py` six plots + SUMMARY.md | scaffolded |
+| `locust/locustfile.py` 3-phase shape + `BENCH_SEED` seeding | shipped |
+| `scripts/run_experiment.sh` orchestration + `RUNS`/`SEED_BASE` batching | shipped |
+| `scripts/plot_results.py` six plots (Locust column fixes + CI bands) | shipped |
+| `scripts/aggregate_runs.py` multi-run mean ± CI → `summary.parquet` + `SUMMARY.md` | shipped (#160) |
 | First full run | **pending** (operator to invoke) |
 | Plots committed to repo | pending |
 | SOT §18 Build Status row | pending |
 | §25 evidence-for-value-prop paragraph | pending |
+
+> **Note (#160):** the plotter previously read Locust columns that don't exist
+> (`current_rps`, `p50/p95/p99_response_time`), so the RPS / latency / error-rate
+> plots came out empty on any real run. Those column lookups are fixed alongside
+> the multi-run CI work, so the plots now populate correctly.

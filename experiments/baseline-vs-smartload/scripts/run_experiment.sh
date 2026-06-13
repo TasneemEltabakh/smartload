@@ -20,6 +20,8 @@
 #
 # Tuning (env vars, all optional):
 #   SIDES               which sides to run (default "baseline smartload")
+#   RUNS                independently-seeded repeats per side (default 5; §35.3/#160)
+#   SEED_BASE           base RNG seed; run k uses SEED_BASE + (k-1) (default 1337)
 #   RAMP_USERS          per locustfile.py (default 50)
 #   RAMP_SECS           per locustfile.py (default 60)
 #   ANOMALY_AT_SECS     per locustfile.py (default 120)
@@ -27,6 +29,10 @@
 #   SUSTAIN_END_SECS    per locustfile.py (default 360 — ~6 min per side)
 #   SHORT               if set to "1", overrides the four duration knobs to
 #                       a 3-minute total run (smoke / harness validation).
+#
+# A multi-run batch lands per-run folders under results/<timestamp>/run-NN/<side>/
+# and is aggregated to per-metric mean ± confidence interval by
+#   python scripts/aggregate_runs.py results/<timestamp>
 
 set -euo pipefail
 
@@ -37,6 +43,8 @@ REPO_ROOT="$(cd "$EXPERIMENT_ROOT/../.." && pwd)"
 # ── knobs ───────────────────────────────────────────────────────────────────
 
 SIDES="${SIDES:-baseline smartload}"
+RUNS="${RUNS:-5}"
+SEED_BASE="${SEED_BASE:-1337}"
 RAMP_USERS="${RAMP_USERS:-50}"
 RAMP_SECS="${RAMP_SECS:-60}"
 ANOMALY_AT_SECS="${ANOMALY_AT_SECS:-120}"
@@ -68,6 +76,8 @@ cat > "$RUN_ROOT/MANIFEST.json" <<EOF
   "git_state": "$GIT_DIRTY",
   "sides": "$SIDES",
   "knobs": {
+    "RUNS": $RUNS,
+    "SEED_BASE": $SEED_BASE,
     "RAMP_USERS": $RAMP_USERS,
     "RAMP_SECS": $RAMP_SECS,
     "ANOMALY_AT_SECS": $ANOMALY_AT_SECS,
@@ -160,8 +170,12 @@ _inject_anomaly_at() {
 
 _run_side() {
     local side="$1"
+    local run_idx="$2"
+    local seed="$3"
     local env_file="$EXPERIMENT_ROOT/env/$side.env"
-    local out="$RUN_ROOT/$side"
+    local run_label
+    run_label="run-$(printf '%02d' "$run_idx")"
+    local out="$RUN_ROOT/$run_label/$side"
     mkdir -p "$out"
 
     if [[ ! -f "$env_file" ]]; then
@@ -171,7 +185,7 @@ _run_side() {
 
     echo
     echo "============================================================"
-    echo "[run] === side=$side  out=$out ==="
+    echo "[run] === $run_label  side=$side  seed=$seed  out=$out ==="
     echo "============================================================"
 
     # Stop the standing traffic-simulator so it doesn't pollute results.
@@ -227,6 +241,7 @@ _run_side() {
         cd "$REPO_ROOT" && \
         MSYS_NO_PATHCONV=1 docker run --rm \
             --network smartload_smartload-net \
+            -e BENCH_SEED="$seed" \
             -e RAMP_USERS="$RAMP_USERS" \
             -e RAMP_SECS="$RAMP_SECS" \
             -e ANOMALY_AT_SECS="$ANOMALY_AT_SECS" \
@@ -269,9 +284,17 @@ _run_side() {
 }
 
 # ── main loop ───────────────────────────────────────────────────────────────
+# Outer loop over runs, inner over sides. Each run is independently seeded so
+# the per-metric confidence interval the aggregator reports reflects genuine
+# run-to-run variance (§35.3 / #160).
 
-for side in $SIDES; do
-    _run_side "$side"
+for run_idx in $(seq 1 "$RUNS"); do
+    seed=$((SEED_BASE + run_idx - 1))
+    echo
+    echo "################  RUN $run_idx / $RUNS  (seed=$seed)  ################"
+    for side in $SIDES; do
+        _run_side "$side" "$run_idx" "$seed"
+    done
 done
 
 # Restart the standing traffic-simulator so the dev stack returns to the
@@ -281,5 +304,9 @@ echo "[run] restoring standing traffic-simulator..."
 (cd "$REPO_ROOT" && docker compose start traffic-simulator >/dev/null 2>&1 || true)
 
 echo
-echo "[run] DONE — results: $RUN_ROOT"
-echo "[run] next: python $EXPERIMENT_ROOT/scripts/plot_results.py $RUN_ROOT"
+echo "[run] aggregating $RUNS run(s) -> summary.parquet + SUMMARY.md + error-band plots..."
+( cd "$REPO_ROOT" && python "$EXPERIMENT_ROOT/scripts/aggregate_runs.py" "$RUN_ROOT" ) \
+    || echo "[run] WARN — aggregation failed; re-run: python $EXPERIMENT_ROOT/scripts/aggregate_runs.py $RUN_ROOT"
+
+echo
+echo "[run] DONE — results: $RUN_ROOT  ($RUNS run(s) × {$SIDES})"

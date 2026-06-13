@@ -1,6 +1,6 @@
 # Adaptive-bench
 
-> **Slice status — shipped (R1 + R2 + R3), with both gating bugs closed in v1.0.7y + v1.0.7z.** Three-round programme: R1 (#155, v1.0.7v) delivered the dynamic-pool autoscaler foundation; R2 (#156) delivered the asyncio orchestrator + three async collectors + 5-phase Locust shape + phase-D anomaly injector; R3 (#157, v1.0.7x) delivered `join_run.py` + `plot_results.py` + four PNGs + `SUMMARY.md`. The first end-to-end run on 2026-06-10 produced real data and surfaced two architectural gaps; **both now closed**: **#163** decision-plane silent thread death (catch-all + /health liveness, v1.0.7y) + **#164** lb-sidecar `smartload.scale` subscription (handle_scale handler, v1.0.7z). The next adaptive-bench re-run produces the affirmative "pool grew N→M during B" + "pool shrank N→M during D" gate strings without manual restarts.
+> **Slice status — shipped (R1 + R2 + R3), with both gating bugs closed in v1.0.7y + v1.0.7z.** Three-round programme: R1 (#155, v1.0.7v) delivered the dynamic-pool autoscaler foundation; R2 (#156) delivered the asyncio orchestrator + three async collectors + 5-phase Locust shape + phase-D anomaly injector; R3 (#157, v1.0.7x) delivered `join_run.py` + `plot_results.py` + four PNGs + `SUMMARY.md`. The first end-to-end run on 2026-06-10 produced real data and surfaced two architectural gaps; **both now closed**: **#163** decision-plane silent thread death (catch-all + /health liveness, v1.0.7y) + **#164** lb-sidecar `smartload.scale` subscription (handle_scale handler, v1.0.7z). The next adaptive-bench re-run produces the affirmative "pool grew N→M during B" + "pool shrank N→M during D" gate strings without manual restarts. **v1.0.7am (#160)** added multi-run batching: `--runs N` (default 5) + `--seed-base S` land per-run folders under one batch dir, and `scripts/aggregate_runs.py` rolls them up into per-phase per-metric `mean ± 95% CI` (`summary.parquet` + `SUMMARY.md`) with CI-band plots — closing SOT §35.3.
 
 ## What this slice delivers
 
@@ -10,13 +10,15 @@ A single repeatable command that drives the SmartLoad stack through a 5-phase lo
 
 | Surface | Detail | Status |
 |---|---|---|
-| CLI | `python experiments/adaptive-bench/run.py --output-root <dir>` — full 360 s bench | ✓ |
-| CLI | `python experiments/adaptive-bench/run.py --output-root <dir> --short` — 60 s compressed bench (CI) | ✓ |
-| CLI | `python experiments/adaptive-bench/scripts/join_run.py <results-dir>` — emits `run.parquet` + per-channel parquets | ✓ |
-| CLI | `python experiments/adaptive-bench/scripts/plot_results.py <results-dir>` — emits 4 PNGs + `SUMMARY.md` | ✓ |
+| CLI | `python experiments/adaptive-bench/run.py --output-root <dir>` — default 5-run batch (auto-joins + aggregates) | ✓ |
+| CLI | `python experiments/adaptive-bench/run.py --output-root <dir> --runs 2 --short` — compressed multi-run (CI) | ✓ |
+| CLI | `python experiments/adaptive-bench/scripts/join_run.py <run-dir>` — emits `run.parquet` + per-channel parquets | ✓ |
+| CLI | `python experiments/adaptive-bench/scripts/aggregate_runs.py <batch-dir>` — `summary.parquet` + mean ± CI `SUMMARY.md` + plots (#160) | ✓ |
+| CLI | `python experiments/adaptive-bench/scripts/plot_results.py <batch-or-run-dir>` — CI-band plots | ✓ |
 | Test | `tests/e2e/adaptive-bench/test_compressed_run.py` — drives `--short`, asserts all 8 artefacts land with the right shape | ✓ |
 | Artefacts | `MANIFEST.json`, `pre_status.json`, `post_status.json`, `scaling_audit.json`, `prom_timeseries.parquet`, `decision_envelopes.jsonl`, `upstream_changes.jsonl`, `locust_stats*.csv` | ✓ |
-| Outputs | `run.parquet`, `forecasts.parquet`, `anomalies.parquet`, `scalings.parquet`, `routings.parquet`, `upstream_changes.parquet`, `scaling_audit.parquet`, 4 PNGs, `SUMMARY.md` | ✓ |
+| Outputs (per run) | `run.parquet`, `forecasts.parquet`, `anomalies.parquet`, `scalings.parquet`, `routings.parquet`, `upstream_changes.parquet`, `scaling_audit.parquet` | ✓ |
+| Outputs (batch, #160) | `summary.parquet` (per-phase per-metric mean ± CI) + `SUMMARY.md` + CI-band plots at the batch top level | ✓ |
 
 ## Implementation pointers
 
@@ -38,6 +40,7 @@ A single repeatable command that drives the SmartLoad stack through a 5-phase lo
 - [x] E2E test under `tests/e2e/adaptive-bench/` (5-min CI budget)
 - [x] SOT §22 / §18 / §25.10 / §33 / §34 sync (this release)
 - [x] PROJECT_WALKTHROUGH §8.16 expansion (this release)
+- [x] Multi-run batching + per-metric confidence intervals (#160, v1.0.7am) — `--runs`/`--seed-base` + shared `_bench_common/bench_stats.py` + `aggregate_runs.py` → `summary.parquet` + mean ± CI `SUMMARY.md` + CI-band plots; closes SOT §35.3 (capability)
 - [x] **#163 + #164 both landed (v1.0.7y + v1.0.7z, 2026-06-10)** — the gates "pool grew during B" and "pool shrank during D" will produce affirmative strings on the next bench run; the harness itself needs no further changes
 - [ ] **Next bench run on the unblocked stack** — drives the freshly-cleared chain end-to-end, captures the affirmative gate strings, updates §34.6 with the new numbers
 - [ ] Multi-run batching with per-metric CIs (#160 — separate workstream)

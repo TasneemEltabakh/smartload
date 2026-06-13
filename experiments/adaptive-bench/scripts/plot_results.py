@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -31,6 +32,11 @@ matplotlib.use("Agg")          # MUST come before pyplot import
 import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt    # noqa: E402
 import pandas as pd                # noqa: E402
+
+# _bench_common lives at experiments/_bench_common — add experiments/ to path
+# for the multi-run confidence-interval maths (#160).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from _bench_common import bench_stats  # noqa: E402
 
 
 # ── loaders ───────────────────────────────────────────────────────────────────
@@ -449,11 +455,180 @@ def _isolate_gate_string(data: dict) -> str:
             "observable")
 
 
+# ── multi-run error-band plots (#160) ─────────────────────────────────────────
+
+def _discover_runs(batch_dir: Path) -> list[Path]:
+    runs = sorted(p for p in batch_dir.glob("run-*") if p.is_dir())
+    return runs or [batch_dir]
+
+
+def _aligned_band(run_dirs: list[Path], value_col: str, max_secs: float):
+    """Align each run's per-second `value_col` onto a common integer
+    seconds-since-start grid, then return (grid, mean, ci_lower, ci_upper).
+
+    With a single run the CI is undefined, so the band collapses to the mean
+    line — i.e. it degrades exactly to the pre-#160 single-line plot."""
+    grid = list(range(0, int(max_secs) + 1))
+    series: list[pd.Series] = []
+    for rd in run_dirs:
+        p = rd / "run.parquet"
+        if not p.exists():
+            continue
+        df = pd.read_parquet(p)
+        if "seconds_since_start" not in df.columns or value_col not in df.columns:
+            continue
+        s = df.dropna(subset=["seconds_since_start"]).copy()
+        s["sec"] = s["seconds_since_start"].round().astype(int)
+        col = s.groupby("sec")[value_col].mean().reindex(grid).interpolate(limit_direction="both")
+        series.append(col)
+    if not series:
+        return grid, None, None, None
+
+    mat = pd.concat(series, axis=1)
+    means, los, his = [], [], []
+    for _, vals in mat.iterrows():
+        st = bench_stats.mean_ci(vals.tolist())
+        m = st["mean"]
+        lo = m if math.isnan(st["ci_lower"]) else st["ci_lower"]
+        hi = m if math.isnan(st["ci_upper"]) else st["ci_upper"]
+        means.append(m); los.append(lo); his.append(hi)
+    return grid, means, los, his
+
+
+def _annotate_phase_secs(ax, phases: dict, y_text: float = 0.92) -> None:
+    for label, key in (("A→B", "PHASE_A_END_SECS"), ("B→C", "PHASE_B_END_SECS"),
+                       ("C→D", "PHASE_C_END_SECS"), ("D→E", "PHASE_D_END_SECS")):
+        secs = phases.get(key)
+        if secs is None:
+            continue
+        ax.axvline(secs, color="gray", linestyle=":", alpha=0.4, linewidth=1)
+        ax.annotate(label, xy=(secs, y_text), xycoords=("data", "axes fraction"),
+                    ha="center", va="top", fontsize=8, color="gray")
+
+
+def _band_plot(run_dirs, phases, specs, title, ylabel, out_path, n_runs):
+    """Draw one or more mean±CI bands (specs: list of (col, colour, label))."""
+    max_secs = phases.get("PHASE_E_END_SECS", 360)
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    drew = False
+    for col, colour, label in specs:
+        grid, mean, lo, hi = _aligned_band(run_dirs, col, max_secs)
+        if mean is None:
+            continue
+        ax.plot(grid, mean, color=colour, linewidth=1.8, label=label)
+        if n_runs > 1:
+            ax.fill_between(grid, lo, hi, color=colour, alpha=0.20)
+        drew = True
+    if not drew:
+        ax.text(0.5, 0.5, "no run.parquet data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=11)
+        ax.set_axis_off()
+    else:
+        _annotate_phase_secs(ax, phases)
+        ci_note = " (mean ± 95% CI band)" if n_runs > 1 else " (single run)"
+        ax.set_title(title + ci_note)
+        ax.set_xlabel("seconds since shape start")
+        ax.set_ylabel(ylabel)
+        ax.legend(loc="upper right")
+        ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+
+
+def plot_phase_latency_ci(batch_dir: Path, out_path: Path) -> None:
+    """Bar chart of per-phase p50/p95/p99 mean with CI error bars, read straight
+    from summary.parquet."""
+    sp = batch_dir / "summary.parquet"
+    fig, ax = plt.subplots(figsize=(11, 4.5))
+    if not sp.exists():
+        ax.text(0.5, 0.5, "summary.parquet missing", ha="center", va="center",
+                transform=ax.transAxes); ax.set_axis_off()
+        fig.savefig(out_path, dpi=120); plt.close(fig); return
+
+    summary = pd.read_parquet(sp)
+    phase_order = ["A_bootstrap", "B_forecast_burst", "C_sustain",
+                   "D_anomaly_scale_down", "E_steady"]
+    metrics = [("latency_p50_ms", "#aec7e8", "p50"),
+               ("latency_p95_ms", "#1f77b4", "p95"),
+               ("latency_p99_ms", "#d62728", "p99")]
+    phases_present = [p for p in phase_order if not summary[summary["phase"] == p].empty]
+    x = list(range(len(phases_present)))
+    width = 0.25
+    for i, (metric, colour, label) in enumerate(metrics):
+        means, errs = [], []
+        for p in phases_present:
+            row = summary[(summary["phase"] == p) & (summary["metric"] == metric)]
+            if row.empty:
+                means.append(0.0); errs.append(0.0); continue
+            r = row.iloc[0]
+            means.append(float(r["mean"]))
+            hw = float(r["half_width"])
+            errs.append(0.0 if math.isnan(hw) else hw)
+        offset = (i - 1) * width
+        ax.bar([xi + offset for xi in x], means, width=width, color=colour, label=label,
+               yerr=errs, capsize=3, error_kw={"alpha": 0.7})
+    ax.set_xticks(x); ax.set_xticklabels(phases_present, fontsize=8, rotation=10)
+    ax.set_ylabel("latency (ms)")
+    ax.set_title("Per-phase latency mean ± 95% CI (across runs)")
+    ax.legend(loc="upper right"); ax.grid(axis="y", alpha=0.3)
+    fig.tight_layout(); fig.savefig(out_path, dpi=120); plt.close(fig)
+
+
+def plot_batch(batch_dir: Path) -> None:
+    """Render the batch-level plots at the top of the batch directory.
+
+    Banded (mean ± CI across runs): pool size, latency p50/p95.
+    Event-overlay plots (time-to-react, anomaly recovery) use the first run as
+    a representative timeline since they annotate discrete events, not bands.
+    Plus a per-phase latency CI bar chart from summary.parquet."""
+    run_dirs = _discover_runs(batch_dir)
+    n_runs = len(run_dirs)
+    manifest = _read_first_manifest(run_dirs)
+    phases = manifest.get("phases", {})
+
+    print(f"[plot] batch {batch_dir.name} — {n_runs} run(s)")
+    _band_plot(run_dirs, phases,
+               [("pool_size_active", "#2ca02c", "active backends")],
+               "Adaptive-bench pool size", "pool size (active backends)",
+               batch_dir / "plot_pool_size.png", n_runs)
+    print("[plot] plot_pool_size.png")
+    _band_plot(run_dirs, phases,
+               [("latency_p95_ms", "#1f77b4", "p95 latency"),
+                ("latency_p50_ms", "#aec7e8", "p50 latency")],
+               "Per-second latency", "latency (ms)",
+               batch_dir / "plot_upstream_timeline.png", n_runs)
+    print("[plot] plot_upstream_timeline.png")
+    plot_phase_latency_ci(batch_dir, batch_dir / "plot_phase_latency_ci.png")
+    print("[plot] plot_phase_latency_ci.png")
+
+    # Representative event-overlay plots from the first run that has run.parquet.
+    rep = next((rd for rd in run_dirs if (rd / "run.parquet").exists()), None)
+    if rep is not None:
+        data = _load_run(rep)
+        if data["run"] is not None:
+            plot_time_to_react(data, batch_dir / "plot_time_to_react.png")
+            print("[plot] plot_time_to_react.png (run-01 representative)")
+            plot_anomaly_recovery(data, batch_dir / "plot_anomaly_recovery.png")
+            print("[plot] plot_anomaly_recovery.png (run-01 representative)")
+
+
+def _read_first_manifest(run_dirs: list[Path]) -> dict:
+    for rd in run_dirs:
+        mp = rd / "MANIFEST.json"
+        if mp.exists():
+            try:
+                return json.loads(mp.read_text())
+            except json.JSONDecodeError:
+                continue
+    return {}
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="adaptive-bench R3 plot_results (#157)")
-    parser.add_argument("run_dir", help="A single bench run directory (results/<TIMESTAMP>/).")
+    parser = argparse.ArgumentParser(description="adaptive-bench plot_results (#157/#160)")
+    parser.add_argument("run_dir", help="A batch directory (multi-run) or a single run directory.")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir).resolve()
@@ -461,6 +636,12 @@ def main() -> int:
         print(f"ERROR: {run_dir} is not a directory", file=sys.stderr)
         return 1
 
+    # Batch directory (has run-* subfolders) → error-band plots.
+    if any(p.is_dir() for p in run_dir.glob("run-*")):
+        plot_batch(run_dir)
+        return 0
+
+    # Single run directory → legacy per-run plots + SUMMARY.md.
     data = _load_run(run_dir)
     if data["run"] is None:
         print(f"ERROR: run.parquet missing — run join_run.py first", file=sys.stderr)
