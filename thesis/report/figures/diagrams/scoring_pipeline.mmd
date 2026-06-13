@@ -1,0 +1,46 @@
+flowchart TB
+  subgraph TRAIN["TRAIN TIME — tools/anomaly-training/train_smd.py"]
+    SMD[("SMD .txt files<br/>per-machine [0,1] normalised<br/>+ real test_label")]
+    SMD --> SS1["smd_scaler<br/>(StandardScaler)<br/>fit on SMD features"]
+    SS1 --> MFIT["IsolationForest.fit()<br/>contamination=0.005<br/>n_estimators=200"]
+    SMD -. test split .-> SS2["smd_scaler.transform()"]
+    SS2 --> DF1["model.decision_function()"]
+    DF1 --> THR["derive thresholds<br/>(healthy_above, unhealthy_below,<br/>unhealthy_score_scale)"]
+    MST[("MST-2021 CSVs<br/>real-ms features")]
+    MST --> PS_FIT["production_scaler<br/>(StandardScaler)<br/>fit on MST features"]
+
+    MFIT --> BUNDLE["bundle dict {<br/>model, smd_scaler,<br/>production_scaler,<br/>feature_order, thresholds,<br/>metadata}"]
+    SS1 --> BUNDLE
+    PS_FIT --> BUNDLE
+    THR --> BUNDLE
+    BUNDLE --> PKL[("isolation_forest.pkl<br/>(joblib serialised)")]
+  end
+
+  subgraph INFER["INFER TIME — engine.score(features)"]
+    GATE{{"sample_count<br/>>= min_sample_count?"}}
+    SCALE["production_scaler.transform(raw)<br/>maps real-ms → standardised-MST"]
+    DF2["model.decision_function(x)<br/>asks: outlier vs standardised-SMD?"]
+    CLASS{"raw vs thresholds"}
+    H["AnomalyScore<br/>healthy / 0.0"]
+    D["AnomalyScore<br/>degraded / 0.5"]
+    U["AnomalyScore<br/>unhealthy / scaled"]
+
+    GATE -- no --> H
+    GATE -- yes --> SCALE
+    SCALE --> DF2 --> CLASS
+    CLASS -- "raw > healthy_above" --> H
+    CLASS -- "raw in [unhealthy_below, healthy_above]" --> D
+    CLASS -- "raw < unhealthy_below" --> U
+  end
+
+  PKL -. loaded into engine at bootstrap .-> SCALE
+  PKL -. loaded into engine at bootstrap .-> DF2
+  PKL -. loaded into engine at bootstrap .-> CLASS
+
+  classDef train fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+  classDef infer fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+  classDef artifact fill:#EFF3F6,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+  classDef warn fill:#fee2e2,color:#0f172a,stroke:#dc2626;
+  class SMD,MST,SS1,SS2,MFIT,DF1,THR,PS_FIT,BUNDLE train
+  class GATE,SCALE,DF2,CLASS,H,D,U infer
+  class PKL artifact

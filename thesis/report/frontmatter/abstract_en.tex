@@ -1,0 +1,40 @@
+% =====================================================================
+%  Front matter -- Abstract (English, 200-350 words)
+% =====================================================================
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Online services face traffic that rises and falls without warning, and the
+tools that keep them fast are usually separate pieces. Classical load balancers
+route requests by fixed rules that do not adapt to demand, cloud autoscalers add
+capacity only after load has already grown, and monitoring and failure-handling
+are bolted on afterwards. Putting these parts together gives operators many
+dials but no single system that decides what to do. So latency spikes when
+demand surges, and resources sit idle when it falls, which hurts most for small
+and medium teams that cannot run heavy container-orchestration platforms.
+
+This thesis presents SmartLoad, a lightweight middleware that brings traffic
+routing, demand forecasting, anomaly detection, and proactive scaling into one
+decision loop, with a deterministic safety fallback on every action. SmartLoad
+watches live telemetry from the backend pool, runs several decision engines in
+parallel over a shared message bus, and applies a strict priority order: health
+constraints first, learned recommendations second, and a classical rule as the
+guaranteed fallback. Every automated decision is recorded and an operator can
+override it at any time.
+
+We built the system as a containerized stack and evaluated it on realistic
+workloads. The forecast-driven scaling loop runs end to end: under rising load
+the backend pool grew automatically from one to six instances across about
+twelve scaling actions, then shrank again as demand fell, with the deterministic
+fallback ready on every step. The anomaly model agrees about 91.4\% with the
+deterministic baseline while also catching extra variance. The learned routing
+policy performs on par with the strong, industry-standard round-robin baseline
+in shadow mode, and a guaranteed-safe fallback keeps routing at least as
+effective as that established approach.
+
+We conclude that an integrated, safety-first decision loop is a practical
+foundation for adaptive load management: the closed loop works end to end, the
+measured results are reported clearly, and richer learned behaviour on highly
+varied workloads is a natural next step.
+
+\clearpage

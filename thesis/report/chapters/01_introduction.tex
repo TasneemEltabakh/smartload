@@ -1,0 +1,424 @@
+\chapter{Introduction}
+\label{ch:intro}
+
+Every online service that people rely on, whether a shopping site, a hospital
+booking portal, or a university registration system, is underneath a pool of
+identical server processes sitting behind a single front door. A piece of
+software called a \emph{load balancer} stands at that door and decides which
+server handles each incoming request. When the pool is the right size and
+traffic is steady, this work is invisible and dull, exactly as it should be.
+
+The trouble starts when demand is hard to predict. A sale launches, a news story
+breaks, or an exam-results page opens at nine o'clock sharp. Traffic surges, the
+fixed pool cannot keep up, requests queue, and the people behind the screens see
+the result as slowness or an error page. The usual answer, adding more servers,
+often arrives \emph{after} the surge has already done its damage, because the
+machinery that detects overload reacts only once latency has climbed.
+
+This report presents \emph{SmartLoad}, a self-hosted middleware that sits in that
+doorway and acts \emph{ahead} of the surge instead of after it. SmartLoad watches
+the live behaviour of the backend pool, forecasts where demand is heading,
+decides how to route requests and whether to grow or shrink the pool, and carries
+those decisions out on a standard NGINX \cite{nginx} data plane.
+
+Equally important, every learned decision sits on top of a simple, predictable
+rule that takes over the moment the learned part is unavailable or an operator
+turns it off. The design follows a single principle: \emph{routing learns; safety
+does not}. This chapter explains why the problem matters, what makes it hard,
+what we did and did not set out to do, how the method works in plain terms, what
+the prototype achieved, and how the rest of the report is organised.
+
+\slpitch{\textbf{SmartLoad} is a self-hosted middleware that inserts a
+telemetry-driven decision layer between client traffic and a pool of backend
+services. It keeps a classical NGINX load balancer as its data plane and adds an
+out-of-band control plane that detects misbehaving backends, forecasts demand,
+learns a routing policy from real traffic, and scales the pool ahead of
+saturation, all behind a \texttt{safe\_mode} switch that pins every engine to its
+deterministic fallback.}
+
+\section{Motivation}
+\label{sec:intro:motivation}
+
+The case for SmartLoad spans four impact contexts: economic, societal,
+environmental, and cultural. We take each in turn, because a system that sits on
+the request path of a production service is never a purely technical thing. It
+has consequences for budgets, for the people who depend on the service, for
+energy use, and for the operators whose trust it has to earn.
+
+\subsection{Economic and Global Context}
+\label{sec:intro:economic}
+
+Load balancing and autoscaling are not exotic functions. They are a routine line
+item in the cost of running any networked application. The market for products
+that perform them (application-delivery controllers, reverse proxies, and cloud
+autoscalers) is mature and crowded.
+
+Open-source data planes such as NGINX \cite{nginx}, HAProxy \cite{haproxy}, and
+Envoy \cite{envoy} move traffic for a large share of the public web, while
+managed platforms add elastic scaling on top. The Kubernetes Horizontal Pod
+Autoscaler \cite{k8shpa} and event-driven autoscalers such as KEDA \cite{keda}
+are now standard tooling for teams that have adopted container orchestration.
+Cloud infrastructure spending, of which application delivery and elastic compute
+are a large part, has grown into one of the biggest categories of enterprise
+technology cost, and research on automatic resource provisioning has tracked that
+growth for over a decade \cite{lorido2014autoscaling,roy2011autoscaling}.
+
+The tooling that makes elastic scaling truly \emph{proactive}, however, usually
+assumes a full orchestration platform and a specialised team to run it.
+SmartLoad's intended customer is the team \emph{below} that line: a small or
+medium engineering group running a pool of backend services on a handful of
+hosts, who needs adaptive traffic management but cannot justify standing up and
+staffing a Kubernetes control plane.
+
+For that customer the choices today are poor. One option is to over-provision
+permanently, paying for idle capacity to absorb peaks that rarely come. The other
+is to wire together a load balancer, a separate autoscaler, a monitoring stack,
+and an alerting tool by hand, with no shared decision-making between them.
+SmartLoad packages those concerns into a single self-hosted unit that installs
+from a container manifest, and that is the economic gap it is built to fill. A
+managed control plane is a plausible later commercial direction, but this work is
+deliberately scoped as middleware a team can run itself.
+
+\subsection{Societal and Environmental Context}
+\label{sec:intro:society}
+
+The reliability of online services is no longer just a convenience question.
+People book medical appointments, sit examinations, file taxes, and reach
+emergency information through web applications, and an outage or a long slowdown
+during a demand peak is felt as a real denial of service to real people. A system
+that grows capacity \emph{before} a predictable peak, rather than scrambling
+after the alarm, directly improves the experience of everyone waiting behind that
+front door, and it helps most during the high-load moments that matter.
+
+The same mechanism brings an environmental benefit. The common way to survive
+demand spikes is to leave spare capacity permanently switched on, which means
+racks of servers drawing power and cooling to serve a load that arrives only now
+and then. Right-sizing compute, scaling the pool \emph{down} when demand recedes
+and not only up when it rises, returns that idle capacity, and capacity that is
+switched off is energy that is not wasted.
+
+SmartLoad's autoscaler is bidirectional by design for this reason. In our
+prototype run it grew the backend pool under a forecast burst and then shrank it
+again as the burst subsided, rather than leaving the enlarged pool running. At
+the scale of one small deployment the saving is modest. As a default behaviour
+across many deployments, scaling idle capacity down becomes a meaningful lever on
+the energy footprint of everyday computing.
+
+\subsection{Cultural Context}
+\label{sec:intro:culture}
+
+Automation that sits in the request path asks operators to hand over control of
+something they are accountable for, and the appetite for that varies widely:
+between individuals, between teams, and across the engineering cultures of
+different organisations. Some teams will give routing decisions to a learned
+model the moment it shows value. Others, for reasons of regulation, risk
+tolerance, or hard-won caution, will not trust an opaque component anywhere near
+production traffic until they can inspect and reverse every decision it makes. A
+system that demands a single fixed level of trust will be rejected by one of these
+audiences whichever level it picks.
+
+SmartLoad's answer is to make the level of autonomy a setting rather than an
+assumption. Every learned decision is logged and attributable, every learned
+component has a deterministic rule behind it, and a single operator flag
+(\texttt{safe\_mode}) can switch off all learned behaviour and return the system
+to classical routing without taking it offline.
+
+The learned router, in particular, ships pinned to a passive \emph{shadow} mode:
+it observes and records what it \emph{would} do, but an operator must explicitly
+promote it before it touches live traffic. A kill switch on every decision does
+more than guard against failure. It also matches the differing cultural attitudes
+toward delegating authority to software, so cautious and confident operators can
+adopt the same product, each at the level of autonomy they are prepared to
+defend.
+
+\section{Overview of the Key Challenges}
+\label{sec:intro:challenges}
+
+Adaptive traffic management is hard for reasons that build on one another, and
+naming them up front explains the design choices in the chapters that follow.
+
+The first challenge is timing. Conventional autoscaling is \emph{reactive}: it
+notices that latency or utilisation has crossed a threshold and only then adds
+capacity. By the time new servers are provisioned and warm, the spike that
+triggered the alarm has often already hurt service. Acting ahead of the spike
+calls for \emph{forecasting} demand, which the autoscaling literature identifies
+as the lever that separates proactive from reactive provisioning
+\cite{lorido2014autoscaling,roy2011autoscaling}. Forecasting brings its own
+difficulty, because a wrong prediction can scale the pool in the wrong direction.
+
+The second challenge is heterogeneity. Real backend pools are not uniform.
+Instances differ in hardware, in cache warmth, and in their position on a shared
+host, and a single slow or sick instance can drag down the latency of any request
+unlucky enough to land on it. A router that treats all backends as
+interchangeable, as plain round-robin does, cannot use these differences. A
+router that tries to learn them must be trained on the variety it will face in
+production, and training data that lacks that variety produces a model that has
+learned little of use.
+
+The third challenge is the risk of putting an opaque model in the request path at
+all. A learned routing policy that misbehaves does not produce a wrong answer in
+a report; it sends live user traffic to the wrong place. The difficulty is
+fundamental: the very adaptiveness that makes a learned component valuable also
+makes it risky, and the only way to earn the right to run it in production is to
+guarantee that any failure degrades to a safe, predictable baseline rather than
+to an outage. This insistence on graceful degradation is a recurring theme in the
+autonomic-computing literature \cite{kephart2003autonomic}.
+
+The remaining challenges are infrastructural but no less real. Getting
+trustworthy telemetry out of the data plane and into the decision components (the
+plumbing of access logs, metrics, and time-series storage) is a real engineering
+effort in its own right, and any error in that pipeline quietly corrupts every
+downstream decision. Reconfiguring a live load balancer safely, without dropping
+in-flight requests or briefly emptying the pool, is a delicate operation that we
+designed for carefully so the service stays up during every change.
+
+\section{Project Scope}
+\label{sec:intro:scope}
+
+SmartLoad is scoped as a \emph{single-tenant, self-hosted adaptive middleware} for
+the request path of a backend pool. Within that scope it handles, as one
+integrated whole, the concerns that are usually bought as separate tools: anomaly
+detection over backend health, short-horizon demand forecasting, learned request
+routing, proactive and bidirectional autoscaling, a central policy and control
+surface for operators, and the telemetry pipeline that feeds all of them.
+
+The defining commitment across all of these is that each learned component sits
+behind a deterministic fallback and an operator override. The loss of
+intelligence reduces the system to classical routing, never to an outage.
+
+Equally important is what SmartLoad deliberately leaves out of this phase. The
+prototype is single-tenant: it assumes one operating team on a trusted internal
+network. Multi-tenant isolation, role-based access control, operator
+authentication, TLS termination at the load balancer, per-token rate limiting,
+and an outbound webhook dispatcher are all planned for a future Phase~2 aimed at a
+managed, multi-customer offering. These are scope decisions, and they sit outside
+the present phase so the work can demonstrate the core adaptive control loop end
+to end rather than spreading thinly across a wide feature set.
+\Cref{tab:intro:scope} summarises the boundary.
+
+\begin{table}[ht]
+  \centering
+  \caption{What the current single-tenant phase delivers, and what is deferred to the Phase~2 managed, multi-customer offering.}
+  \label{tab:intro:scope}
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.46\linewidth}Y@{}}
+    \toprule
+    \headrow
+    \textbf{In scope (this phase)} & \textbf{Out of scope (Phase~2)} \\
+    \midrule
+    Anomaly detection over backend health & Multi-tenant isolation across customers \\
+    Short-horizon demand forecasting       & Role-based access control \\
+    Learned request routing (shadow by default) & Operator authentication \\
+    Proactive, bidirectional autoscaling   & TLS termination at the load balancer \\
+    Central policy and control surface     & Per-token rate limiting \\
+    Telemetry pipeline feeding every engine & Outbound webhook dispatcher \\
+    Deterministic fallback and operator override at every layer & Managed control plane as a hosted service \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+Several assumptions bound the work. We assume HTTP/1.1 reverse proxying without
+session affinity, so the request path carries no hidden per-client state and any
+backend can serve any request. We assume the control bus may lose messages, since
+it is treated as best-effort, in-memory transport, so every consumer of a learned
+signal can tolerate its absence. We assume backends are interchangeable members
+of a pool rather than functionally distinct services. And we assume the operator,
+not the system, is the final authority: SmartLoad recommends and acts within a
+policy, but a human can always inspect, override, or disable any decision.
+
+Within this scope, the evaluation is organised around four research questions, set
+out in \cref{tab:intro:rqs}. They ask, in turn, whether enabling the decision
+plane improves end-to-end outcomes over plain round-robin, whether the learned
+router beats the classical baselines offline, whether health-based exclusion
+reacts faster than passive load-balancer health checks, and whether the forecast
+arrives early enough to pre-warm capacity before saturation. Each question maps to
+a specific benchmark harness, and the answers are reported in
+\cref{ch:discussion}.
+
+\begin{table}[ht]
+  \centering
+  \caption{The four research questions and the evaluation surface that answers each. Wording follows the project specification.}
+  \label{tab:intro:rqs}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l Y l@{}}
+    \toprule
+    \headrow
+    \textbf{\#} & \textbf{Research question} & \textbf{Surface} \\
+    \midrule
+    RQ1 & On identical infrastructure (same NGINX, backend pool, and workload), does enabling the SmartLoad decision plane produce measurably better tail-latency and failure-rate outcomes than plain NGINX round-robin? & System bench \\
+    \addlinespace
+    RQ2 & Does the trained PPO routing policy, evaluated offline on held-out trace partitions, outperform the classical baselines (round-robin, least-connections) on per-window p50/p95/p99 latency and SLO-violation rate? & Offline RL eval \\
+    \addlinespace
+    RQ3 & Does the load-balancer sidecar pull a misbehaving backend out of rotation faster than NGINX's passive health checks, when the backend is slow but still returns 200 OK so passive checks never trip? & System bench, anomaly phase \\
+    \addlinespace
+    RQ4 & Does the forecasting service publish a predicted-RPS curve far enough ahead of saturation that the autoscaler can pre-warm a new backend before the ramp tops out? & Adaptive bench \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{Proposed Methodology}
+\label{sec:intro:method}
+
+In plain terms, SmartLoad runs a continuous \emph{control loop} with four steps
+that repeat several times a minute. It \textbf{observes} the live behaviour of
+the backend pool: how fast each instance is responding, how many requests are in
+flight, and whether any instance is throwing errors. From those observations it
+\textbf{predicts} where demand is heading over the next short horizon. Using the
+prediction and the current health picture, it \textbf{decides} two things: how to
+spread incoming requests across the healthy instances, and whether the pool
+should grow, shrink, or hold. Finally it \textbf{acts}, applying those decisions
+to the NGINX data plane that carries the traffic, and the loop begins again by
+observing the result.
+
+This loop of observe, predict, decide, and act is the classical shape of a
+self-managing system, often written MAPE-K (Monitor, Analyse, Plan, Execute over
+shared Knowledge), introduced in the autonomic-computing literature
+\cite{kephart2003autonomic} that frames our approach.
+
+What makes SmartLoad's version of this loop distinctive is that the decide step is
+not a single algorithm but a small committee, applied in a fixed safety order. An
+anomaly check runs first and removes any unhealthy backend from consideration,
+and that exclusion is never overridden. A learned routing policy then proposes how
+to spread traffic across what remains, while a demand forecast drives the scaling
+decision in parallel.
+
+Behind each learned component stands a deterministic baseline: a simple threshold
+rule for anomalies, a moving average for the forecast, and plain round-robin for
+routing. If a learned component is turned off, cannot load, or is overridden by
+the operator, its baseline quietly takes its place. The operator sits above the
+whole loop: every decision is recorded and attributable, and a single safe-mode
+flag collapses the committee back to pure classical routing.
+
+The methodology, then, is not to replace classical infrastructure with a model,
+but to wrap classical infrastructure in a learning loop that can always fall back
+to it. That fallback is what lets the learned parts be trusted in the request path
+at all. \Cref{fig:intro:loop} sketches the loop at a glance; the detailed
+architecture is the subject of \cref{ch:design_solution}.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=10mm and 16mm]
+  \node[slnode] (obs) {\textbf{Observe}\\telemetry from\\the pool};
+  \node[slnode,right=of obs] (pred) {\textbf{Predict}\\demand over\\the next horizon};
+  \node[slnode,right=of pred] (dec) {\textbf{Decide}\\route + scale\\(learned, with\\deterministic\\fallback)};
+  \node[slnode,right=of dec] (act) {\textbf{Act}\\apply to the\\NGINX data plane};
+  \draw[slflow] (obs) -- (pred);
+  \draw[slflow] (pred) -- (dec);
+  \draw[slflow] (dec) -- (act);
+  % closing the loop: act feeds back into the next observation
+  \draw[slbus] (act.south) -- ++(0,-9mm) -| node[pos=0.25,below,font=\footnotesize]{feedback: observe the result} (obs.south);
+\end{tikzpicture}
+\caption{The SmartLoad control loop. Telemetry is observed, demand is predicted, routing and scaling are decided by learned components each backed by a deterministic fallback, and the decisions are applied to the NGINX data plane. The act step feeds the next observation, closing a MAPE-K-style loop.}
+\label{fig:intro:loop}
+\end{figure}
+
+Where \cref{fig:intro:loop} shows the rhythm of the loop, the decide step itself
+rests on three learned capabilities that all share one common floor.
+\Cref{fig:intro:pillars} draws that arrangement: anomaly-aware routing,
+forecast-driven autoscaling, and a learned shadow router, each able to collapse
+onto the same deterministic baseline that the \texttt{safe\_mode} switch can pin
+the whole system to at any moment.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=7mm and 8mm]
+  % The three learned pillars
+  \node[slnode] (p1) {\textbf{Anomaly-aware}\\\textbf{routing}\\Isolation Forest\\flags sick\\backends out};
+  \node[slnode,right=of p1] (p2) {\textbf{Forecast-driven}\\\textbf{autoscaling}\\predict demand,\\grow / shrink\\the pool ahead};
+  \node[slnode,right=of p2] (p3) {\textbf{Learned (shadow)}\\\textbf{routing}\\PPO ranks\\backends;\\sidecar ignores\\until promoted};
+  \node[slplane,fit=(p1)(p2)(p3),label={[font=\footnotesize\bfseries]above:LEARNED DECISION PLANE (off the request path)}] (learned) {};
+
+  % The deterministic safety floor underneath
+  \node[slnode,fill=slmint!12,below=12mm of p2,minimum width=0.86\linewidth] (floor)
+    {\textbf{Deterministic fallback floor}\\threshold health rule $\;\cdot\;$ moving-average forecast $\;\cdot\;$ NGINX round-robin\\\textit{the baseline has no model, cannot raise, and is never deprecated}};
+
+  % safe_mode gate on the side
+  \node[slnode,fill=slbox,right=10mm of floor.east,anchor=west,xshift=-2mm,text width=18mm] (safe)
+    {\texttt{safe\_mode}\\collapses to\\the floor};
+
+  % Each pillar drops to the floor
+  \draw[slflow] (p1.south) -- (p1.south |- floor.north);
+  \draw[slflow] (p2.south) -- (floor.north);
+  \draw[slflow] (p3.south) -- (p3.south |- floor.north);
+\end{tikzpicture}
+\caption{The three learned pillars of SmartLoad and the deterministic floor beneath them. Anomaly-aware routing, forecast-driven autoscaling, and a shadow-mode learned router all run off the request path; each degrades onto a simple, predictable baseline, and the \texttt{safe\_mode} switch pins the whole system to that floor on demand. This expresses the central discipline that routing may learn while safety does not.}
+\label{fig:intro:pillars}
+\end{figure}
+
+\section{Summary of the Implementation and Results}
+\label{sec:intro:results}
+
+The prototype is a containerised stack of roughly twelve cooperating services
+orchestrated with Docker Compose \cite{merkel2014docker}. An NGINX data plane
+\cite{nginx} carries the traffic; a telemetry pipeline built on OpenTelemetry
+\cite{opentelemetry} tails the access log and lands per-request metrics in
+TimescaleDB \cite{timescaledb}; and a Redis \cite{carlson2013redis} control bus
+carries decision envelopes between services. Four decision services (an anomaly
+detector, a demand forecaster, a learned routing engine, and an autoscaler) run
+off the request path, alongside a policy manager and an operator user interface.
+
+The intelligence is built with the standard Python scientific stack: scikit-learn
+and an Isolation Forest model \cite{liu2008isolationforest} for anomaly detection,
+statsmodels with an ARIMA model \cite{box2015timeseries} for forecasting, and
+Stable-Baselines3 \cite{raffin2021sb3} with a PPO policy \cite{schulman2017ppo}
+for learned routing. Operational visibility comes through Prometheus
+\cite{prometheus} and Grafana \cite{grafana}, and load is exercised with Locust
+\cite{locust}.
+
+The main result is that the closed control loop works end to end, and the
+deterministic-fallback design keeps the whole system safe while the learned
+components continue to improve.
+
+Closed-loop proactive autoscaling is demonstrated. In a committed benchmark run,
+the forecast-to-autoscaler-to-load-balancer loop scaled the backend pool from one
+instance to six under a forecast-driven burst and then shrank it back as demand
+subsided, across roughly twelve scaling actions, with per-phase p95 latencies
+measured throughout.
+
+For forecasting, the production default is a reliable moving-average predictor
+that drives this autoscaling loop, with a trained ARIMA model available as an
+optional advanced predictor under continued tuning. For anomaly detection, the
+production default is a deterministic threshold detector chosen for guaranteed
+stability; a trained Isolation Forest model agrees with this rule about 91.4\% of
+the time while catching extra variance, and ships as an enhanced opt-in mode.
+
+The learned PPO router performs on par with the strong, industry-standard
+round-robin baseline in shadow mode. The deterministic fallback and operator
+override keep routing at least as safe and effective as the established approach,
+and richer gains on highly varied workloads are an active future direction.
+
+Across all of these, the system runs safely on its deterministic baseline today,
+and each learned component is a measurable, named enhancement on top of that
+foundation. The full quantitative results are reported in \cref{ch:discussion}.
+
+\section{Report Organization}
+\label{sec:intro:organization}
+
+The rest of this report is organised as follows. \Cref{ch:litreview} (Literature
+Review) surveys the prior work this project builds on and positions against:
+classical and learned load balancing, reactive versus proactive autoscaling,
+time-series demand forecasting, anomaly detection for service health, and the
+autonomic-computing tradition that frames adaptive systems as closed control
+loops.
+
+\Cref{ch:design_problem} and \cref{ch:design_solution} (Proposed Design) state
+the engineering problem formally and then present the SmartLoad solution: the
+three-plane separation of data, control, and decision; the contracts that let
+independently developed services cooperate; the routing safety hierarchy; and the
+deterministic-fallback discipline that runs through every learned component.
+
+\Cref{ch:impl_overview}, \cref{ch:impl_decision}, and \cref{ch:impl_testing}
+(Implementation) describe how the design was realised: the containerised stack
+and telemetry pipeline, the internals of the four decision engines and their
+training, and the testing and benchmarking strategy used to validate the system
+end to end.
+
+\Cref{ch:discussion} (Discussion and Project Impact) reports and interprets the
+results: what was demonstrated, how each learned component compares with its
+deterministic baseline, and the project's impact across the economic, societal,
+environmental, and cultural contexts introduced in this chapter.
+
+\Cref{ch:conclusion} (Conclusion) summarises the contribution, restates the
+central idea that routing may learn while safety does not, and sets out the
+Phase~2 directions (multi-tenancy, access control, and a managed control plane)
+that follow from the single-tenant foundation built here.

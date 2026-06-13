@@ -1,0 +1,728 @@
+% =====================================================================
+%  Chapter 3 (Proposed Design) -- PART B: Design Solution
+%  This file CONTINUES the chapter opened by Part A. It does NOT call
+%  \chapter. The first section carries the chapter-continuation label.
+% =====================================================================
+
+\section{Design Alternatives and Justification}
+\label{ch:design_solution}
+
+Part~A of this chapter set out \emph{what} SmartLoad has to do: the functional
+and non-functional requirements, the four-context concerns, and the risk
+register that any design must answer to. This second part explains \emph{how}
+the design was chosen. For each important decision, we listed several candidate
+designs, weighed them against the requirements and risks, and then settled on
+one. The same tension runs through every decision. The system has to be smart
+enough to adapt to changing load, yet that smartness must never sit on the
+critical path in a way that can take traffic down. The rule that settles this
+tension is \emph{graceful degradation by default}: if any adaptive component is
+lost, SmartLoad drops back to classical routing, never to an outage. Each
+alternative below is judged first on whether it respects that rule, and only
+then on its performance, cost, and ease of extension.
+
+\subsection{Routing Intelligence}
+\label{dsb:alt-routing}
+
+Routing is the decision the data plane makes on every request: given a pool of
+backends, which one gets the next connection. We looked at four candidate
+designs.
+
+\textbf{(a) Static round-robin.} The classical default cycles through the pool
+in order and gives each backend an equal share. It is deterministic, has no
+dependencies, and is trivially correct, which is exactly why it is kept as the
+deterministic floor. Its limitation is that it is blind. It cannot react to a
+slow or unhealthy backend, and it wastes capacity when the backends are not all
+the same size.
+
+\textbf{(b) Heuristic least-connections.} Send each request to the backend with
+the fewest in-flight connections. This is a small step up, reacting to load
+imbalance with no model and no training. But it reads only one coarse signal
+(connection count), it knows nothing about latency or error rate, and it cannot
+look ahead, so it remains purely reactive.
+
+\textbf{(c) A learned routing policy.} Train a reinforcement-learning policy
+\cite{sutton2018rl} that watches per-backend telemetry (latency, queue depth,
+health) and produces a ranking that the data plane turns into upstream weights.
+In principle this captures patterns that neither heuristic can: correlated
+slowdowns, backends with different capacity, anticipatory shifting. The
+trade-offs are just as clear. It needs offline training
+\cite{schulman2017ppo,raffin2021sb3}, its behaviour is harder to explain, and a
+badly trained or stale policy could route traffic poorly. A learned policy that
+is allowed to authorise routing on its own does not fit the degradation rule.
+
+\textbf{(d) A hybrid learned policy with a deterministic fallback (chosen).}
+Run the learned policy, but only ever as an \emph{advisory} input bounded by two
+deterministic guards: an anomaly check that strips unhealthy backends out of the
+action space before the policy even sees them, and a classical floor that takes
+over whenever the policy is disabled, warming up, stale, or overridden. The
+learned policy proposes; deterministic logic disposes. This keeps the upside of
+(c), adaptivity, while structurally bounding the downside, because the worst
+case degrades to (a). This is the design SmartLoad adopts, and
+\cref{dsb:sec-decision} shows in numbers why it is the clear winner.
+
+\subsection{Where Routing Decisions Live}
+\label{dsb:alt-locus}
+
+A second, separate decision is \emph{where} the routing intelligence physically
+runs relative to the data plane.
+
+\textbf{(a) An in-process load-balancer module.} Put the decision logic inside
+the data plane itself, for example as an NGINX \cite{nginx} module or Lua
+handler that computes weights per request. This is the lowest-latency option,
+but it breaks the separation of decision and data planes: model code, database
+queries, and training dependencies would now live in the request path, where a
+fault stalls traffic. It also ties the intelligence to one specific load
+balancer.
+
+\textbf{(b) An external control plane that writes upstream configuration
+(chosen).} Keep the data plane (NGINX) free of intelligence, and place every
+decision service off the request path. A single bridging process, the
+\emph{LB sidecar}, subscribes to the control bus and regenerates the NGINX
+upstream configuration, then applies it with a graceful reload. Decisions are
+computed asynchronously and consumed as pre-computed signals; the request path
+reads only its in-memory effective configuration. A fault in any decision
+service stops \emph{adaptation}, not \emph{traffic}. This is SmartLoad's
+architecture.
+
+\textbf{(c) A full service mesh.} Adopt a mesh such as Istio \cite{istio} and
+express routing as mesh policy enforced by per-pod sidecars. A mesh is powerful
+and proven in production, but it is too heavy for this problem. It brings a
+control plane, a data plane of injected proxies, and an operational learning
+curve far larger than a thin middleware needs, and it does not supply the
+telemetry-driven forecasting and learned-routing loop that is SmartLoad's main
+contribution. The mesh would become the platform rather than a component inside
+it, which goes against the middleware-first principle.
+
+\subsection{Forecasting}
+\label{dsb:alt-forecast}
+
+Forecasting predicts the short-horizon request rate so the autoscaler can
+provision ahead of demand rather than after it.
+
+\textbf{(a) A moving-average baseline.} Predict the next horizon as the mean of
+a recent window, with one standard deviation as a spread indicator. It is exact,
+cheap, and always produces an answer, which is why it ships as the forecasting
+baseline. What it cannot do is capture trend or seasonality.
+
+\textbf{(b) ARIMA.} Classical Box--Jenkins time-series modelling
+\cite{box2015timeseries,hyndman2021forecasting} fits autoregressive and
+moving-average terms and gives a principled prediction interval. It captures
+trend and short-horizon momentum that a flat mean cannot, in exchange for an
+offline-trained artefact and heavier inference. SmartLoad ships an ARIMA engine
+as the trained replacement for the baseline.
+
+\textbf{(c) Heavier deep models.} Recurrent or attention-based sequence models
+can in principle model long, complex seasonalities. For a five-minute scaling
+horizon on operational request-rate data, the extra accuracy did not justify
+the training cost, the artefact size, and the inference latency: the autoscaler
+needs a useful number quickly, not a slightly better number slowly. Deep models
+are recorded as future work, not a current choice.
+
+\subsection{Anomaly Detection}
+\label{dsb:alt-anomaly}
+
+Anomaly detection flags backends that are degraded or unhealthy so they can be
+excluded from routing before the learned policy ever sees them.
+
+\textbf{(a) A static threshold rule.} Flag a backend when its current latency
+goes above a multiple of its own rolling mean (or its error rate crosses a
+bound). It is interpretable, needs no model, and always produces a
+classification. Those properties make it the anomaly baseline and the canonical
+fallback.
+
+\textbf{(b) Isolation Forest.} An unsupervised tree ensemble
+\cite{liu2008isolationforest} that isolates outliers in feature space without a
+labelled training set. It can catch multivariate anomalies the threshold rule
+misses, and it is light enough to score every cycle. SmartLoad ships an
+Isolation Forest engine as the trained replacement, with the threshold rule as
+its guaranteed fallback.
+
+\textbf{(c) A deep autoencoder.} Reconstruction-error detectors such as those
+benchmarked on the Server Machine Dataset \cite{su2019omnianomaly} can model
+rich temporal structure, but they need a lot more data and tuning, and their
+opacity works against the transparency the operator surface needs for a
+safety-critical exclusion. We record them as future work.
+
+\subsection{Messaging Between Services}
+\label{dsb:alt-messaging}
+
+The decision services have to hand their signals to the actuating services.
+
+\textbf{(a) Synchronous HTTP.} Each service calls the next directly over HTTP.
+This is simple and easy to trace, but it couples producers to consumers: a
+publisher blocks on a slow or absent subscriber, and adding a new consumer (for
+example the operator UI's live feed) means editing the producer. For a fan-out
+of advisory signals, synchronous request/response is the wrong shape.
+
+\textbf{(b) A Redis pub/sub control bus (chosen).} Decision services publish
+typed envelopes onto named channels, and any number of consumers subscribe
+\cite{carlson2013redis}. Publishers never block on subscribers, new consumers
+attach without touching producers, and the fire-and-forget behaviour fits the
+nature of the signals. A missed advisory message is harmless because the next
+cycle re-publishes, and the only durable surface (the audit hypertable) is
+written separately. This decoupling is what lets a decision service fail without
+stalling any other. SmartLoad uses five such channels, detailed in
+\cref{dsb:sec-bus}.
+
+\section{Decision Analysis}
+\label{dsb:sec-decision}
+
+To make the routing-architecture decision something we could defend rather than
+just assert, we applied a weighted decision matrix in the Pugh tradition
+\cite{pugh1991totaldesign}. We drew six criteria straight from the requirements
+and risks of Part~A and gave each a weight that reflects how much it matters for
+a safety-critical middleware. We scored each candidate routing design on a
+one-to-five scale per criterion (five is best); the weighted total is the sum of
+weight~$\times$~score across the criteria.
+
+The criteria, with the reasoning behind each weight, are as follows.
+\emph{Safety} (weight $0.30$) is the dominant concern, capturing whether a
+failure or mistake in the routing layer can take traffic down. \emph{Latency
+overhead} (weight $0.15$) is the cost the design adds to the request path.
+\emph{Operational weight} (weight $0.15$) is the effort to deploy, run, and
+reason about the design. \emph{Extensibility} (weight $0.15$) is how easily a
+better algorithm can be dropped in later. \emph{Transparency} (weight $0.15$)
+is whether an operator can reconstruct why a routing decision was made. And
+\emph{Cost} (weight $0.10$) is the compute, training, and dependency footprint.
+The weights sum to one. \Cref{dsb:tab:decision} records the scoring.
+
+\begin{table}[t]
+\centering
+\caption{Weighted decision matrix for the routing-architecture decision. Scores
+are on a 1--5 scale (5 is best); the weighted total is $\sum_i w_i s_i$. The
+hybrid learned-with-deterministic-fallback design maximises the weighted total
+once the dominant safety weight is taken into account.}
+\label{dsb:tab:decision}
+\small
+\begin{tabular}{l c cccc}
+\toprule
+ & & \multicolumn{4}{c}{Candidate routing design (score 1--5)} \\
+\cmidrule(lr){3-6}
+Criterion & Weight & Round- & Least- & Learned & Hybrid \\
+          &        & robin  & conn.  & only    & (chosen) \\
+\midrule
+Safety              & 0.30 & 5 & 4 & 2 & 5 \\
+Latency overhead    & 0.15 & 5 & 4 & 3 & 4 \\
+Operational weight  & 0.15 & 5 & 4 & 2 & 3 \\
+Extensibility       & 0.15 & 1 & 2 & 5 & 5 \\
+Transparency        & 0.15 & 5 & 4 & 2 & 4 \\
+Cost                & 0.10 & 5 & 4 & 2 & 3 \\
+\midrule
+\textbf{Weighted total} & \textbf{1.00} & \textbf{4.40} & \textbf{3.70} & \textbf{2.70} & \textbf{4.20} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The matrix is clear about a tension it exposes. Pure round-robin scores highest
+in raw weighted terms ($4.40$) precisely because it is safe, cheap, and
+transparent, yet it scores the floor on extensibility, and on its own it cannot
+meet the adaptive-routing requirement from Part~A at all: it has no way to react
+to a slow backend or to a learned signal. So it is not a candidate for the
+\emph{whole} design; it is the candidate for the \emph{fallback}. The key
+observation is that the hybrid design ($4.20$) scores within a whisker of
+round-robin on every safety-related criterion \emph{while} earning the top
+extensibility score, because its worst case \emph{is} round-robin. The hybrid
+does not trade safety for adaptivity; it layers adaptivity on top of a
+round-robin floor it can always fall back to. The learned-only design ($2.70$)
+loses ground on every axis that matters, giving up safety, transparency, and
+operational simplicity for an adaptivity the hybrid also delivers, but without
+the structural guard.
+
+Reading the matrix against Part~A closes the argument. The dominant risk in the
+register was that an adaptive routing layer could degrade availability. The
+$0.30$ safety weight encodes that risk directly, and only the round-robin and
+hybrid designs score $5$ there. Of those two, only the hybrid also satisfies the
+adaptive-routing and replaceable-engine requirements. The selected design is
+therefore the external control plane (\cref{dsb:alt-locus}) carrying a hybrid
+learned-with-deterministic-fallback routing policy (\cref{dsb:alt-routing}). The
+locus choice keeps intelligence off the request path, and the routing choice
+keeps a deterministic floor underneath it. The rest of this chapter describes
+that selected design in detail.
+
+\section{Description of the Selected Design}
+\label{dsb:sec-design}
+
+SmartLoad is organised as a set of cooperating containerised services split
+across three planes. The \emph{data plane} carries client traffic; the
+\emph{decision plane} computes adaptive signals off the request path; and the
+\emph{control plane} turns those signals into concrete actuations on the data
+plane. The subsections below build the design up one view at a time, from the
+outside-in system context, through the plane split and the closed control loop,
+down to the control bus, the engine abstraction, and the layered safety model
+that makes the whole thing trustworthy.
+
+A reader who wants the engines side by side before the views unfold can jump to
+\cref{dsb:tab:engines}, which contrasts the learned model, deterministic
+baseline, production default, and headline metric of all four decision engines
+in one place.
+
+\Cref{fig:dsb:overview} gives the outside-in view that the rest of this section
+unfolds. SmartLoad sits as middleware between client traffic and a backend
+service pool, with its ingress, decision, and actuation responsibilities held
+inside one boundary. The operator writes policy and configuration in two ways:
+in-band through the API and out-of-band by editing the YAML files directly. The
+operator reads the system back through Grafana and the Operator UI. The Operator
+UI is a transparency and override surface only; it owns no channel, table, or
+decision path of its own, and it embeds Grafana for its charts rather than
+serving them itself.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{context}
+\caption{SmartLoad in context, as middleware between clients and a backend
+service pool. Client requests are proxied through the ingress to the pool and the
+responses return the same way, so from the client's side SmartLoad is an ordinary
+reverse proxy. The operator writes policy and configuration in-band through the
+API or out-of-band by editing the YAML files, and reads the system back through
+Grafana and the Operator UI. The Operator UI is a transparency and override
+surface that owns no channel, table, or decision path; it embeds Grafana for its
+charts.}
+\label{fig:dsb:overview}
+\end{figure}
+
+\subsection{System Context}
+\label{dsb:sec-context}
+
+At the coarsest level, SmartLoad is middleware that sits between client traffic
+and a pool of backend services. \Cref{fig:dsb:overview} shows the context.
+Clients send HTTP requests to the NGINX data plane \cite{nginx}, which proxies
+them to a backend in the pool and returns the response; from the client's point
+of view SmartLoad is an ordinary reverse proxy. Beside the data plane sits the
+control plane, which never touches a request directly: it observes the pool
+through telemetry and steers the data plane by rewriting its upstream
+configuration. The operator works with the control plane through two read/write
+surfaces: a policy interface (to set bounds and the safe-mode kill switch) and
+an operator UI plus Grafana dashboards \cite{grafana} (to see what every engine
+is doing). The backend pool is the customer's application; SmartLoad treats it
+as an opaque set of interchangeable endpoints.
+
+\subsection{Three-Plane Architecture}
+\label{dsb:sec-planes}
+
+\Cref{fig:dsb:planes} opens the box. The \emph{data plane} (NGINX and the
+backend pool) is the only surface that handles live requests. The
+\emph{decision plane} holds the four adaptive services, namely the anomaly
+detector, the forecaster, the learned routing engine, and the autoscaler, which
+read aggregated telemetry from TimescaleDB \cite{timescaledb} and emit signals;
+none of them ever proxies traffic. The \emph{control plane} holds the policy
+manager, the Redis control bus \cite{carlson2013redis}, and the LB sidecar that
+bridges back to the data plane. Telemetry flows \emph{up} from the data plane
+(NGINX access logs are tailed, shipped over OpenTelemetry \cite{opentelemetry},
+and persisted to TimescaleDB), and decisions flow \emph{down} (signals cross the
+bus and the sidecar rewrites the upstream configuration). The key structural
+property, visible in the figure, is that exactly one process, the LB sidecar,
+crosses the plane boundary downward, and it does so by writing configuration,
+not by taking part in request handling. Every adaptive service can fail without
+stalling a single request.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{layer}
+\caption{The two execution surfaces. The data plane (top) serves traffic; the
+control plane (everything else) decides how traffic is served. The LB sidecar is
+the only process that crosses the boundary: it lives in the control plane and
+writes the NGINX configuration into the data plane through a graceful reload, so
+no decision service ever touches NGINX directly. The lb-otel-shipper tails the
+NGINX JSON access log over a shared volume and emits one OTLP data point per
+request, preserving the per-request fidelity the engines need.}
+\label{fig:dsb:planes}
+\end{figure}
+
+\subsection{The Adaptive Control Loop}
+\label{dsb:sec-mapek}
+
+The planes cooperate as a continuous closed-loop controller in the MAPE-K style
+of autonomic computing \cite{kephart2003autonomic,ibm2005mapek}:
+\emph{Monitor}, \emph{Analyze}, \emph{Plan}, \emph{Execute}, over shared
+\emph{Knowledge}. \Cref{fig:dsb:mapek} maps SmartLoad onto this loop.
+\emph{Monitor} is the telemetry pipeline that lands per-request metrics in
+TimescaleDB. \emph{Analyze} is the anomaly detector, scoring each backend's
+health. \emph{Plan} is the combination of the forecaster, the learned routing
+engine, and the autoscaler, each turning analysis into a proposed action.
+\emph{Execute} is the LB sidecar, which merges the proposals under policy and
+applies them to NGINX, together with the autoscaler's pool changes. The shared
+\emph{Knowledge} is the operating policy and the durable telemetry and audit
+store. After each actuation, new telemetry reflects the post-action state and
+the loop closes.
+
+A representational note keeps the figure precise about what flows where.
+\emph{Forecasts drive scaling only; they never enter the routing decision.}
+A demand prediction adjusts how many backends exist, but a prediction error
+must never be able to move a single per-request routing choice. This separation
+of forecast (capacity) from routing (per-request selection) is a deliberate
+safety boundary, not an accident of wiring.
+
+\Cref{dsb:tab:engines} summarises the four engines that populate the Analyze and
+Plan stages, recording for each one its learned model, its deterministic
+baseline, the engine that runs in production today, and the metric that governs
+whether the learned engine is allowed to lead.
+
+\begin{table}[t]
+\centering
+\caption{The four decision engines, side by side. Each engine ships a learned
+model behind the same interface as a deterministic baseline; the production
+default records which one runs today, and the headline metric is the gate that
+governs promotion. Routing learns but is pinned to shadow; safety (the anomaly,
+forecast, and scaling defaults) does not learn at all.}
+\label{dsb:tab:engines}
+\small
+\begin{tabularx}{\linewidth}{@{}l Y Y Y Y@{}}
+\toprule
+\headrow \textbf{Engine} & \textbf{Learned model} & \textbf{Deterministic baseline} & \textbf{Prod.\ default} & \textbf{Headline metric / KPI} \\
+\midrule
+Anomaly detector
+  & Isolation Forest \cite{liu2008isolationforest}
+  & \texttt{threshold} rule (latency $>m\bar{\ell}$, error rate $>0.05$)
+  & \texttt{isolation\_\allowbreak forest}
+  & $\text{F1}=0.8012$ on SMD holdout (gate $>0.80$); $91.4\%$ agreement with threshold after re-calibration \\
+\addlinespace
+Forecaster
+  & ARIMA$(3,0,1)$ \cite{box2015timeseries}
+  & \texttt{moving\_\allowbreak average} (windowed mean $\pm\,\sigma$)
+  & \texttt{moving\_\allowbreak average}
+  & ARIMA MAPE $\approx 25\%$ vs.\ KPI $<20\%$; baseline kept until gap closes \\
+\addlinespace
+Routing engine
+  & MaskablePPO \cite{schulman2017ppo,raffin2021sb3}
+  & \texttt{round\_\allowbreak robin} (and \texttt{least\_\allowbreak connections})
+  & \texttt{round\_\allowbreak robin} (PPO shadow-only)
+  & PPO ties round-robin (both mean reward $-0.0056$, zero SLO violations) on the offline eval \\
+\addlinespace
+Autoscaler
+  & none (deterministic controller)
+  & threshold controller on forecasted RPS
+  & threshold controller
+  & RQ4 affirmative: pool grew $1\to6$ and shrank back over $12$ scaling actions \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.62\linewidth]{mapek}
+\caption{The closed control loop, in MAPE terms. Monitor gathers telemetry,
+Analyse runs the decision engines, Plan is owned by the LB sidecar, which merges
+signals in a strict priority order (anomaly exclusion, then policy, then learned
+weights, then the classical fallback), and Execute rewrites the NGINX
+configuration and scales the pool. Forecasts drive scaling only; they never enter
+the routing decision.}
+\label{fig:dsb:mapek}
+\end{figure}
+
+\subsection{Control Bus}
+\label{dsb:sec-bus}
+
+The decision and control planes communicate over a Redis pub/sub bus
+\cite{carlson2013redis} carrying five named channels of typed envelopes. The
+choice of pub/sub over synchronous HTTP (\cref{dsb:alt-messaging}) is what lets
+a publisher fail without stalling a consumer, and a new consumer attach without
+editing a producer. \Cref{fig:dsb:bus} shows the publishers and subscribers of
+each channel, and \cref{dsb:tab:channels} records the full contract: the
+envelope type, the publish frequency, and the key payload fields each channel
+carries. \texttt{smartload.policy} is published by the policy manager and read by
+every service that needs the operating policy; the remaining four carry decision
+signals: \texttt{smartload.anomaly} (anomaly detector $\rightarrow$ LB sidecar
+and operator UI), \texttt{smartload.forecast} (forecaster $\rightarrow$
+autoscaler), \texttt{smartload.routing} (routing engine $\rightarrow$ LB
+sidecar), and \texttt{smartload.scale} (autoscaler $\rightarrow$ LB sidecar and
+operator UI). The bus is fire-and-forget by design: a missed message is harmless
+because the next cycle re-publishes, and the only durable record is the audit
+hypertable, written separately. Every envelope carries a \texttt{version} field,
+and subscribers are required to tolerate unknown fields, so the contract can grow
+without a flag day. The dispatch side of this contract, namely what each channel
+does to the NGINX configuration once the LB sidecar receives it, is detailed
+later in \cref{tab:ima:channels}.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{channels}
+\caption{The five Redis channels, each with exactly one publisher. Solid arrows
+mark subscribers that act on the envelope (the LB sidecar rewrites the upstream
+configuration, the autoscaler resizes the pool); dashed arrows mark subscribers
+that only observe (the Operator UI live feed and the planned webhook dispatcher).
+The forecaster's output reaches only the autoscaler, so prediction stays out of
+the routing path.}
+\label{fig:dsb:bus}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{The control-bus channel contract. All five channels are fire-and-forget
+Redis pub/sub; the only durable surface is the audit hypertable, written
+separately. Every envelope is a dataclass carrying a \texttt{version} field, and
+subscribers tolerate unknown fields. Compose tightens the anomaly poll to ten
+seconds.}
+\label{dsb:tab:channels}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}l l Y l Y@{}}
+\toprule
+\headrow \textbf{Channel} & \textbf{Publisher} & \textbf{Subscriber(s)} & \textbf{Envelope} & \textbf{Frequency} \\
+\midrule
+\texttt{smartload.policy}
+  & policy-manager
+  & all services reading policy
+  & \texttt{PolicyUpdate}
+  & on accepted change \\
+\addlinespace
+\texttt{smartload.anomaly}
+  & anomaly-detector
+  & LB sidecar, operator UI
+  & \texttt{AnomalyEvent}
+  & per backend per poll ($5$\,s) \\
+\addlinespace
+\texttt{smartload.forecast}
+  & forecasting
+  & autoscaler
+  & \texttt{ForecastResult}
+  & per poll ($60$\,s) \\
+\addlinespace
+\texttt{smartload.routing}
+  & rl-engine
+  & LB sidecar (when \texttt{mode=active})
+  & \texttt{RoutingRecommendation}
+  & per poll ($5$\,s) \\
+\addlinespace
+\texttt{smartload.scale}
+  & autoscaler
+  & LB sidecar, operator UI
+  & \texttt{ScaleEvent}
+  & on action \\
+\bottomrule
+\end{tabularx}
+
+\medskip
+\begin{minipage}{\linewidth}
+\footnotesize
+\textit{Key payload fields.}
+\texttt{PolicyUpdate}: \texttt{operating\_mode}, \texttt{safe\_mode},
+\texttt{min\_backends}, \texttt{max\_backends}, \texttt{slo\_p95\_latency\_ms},
+\texttt{per\_instance\_capacity\_rps}, \texttt{version}.
+\texttt{AnomalyEvent}: \texttt{backend\_id}, \texttt{status}
+(healthy/degraded/unhealthy), \texttt{score} ($0$--$1$), \texttt{version}.
+\texttt{ForecastResult}: \texttt{horizon\_minutes}, \texttt{predicted\_rps},
+\texttt{confidence\_lower}, \texttt{confidence\_upper}.
+\texttt{RoutingRecommendation}: \texttt{mode} (shadow/active),
+\texttt{server\_rankings} (a list of \texttt{\{backend\_id, score\}}).
+\texttt{ScaleEvent}: \texttt{action} (scale\_out/scale\_in),
+\texttt{target\_count}, \texttt{current\_count}, \texttt{reason},
+\texttt{mechanism}.
+\end{minipage}
+\end{table}
+
+\subsection{Pluggable Engine Contract}
+\label{dsb:sec-engine}
+
+The replaceable-engine principle is realised as a strict plugin contract shared
+by the three decision services that host swappable algorithms (anomaly
+detection, forecasting, and learned routing). \Cref{fig:dsb:engine} shows the
+abstraction. Three rules govern every plugin. First, \emph{plugins are pure}: an
+engine is a function from a structured input dataclass to a structured output
+dataclass, opening no sockets, querying no database, touching no bus, and
+reading no environment. Every side effect lives in the surrounding \emph{run
+loop}, which owns the telemetry query, the envelope construction, and the
+publish. Second, \emph{the run loop owns the envelope}: a plugin never builds a
+wire message; the loop converts the plugin's output dataclass into the published
+payload. Third, \emph{the baseline never fails}: each service ships one baseline
+engine with no model artefact and a constructor that cannot raise, and the run
+loop installs it automatically whenever the requested engine fails to load.
+
+The result is a clean three-state engine: a deterministic \emph{baseline}, a
+\emph{trained} replacement that drops in as one folder behind the same
+interface, and an \emph{automatic fallback} from the trained engine to the
+baseline on any load failure. Swapping the threshold rule for an Isolation
+Forest \cite{liu2008isolationforest}, or the moving average for ARIMA
+\cite{box2015timeseries}, is a change inside one service and one model file. The
+LB sidecar and autoscaler, which depend on the message contract rather than the
+engine, never notice.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=8mm and 14mm]
+  \node[slnode] (db) {TimescaleDB\\rows};
+  \node[slnode,right=of db] (loop) {\textbf{Run loop}\\(owns I/O +\\the envelope)};
+  \node[slnode,above right=8mm and 16mm of loop] (trained) {\textbf{Trained}\\engine\\(model artefact)};
+  \node[slnode,below right=8mm and 16mm of loop] (base) {\textbf{Baseline}\\engine\\(no artefact,\\cannot fail)};
+  \node[slnode,right=34mm of loop] (bus) {Redis\\channel};
+  \draw[slflow] (db) -- node[above,font=\footnotesize]{query} (loop);
+  \draw[slflow] (loop) -- node[above left,font=\footnotesize]{input dataclass} (trained);
+  \draw[slflow,dashed] (trained) -- node[right,font=\footnotesize]{load fails} (base);
+  \draw[slflow] (base) -- node[below right,font=\footnotesize]{output dataclass} (loop);
+  \draw[slflow] (loop) -- node[above,font=\footnotesize]{envelope} (bus);
+\end{tikzpicture}
+\caption{The pluggable engine contract. The run loop owns all input and output:
+it queries TimescaleDB, hands the engine a pure input dataclass, receives a pure
+output dataclass, and builds the published envelope. The engine is one of two
+interchangeable implementations behind the same interface: a trained engine
+(with a model artefact) or the baseline (no artefact, cannot fail). If the
+trained engine fails to load, the run loop installs the baseline automatically.}
+\label{fig:dsb:engine}
+\end{figure}
+
+\paragraph{Representational models.} Three small formulae pin down the behaviour
+the figures describe. The learned routing engine emits a per-backend score $s_b$
+over the surviving (non-excluded) backends $\mathcal{B}$; the LB sidecar turns
+scores into integer NGINX upstream weights by normalising over the pool,
+\begin{equation}
+  w_b \;=\; \max\!\left(1,\ \left\lceil W_{\max}\cdot
+  \frac{s_b}{\sum_{b'\in\mathcal{B}} s_{b'}}\right\rceil\right),
+  \qquad b\in\mathcal{B},
+  \label{dsb:eq:weights}
+\end{equation}
+so that every surviving backend keeps a floor weight of one (no backend is ever
+starved) and relative preference follows the learned ranking. The autoscaler
+converts a forecast into a target pool size by dividing predicted demand by
+per-instance capacity,
+\begin{equation}
+  n^{\star} \;=\; \operatorname{clip}\!\left(
+  \left\lceil \frac{\widehat{\mathrm{rps}}}{c}\right\rceil,\ n_{\min},\ n_{\max}\right),
+  \label{dsb:eq:scale}
+\end{equation}
+where $\widehat{\mathrm{rps}}$ is the predicted request rate, $c$ is the
+per-instance capacity, and $[n_{\min},n_{\max}]$ are the policy bounds. Lastly,
+the threshold anomaly rule flags a backend whenever its current latency goes
+above a policy multiple of its own rolling mean,
+\begin{equation}
+  \texttt{unhealthy} \;\Longleftrightarrow\;
+  \ell_{\text{cur}} \;>\; m\cdot \bar{\ell}_{\text{roll}},
+  \label{dsb:eq:anomaly}
+\end{equation}
+with multiplier $m$ supplied by the operating policy. Each formula is computed
+off the request path; the data plane consumes only the resulting weights.
+
+\subsection{Three-Tier Safety Model}
+\label{dsb:sec-safety}
+
+A learned policy can be trusted in the request path at all only because three
+independent override tiers sit between it and live traffic, and \emph{all three
+must agree} before any learned weight is applied. The first tier is the operating
+policy's \texttt{safe\_mode} flag:
+when an operator sets it, the published routing mode is forced to \emph{shadow},
+weights reset to equal, and the data plane falls back to round-robin, a single
+human-controlled kill switch. The second tier is the \texttt{RL\_MODE} deployment
+pin: even with \texttt{safe\_mode} off, the mode stays \emph{shadow} unless the
+deployment explicitly pins \texttt{RL\_MODE=active}, so a freshly deployed learned
+policy publishes its inferences without actuating until an operator deliberately
+promotes it. The third tier is the LB sidecar's own active gate: only when
+\texttt{safe\_mode} is off, \texttt{RL\_MODE} is \texttt{active}, \emph{and} the
+policy itself returns an \emph{active} action does the sidecar apply learned
+weights. The default across all three tiers is the safe state; the trained policy
+alone can never escalate routing past shadow.
+
+This layered gate sits inside a strict routing hierarchy that the LB sidecar
+enforces in order, shown in \cref{fig:dsb:safety}: anomaly exclusion first (an
+unhealthy backend is removed from the action space and the learned policy never
+sees it), then policy bounds and \texttt{safe\_mode}, then learned weights, then
+the classical floor. Anomaly constraints outrank everything. \texttt{safe\_mode} can silence the learned
+policy but can never re-admit a backend that anomaly excluded, because routing
+to a known-bad backend has unbounded cost while the cost of conservatively
+excluding a borderline one is bounded.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.6\linewidth]{routing_hierarchy}
+\caption{The four-level routing priority stack inside the LB sidecar. Anomaly
+exclusion is unconditional. The policy can short-circuit the learned weights but
+cannot override an anomaly exclusion. The learned policy operates only within the
+bounds set by the two levels above it. Classical round-robin is the
+dependency-free floor and is always available. Forecasts never enter a routing
+decision.}
+\label{fig:dsb:safety}
+\end{figure}
+
+\section{Adherence to Codes of Ethics, Regulations, and Laws}
+\label{dsb:sec-ethics}
+
+The selected design puts the professional obligations of the ACM/IEEE-CS
+Software Engineering Code of Ethics \cite{gotterbarn1999ethics,acm2018ethics}
+into the structure of the system itself, rather than bolting them on as policy.
+The Code's first principle, to act in the public interest and hold paramount the
+safety of the systems one builds, is the direct motivation for the
+graceful-degradation guarantee. Because every adaptive component degrades to a
+deterministic baseline (\cref{dsb:sec-engine}) and three override tiers stand
+between any learned decision and live traffic (\cref{dsb:sec-safety}), a defect
+or a mis-trained model in the experimental intelligence cannot escalate into an
+availability failure for the served application. Safety-by-fallback is the
+design's answer to the obligation to minimise the risk the public bears from the
+software.
+
+The Code's emphasis on transparency and accountability is met through the audit
+log and the operator UI. Every routing and scaling decision is attributable: the
+operator can reconstruct, from the durable audit store, why a given backend was
+chosen or why the pool changed size at a given moment, and the operator UI shows
+what each engine \emph{would} emit even when \texttt{safe\_mode} is suppressing
+actuation. The design avoids the opacity of an unexplainable black box: the
+deterministic baselines are fully interpretable, and the learned components are
+always shadowed by an audited, human-overridable decision path. The reporting in
+this thesis follows the same principle. Where a trained engine has not yet met
+its target metric, the gap is recorded plainly rather than papered over, and the
+baseline remains the default until the gap closes.
+
+On data protection, the design's posture is conservative by construction
+\cite{gdpr2016}. SmartLoad routes on \emph{operational metadata only}: per-backend
+latency, error rate, request count, and queue depth. It carries no session
+affinity and stores no per-client identity (the stateless-request-path
+principle), so request bodies and personal data never enter the decision plane or
+the telemetry store. The data the system retains describes the
+\emph{infrastructure's} behaviour, not the \emph{user's}, which keeps SmartLoad
+clear of the personal-data obligations that a content-inspecting middleware would
+incur, while still respecting the principle of collecting only what the function
+requires.
+
+\section{Response to Global, Economic, Environmental, and Societal Concerns}
+\label{dsb:sec-impact}
+
+The four-context concerns raised in Part~A are answered directly by properties of
+the selected design rather than by aspiration.
+
+\textbf{Environmental.} The autoscaler is symmetric: \cref{dsb:eq:scale} scales
+the pool \emph{down} as readily as up, decommissioning backends within the policy
+floor once predicted demand falls. Because the forecaster drives provisioning
+proactively, the pool tracks demand rather than being permanently
+over-provisioned for a worst case, so idle compute, and the energy it consumes,
+is released when load recedes. Right-sizing capacity to actual demand is the
+design's primary environmental contribution.
+
+\textbf{Economic.} The same scale-down behaviour is a direct cost lever for the
+operator, since released instances are instances not billed. The middleware-first
+posture adds to this: SmartLoad is a thin layer over commodity NGINX and an
+open-source telemetry stack, deployable on the customer's existing infrastructure
+with Docker \cite{merkel2014docker}, so adopting it does not mean replatforming
+onto a heavyweight mesh or a managed cloud product. Its own overhead stays
+bounded because the intelligence runs off the request path and adds no
+per-request computation.
+
+\textbf{Global / portability.} The design treats the load balancer as an adapter
+behind a stable interface, not a hard dependency, as \cref{fig:dsb:lbadapter}
+shows. The decision plane calls a small set of methods on the
+\texttt{LoadBalancerAdapter} interface and never references NGINX directly. Only
+the NGINX adapter is wired in this phase; the Envoy \cite{envoy}, HAProxy
+\cite{haproxy}, and cloud-ALB modules are real Python packages whose constructors
+raise \texttt{NotImplementedError}, with a shared conformance suite already
+written against the interface. Adding a new data plane is therefore a
+folder-creation exercise behind a settled contract rather than a refactor of the
+decision services. In the same spirit, the contract assumes message loss is
+possible and the deployment is portable from Docker Compose to an orchestrator
+\cite{merkel2014docker} without redesign. This keeps SmartLoad usable across the
+varied environments a global user base actually runs.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth]{lb_adapter}
+\caption{The load-balancer adapter pattern. The decision plane calls a small set
+of methods on the \texttt{LoadBalancerAdapter} interface and never references
+NGINX directly. Only the NGINX adapter is wired in this phase; the Envoy,
+HAProxy, and cloud-ALB modules are real Python packages whose constructors raise
+\texttt{NotImplementedError}, and a shared conformance suite exercises the
+contract against every adapter. Adding a new data plane is a folder-creation
+exercise behind a settled interface rather than a refactor of the decision
+services.}
+\label{fig:dsb:lbadapter}
+\end{figure}
+
+\textbf{Societal / reliability.} For the people who depend on the served
+applications, the most important societal property is that the system stays up.
+The layered safety model (\cref{dsb:sec-safety}) and the deterministic floor
+(\cref{dsb:sec-engine}) mean that adding adaptive intelligence does not add a new
+way for the service to fail: in the worst case SmartLoad behaves exactly like the
+classical load balancer it wraps. Reliability is therefore not traded away for
+adaptivity; it is the precondition the adaptivity is built on top of.

@@ -1,0 +1,321 @@
+% =====================================================================
+%  Back matter -- Appendices (English).
+%  Body content only: main.tex calls \appendix immediately before this
+%  \input, so the \chapter{...} entries below auto-number as Appendix A,
+%  B, C, ... Every \label is prefixed `bm`.
+% =====================================================================
+
+% =====================================================================
+\chapter{System Components and Software Stack}
+\label{bm:app-stack}
+% =====================================================================
+
+SmartLoad ships as a containerized stack orchestrated by Docker Compose
+\cite{merkel2014docker}. The deployable surface splits into the SmartLoad
+services (the decision, control, and traffic planes) and the supporting
+infrastructure components they depend on. \Cref{bm:tab-services} lists the
+SmartLoad services with their implementation language and role;
+\Cref{bm:tab-infra} lists the shared infrastructure; and
+\Cref{bm:tab-libs} lists the main third-party Python libraries.
+
+\begin{table}[htbp]
+  \centering
+  \caption{SmartLoad services: language, default port, and role.}
+  \label{bm:tab-services}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l c Y@{}}
+    \toprule
+    \textbf{Service} & \textbf{Language} & \textbf{Port} & \textbf{Role} \\
+    \midrule
+    load-balancer    & NGINX \cite{nginx}   & 8080    & Client traffic ingress; reloads \texttt{upstream.conf} on write. \\
+    lb-otel-shipper  & Python               & sidecar & Tails the NGINX access log, ships OTLP/HTTP-JSON to the collector. \\
+    lb-sidecar       & Python               & 8087    & Subscribes to the routing / anomaly / policy / scale channels; atomically rewrites \texttt{upstream.conf} and triggers \texttt{nginx -s reload}. \\
+    telemetry        & Python               & 8081    & OTLP ingest plus a read API over TimescaleDB \cite{timescaledb}. \\
+    anomaly-detector & Python               & 8082    & Threshold baseline (default) plus a trained Isolation Forest engine \cite{liu2008isolationforest}. \\
+    forecasting      & Python               & 8083    & Moving-average baseline (default) plus a trained ARIMA model \cite{box2015timeseries}. \\
+    rl-engine        & Python               & 8084    & Random-shadow baseline plus a PPO routing policy \cite{schulman2017ppo} with a shadow/active pin. \\
+    autoscaler       & Python               & 8085    & Forecast-driven scaling with cooldown and a reactive fallback; Docker SDK pool control. \\
+    policy-manager   & Python               & 8086    & Operating-policy REST API, per-field audit, and Redis publish on change. \\
+    operator-ui      & Flask + React        & 8090    & Backend-for-frontend plus a web transparency and override surface. \\
+    test-backend     & Node.js              & 8080    & Replicated stub backends the autoscaler scales between running and stopped. \\
+    traffic-simulator & Python (Locust)     & 8089    & Synthetic load generator for development and benchmarking. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Shared infrastructure components.}
+  \label{bm:tab-infra}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l c Y@{}}
+    \toprule
+    \textbf{Component} & \textbf{Port} & \textbf{Role} \\
+    \midrule
+    TimescaleDB \cite{timescaledb} & 5432 & Time-series store for per-request telemetry, audit rows, and forecast hypertables. \\
+    Redis \cite{carlson2013redis}  & 6379 & Pub/sub control bus carrying the five decision-plane channels. \\
+    redis-exporter                 & 9121 & Exports Redis health and per-channel publish rates to Prometheus. \\
+    OTel Collector \cite{opentelemetry} & 4317/4318 & Receives OTLP from the shipper and forwards metrics downstream. \\
+    Prometheus \cite{prometheus}   & 9090 & Scrapes per-process \texttt{/metrics} from every control-plane service. \\
+    Grafana \cite{grafana}         & 3000 & Renders the operational dashboards (overview, routing, anomaly, scaling, forecast). \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Principal third-party Python libraries.}
+  \label{bm:tab-libs}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l Y@{}}
+    \toprule
+    \textbf{Library} & \textbf{Used for} \\
+    \midrule
+    Flask + waitress    & HTTP service shell and the production WSGI server for every control-plane service. \\
+    redis-py            & Pub/sub publisher and subscriber clients for the control bus. \\
+    psycopg2            & PostgreSQL/TimescaleDB driver for telemetry and audit writes and reads. \\
+    docker (SDK)        & Container lifecycle control used by the autoscaler and lb-sidecar. \\
+    PyYAML              & Operating-policy serialization (\texttt{policy.yaml}). \\
+    scikit-learn        & Isolation Forest training and inference for the anomaly engine. \\
+    statsmodels         & ARIMA training and inference for the forecasting engine. \\
+    stable-baselines3   & PPO policy training and inference for the routing engine. \\
+    httpx               & HTTP client used by the operator-UI backend-for-frontend fan-out. \\
+    Locust              & Load generation in the traffic simulator and the benchmark harnesses. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\TBD{Pin exact library versions from each service's \texttt{requirements.txt}
+in the final camera-ready table if the rubric requires version-level
+reproducibility.}
+
+% =====================================================================
+\chapter{Project Cost Sheet}
+\label{bm:app-cost}
+% =====================================================================
+
+SmartLoad is built entirely from open-source components and is designed to
+run self-hosted on commodity hardware, so its recurring cost model is
+deliberately small. There are no per-seat or per-core licensing fees: every
+runtime dependency (NGINX, Redis, TimescaleDB, Prometheus, Grafana, the
+OpenTelemetry Collector, and the Python ecosystem) is released under a
+permissive or open-source license, and the SmartLoad services themselves are
+distributed under the MIT license. The only non-trivial one-time expense is the
+offline compute used to train the machine-learning artefacts (the Isolation
+Forest anomaly model, the ARIMA forecaster, and the PPO routing policy); once
+trained, these artefacts ship as static files and carry no inference licensing.
+
+\Cref{bm:tab-cost} states the cost model as line items. Monetary figures are
+left as \TBD{site-specific figure} because they are entirely deployment-specific --- they depend on
+the operator's chosen hosting (on-premises hardware already owned, a single
+rented virtual machine, or short-lived cloud instances for the training step)
+and on local electricity and labour rates.
+
+\paragraph{Assumptions.}
+The model assumes (1) a single-tenant, self-hosted deployment on one host or a
+small cluster the operator already controls; (2) open-source components only, so
+licensing is \$0 by construction; (3) model training is a one-time, offline
+activity run on commodity CPU hardware (no specialized accelerator is needed for
+the current models); and (4) ongoing operation is bounded by commodity hosting,
+electricity, and routine operator time rather than by any metered third-party
+service.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Self-hosted, open-source cost model (figures are deployment-specific).}
+  \label{bm:tab-cost}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Line item} & \textbf{Type} & \textbf{Estimated cost} \\
+    \midrule
+    Software licensing (all components) & Recurring & \$0 (open-source / MIT). \\
+    Container host (1 VM or owned server) & Recurring & \TBD{monthly hosting cost} \\
+    Storage for telemetry hypertables    & Recurring & \TBD{monthly storage cost} \\
+    Electricity (self-hosted hardware)   & Recurring & \TBD{local rate} \\
+    One-time model-training compute       & One-time  & \TBD{offline training compute} \\
+    Training datasets                     & One-time  & \$0 (public, openly licensed traces). \\
+    Engineering / operator labour         & Recurring & \TBD{labour rate} \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+% =====================================================================
+\chapter{Application Programming Interface and Control-Bus Contract}
+\label{bm:app-api}
+% =====================================================================
+
+SmartLoad exposes two coordinated contract surfaces: a synchronous HTTP API for
+operators and integrators, and an asynchronous Redis pub/sub control bus that
+carries decision-plane envelopes between services. The HTTP surface is defined
+canonically in the OpenAPI 3.1 specification \cite{openapi}; the control bus is
+catalogued in the channel registry.
+
+\section{HTTP API}
+\label{bm:sec-http}
+
+\Cref{bm:tab-api} summarizes the main \texttt{/api/v1} endpoints. Each
+service also exposes a uniform \texttt{GET /health} probe returning
+\texttt{\{status, redis, timescaledb\}}, with HTTP~503 on a degraded
+dependency.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Principal HTTP endpoints (see the OpenAPI spec for full schemas).}
+  \label{bm:tab-api}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Method} & \textbf{Path} & \textbf{Purpose} \\
+    \midrule
+    GET  & /api/v1/policy          & Read the current operating policy. \\
+    POST & /api/v1/policy          & Propose and commit a policy change (idempotent no-op on no change). \\
+    GET  & /api/v1/audit/policy    & Recent policy-change audit rows, one per changed field. \\
+    GET  & /api/v1/audit/scaling   & Recent autoscaler-action audit rows. \\
+    POST & /api/v1/scale           & Operator override: manually scale the backend pool to a target count. \\
+    GET  & /api/v1/status          & Consolidated one-shot read across every service plus active policy. \\
+    GET  & /api/v1/lb/state        & Current upstream weight table and the set of excluded backends. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{Redis control bus}
+\label{bm:sec-bus}
+
+The decision plane communicates over five Redis \cite{carlson2013redis} pub/sub
+channels. Every message is a versioned JSON envelope, and subscribers tolerate
+unknown fields for forward compatibility. \Cref{bm:tab-channels} lists each
+channel with its publisher and subscribers.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Redis control-bus channels with publishers and subscribers.}
+  \label{bm:tab-channels}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Channel} & \textbf{Publisher} & \textbf{Subscribers} \\
+    \midrule
+    smartload.policy   & policy-manager   & All services that read the operating policy at runtime. \\
+    smartload.anomaly  & anomaly-detector & lb-sidecar (include/exclude on health change); operator-ui live feed. \\
+    smartload.forecast & forecasting      & autoscaler. \\
+    smartload.routing  & rl-engine        & lb-sidecar (rewrites upstream weights when mode is active). \\
+    smartload.scale    & autoscaler       & lb-sidecar (re-queries the pool and rewrites \texttt{upstream.conf}); operator-ui. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\Cref{bm:lst-envelope} shows a representative envelope: the \texttt{ScaleEvent}
+the autoscaler publishes on \texttt{smartload.scale} when a forecast triggers a
+scale-out.
+
+\begin{lstlisting}[language=,caption={A \texttt{ScaleEvent} envelope on \texttt{smartload.scale}.},label={bm:lst-envelope}]
+{
+  "version": 1,
+  "action": "scale_out",
+  "target_count": 4,
+  "current_count": 3,
+  "reason": "forecast_predicted_rps=420 exceeds 3 backends x 100 capacity",
+  "timestamp": "2026-05-14T12:01:00Z"
+}
+\end{lstlisting}
+
+% =====================================================================
+\chapter{Selected Pseudocode and Configuration}
+\label{bm:app-pseudocode}
+% =====================================================================
+
+This appendix gives two short, illustrative artefacts: the autoscaler's
+forecast-driven decision rule, and the NGINX upstream block the lb-sidecar
+rewrites at runtime. Both are abridged for clarity; the authoritative
+implementations live in the service source.
+
+\Cref{bm:lst-autoscaler} sketches the autoscaler decision. The required backend
+count comes from the predicted request rate and the per-instance capacity from
+the live policy, then is clamped to the policy bounds and gated by a cooldown
+timer so the pool cannot oscillate.
+
+\begin{lstlisting}[language=Python,caption={Autoscaler forecast-driven decision (abridged).},label={bm:lst-autoscaler}]
+def decide(forecast, policy, current_count, last_action_time):
+    # Capacity-based target from the predicted load.
+    needed = ceil(forecast.predicted_rps / policy.per_instance_capacity_rps)
+    target = clamp(needed, policy.min_backends, policy.max_backends)
+
+    if target == current_count:
+        return NoOp()
+    # Respect the cooldown so scaling does not flap.
+    if now() - last_action_time < policy.autoscaler_cooldown_seconds:
+        return NoOp()
+
+    action = "scale_out" if target > current_count else "scale_in"
+    return ScaleEvent(action=action, target_count=target,
+                      current_count=current_count)
+\end{lstlisting}
+
+\Cref{bm:lst-upstream} shows the NGINX \cite{nginx} upstream block the
+lb-sidecar maintains. Per-backend \texttt{weight} values are rewritten from
+routing recommendations; a backend flagged unhealthy is marked \texttt{down} so
+it serves no traffic until it recovers.
+
+\begin{lstlisting}[language=,caption={Generated NGINX \texttt{upstream.conf} (illustrative).},label={bm:lst-upstream}]
+upstream backend_pool {
+    server smartload-test-backend-1:8080 weight=90;
+    server smartload-test-backend-2:8080 weight=50;
+    server smartload-test-backend-3:8080 down;   # excluded by anomaly engine
+    server smartload-test-backend-4:8080 weight=10;
+}
+\end{lstlisting}
+
+% =====================================================================
+\chapter{Operator Quick-Start Manual}
+\label{bm:app-quickstart}
+% =====================================================================
+
+This appendix is a short operational walkthrough for bringing up SmartLoad and
+exercising its core controls. It assumes Docker and Docker Compose are
+installed and that the repository has been cloned.
+
+\begin{enumerate}
+  \item \textbf{Configure the environment.} Copy the example environment file
+        (\texttt{config/.env.example}) to \texttt{.env} at the repository root
+        and fill in the database password and any deployment-specific values.
+
+  \item \textbf{Bring up the stack.} Launch the full stack with Docker Compose.
+        The stack must run under the Compose project name \texttt{smartload}
+        because several backend hostnames are referenced explicitly; if the
+        project name differs, NGINX cannot resolve its upstream backends and the
+        load balancer does not start. Force the name explicitly:
+\begin{lstlisting}[language=bash]
+COMPOSE_PROJECT_NAME=smartload docker compose up -d
+\end{lstlisting}
+
+  \item \textbf{Open the operator UI.} Browse to \texttt{http://localhost:8090}.
+        The Swagger UI for the HTTP API is served at
+        \texttt{http://localhost:8090/api/docs}.
+
+  \item \textbf{Read health.} On the Home page, inspect the service-health grid,
+        which polls every service's \texttt{/health} probe. A consolidated
+        machine-readable read is available at \texttt{GET /api/v1/status}.
+
+  \item \textbf{Edit policy.} On the Policy page, review the active operating
+        policy and edit fields such as \texttt{operating\_mode},
+        \texttt{safe\_mode}, the backend bounds, and the latency SLO. The page
+        shows a diff preview before committing; each accepted change is written
+        to the audit trail and published on the policy channel.
+
+  \item \textbf{Trigger a manual scale or isolate.} On the Actions page, scale
+        the pool to a chosen backend count (validated against the policy bounds)
+        or isolate a specific backend. These map to the manual override
+        endpoints and are recorded in the audit trail.
+
+  \item \textbf{Watch the live engine feed.} Open the Live Engines page to watch
+        the merged stream of anomaly, forecast, routing, and scaling envelopes
+        as the decision plane reacts to traffic in real time.
+
+  \item \textbf{Generate load (optional).} Drive synthetic traffic through the
+        Locust traffic simulator at \texttt{http://localhost:8089} and watch
+        the forecast-driven scaling and anomaly-aware routing respond.
+\end{enumerate}
+
+\TBD{Add the exact \texttt{safe\_mode} recovery runbook and the backup/restore
+procedure for the TimescaleDB volume once those operational docs are finalized.}

@@ -1,0 +1,629 @@
+\chapter{Literature Review}
+\label{ch:litreview}
+\label{lit:chapter}
+
+This chapter places SmartLoad inside the existing technology and research
+landscape. SmartLoad is adaptive load-management middleware: an NGINX data
+plane sits in front of a backend pool, while an out-of-band decision plane
+(anomaly detection, demand forecasting, and learned routing) and a control
+plane work together over a Redis bus, with a deterministic classical scheduler
+kept in place as a safety floor. To explain why we made each of these choices,
+the chapter surveys the products and tools in the same space
+(\cref{lit:sec:market}), reviews the state of the art in the research behind
+each engine (\cref{lit:sec:research}), records the standards and best practices
+the system follows and the areas where no standard yet exists
+(\cref{lit:sec:standards}), looks at the data-protection duties that come with
+collecting request telemetry (\cref{lit:sec:laws}), maps the design onto the
+established codes of engineering ethics (\cref{lit:sec:ethics}), and closes by
+pulling together what the survey teaches and the openings SmartLoad is built to
+fill (\cref{lit:sec:conclusion}).
+
+%======================================================================
+\section{Market Survey}
+\label{lit:sec:market}
+
+The market that SmartLoad enters is mature in its individual layers but
+fragmented across them. Three kinds of established product are relevant here:
+the reverse proxies and load balancers that form the request-serving data
+plane; the orchestrators and autoscalers that adjust capacity; and the
+observability stack that supplies the telemetry on which any adaptive decision
+must rest. SmartLoad does not try to replace any of these. It puts a subset of
+them together and adds the decision layer that none of them ships. This section
+walks through each kind, names the specific tools SmartLoad uses, and explains
+the choices.
+
+\subsection{Reverse proxies and load balancers}
+\label{lit:sec:market-lb}
+
+The main production load-balancing fabric is built on long-lived reverse
+proxies that pick an upstream per request from a small set of well-understood
+scheduling rules: round-robin, weighted round-robin, least-connections, and
+consistent hashing. The three open-source implementations that define this
+space are NGINX \cite{nginx}, HAProxy \cite{haproxy}, and Envoy \cite{envoy}.
+All three publish the same family of scheduling rules together with passive and
+active health checking.
+
+\Cref{lit:tab:classical-lb} sets out those four rules, the decision each one
+makes, and the condition under which it stops serving traffic well. The pattern
+across the column is consistent: every rule decides from in-memory state alone,
+so none of them can re-weight an upstream from external telemetry. In NGINX,
+dynamic upstream weights need either a paid module, a configuration rewrite
+followed by a reload, or an external operator process driving the change. The
+data plane in all three projects is designed around in-memory static
+configuration plus passive health probing, so telemetry-driven routing is out
+of scope by construction. Cloud-managed equivalents (AWS Application Load
+Balancer, GCP Cloud Load Balancing, Azure Front Door) expose the same
+scheduling rules behind managed control planes, but they constrain weight
+updates to coarse autoscaling-group events and offer no per-second decision
+surface for an external controller to drive.
+
+\begin{table}[ht]
+\centering
+\caption{Classical load-balancing scheduling rules as published by NGINX
+\cite{nginx}, HAProxy \cite{haproxy}, and Envoy \cite{envoy}. Every rule
+decides from in-memory state; none consumes an external telemetry feedback
+loop.}
+\label{lit:tab:classical-lb}
+\small
+\begin{tabularx}{\linewidth}{@{}lXX@{}}
+\toprule
+\headrow
+\textbf{Rule} & \textbf{Decision} & \textbf{What it cannot do} \\
+\midrule
+Round-robin (RR) &
+Hand requests to upstreams in fixed cyclic order. &
+Assumes uniform capacity; a slow backend keeps taking $1/N$ of traffic until
+passive health checks trip. \\
+\addlinespace
+Weighted RR (WRR) &
+RR with a static per-upstream weight set at admit time. &
+Weights are operator-set and rarely revisited, so the split drifts away from
+real capacity over time. \\
+\addlinespace
+Least-connections (LC) &
+Route to the upstream with the fewest in-flight connections. &
+In-flight count is a noisy load proxy; it tracks capacity only when per-request
+cost is uniform. \\
+\addlinespace
+IP / consistent hash &
+Hash a request attribute (client IP, cookie) to a fixed slot. &
+Sticky by design; cannot react to backend health inside the affinity window
+without breaking session identity. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+SmartLoad picks \textbf{NGINX} as its default data plane for three reasons.
+First, it is everywhere. NGINX is among the most widely deployed reverse
+proxies, which lowers the cost of putting SmartLoad in front of an existing
+estate. Second, the hot-reload model fits. NGINX applies a rewritten upstream
+block on \texttt{nginx -s reload} without dropping live connections, which is
+exactly the actuation surface SmartLoad's control plane needs to nudge weights
+on the order of seconds. Third, the upstream model is simple and explicit. The
+upstream block is plain text that an out-of-band process can rewrite
+deterministically and audit afterwards, which matters for the operator-override
+property described in \cref{lit:sec:ethics}.
+
+The data plane is deliberately \emph{pluggable} rather than NGINX-locked. If
+the decision plane called \texttt{nginx -s reload} directly, the whole stack
+would become NGINX-only, and the first HAProxy or Envoy user would force a
+rewrite. So SmartLoad instead defines a \texttt{LoadBalancerAdapter} interface,
+with one folder per adapter, each self-contained with its implementation,
+documentation, and conformance tests. The NGINX adapter works in the prototype;
+Envoy, HAProxy, and AWS Application Load Balancer adapters exist as scaffolded
+stubs that a conformance suite proves interchangeable once implemented. The
+data plane is therefore a replaceable component behind a stable contract, not a
+hard dependency.
+
+\slpitch{\textbf{Where SmartLoad sits.} SmartLoad does not replace NGINX. It
+runs NGINX as its data plane and adds an out-of-band sidecar that consumes
+Redis-published routing decisions, rewrites \texttt{upstream.conf}, and triggers
+\texttt{nginx -s reload} on the order of seconds. The classical scheduler stays
+in place as the deterministic safety floor and is never deprecated.}
+
+\subsection{Service meshes}
+\label{lit:sec:market-mesh}
+
+Service meshes such as Istio \cite{istio} push routing, retries, mutual TLS,
+and fine-grained traffic-shaping policy into a sidecar proxy attached to every
+workload. This is powerful: a mesh can express canary splits, circuit-breaking,
+and per-route policy uniformly across a fleet. The cost is operational weight.
+A mesh adds a control plane, a per-pod sidecar, and a policy surface that has to
+be learned, operated, and kept current, and for many teams the extra value does
+not justify that overhead. SmartLoad targets the case where a team wants
+adaptive, predictive load management in front of a modest backend pool without
+adopting a full mesh. Where a mesh is already present, SmartLoad's
+adapter-based data plane is meant to sit alongside it rather than compete with
+the mesh's own routing layer.
+
+\subsection{Orchestration and autoscaling}
+\label{lit:sec:market-autoscale}
+
+The orchestration layer that overlaps most directly with SmartLoad is the
+Kubernetes Horizontal Pod Autoscaler (HPA) \cite{k8shpa}, together with
+event-driven extensions such as KEDA \cite{keda} that scale on external signals
+(queue depth, stream lag, custom metrics). These come from a well-documented
+lineage of cluster-management systems, namely Borg, Omega, and Kubernetes
+\cite{burns2016borgomega}, whose evolution shaped the reactive-scaling model in
+use today. \Cref{lit:tab:autoscalers} compares the dominant production shapes.
+
+The defining feature shared across the table is that the trigger is
+\textbf{reactive}: a metric crosses a threshold, a stabilisation window prevents
+flapping, and only then does the replica count move. The lag between load
+arriving and a new replica being ready is bounded below by container start time
+plus warm-up, commonly 30 to 90 seconds for typical web workloads. The same
+order of magnitude appears in the large-scale fleet measurements that motivated
+the Borg work \cite{verma2015borg}. Cloud autoscalers therefore react
+\emph{after} load has already risen, so the spike is felt by users before
+capacity arrives.
+
+Predictive variants do exist. The autoscaling survey by Lorido-Botran et al.\
+\cite{lorido2014autoscaling} catalogues them, and AWS Predictive Scaling is the
+closest commercial analogue: it fits a forecaster on CloudWatch metrics and
+pre-warms instances on the predicted shape. The forecaster is a black box, and,
+more importantly, the forecasting and routing decisions stay decoupled, so the
+prediction cannot inform the per-request scheduler.
+
+\begin{table}[ht]
+\centering
+\caption{Production autoscaler shapes. The trigger is reactive in every case
+except AWS predictive scaling, and the reactive lag is structurally bounded
+below by container start plus warm-up (commonly 30 to 90 seconds).}
+\label{lit:tab:autoscalers}
+\small
+\begin{tabularx}{\linewidth}{@{}lXlc@{}}
+\toprule
+\headrow
+\textbf{System} & \textbf{Trigger} & \textbf{Scales} & \textbf{Posture} \\
+\midrule
+Kubernetes HPA \cite{k8shpa} &
+CPU/memory or custom metric over a stabilisation window &
+Replica count & Reactive \\
+\addlinespace
+KEDA \cite{keda} &
+External event signals (queue depth, stream lag, custom) &
+Replica count (HPA-backed) & Reactive \\
+\addlinespace
+K8s Cluster Autoscaler &
+Pending unschedulable pods &
+Node count & Reactive \\
+\addlinespace
+AWS Auto Scaling (target/step) &
+CloudWatch metric breach &
+EC2 instance count & Reactive \\
+\addlinespace
+AWS Predictive Scaling &
+Built-in forecaster on historical metrics &
+EC2 instance count & Proactive (decoupled) \\
+\addlinespace
+\textbf{SmartLoad autoscaler} &
+Forecasted RPS, with reactive sliding window as fallback &
+Backend pool count & Proactive + reactive floor \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+This reactive-versus-proactive split is well established in the literature.
+Roy et al.\ \cite{roy2011autoscaling} show that provisioning ahead of demand
+from a workload forecast measurably cuts SLA violations against purely reactive
+control, while the Lorido-Botran survey \cite{lorido2014autoscaling} records
+that reactive threshold scaling still dominates practice because it is simple
+and dependable. SmartLoad's response is to make prediction first-class and to
+couple it to actuation. A forecasting service publishes a short-horizon
+request-rate forecast, and an autoscaler uses that forecast to grow the backend
+pool \emph{ahead} of saturation, falling back to a reactive sliding-window rule
+when the forecaster is silent or unhealthy. The contribution here is not a new
+autoscaling algorithm. It is the proactive-by-default posture combined with a
+reactive safety net.
+
+\subsection{Observability stack}
+\label{lit:sec:market-observability}
+
+Any adaptive decision is only as good as the telemetry beneath it, so SmartLoad
+uses a conventional, vendor-neutral observability stack rather than inventing
+one. Request telemetry is emitted in OpenTelemetry's OTLP format
+\cite{opentelemetry}, collected, and stored; per-process service health is
+exposed in the Prometheus exposition format \cite{prometheus} and scraped
+directly; operators view both surfaces in Grafana \cite{grafana}. Aggregated
+time-series telemetry, namely per-backend latency, error rate, and request
+count, lands in TimescaleDB \cite{timescaledb}, a PostgreSQL extension whose
+hypertables suit the append-heavy, time-windowed query pattern that every
+decision engine runs. The control plane coordinates over a Redis pub/sub bus
+\cite{carlson2013redis}, chosen because the control signals are fire-and-forget
+envelopes for which a lightweight broker is enough and a durable queue would be
+over-engineered. The whole system is packaged and shipped with Docker
+\cite{merkel2014docker} so an evaluator can stand the stack up locally and
+reproduce results. Each of these is the de facto open standard in its niche, so
+choosing them keeps SmartLoad portable and lets the new work concentrate in the
+decision plane.
+
+\subsection{Comparison}
+\label{lit:sec:market-comparison}
+
+\Cref{lit:tab:market} compares SmartLoad against the three closest alternatives
+across the axes that matter for predictive load management. NGINX alone is the
+deterministic data plane SmartLoad builds on, Kubernetes HPA is the dominant
+reactive autoscaler, and a service mesh represents the heavyweight, policy-rich
+routing fabric. SmartLoad is the only column that combines predictive scaling
+and learned routing with a deterministic fallback and an operator override, and
+it does so at a far lower operational weight than a mesh.
+
+\begin{table}[ht]
+\centering
+\caption{SmartLoad compared with the closest alternatives across the axes
+relevant to predictive, safety-bounded load management.}
+\label{lit:tab:market}
+\small
+\begin{tabularx}{\linewidth}{@{}Y *{4}{>{\centering\arraybackslash}X}@{}}
+\toprule
+\headrow \textbf{Capability} & \textbf{SmartLoad} & \textbf{NGINX alone} & \textbf{K8s HPA} & \textbf{Service mesh} \\
+\midrule
+Predictive (forecast-driven) scaling & Yes & No & Reactive only & No \\
+Learned (adaptive) routing            & Yes & No & No & Policy-driven, not learned \\
+Deterministic fallback                & Yes (first-class) & Yes (only mode) & N/A & Partial \\
+Operator override / kill switch       & Yes (per decision) & Config edit & Manual & Config edit \\
+Operational weight                    & Low to moderate & Low & Moderate & High \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+%======================================================================
+\section{Existing Research Efforts}
+\label{lit:sec:research}
+
+Where \cref{lit:sec:market} surveyed shipping products, this section surveys the
+research behind each of SmartLoad's engines. The guiding research question
+across the whole system is whether a load balancer can be made to adapt to
+changing backend conditions, predicting load and learning routing preferences,
+without giving up the deterministic guarantees that make classical load
+balancing trustworthy. Each subsection below covers the slice of the literature
+relevant to one engine and records what that literature establishes and where
+its findings stop short of an integration-ready system.
+
+\Cref{lit:tab:lineage} maps the foundations SmartLoad builds on before the
+engine-by-engine discussion. It groups the literature by the engine it informs,
+names the canonical reference in each line, and records what SmartLoad takes
+from it. The remaining subsections expand each row in turn.
+
+\begin{table}[ht]
+\centering
+\caption{Related-work lineage: the research foundations grouped by the
+SmartLoad engine each informs, with the canonical reference and what SmartLoad
+adopts from it.}
+\label{lit:tab:lineage}
+\small
+\begin{tabularx}{\linewidth}{@{}llX@{}}
+\toprule
+\headrow
+\textbf{Engine / concern} & \textbf{Canonical reference} & \textbf{What SmartLoad takes} \\
+\midrule
+Autoscaling (predictive) &
+\cite{lorido2014autoscaling, roy2011autoscaling} &
+Forecast-ahead provisioning cuts SLA breaches; reactive scaling stays the
+dependable default. \\
+\addlinespace
+Time-series forecasting &
+\cite{box2015timeseries, hyndman2021forecasting} &
+ARIMA as the reference baseline; a simple model with uncertainty intervals and
+a moving-average floor. \\
+\addlinespace
+Anomaly detection &
+\cite{liu2008isolationforest, su2019omnianomaly} &
+Unsupervised, label-free, small-artifact scoring; a labelled dataset used only
+for an F1 gate. \\
+\addlinespace
+RL for systems &
+\cite{sutton2018rl, schulman2017ppo, raffin2021sb3} &
+Policy-gradient routing with a clipped objective and action masking as a hard
+safety property. \\
+\addlinespace
+Autonomic computing &
+\cite{kephart2003autonomic, ibm2005mapek} &
+The MAPE-K loop (monitor, analyse, plan, execute over shared knowledge) as the
+control-loop shape. \\
+\addlinespace
+Cluster traces &
+\cite{verma2015borg, tirmazi2020borg, guo2019alibaba} &
+Production-like workload for offline RL training and comparative benchmarks. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Autoscaling and predictive capacity management}
+\label{lit:sec:research-autoscale}
+
+The autoscaling literature is broad and has been surveyed widely. The review by
+Lorido-Botran et al.\ \cite{lorido2014autoscaling} sorts auto-scaling
+techniques for cloud environments along the reactive--predictive and
+threshold--model axes, and its main finding is that reactive, threshold-based
+scaling dominates practice precisely because it is simple and dependable, while
+predictive approaches promise lower tail latency at the cost of forecast risk.
+The predictive branch is shown well by Roy et al.\ \cite{roy2011autoscaling},
+who drive resource provisioning from a workload-forecasting model and a
+look-ahead controller, and show that provisioning \emph{ahead} of demand
+measurably cuts SLA violations compared with purely reactive control. The
+research question SmartLoad takes from this line is how to get a trustworthy
+short-horizon forecast cheaply, and how to degrade gracefully when the forecast
+is wrong. That question motivates both the forecasting engine and its mandatory
+reactive fallback.
+
+\subsection{Time-series forecasting foundations}
+\label{lit:sec:research-forecasting}
+
+The forecasting engine rests on classical time-series theory. The Box--Jenkins
+methodology for autoregressive integrated moving-average (ARIMA) modelling
+\cite{box2015timeseries} gives the canonical framework for fitting an
+autoregressive model to a differenced series and selecting its order from
+autocorrelation structure; it is still the reference baseline against which
+heavier forecasters are judged. The modern, practice-oriented synthesis by
+Hyndman and Athanasopoulos \cite{hyndman2021forecasting} sets out the
+principles SmartLoad's forecasting design follows: prefer a simple model with
+clear uncertainty intervals, always keep a naive or moving-average baseline as
+a floor, and evaluate on held-out data with a scale-free error metric. The key
+finding the field offers is that, at short horizons, a well-specified ARIMA or
+even a moving-average predictor is often competitive with much heavier sequence
+models. That finding is why SmartLoad ships a moving-average baseline as a
+first-class engine and an ARIMA bundle as the upgrade, rather than reaching
+straight for a deep model.
+
+\subsection{Anomaly detection}
+\label{lit:sec:research-anomaly}
+
+The anomaly-detection engine has to flag an unhealthy backend from its telemetry
+without labelled training data, which points to unsupervised methods. Isolation
+Forest \cite{liu2008isolationforest} is the canonical choice: it isolates
+anomalies by random recursive partitioning, using the fact that anomalous
+points sit in sparse regions of feature space and are therefore isolated in
+fewer splits than normal points. Its training cost is linear, it needs no
+labels, and it serialises to a small artifact. Those properties all fit a
+routing-path engine that must fall back cleanly when its model is absent. For
+the multivariate, contextual case, the line of work around the Server Machine
+Dataset (SMD) and stochastic recurrent models \cite{su2019omnianomaly} shows
+that sequence-aware detectors catch contextual anomalies that point-based
+methods miss, and, importantly for evaluation, supplies a public dataset with
+per-timestep ground-truth labels. SmartLoad uses that labelled dataset not for
+training but to check detector quality against a fixed F1 gate. The field's
+finding is a trade-off SmartLoad takes seriously. Point-based detectors are
+cheap and explainable but blind to context, while sequence models are accurate
+but expensive to train and serve, which is why the threshold rule is the
+shipping baseline and the heavier detector is a guarded upgrade path.
+
+\subsection{Reinforcement learning for routing and resource management}
+\label{lit:sec:research-rl}
+
+The learned-routing engine draws on the reinforcement-learning (RL) literature.
+The foundational text by Sutton and Barto \cite{sutton2018rl} frames sequential
+decision-making as a Markov Decision Process and develops the value- and
+policy-based methods the field builds on. Among policy-gradient methods,
+Proximal Policy Optimization (PPO) \cite{schulman2017ppo} is the common choice.
+Its clipped surrogate objective turns off the gradient when the policy update
+leaves a trust region, which makes it forgiving of mis-tuned learning rates
+without an explicit constraint, and that robustness is what makes it practical
+for a small team. SmartLoad uses the action-masking PPO variant from
+Stable-Baselines3 \cite{raffin2021sb3} so that unhealthy backends are removed
+from the action space before the policy ever samples, a hard safety property
+rather than a learned preference.
+
+SmartLoad applies reinforcement learning to routing as a learned policy that
+sits behind proven deterministic baselines, with a safety fallback always in
+place. SmartLoad frames the problem as an offline contextual bandit over
+replayed traces \cite{guo2019alibaba} rather than an online Markov decision
+process, which keeps training reproducible and bounds its cost. The learned
+router runs in shadow mode by default, the classical scheduler stays the trusted
+floor, and the anomaly constraints filter the action space before the policy is
+ever consulted. This keeps the adaptive component bounded by guarantees the
+operator can rely on while the policy is exercised against real traffic.
+
+The honest evaluation finding, developed in the results chapter, is that on a
+homogeneous-latency training distribution the PPO policy converges to
+round-robin equivalence, since uniform sampling is the optimal policy when no
+backend discriminates on latency. The policy is therefore kept in shadow mode
+rather than promoted, and retraining on a heterogeneous-latency distribution is
+the named next step. Richer state features, online updating, and a wider set of
+replayed traces are the further research directions the project records.
+
+\subsection{Autonomic computing and control loops}
+\label{lit:sec:research-mapek}
+
+SmartLoad's overall shape, which is to observe telemetry, decide, actuate, and
+repeat, is an instance of the autonomic-computing vision set out by Kephart and
+Chess \cite{kephart2003autonomic}, in which self-managing systems take low-level
+control off the operator's hands. The concrete pattern is the MAPE-K loop
+(Monitor, Analyse, Plan, Execute, over shared Knowledge) codified in IBM's
+autonomic blueprint \cite{ibm2005mapek}. SmartLoad's mapping is direct: the
+observability stack monitors, the decision engines analyse and plan, the
+load-balancer sidecar and autoscaler execute, and the policy plus telemetry
+store is the shared knowledge. Framing the architecture this way connects it to
+a well-established body of work on safe, layered control and makes clear that
+the new part is not the loop itself but the safety hierarchy imposed on its
+plan stage.
+
+\subsection{Cluster traces as data sources}
+\label{lit:sec:research-traces}
+
+Realistic evaluation of any load-management system needs realistic workload
+data, and the field has settled on a small set of public production traces.
+Google's Borg traces \cite{verma2015borg, tirmazi2020borg} and Alibaba's
+cluster traces \cite{guo2019alibaba} document request patterns, resource usage,
+and machine heterogeneity at fleet scale, and have become the standard data
+sources for autoscaling and scheduling research. SmartLoad replays Alibaba
+trace windows to drive both the offline RL training and the comparative
+benchmarks, which grounds its claims in measured production-like load rather
+than synthetic curves. The published trace studies also supply the empirical
+basis for the tens-of-seconds provisioning-lag figure that motivates predictive
+scaling in the first place.
+
+%======================================================================
+\section{Best Practices and Standards}
+\label{lit:sec:standards}
+
+SmartLoad adopts an established standard at every interface where one exists,
+and is clear about the one place where no standard yet does. Treating these
+standards as constraints rather than afterthoughts is what keeps the system
+portable and interoperable with the surrounding observability and orchestration
+ecosystem surveyed in \cref{lit:sec:market}.
+
+The HTTP control surface, namely the operator API for reading state and posting
+policy changes, is specified against OpenAPI 3.1 \cite{openapi}, so the
+contract is machine-readable, client SDKs can be generated, and the interface
+can be validated in continuous integration. Telemetry follows the OpenTelemetry
+data model and is shipped over OTLP \cite{opentelemetry}, the emerging
+cross-vendor standard for traces, metrics, and logs; this is what lets
+SmartLoad's request telemetry flow into any conformant collector rather than a
+proprietary agent. Per-process health is published in the Prometheus exposition
+format \cite{prometheus}, the de facto standard for pull-based metrics, so any
+Prometheus-compatible scraper can read service metrics without bespoke glue.
+
+Beyond these wire formats, SmartLoad follows two widely adopted engineering
+conventions. The first is semantic versioning, applied consistently to the HTTP
+API, the policy schema, the Redis envelope, and the client SDK so that consumers
+can reason about compatibility. The second is the twelve-factor application
+methodology, whose discipline around configuration-in-environment, stateless
+processes, and disposability maps cleanly onto a containerised,
+horizontally-composed service set. For the eventual rollout of learned routing
+into live traffic, the progressive-delivery patterns embodied by tools such as
+Flagger \cite{flagger}, which provide canary analysis, automated promotion, and
+automated rollback gated on metrics, are the reference model SmartLoad's shadow-
+and hybrid-mode rollout follows.
+
+There is, however, an open opportunity the project targets directly. No settled
+standard yet covers learned routing with a safety fallback. The observability
+and API layers are standardised, and progressive delivery standardises
+\emph{how} a new behaviour is rolled out, but neither one says \emph{what
+guarantees} an adaptive routing decision must satisfy before it is trusted, nor
+how a deterministic fallback should be composed with a learned policy. SmartLoad
+fills that space with its own contract, a strict routing decision hierarchy in
+which anomaly constraints are applied first, learned recommendations second, and
+the classical scheduler third, with an operator kill switch that short-circuits
+all adaptation. This contract is a project convention, not an external standard.
+Naming the opening is itself a contribution of the survey, since the safety
+semantics of adaptive routing are an area where practice currently runs ahead of
+standardisation.
+
+%======================================================================
+\section{Related Laws and Regulations}
+\label{lit:sec:laws}
+
+Any system that collects telemetry from live request traffic has to be checked
+against data-protection law. The most influential regime is the European Union's
+General Data Protection Regulation (GDPR) \cite{gdpr2016}, whose principles of
+lawful basis, purpose limitation, data minimisation, and accountability now
+shape similar regimes worldwide and are a reasonable benchmark even for a system
+not deployed in the EU.
+
+The relevant question is whether SmartLoad processes \emph{personal data}.
+SmartLoad's decision plane works on \emph{operational metadata}: per-backend
+request latencies, HTTP status codes, aggregate request counts, and internal
+backend identifiers, grouped into time windows. It does not collect request
+bodies, client identifiers, authentication tokens, or payload contents, and the
+backend identifiers it records are internal pool labels rather than end-user
+identities. On that basis the telemetry SmartLoad itself processes falls outside
+the core definition of personal data, which materially reduces its regulatory
+exposure.
+
+That conclusion does not end the project's responsibilities. First, the boundary
+is a design property that has to be maintained. If a future feature logged client
+IP addresses or request headers, for example to support consistent-hash routing
+on a client attribute, that data could become personal data, and the
+data-minimisation and purpose-limitation principles would then apply directly.
+So the design treats ``operational metadata only'' as an invariant to defend,
+not a permanent guarantee. Second, a deployer who places SmartLoad in front of a
+service that \emph{does} handle personal data inherits the controller's
+obligations for the surrounding system, so SmartLoad's documentation should make
+clear what it does and does not record so the deployer can complete their own
+assessment. Finally, the project is developed under an academic accreditation
+context whose criteria \cite{abet2025criteria} require explicit consideration of
+the legal and societal impact of engineering work, which is the duty this
+section discharges.
+
+%======================================================================
+\section{Related Code of Ethics}
+\label{lit:sec:ethics}
+
+SmartLoad's design decisions are not only technical; several of them are direct
+expressions of professional engineering ethics. Two codes are authoritative
+here: the ACM/IEEE-CS Software Engineering Code of Ethics and Professional
+Practice \cite{gotterbarn1999ethics} and the ACM Code of Ethics and
+Professional Conduct \cite{acm2018ethics}. Both place the public interest above
+all other considerations, and SmartLoad's safety-first architecture can be read
+as a concrete attempt to honour specific principles from them.
+
+\paragraph{Public: reliability and safety.}
+The first principle of the Software Engineering Code holds that engineers shall
+act consistently with the public interest, which in an infrastructure component
+means putting reliability first and avoiding harm to the systems that depend on
+it. SmartLoad acts on this by refusing to let any adaptive decision remove the
+deterministic safety floor. The classical scheduler is always present, the
+decision plane sits out of the critical request path so that a failed engine
+stops \emph{adaptation} rather than \emph{traffic}, and the routing hierarchy
+guarantees that an unhealthy backend is excluded before any learned
+recommendation is considered. The system is designed to fail safe, not only to
+perform well when everything works.
+
+\paragraph{Product: testing and quality.}
+The Code's product principle requires that work meet the highest professional
+standards, which for SmartLoad is enforced through pluggable engines that each
+ship with a baseline requiring no model artifact, conformance test suites that
+prove adapters interchangeable, and a discipline of unit tests and validation
+gates before a change is accepted. Quality is treated as a property of the
+artifact, established by tests, not a claim made in prose.
+
+\paragraph{Judgment: transparency in reporting.}
+The principle on professional judgment, backed by the ACM Code's commitment to
+honesty and to avoiding misleading claims, is the reason SmartLoad reports its
+evaluation results plainly and keeps the learned router in shadow mode while the
+classical scheduler remains the trusted floor. An engineering report that
+dressed up its adaptive component beyond what the measurements support would
+break this principle directly. Reporting clearly, and letting the safety
+hierarchy follow from the evidence, is how the project honours it.
+
+\paragraph{Transparency and operator agency.}
+Both codes value transparency and respect for the people affected by a system.
+SmartLoad encodes this in two mechanisms. The first is an operator override, a
+single kill-switch flag that immediately disables all adaptation and reverts to
+deterministic routing. The second is an audit log that records every decision
+the system actuates, surfaced through a transparent decision feed. Together the
+audit log, the operator override, and that decision feed give the human
+operator, not the model, final authority, and make every automated action
+inspectable after the fact. This puts the Code's emphasis on honesty and
+accountability into working machinery.
+
+%======================================================================
+\section{Conclusion}
+\label{lit:sec:conclusion}
+
+The survey establishes that the load-management space is strong in its
+individual layers but leaves a clear gap between them. Classical load balancers
+(\cref{lit:sec:market-lb}) provide deterministic, well-understood scheduling but
+cannot react to backend health within seconds without external orchestration.
+Cloud autoscalers (\cref{lit:sec:market-autoscale}) react to threshold breaches
+but, outside narrow proprietary offerings, cannot pre-warm capacity against a
+predicted spike, and even when they forecast they keep the prediction decoupled
+from routing. The research on RL for routing (\cref{lit:sec:research-rl})
+demonstrates feasibility but does not ship as integration-ready middleware, and
+the commercial AIOps platforms surface anomalies and forecasts to a human while
+deliberately declining to automate the data-plane response. No single existing
+system closes the loop from detection to actuation while keeping that actuation
+provably safe.
+
+From this, SmartLoad's technical approach follows. It runs a proven classical
+data plane (NGINX, behind a pluggable adapter) and adds an out-of-band decision
+plane covering anomaly detection, forecasting, and learned routing, coordinated
+over a Redis control bus and grounded in a conventional, standards-based
+observability stack. The decision plane is composed with the data plane through
+a strict safety hierarchy and an operator kill switch, so adaptiveness is only
+ever exercised inside bounds the operator can revoke.
+
+Three openings identified by the survey define the contribution. The first is to
+predict ahead instead of reacting. SmartLoad drives scaling from a short-horizon
+forecast and routing from current-state prediction, moving capacity before the
+spike rather than after the alarm, with a reactive rule as the floor. The second
+is to treat the deterministic fallback as a first-class design property. Every
+engine ships with a dependency-free baseline and degrades to it cleanly, so the
+system never enters a ``no decision available'' state and never loses its
+deterministic guarantee. The third is the absence of a standard for safe learned
+routing. The survey found mature standards for telemetry, APIs, and progressive
+delivery, but none for the safety semantics of an adaptive routing decision, and
+SmartLoad's routing hierarchy is offered as a concrete filling of that gap
+pending an external standard. The chapters that follow develop each of these
+into the system's design and evaluation.

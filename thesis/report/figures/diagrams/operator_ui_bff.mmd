@@ -1,0 +1,30 @@
+flowchart LR
+    Browser["Operator browser"]
+    subgraph OperatorUI["operator-ui (one container, port 8090)"]
+        Web["web/dist/index.html<br/>+ JS bundle<br/>(served at /)"]
+        BFF["bff/app.py<br/>(Flask + gunicorn)"]
+    end
+    PM["policy-manager :8086"]
+    AS["autoscaler :8085"]
+    TLM["telemetry :8081"]
+    AD["anomaly-detector :8082"]
+    FC["forecasting :8083"]
+    RL["rl-engine :8084"]
+    LB["load-balancer :80"]
+
+    Browser ==> Web
+    Web -.fetch /api/ui/*.-> BFF
+    Web -.fetch /api/docs.-> BFF
+    BFF -. /api/v1/policy* .-> PM
+    BFF -. /health .-> AS
+    BFF -. /health .-> TLM
+    BFF -. /health .-> AD
+    BFF -. /health .-> FC
+    BFF -. /health .-> RL
+    BFF -. /health .-> LB
+    BFF -. /health .-> PM
+
+    classDef ui fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    classDef svc fill:#EFF3F6,color:#0f172a,stroke:#5B6472;
+    class Web,BFF ui
+    class PM,AS,TLM,AD,FC,RL,LB svc

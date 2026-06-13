@@ -1,0 +1,45 @@
+flowchart LR
+    TLM["Telemetry Service"]
+    AND["Anomaly Detector"]
+    FCT["Forecasting Engine"]
+    AS["Autoscaler"]
+    PM_W["Policy Manager"]
+
+    metrics[("<b>metrics</b><br/>time · service · instance<br/>metric_name · value")]
+    metrics_1min[("<b>metrics_1min</b><br/>continuous aggregate<br/>(1-min roll-up)")]
+    backend_health[("<b>backend_health</b><br/>time · backend_id<br/>status · score")]
+    scaling_events[("<b>scaling_events</b><br/>time · action<br/>instance_count · reason · mechanism")]
+    forecasts[("<b>forecasts</b><br/>time · horizon_minutes<br/>predicted_rps · model_version<br/>v1.0.7w #159")]
+    policy_changes[("<b>policy_changes</b><br/>time · field · old · new<br/>actor · version")]
+
+    Engines["AI Engines<br/>(anomaly · forecast · RL)"]
+    SC["LB Sidecar"]
+    PM["Policy Manager (audit reader)"]
+    GRF["Grafana"]
+
+    TLM ==>|"METRICS_INSERT"| metrics
+    AND ==>|"BACKEND_HEALTH_INSERT"| backend_health
+    FCT ==>|"FORECAST_INSERT"| forecasts
+    AS ==>|"SCALING_EVENT_INSERT"| scaling_events
+    PM_W ==>|"POLICY_CHANGE_INSERT"| policy_changes
+
+    metrics -.->|"refresh 1 min"| metrics_1min
+    metrics --> Engines
+    metrics --> GRF
+    metrics_1min --> Engines
+    metrics_1min --> GRF
+    backend_health --> SC
+    backend_health --> Engines
+    scaling_events --> PM
+    scaling_events --> GRF
+    forecasts --> GRF
+    policy_changes --> GRF
+
+    classDef table fill:#EFF3F6,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+    classDef cagg fill:#DCE7EE,color:#0f172a,stroke:#5B6472,stroke-width:2px,stroke-dasharray:4 2;
+    classDef writer fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+    classDef reader fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+    class metrics,backend_health,scaling_events,forecasts,policy_changes table
+    class metrics_1min cagg
+    class TLM,AND,FCT,AS,PM_W writer
+    class Engines,SC,PM,GRF reader

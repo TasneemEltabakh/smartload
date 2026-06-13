@@ -1,0 +1,73 @@
+flowchart TB
+    subgraph Ingress["Edge"]
+        ING["Ingress<br/>+ TLS"]
+    end
+
+    subgraph DataPlane["Data plane (Deployment)"]
+        LB["load-balancer<br/>(NGINX)"]
+        SHIPPER["lb-otel-shipper<br/>(sidecar)"]
+        BE["test-backend<br/>(Deployment, scaled by HPA)"]
+    end
+
+    subgraph ControlPlane["Control plane (Deployments)"]
+        PM["policy-manager"]
+        AS["autoscaler"]
+        TEL["telemetry"]
+        AD["anomaly-detector"]
+        FC["forecasting"]
+        RL["rl-engine"]
+        OUI["operator-ui<br/>(BFF + web)"]
+        WH["webhook-dispatcher"]
+    end
+
+    subgraph Stateful["Stateful (StatefulSet or external Service)"]
+        TS[("TimescaleDB")]
+        RDS[("Redis")]
+        RX["redis-exporter<br/>(sidecar / paired Deployment)"]
+    end
+
+    subgraph Observability["Observability (Deployments)"]
+        OTC["otel-collector"]
+        PROM["Prometheus<br/>(or ServiceMonitor)"]
+        GRF["Grafana"]
+    end
+
+    ConfigMap["ConfigMap<br/>policy.yaml"]
+    Secret["Secret<br/>DB + API keys"]
+
+    ING --> LB
+    LB --> BE
+    LB -. "access log" .-> SHIPPER
+    SHIPPER --> OTC
+    BE --> OTC
+    OTC --> TEL
+    TEL --> TS
+    PM <--> TS
+    PM <--> RDS
+    AS <--> RDS
+    AD <--> RDS
+    FC <--> RDS
+    RL <--> RDS
+    AS --> BE
+    OUI <--> PM
+    OUI <--> AS
+    WH <--> RDS
+    PROM --> OTC
+    RDS -. "INFO" .-> RX
+    RX -. /metrics .-> PROM
+    GRF --> PROM
+    GRF --> TS
+
+    ConfigMap -. "mount" .-> PM
+    ConfigMap -. "mount" .-> AS
+    Secret -. "mount" .-> PM
+    Secret -. "mount" .-> WH
+
+    classDef edge   fill:#EFF3F6,color:#0f172a,stroke:#5B6472;
+    classDef ctl    fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    classDef state  fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+    classDef obs    fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+    class ING,LB,SHIPPER,BE edge
+    class PM,AS,TEL,AD,FC,RL,OUI,WH ctl
+    class TS,RDS,RX state
+    class OTC,PROM,GRF obs

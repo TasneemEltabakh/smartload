@@ -1,0 +1,59 @@
+% =====================================================================
+%  SmartLoad -- CIE 599 Final Report (2025/2026)
+%  Title: SmartLoad: An Intelligent Middleware for Telemetry-Driven
+%         Traffic Routing and Predictive Resource Scaling in
+%         Distributed Backend Systems
+%
+%  BUILD:  latexmk -xelatex -interaction=nonstopmode main.tex
+%  (XeLaTeX is required for Times New Roman + the Arabic sections.)
+% =====================================================================
+\documentclass[12pt,letterpaper]{report}
+\input{preamble}
+
+\begin{document}
+
+% --------------------------- FRONT MATTER ---------------------------
+% Roman page numbers for everything before the Introduction.
+\pagenumbering{roman}
+
+\input{frontmatter/cover_en}
+\input{frontmatter/acknowledgement}
+\input{frontmatter/declaration}
+\input{frontmatter/abstract_en}
+
+\begin{singlespace}
+  \tableofcontents
+  \listoftables
+  \listoffigures
+\end{singlespace}
+
+\input{frontmatter/abbreviations}
+
+% ---------------------------- MAIN MATTER ---------------------------
+% Arabic page numbers, restarted at 1 from the Introduction.
+\clearpage
+\pagenumbering{arabic}
+
+\input{chapters/01_introduction}
+\input{chapters/02_literature_review}
+\input{chapters/03a_design_problem}
+\input{chapters/03b_design_solution}
+\input{chapters/04a_impl_overview}
+\input{chapters/04b_impl_decision}
+\input{chapters/04c_impl_testing}
+\input{chapters/05_discussion_impact}
+\input{chapters/06_conclusion}
+
+% ---------------------------- REFERENCES ----------------------------
+\begin{singlespace}
+  \printbibliography[heading=bibintoc,title={References}]
+\end{singlespace}
+
+% --------------------------- BACK MATTER ----------------------------
+\input{backmatter/abstract_ar}
+\input{backmatter/cover_ar}
+
+\appendix
+\input{backmatter/appendices}
+
+\end{document}

@@ -1,0 +1,81 @@
+flowchart TB
+    Client["Clients"]
+
+    subgraph DataPlane["Data Plane"]
+        NGINX["nginx :80→8080"]
+        BE["test-backend × N"]
+    end
+
+    subgraph Telem["Telemetry"]
+        SHP["lb-otel-shipper"]
+        OTC["otel-collector"]
+        TLM["telemetry :8081"]
+        TDB[("TimescaleDB<br/>metrics · backend_health<br/>scaling_events · forecasts<br/>policy_changes")]
+        RX["redis-exporter :9121<br/>(v1.0.7ac #116)"]
+        PRM["prometheus :9090"]
+    end
+
+    subgraph AI["Decision Intelligence"]
+        AND["anomaly :8082<br/>threshold · isolation_forest"]
+        FCT["forecasting :8083<br/>moving_avg · arima"]
+        RLE["rl-engine :8084<br/>round_robin · least_conn<br/>random_shadow · ppo"]
+    end
+
+    subgraph Ctrl["Control"]
+        RDS(["redis :6379"])
+        ASL["autoscaler :8085"]
+        POL["policy :8086"]
+        SDC["lb-sidecar :8087"]
+        OUI["operator-ui :8090<br/>(BFF + web)"]
+        WHD["webhook-dispatcher<br/>(planned #130)"]
+    end
+
+    GRF["grafana :3000"]
+    CUS["Customer<br/>webhook URL"]
+
+    subgraph Tools["Tooling (off the request path)"]
+        LOAD["traffic-simulator :8089<br/>(Locust)"]
+        DEMO["demo-ui :8091<br/>(Dev Console)"]
+    end
+
+    Client --> NGINX --> BE
+    LOAD -- "synthetic load" --> NGINX
+    RDS -. "live feed" .-> DEMO
+    NGINX -. "JSON access log<br/>(shared volume)" .-> SHP
+    SHP -. "OTLP/HTTP-JSON<br/>per request" .-> OTC --> TLM --> TDB
+    TDB --> AND
+    TDB --> FCT
+    TDB --> RLE
+    AND --> RDS
+    FCT --> RDS
+    RLE --> RDS
+    POL --> RDS
+    RDS --> ASL
+    RDS --> SDC
+    RDS --> WHD
+    ASL --> RDS
+    RDS -. "redis INFO" .-> RX
+    RX -. "/metrics" .-> PRM
+    OTC --> PRM
+    PRM --> GRF
+    WHD -. HMAC-signed POST .-> CUS
+    SDC ==> |"reload"| NGINX
+    TDB --> GRF
+    OUI <==> POL
+    OUI <==> ASL
+    OUI --> GRF
+
+    classDef data fill:#EFF3F6,color:#0f172a,stroke:#5B6472;
+    classDef telemetry fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+    classDef ai fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+    classDef ctrl fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    classDef bridge fill:#DCEFE4,color:#0f172a,stroke:#2E8B57,stroke-width:2px;
+    classDef planned fill:#F1F3F5,color:#475569,stroke:#5B6472,stroke-dasharray:4 2;
+    classDef tool fill:#ECEFF2,color:#0E1116,stroke:#5B6472;
+    class WHD,CUS planned;
+    class LOAD,DEMO tool;
+    class NGINX,BE,Client data
+    class SHP,OTC,TLM,TDB,RX,PRM,GRF telemetry
+    class AND,FCT,RLE ai
+    class RDS,ASL,POL,OUI ctrl
+    class SDC bridge

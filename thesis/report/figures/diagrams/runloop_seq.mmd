@@ -1,0 +1,29 @@
+sequenceDiagram
+    autonumber
+    participant App as app.py thread
+    participant DB as TimescaleDB
+    participant Eng as engine (loaded)
+    participant Bus as Redis bus
+
+    Note over App,Bus: Steady state — every POLL_INTERVAL_SECONDS
+    App->>Bus: pubsub.get_message(smartload.policy, timeout=1s)
+    alt policy publish arrived
+        Bus-->>App: PolicyUpdate envelope
+        App->>App: parse_envelope() + policy_from_payload(fallback)
+        App->>App: bootstrap_engine(requested, new_policy)
+        App->>Eng: engine.reload() (re-read .pkl if trained)
+    end
+
+    App->>DB: SVC_QUERY (ANOMALY / FORECAST / RL_STATE)
+    DB-->>App: rows
+    App->>App: build features / history / state from rows
+
+    App->>Eng: score() / forecast() / act()
+    Eng-->>App: AnomalyScore / Forecast / RoutingAction
+
+    alt should_publish() gate passes
+        App->>Bus: publish_envelope(smartload.anomaly / .forecast / .routing)
+        Note right of Bus: subscribers: load-balancer sidecar,<br/>autoscaler, policy-manager, operator UI
+    else gate blocks (safe_mode, healthy-noise)
+        App->>App: drop, increment counter
+    end

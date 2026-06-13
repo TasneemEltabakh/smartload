@@ -1,0 +1,16 @@
+flowchart LR
+    ENV["&lt;SVC&gt;_ENGINE<br/>env var"] --> SELECT{"select_engine(name)"}
+    SELECT -- "loads OK" --> READY["engine_ready=true<br/>engine_type=name"]
+    SELECT -- "raises<br/>(missing .pkl,<br/>bad name,<br/>__init__ failure)" --> FB{"name == baseline?"}
+    FB -- "yes" --> CRASH["startup raises<br/>(deployment bug —<br/>do not swallow)"]
+    FB -- "no" --> BASE["fallback to baseline<br/>engine_ready=false<br/>engine_type=baseline<br/>engine_requested=name"]
+    BASE --> READY2["service runs<br/>on baseline"]
+    READY --> HEALTH["/health surfaces:<br/>engine_type<br/>engine_requested<br/>engine_ready<br/>last_inference_age_seconds"]
+    READY2 --> HEALTH
+
+    classDef ok fill:#DCEFE4,stroke:#2E8B57,color:#0E1116;
+    classDef warn fill:#F1F3F5,stroke:#5B6472,color:#0E1116;
+    classDef bad fill:#F7E3E6,stroke:#B00020,color:#0E1116;
+    class READY,READY2 ok;
+    class BASE warn;
+    class CRASH bad;

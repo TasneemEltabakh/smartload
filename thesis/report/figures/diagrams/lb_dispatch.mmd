@@ -1,0 +1,54 @@
+flowchart LR
+  subgraph Publishers["Publishers"]
+    RL["rl-engine"]
+    AD["anomaly-detector"]
+    PM["policy-manager"]
+    AS["autoscaler"]
+  end
+
+  subgraph Channels["Redis pub/sub"]
+    C1(["smartload.routing"])
+    C2(["smartload.anomaly"])
+    C3(["smartload.policy"])
+    C4(["smartload.scale<br/>v1.0.7z #164"])
+  end
+
+  subgraph Sidecar["lb-sidecar _run_loop"]
+    DOCKER[["discover_all_backends()<br/>(re-queried per envelope)"]]
+    H1["handle_routing<br/>scores → weights"]
+    H2["handle_anomaly<br/>exclude / include"]
+    H3["handle_policy<br/>safe_mode → reset weights<br/>policy snapshot update"]
+    H4["handle_scale<br/>pool → equal-weight map"]
+    ADAPT[["NginxFileAdapter<br/>.set_upstream_weights()<br/>(idempotent on identical map)"]]
+  end
+
+  subgraph Effect["Effect on NGINX"]
+    CONF[["/etc/nginx/conf.d/<br/>upstream.conf"]]
+    NGX[["NGINX worker<br/>nginx -s reload"]]
+  end
+
+  RL ==> C1 ==> H1
+  AD ==> C2 ==> H2
+  PM ==> C3 ==> H3
+  AS ==> C4 ==> H4
+
+  DOCKER -. live pool .-> H1
+  DOCKER -. live pool .-> H2
+  DOCKER -. live pool .-> H3
+  DOCKER -. live pool .-> H4
+
+  H1 --> ADAPT
+  H2 --> ADAPT
+  H3 --> ADAPT
+  H4 --> ADAPT
+
+  ADAPT ==> CONF ==> NGX
+
+  classDef pub fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+  classDef chan fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+  classDef handler fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+  classDef sink fill:#EFF3F6,color:#0f172a,stroke:#5B6472;
+  class RL,AD,PM,AS pub
+  class C1,C2,C3,C4 chan
+  class H1,H2,H3,H4 handler
+  class CONF,NGX sink
