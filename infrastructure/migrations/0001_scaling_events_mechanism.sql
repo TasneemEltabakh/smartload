@@ -1,0 +1,13 @@
+-- 0001 — scaling_events.mechanism
+--
+-- Adds the lifecycle-mechanism column to scaling_events so downstream
+-- consumers can filter on the mechanism (start | provision | stop |
+-- decommission, introduced with the ScalingEvent envelope in #155/v1.0.7v)
+-- with a clean `WHERE mechanism = 'provision'` instead of regex-ing it out of
+-- the free-text `reason` column.
+--
+-- Idempotent: ADD COLUMN IF NOT EXISTS is a no-op on a fresh deployment where
+-- init.sql already created the column (the two are kept in sync). Existing
+-- deployments — whose timescaledb-data volume predates the column and so never
+-- re-ran init.sql — pick it up here. NULL on legacy rows.
+ALTER TABLE scaling_events ADD COLUMN IF NOT EXISTS mechanism TEXT;

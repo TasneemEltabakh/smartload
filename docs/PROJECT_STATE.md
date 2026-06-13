@@ -129,7 +129,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 **Nothing flagged.** Every SOT §18 claim verified by the audit matched the actual code. The closest items to "wrong" are documentation-side:
 
 - The #155 original issue body said the BFF SSE endpoint was `/api/ui/events` — the actual endpoint is `/api/ui/engines/stream`. (Issue text was wrong; code is right; corrected in #156.)
-- The `scaling_events.action` SQL column carries `"scale_out" | "scale_in"` text; v1.0.7v's new `mechanism` field rides in the envelope and textually in `reason` rather than a structured column. Defensible (no migration needed) but a future column add would let downstream consumers join on it cleanly.
+- The `scaling_events.action` SQL column carries `"scale_out" | "scale_in"` text; v1.0.7v's new `mechanism` field rides in the envelope and textually in `reason` rather than a structured column. Defensible (no migration needed) but a future column add would let downstream consumers join on it cleanly. **Update (v1.0.7as, #141):** the `mechanism` column now exists — added to `init.sql` (fresh deployments) + migration `0001` (existing volumes). The autoscaler still also writes mechanism into `reason`; switching `SCALING_EVENT_INSERT` to populate the column is the remaining step (hygiene batch).
 
 ## What NEEDS ENHANCEMENT (works today, could be production-grade)
 
@@ -138,7 +138,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 | ~~Own-metrics~~ | ~~Prometheus `/metrics` per AI service~~ — **DONE v1.0.7al** (#161): `<svc>_up`/`_cycle_*`/`_publish_*` + decision counters across 6 services | ~~#161~~ |
 | API versioning + deprecation | Formal `Sunset` / `Deprecation` header window mechanism | #134 |
 | Strict lint mode | Flip the three structural lints from permissive to enforcing | #139 |
-| DB migrations | Migrations folder + first migration script (today's ops rely on `init.sql` idempotency) | #141 |
+| ~~DB migrations~~ | **DONE v1.0.7as (#141):** `scripts/migrate.py` numbered-SQL runner + `schema_migrations` tracking table + `infrastructure/migrations/0001_scaling_events_mechanism.sql`; `init.sql` kept in sync for fresh volumes. Remaining ops nicety: a profile-gated one-shot `migrate` compose service | ~~#141~~ |
 | Request correlation ID | W3C Trace Context end-to-end propagation for per-request explainability | #143 |
 | Test reorg | Migrate applicable `tests/integration/*` into `tests/e2e/<feature>/` | #140 |
 | Backup / restore runbook | TimescaleDB backup story not yet documented | #142 |

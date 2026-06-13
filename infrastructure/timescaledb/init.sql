@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS scaling_events (
     time           TIMESTAMPTZ NOT NULL,
     action         TEXT        NOT NULL,   -- "scale_out" | "scale_in"
     instance_count INT         NOT NULL,   -- resulting backend count after action
-    reason         TEXT                    -- e.g. "forecast predicted 450 rps"
+    reason         TEXT,                   -- e.g. "forecast predicted 450 rps"
+    mechanism      TEXT                    -- "start" | "provision" | "stop" | "decommission" (#155); NULL for legacy rows. Kept in sync with migration 0001 for existing volumes.
 );
 
 SELECT create_hypertable('scaling_events', 'time', if_not_exists => TRUE);
