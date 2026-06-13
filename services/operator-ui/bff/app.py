@@ -589,14 +589,28 @@ def ui_metrics_ops():
         active_alerts = 0
         notes.append(f"active_alerts: ring buffer read failed: {exc}")
 
-    # TODO(#telemetry): once telemetry-service exposes a /api/v1/metrics/rpm
-    # endpoint (or equivalent Prom scrape proxy), wire throughput_rpm and
-    # requests_total here. Until then we return null + a note so the UI can
-    # display "—" rather than misleading zeros.
+    # Throughput + cumulative request count from telemetry's per-minute
+    # request-rate series (/api/v1/metrics/rpm): throughput_rpm is the most
+    # recent complete-minute rate, requests_total the windowed sum. On any
+    # upstream failure we fall back to null + a note so the UI shows "—"
+    # rather than misleading zeros — same graceful-degradation contract as
+    # /api/ui/metrics/throughput.
     throughput_rpm = None
     requests_total = None
-    notes.append("throughput_rpm: requires telemetry-service /api/v1/metrics/rpm")
-    notes.append("requests_total: requires telemetry-service /api/v1/metrics/rpm")
+    try:
+        r = _http.get(
+            f"{SERVICE_URLS['telemetry']}/api/v1/metrics/rpm",
+            params={"window": 24},
+        )
+        if r.status_code == 200:
+            body = r.json() or {}
+            throughput_rpm = body.get("current_rpm")
+            requests_total = body.get("total_requests")
+        else:
+            notes.append(f"throughput_rpm: telemetry returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("ops metrics: rpm fetch failed: %s", exc)
+        notes.append(f"throughput_rpm: telemetry upstream failed: {exc}")
 
     return jsonify({
         "services_total":        services_total,

@@ -7,18 +7,18 @@ Per the SOT lock (commit `6f89a13`), this is a **transparency + override layer**
 ## Layout
 
 - `bff/` — Flask BFF (backend-for-frontend). Aggregates `/health` from every service, proxies API calls, serves Swagger UI, holds session state if needed.
-- `web/` — frontend (React or chosen stack). Pages:
+- `web/` — frontend (React 18 + TypeScript, built with Vite). Pages:
   - Home — service health overview
   - Policy — read + diff-preview + commit
-  - Live Engines — real-time anomaly / forecast / routing event stream
+  - Live Engines — real-time anomaly / forecast / routing event stream (with an Engine Detail drill-down)
   - Audit — policy_changes + scaling_events table
   - Actions — manual scale / isolate
-  - Dashboards — embedded charts (#131)
-  - Logs — service log viewer (#124, optional)
+  - Dashboards — embedded charts (backlog, #131)
+  - Logs — service log viewer (backlog, #124, optional)
 
 ## Status
 
-Scaffolded only. Not yet in `docker-compose.yml`, does not run. Implementation lands across issues #119–#125, #131.
+**Running.** Built and wired into `docker-compose.yml` as the `operator-ui` service (port 8090): a multi-stage image bundling the Vite/React + TypeScript frontend with the Flask BFF runtime. The BFF fans out `/health` across the control plane, proxies the policy / actions / audit APIs, exposes an SSE activity stream, and serves the consolidated `/api/v1/status` aggregate. The web app ships the Home, Policy, Live Engines (+ Engine Detail), Audit, and Actions pages (#119–#123, #121 live-engines fully shipped). Remaining on the backlog: embedded dashboards (#131) and the log viewer (#124).
 
 ## Why it lives in services/
 
