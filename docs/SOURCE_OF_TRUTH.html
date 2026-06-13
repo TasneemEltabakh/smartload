@@ -1479,9 +1479,9 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.0.7ar &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.7az &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-13 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&ndash;ar pre-Sprint-6 release hardening (critical-bug batch): lb-sidecar quorum guard (never exclude the last active backend → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert); Isolation-Forest non-finite feature guard; all 7 control-plane Flask services moved off the dev server to waitress. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;az pre-Sprint-6 release hardening: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5656,6 +5656,38 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7as&ndash;az — 2026-06-13 — Pre-Sprint-6 hardening: migrations, CI/test, shared modules + adoption</h3>
+<table>
+  <thead><tr><th>Unit</th><th>What changed</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>DB migration runner (#141)</strong></td>
+      <td><code>scripts/migrate.py</code> — a numbered-SQL runner tracking applied versions in <code>schema_migrations</code> (idempotent, re-runnable; not Alembic — fits the raw-SQL persistence). First migration <code>0001_scaling_events_mechanism.sql</code> adds the <code>scaling_events.mechanism</code> column (consumers can filter on it instead of regex-ing <code>reason</code>); <code>init.sql</code> kept in sync for fresh volumes. Closes the "init.sql only runs on a fresh volume" gap.</td>
+      <td>v1.0.7as</td>
+    </tr>
+    <tr>
+      <td><strong>Structural lints in CI + anomaly tests run</strong></td>
+      <td>New <code>structure-lint</code> CI job: <code>lint-redis-channels --strict</code> enforced (after fixing a false positive where the Docker label keys <code>smartload.dynamic</code>/<code>.role</code> were flagged as channels); <code>lint-structure</code> + <code>lint-openapi</code> permissive pending #139. The <code>unit-tests</code> job now installs <code>joblib</code> so the anomaly-detector engine tests run rather than skip.</td>
+      <td>v1.0.7at</td>
+    </tr>
+    <tr>
+      <td><strong>Compose healthchecks</strong></td>
+      <td>Additive <code>/health</code> healthchecks on the seven control-plane/telemetry services (python-stdlib probe; reflects the #163 liveness verdict). Enables <code>docker compose up --wait</code> + future <code>service_healthy</code> gating; no <code>depends_on</code> changed (CI-safe).</td>
+      <td>v1.0.7au</td>
+    </tr>
+    <tr>
+      <td><strong>Shared service primitives (module-first)</strong></td>
+      <td>Three new <code>services/shared/</code> modules with full unit tests: <code>config.py</code> (typed env helpers + fail-fast DSN), <code>bootstrap.py</code> (redis/db probes, <code>shared/</code>-path resolution, SIGTERM wiring, liveness threshold), <code>logging_setup.py</code> (structured logging + correlation IDs, #143). Stdlib-only / injectable so they unit-test without redis/psycopg2/flask.</td>
+      <td>v1.0.7av&ndash;ax</td>
+    </tr>
+    <tr>
+      <td><strong>Adoption: correlation IDs across the fleet (#143)</strong></td>
+      <td>Wired the three modules into all seven app services (anomaly-detector pilot, then fan-out): env blocks → <code>config.env_*</code>; <code>install_correlation_middleware</code> everywhere (per-request <code>X-Correlation-ID</code> / W3C <code>traceparent</code> propagation); <code>bootstrap.check_*</code> / liveness delegates where applicable. Deferred: the <code>print</code>&rarr;<code>get_logger</code> sweep, SIGTERM run-loop drain, and threading the correlation id onto Redis envelopes (the remaining "end-to-end" piece of #143).</td>
+      <td>v1.0.7ay&ndash;az</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7ap&ndash;ar — 2026-06-13 — Pre-Sprint-6 release hardening: critical-bug batch</h3>
 <table>
