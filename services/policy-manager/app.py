@@ -471,4 +471,6 @@ def index():
 if __name__ == "__main__":
     log.info("starting on port %d (CONFIG_PATH=%s)", PORT, CONFIG_PATH)
     validate_at_startup()
-    app.run(host="0.0.0.0", port=PORT)
+    # Production WSGI server (Flask's app.run dev server is single-threaded).
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=PORT, threads=8)

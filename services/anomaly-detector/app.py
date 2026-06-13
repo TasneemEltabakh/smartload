@@ -503,4 +503,7 @@ if __name__ == "__main__":
               f"(set ANOMALY_RUNLOOP_ENABLED=true to enable)", flush=True)
 
     print(f"[{SERVICE_NAME}] starting on port {PORT}", flush=True)
-    app.run(host="0.0.0.0", port=PORT)
+    # Production WSGI server (Flask's app.run dev server is single-threaded);
+    # single process keeps the background run loop a singleton.
+    from waitress import serve
+    serve(app, host="0.0.0.0", port=PORT, threads=8)

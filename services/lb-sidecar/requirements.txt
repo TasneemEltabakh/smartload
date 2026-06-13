@@ -3,3 +3,4 @@ redis>=5.0,<6
 docker>=7.0,<8
 psycopg2-binary>=2.9,<3
 prometheus-client>=0.20,<1
+waitress>=3.0,<4
