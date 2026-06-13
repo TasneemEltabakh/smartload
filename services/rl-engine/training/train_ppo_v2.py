@@ -45,8 +45,8 @@ if str(_RL_ENGINE) not in sys.path:
 logging.getLogger("obs_builder").setLevel(logging.ERROR)
 
 from obs_builder import N_MAX_BACKENDS                       # noqa: E402
-from training.env_v2 import SmartLoadEnvV2, DEFAULT_NORM, action_to_weights  # noqa: E402
-from training.reward_v2 import RewardConfig, compute_reward  # noqa: E402
+from training.env_v2 import SmartLoadEnvV2, DEFAULT_NORM  # noqa: E402
+from training.reward_v2 import RewardConfig  # noqa: E402
 
 _MODELS_DIR = _RL_ENGINE / "models"
 _ACTION_BOUND = 10.0
@@ -78,7 +78,9 @@ def eval_policy(action_fn, seeds, episode_length=128, reward_cfg=None):
         done = False
         while not done:
             obs, r, done, _, info = env.step(action_fn(obs))
-            rewards.append(r); lats.append(info["served_lat_ms"]); sheds.append(info["shed"])
+            rewards.append(r)
+            lats.append(info["served_lat_ms"])
+            sheds.append(info["shed"])
     return {
         "mean_reward": float(np.mean(rewards)),
         "mean_served_latency_ms": float(np.mean(lats)),

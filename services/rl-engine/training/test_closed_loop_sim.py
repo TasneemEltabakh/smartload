@@ -19,12 +19,14 @@ from training.closed_loop_sim import (   # noqa: E402
 
 
 def _pool_latency(weights, profiles, total_rps):
-    w = np.asarray(weights, float); w = w / w.sum()
+    w = np.asarray(weights, float)
+    w = w / w.sum()
     routed = w * total_rps
     lat, shed = [], []
     for i, p in enumerate(profiles):
-        l, s = queue_response(routed[i], p.workers, p.service_s, p.queue_max)
-        lat.append(l); shed.append(s)
+        lt, s = queue_response(routed[i], p.workers, p.service_s, p.queue_max)
+        lat.append(lt)
+        shed.append(s)
     served = routed * (1 - np.array(shed))
     return float((np.array(lat) * served).sum() / served.sum()), float(
         (routed * np.array(shed)).sum() / routed.sum())
@@ -63,7 +65,6 @@ def test_capacity_proportional_beats_even_heterogeneous():
 
 
 def test_degradation_spikes_backend():
-    rng = np.random.default_rng(0)
     sim = ClosedLoopSimulator(n_backends=5, episode_length=64)
     # find a degrading scenario
     for s in range(200):

@@ -42,7 +42,7 @@ if str(_RL_ENGINE) not in sys.path:
 
 from obs_builder import (   # noqa: E402
     N_MAX_BACKENDS, NormParams,
-    build_observation, build_action_mask, all_masked_fallback,
+    build_observation,
 )
 from training.closed_loop_sim import ClosedLoopSimulator, DEFAULT_EPISODE_LENGTH  # noqa: E402
 from training.reward_v2 import RewardConfig, compute_reward                       # noqa: E402

@@ -47,11 +47,10 @@ if str(_RL_ENGINE) not in sys.path:
 
 logging.getLogger("obs_builder").setLevel(logging.ERROR)
 
-from obs_builder import N_MAX_BACKENDS, NormParams, build_observation, build_action_mask  # noqa: E402
+from obs_builder import N_MAX_BACKENDS, build_action_mask  # noqa: E402
 from training.env_v2 import SmartLoadEnvV2, DEFAULT_NORM, action_to_weights        # noqa: E402
 from training.env_discrete_templates import SmartLoadDiscreteTemplatesEnv, template_weights  # noqa: E402
 from training.reward_v2 import RewardConfig                                        # noqa: E402
-from training.closed_loop_sim import ClosedLoopSimulator                           # noqa: E402
 from training.train_ppo_v2 import (                                               # noqa: E402
     eval_policy, model_action_fn, uniform_action, inv_latency_action,
 )
@@ -172,7 +171,9 @@ def eval_discrete_model(model, reward_cfg):
         while not done:
             a, _ = model.predict(np.asarray(obs, dtype=np.float32), deterministic=True)
             obs, r, done, _, info = env.step(a)
-            rewards.append(r); lats.append(info["served_lat_ms"]); sheds.append(info["shed"])
+            rewards.append(r)
+            lats.append(info["served_lat_ms"])
+            sheds.append(info["shed"])
     rew = {"mean_reward": float(np.mean(rewards)),
            "mean_served_latency_ms": float(np.mean(lats)),
            "mean_shed": float(np.mean(sheds))}
