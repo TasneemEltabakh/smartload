@@ -31,8 +31,11 @@ if str(_SERVICE) not in sys.path:
 from engine_base import AnomalyScore, BackendFeatures  # noqa: E402
 from runloop import (                                  # noqa: E402
     DEFAULT_ERROR_RATE_THRESHOLD,
+    DEFAULT_FLIP_CONFIRMATION_CYCLES,
     DEFAULT_LATENCY_MULTIPLIER,
+    BackendState,
     EnginePolicy,
+    apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
     policy_from_payload,
@@ -84,11 +87,13 @@ def test_policy_from_full_payload():
         "safe_mode": True,
         "anomaly_response": "advisory",
         "policy_version": 7,
+        "anomaly_flip_confirmation_cycles": 4,
     }, fallback=fallback)
     assert new.latency_multiplier == 5.0
     assert new.safe_mode is True
     assert new.anomaly_response == "advisory"
     assert new.policy_version == 7
+    assert new.flip_confirmation_cycles == 4
 
 
 def test_policy_missing_fields_use_fallback():
@@ -264,6 +269,107 @@ def test_engine_policy_defaults():
     assert p.error_rate_threshold == DEFAULT_ERROR_RATE_THRESHOLD
     assert p.safe_mode is False
     assert p.anomaly_response == "auto-isolate"
+    assert p.flip_confirmation_cycles == DEFAULT_FLIP_CONFIRMATION_CYCLES
+
+
+def test_engine_kwargs_excludes_flip_confirmation_cycles():
+    """flip_confirmation_cycles is consumed by app.py directly, not an
+    engine constructor param."""
+    p = EnginePolicy(flip_confirmation_cycles=5)
+    assert "flip_confirmation_cycles" not in p.engine_kwargs()
+
+
+# ── apply_stability_gate (B1/B2 fixes) ───────────────────────────────────────
+
+def test_gate_passes_through_when_status_matches_last():
+    state = BackendState(last_status="healthy", last_score=0.0)
+    raw = AnomalyScore("b1", "healthy", 0.0)
+    gated = apply_stability_gate(raw, low_sample=False, state=state, confirmation_cycles=2)
+    assert gated == raw
+    assert state.pending_status is None
+    assert state.pending_count == 0
+
+
+def test_gate_low_sample_preserves_last_non_healthy_status():
+    """B1: a backend failing fast (few samples) shouldn't be reported
+    healthy just because the engine had no evidence this cycle."""
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    raw = AnomalyScore("b1", "healthy", 0.0)  # engine's forced low-sample output
+    gated = apply_stability_gate(raw, low_sample=True, state=state, confirmation_cycles=2)
+    assert gated.status == "unhealthy"
+    assert gated.score == 0.9
+    # state unchanged -- no new evidence was actually observed
+    assert state.last_status == "unhealthy"
+    assert state.pending_count == 0
+
+
+def test_gate_low_sample_with_healthy_last_status_passes_through():
+    state = BackendState(last_status="healthy", last_score=0.0)
+    raw = AnomalyScore("b1", "healthy", 0.0)
+    gated = apply_stability_gate(raw, low_sample=True, state=state, confirmation_cycles=2)
+    assert gated == raw
+
+
+def test_gate_requires_confirmation_cycles_before_flip_to_unhealthy():
+    """B2: a single noisy 'unhealthy' reading shouldn't flip the published
+    status -- it must be observed for confirmation_cycles consecutive
+    cycles."""
+    state = BackendState(last_status="healthy", last_score=0.0)
+
+    # Cycle 1: raw flips to unhealthy, but not yet confirmed.
+    gated1 = apply_stability_gate(AnomalyScore("b1", "unhealthy", 0.9), False, state, confirmation_cycles=2)
+    assert gated1.status == "healthy"
+    assert state.last_status == "healthy"
+    assert state.pending_status == "unhealthy"
+    assert state.pending_count == 1
+
+    # Cycle 2: raw unhealthy again -- now confirmed.
+    gated2 = apply_stability_gate(AnomalyScore("b1", "unhealthy", 0.9), False, state, confirmation_cycles=2)
+    assert gated2.status == "unhealthy"
+    assert gated2.score == 0.9
+    assert state.last_status == "unhealthy"
+    assert state.pending_status is None
+    assert state.pending_count == 0
+
+
+def test_gate_recovery_also_requires_confirmation():
+    """A recovery (unhealthy -> healthy) is gated the same way as a degrade."""
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+
+    gated1 = apply_stability_gate(AnomalyScore("b1", "healthy", 0.0), False, state, confirmation_cycles=2)
+    assert gated1.status == "unhealthy"  # not yet confirmed
+    assert state.pending_status == "healthy"
+    assert state.pending_count == 1
+
+    gated2 = apply_stability_gate(AnomalyScore("b1", "healthy", 0.0), False, state, confirmation_cycles=2)
+    assert gated2.status == "healthy"
+    assert state.last_status == "healthy"
+
+
+def test_gate_flapping_resets_pending_count():
+    """If the raw status reverts to last_status before confirmation, the
+    pending flip is dropped -- prevents single-cycle flaps from
+    accumulating across unrelated flips."""
+    state = BackendState(last_status="healthy", last_score=0.0)
+
+    apply_stability_gate(AnomalyScore("b1", "degraded", 0.5), False, state, confirmation_cycles=2)
+    assert state.pending_status == "degraded"
+    assert state.pending_count == 1
+
+    # Reverts to healthy before confirmation.
+    gated = apply_stability_gate(AnomalyScore("b1", "healthy", 0.0), False, state, confirmation_cycles=2)
+    assert gated.status == "healthy"
+    assert state.pending_status is None
+    assert state.pending_count == 0
+
+
+def test_gate_confirmation_cycles_one_confirms_immediately():
+    """confirmation_cycles=1 acts as a no-op gate -- every raw change is
+    confirmed on first observation."""
+    state = BackendState(last_status="healthy", last_score=0.0)
+    gated = apply_stability_gate(AnomalyScore("b1", "unhealthy", 0.9), False, state, confirmation_cycles=1)
+    assert gated.status == "unhealthy"
+    assert state.last_status == "unhealthy"
 
 
 # ── serialize_engine_state (Live Engines #121) ───────────────────────────────

@@ -37,6 +37,13 @@ The prior bundle (`train_smd.py`, `pipeline="smd"`) trained on SMD with real `te
 
 Thresholds (`healthy_above`, `unhealthy_below`, `unhealthy_score_scale`) and the contamination are baked into the `.pkl` at training time — re-tuning means re-running `tools/anomaly-training/train_production.py` (adjust the healthy-region distribution or the calibration gates), not a runtime policy field. Train it inside the anomaly-detector container so the bundle is pickled with the runtime scikit-learn (1.3.2), then `docker cp` the artifact onto the host (the script header documents the exact commands). The only runtime knob shared with other engines is `min_sample_count` (data-quality gate); `latency_multiplier`/`error_rate_threshold` are accepted for `select_engine()` kwarg compatibility but unused.
 
+## Stability gate + live validation
+
+- **Auto-recovery cool-down (v1.0.7bd)**: the run loop wraps every raw verdict with `runloop.apply_stability_gate` before it is published or persisted — a status flip must hold for `flip_confirmation_cycles` (`EnginePolicy`, default 2) consecutive cycles, and a low-sample cycle preserves the last non-healthy verdict instead of reverting to `healthy`. `app.py::_inference_cycle` persists a `backend_health` row every poll cycle, for every backend.
+- **Stage-B live-injection track (complementary to #165)**: `tools/anomaly-training/collect_production_data.py` records injection-labeled features from the live stack and `train_stage_b.py` fits a single-domain bundle (`pipeline="production_live"`) on them — a real-data alternative-retrain / validation path that sits *alongside* the shipped #165 synthetic recalibration (`train_production.py`, `pipeline="production_synthetic"`) and does **not** auto-promote.
+- **Drift check**: `tools/anomaly-training/evaluate_live.py` scores the *currently shipped* `.pkl` against a fresh injection-labeled collection and warns if F1 drops more than `DRIFT_F1_TOLERANCE` (0.15) vs the bundle's recorded `metadata.test_f1`.
+- **Live-stack acceptance**: `tests/integration/test_anomaly_isolation_forest.py` injects real latency via `/_admin/delay` and asserts the `backend_health` table flips `degraded`/`unhealthy` → `healthy` through the real `.pkl` + stability gate.
+
 ## Tests
 
 - `test_normal_features_are_not_unhealthy` — a feature vector near the centre of the training distribution is classified `healthy` or `degraded`, never `unhealthy`.

@@ -58,7 +58,9 @@ from shared.queries import (                                   # noqa: E402
 )
 
 from runloop import (                                          # noqa: E402
+    BackendState,
     EnginePolicy,
+    apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
     policy_from_payload,
@@ -121,6 +123,9 @@ _publishes_total: int = 0
 _last_tick_at_iso: str | None = None
 _last_publish_at_iso: str | None = None
 _last_output_payload: list[dict] | None = None
+# Per-backend stability-gate memory (B1 low-sample hold / B2 flip confirmation).
+# Only touched by the run-loop thread (_inference_cycle) — not under _state_lock.
+_backend_states: dict[str, BackendState] = {}
 
 
 def _set_engine_state(bootstrap) -> None:
@@ -177,13 +182,37 @@ def _inference_cycle(db_conn, redis_client) -> int:
 
     published = 0
     cycle_outputs: list[dict] = []
+    now_dt = datetime.now(timezone.utc)
     for features in features_list:
         try:
-            score = engine.score(features)
+            raw_score = engine.score(features)
         except Exception as exc:                        # noqa: BLE001
             print(f"[{SERVICE_NAME}] engine.score failed for {features.backend_id}: {exc}", flush=True)
             continue
+
+        # Wrap the engine's raw verdict with per-backend stability memory
+        # (B1 low-sample hold + B2 flip confirmation) before it is persisted
+        # or published — see runloop.apply_stability_gate.
+        low_sample = features.sample_count < policy.min_sample_count
+        state = _backend_states.setdefault(features.backend_id, BackendState())
+        score = apply_stability_gate(raw_score, low_sample, state, policy.flip_confirmation_cycles)
+
         cycle_outputs.append(score_to_event_payload(score, model_version))
+
+        # Persist every backend's verdict every cycle so lb-sidecar startup
+        # hydration always has fresh data (previously only /api/v1/isolate
+        # wrote backend_health). db_conn.autocommit is True (see _run_loop),
+        # so each insert commits independently and a failure can't poison the
+        # rest of the cycle.
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    BACKEND_HEALTH_INSERT,
+                    (now_dt, score.backend_id, score.status, score.score),
+                )
+        except Exception as exc:                        # noqa: BLE001
+            print(f"[{SERVICE_NAME}] backend_health write failed for {score.backend_id}: {exc}", flush=True)
+
         if not should_publish(score, policy):
             continue
         with METRICS.time_publish(ANOMALY_CHANNEL):
@@ -196,7 +225,7 @@ def _inference_cycle(db_conn, redis_client) -> int:
         ISOLATE_TOTAL.labels(backend=score.backend_id, status=score.status).inc()
         published += 1
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = now_dt.isoformat()
     with _state_lock:
         _last_inference_monotonic = time.monotonic()
         _ticks_total += 1

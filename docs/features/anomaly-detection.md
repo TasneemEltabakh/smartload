@@ -1,6 +1,6 @@
 # Anomaly Detection
 
-> **Slice status — partial.** The wiring layer (Phase-1 run loop, threshold-engine baseline, Redis publish, lb-sidecar exclude/include, Live Engines UI surfacing, Grafana Anomaly dashboard) ships today. The **trained Isolation Forest plugin landed v1.0.7ab (#101)** — F1=0.8012 on SMD holdout (PASS of the >0.80 KPI gate) — but is **currently under-reacting at production scales** (25% bench agreement with threshold; production_scaler domain-adaptation gap, tracked as **#165**). Compose default remains `ANOMALY_ENGINE=threshold` until #165's re-calibration lands. Remaining work for full slice closure: #165, plus the SDK / scenario / webhook layers below. This manifest is the canonical place to track what's done and what's pending.
+> **Slice status — near-complete.** The wiring layer (Phase-1 run loop, threshold-engine baseline, Redis publish, lb-sidecar exclude/include, Live Engines UI surfacing, Grafana Anomaly dashboard) ships today. The **trained Isolation Forest plugin landed v1.0.7ab (#101)** — F1=0.8012 on SMD holdout — and was **re-calibrated in production-shape space (#165, v1.0.7ah — 91.4% bench agreement)**; the compose default remains `ANOMALY_ENGINE=threshold` pending the `backend_pool` backend-id-granularity follow-up. **v1.0.7bd** added the auto-recovery cool-down (flip-confirmation stability gate), per-cycle `backend_health` persistence, a live-stack acceptance test, e2e + scenario coverage, and a complementary Stage-B live-injection retrain/validation track (alongside, not replacing, the #165 shipped bundle). Remaining: a dedicated SDK `subscribe_anomaly` helper and the webhook fan-out (#130). This manifest is the canonical place to track what's done and what's pending.
 
 ## What this slice delivers
 
@@ -24,7 +24,7 @@ Customers running SmartLoad in front of a backend pool stop having to write thei
 - Trained engine: `services/anomaly-detector/engines/isolation_forest/engine.py` + `services/anomaly-detector/models/isolation_forest.pkl` (N2.1, shipped v1.0.7ab via #101 — Nada); training pipeline at `tools/anomaly-training/train_smd.py`. Comparison bench: `experiments/anomaly-engine-bench/`. Live-stack test: `tests/integration/test_isolation_forest_live_stack.py` (`@pytest.mark.slow`, requires `ANOMALY_ENGINE=isolation_forest`). Artifact smoke tests: `tests/integration/test_isolation_forest_artifact.py`.
 - Envelope: `services/shared/contracts.py::AnomalyEvent`
 - SQL: `services/shared/queries.py::ANOMALY_QUERY` (parameterised on `window`, `service`, `metric_names`)
-- Storage: `backend_health` hypertable (TimescaleDB) — written by the anomaly-detector when persistence lands; read by lb-sidecar startup hydration (v1.0.7b G2)
+- Storage: `backend_health` hypertable (TimescaleDB) — written every poll cycle, for every backend, by `app.py::_inference_cycle` (plus the manual `/api/v1/isolate` path), v1.0.7bd; read by lb-sidecar startup hydration (v1.0.7b G2)
 - LB consume: `services/lb-sidecar/runloop.py::handle_anomaly` — translates IP backend_id → container name via `BackendRegistry`, calls `adapter.exclude_backend()` / `include_backend()`
 - UI: `services/operator-ui/web/src/pages/LiveEngines.tsx` (anomaly tile + activity feed)
 
@@ -40,13 +40,13 @@ Customers running SmartLoad in front of a backend pool stop having to write thei
 - [x] Grafana Anomaly dashboard (v1.0.7d)
 - [x] Manual operator override — `POST /api/v1/isolate` (slice #3, #123)
 - [x] Isolation Forest model artifact (`isolation_forest.pkl`) — N2.1. Trained on SMD (Server Machine Dataset, machine-1-1 + machine-1-6), test F1=0.8012 > 0.80. See `engines/isolation_forest/README.md` and `tools/anomaly-training/training_log.json`.
-- [ ] Persistence to `backend_health` — anomaly-detector should write every verdict so lb-sidecar startup hydration has data; currently the table only fills under specific test paths
-- [ ] Auto-recovery cool-down — engine should not flicker between HEALTHY and DEGRADED on a single noisy sample
-- [ ] SDK method — `client.subscribe_anomaly(callback)`
+- [x] Persistence to `backend_health` — anomaly-detector writes every verdict, every poll cycle, for every backend (v1.0.7bd, `app.py::_inference_cycle`), so lb-sidecar startup hydration always has fresh data
+- [x] Auto-recovery cool-down — `flip_confirmation_cycles` requires N consecutive confirming cycles before a status change is published/persisted, and a low-sample cycle holds the last non-healthy verdict (`runloop.apply_stability_gate`, v1.0.7bd)
+- [ ] SDK method — dedicated `client.subscribe_anomaly(callback)` (the generic `client.engines.subscribe()` already delivers `smartload.anomaly` events today)
 - [ ] Webhook fan-out (#130)
-- [ ] Scenario script `examples/scenarios/anomaly-detection/anomaly_walk.py`
-- [ ] E2E test suite `tests/e2e/anomaly-detection/`
-- [ ] §25.9 slice-catalog row flipped to *Shipped*
+- [x] Scenario script `examples/scenarios/anomaly-detection/anomaly_walk.py`
+- [x] E2E test suite `tests/e2e/anomaly-detection/` (+ live-stack `tests/integration/test_anomaly_isolation_forest.py`)
+- [x] §25.9 slice-catalog row flipped to *Shipped*
 
 ## Non-goals
 
