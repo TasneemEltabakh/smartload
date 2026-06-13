@@ -1479,9 +1479,9 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.0.7v &nbsp;·&nbsp;
-    <strong>Last updated:</strong> 2026-06-09 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S5 — Phase 3A — DONE — v1.0.7ae doc-completeness sweep: 8 SOT figures updated to cover redis-exporter + smartload.scale subscribers + forecasts/policy_changes hypertables; 3 new walkthrough Mermaid blocks (lb-sidecar four-channel dispatch, IF scoring + coordinate-system bridge, test-layer pyramid); §13 Tech Stack flipped from pending to shipped for Anomaly model / Dashboards / Operator UI. No hidden modules; S6 next</span> &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.7ar &nbsp;·&nbsp;
+    <strong>Last updated:</strong> 2026-06-13 &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&ndash;ar pre-Sprint-6 release hardening (critical-bug batch): lb-sidecar quorum guard (never exclude the last active backend → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert); Isolation-Forest non-finite feature guard; all 7 control-plane Flask services moved off the dev server to waitress. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -4903,7 +4903,7 @@ flowchart LR
     <tr><td><strong>Load Balancer</strong></td><td>NGINX</td><td><span class="pill pill-done">Implemented</span></td><td>Was Go (with Node.js fallback) in old plan; NGINX is the wired choice. <span class="badge badge-historical">Go superseded</span></td></tr>
     <tr><td><strong>Test backend</strong></td><td>Node.js Express</td><td><span class="pill pill-done">Implemented</span></td><td>Multiple instances scaled via compose.</td></tr>
     <tr><td><strong>AI services runtime</strong></td><td>Python 3.11-slim + Flask 3.0.3</td><td><span class="pill pill-done">Implemented</span></td><td>Per-service Dockerfile; <code>psycopg2-binary 2.9.9</code> + <code>redis 5.0.4</code>.</td></tr>
-    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. <strong>Re-calibrated in production-shape space v1.0.7ah (#165): bench agreement 25% &rarr; 91.4%, zero under-reactions, model reacts live. Compose default v1.0.7aj &rarr; reverted to <code>threshold</code> v1.0.7an</strong> (after the v1.0.7ai backend-id canonicalization closed the live-stack test). <strong>The #160 multi-run smoke exposed an over-exclusion: under sustained bench load the IF engine flagged the single seed backend every cycle, the LB dropped the whole pool to <code>down</code> and returned 502 on all traffic (a feedback loop — excluded &rarr; 502s &rarr; high error metric &rarr; re-flagged). <code>threshold</code> is the safe compose default while that is fixed (follow-up to #165); opt back in with <code>ANOMALY_ENGINE=isolation_forest</code>.</strong> LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
+    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. <strong>Re-calibrated in production-shape space v1.0.7ah (#165): bench agreement 25% &rarr; 91.4%, zero under-reactions, model reacts live. Compose default v1.0.7aj &rarr; reverted to <code>threshold</code> v1.0.7an</strong> (after the v1.0.7ai backend-id canonicalization closed the live-stack test). <strong>The #160 multi-run smoke exposed an over-exclusion: under sustained bench load the IF engine flagged the single seed backend every cycle, the LB dropped the whole pool to <code>down</code> and returned 502 on all traffic (a feedback loop — excluded &rarr; 502s &rarr; high error metric &rarr; re-flagged). <code>threshold</code> is the safe compose default while that is fixed (follow-up to #165); opt back in with <code>ANOMALY_ENGINE=isolation_forest</code>. v1.0.7ap adds a lb-sidecar quorum guard + NGINX adapter safety net so the empty-pool 502 feedback loop can no longer occur (an exclusion that would drop the last active backend is refused); v1.0.7aq guards non-finite feature vectors that previously scored a spurious <code>unhealthy</code> — together they de-risk re-enabling the IF default (gated on a live-stack smoke).</strong> LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
     <tr><td><strong>Forecasting model</strong></td><td>ARIMA (statsmodels)</td><td><span class="pill pill-done">v1.0.7i (N2.2) — ships behind <code>FORECAST_ENGINE=arima</code> until MAPE&lt;20%</span></td><td>Moving average remains the default; ARIMA(3,0,1) ships with 25.0% test MAPE (+22.77% vs baseline). Tightening pass needed to cross the SOT KPI.</td></tr>
     <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-done">N2.3–N2.5 code complete</span></td><td>Custom Gym env <code>SmartLoadEnv</code> + <code>obs_builder.py</code> (shared train/serve); <code>PPOPolicy</code> serving plugin; <code>MaskablePPO</code> training script with 50k-step canary gate; <code>round_robin</code> + <code>least_connections</code> baselines; reproducible eval harness (<code>eval_seed_bank.json</code>). DQN fallback (<code>train_dqn.py</code>) ready. <strong>Pending:</strong> ~7-day training run to generate <code>policy.zip</code>.</td></tr>
     <tr><td><strong>Metrics DB</strong></td><td>TimescaleDB (PostgreSQL 16)</td><td><span class="pill pill-done">Implemented</span></td><td>Hypertables + continuous aggregates planned in V1 redesign (draft).</td></tr>
@@ -5656,6 +5656,55 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7ap&ndash;ar — 2026-06-13 — Pre-Sprint-6 release hardening: critical-bug batch</h3>
+<table>
+  <thead><tr><th>Fix</th><th>What changed</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Quorum guard — never exclude the last active backend</strong></td>
+      <td>Excluding the only serving backend left NGINX with an empty <code>upstream</code> block (502 on the whole pool), and the error spike fed back as more <code>unhealthy</code> anomaly events — the self-sustaining outage that forced the v1.0.7an <code>isolation_forest</code> revert. <code>lb-sidecar/runloop.py</code> <code>handle_anomaly()</code> now refuses an exclusion that would empty the pool (<code>action="noop"</code>; degrades safely to prior behaviour if pool state is unreadable); <code>NginxAdapter._render_and_reload()</code> refuses to reload an all-excluded upstream, keeping last-known-good (defence-in-depth across all adapters). Affects the <code>threshold</code> engine too, not just isolation_forest. 58 lb-sidecar unit tests green (5 new guard cases).</td>
+      <td>v1.0.7ap</td>
+    </tr>
+    <tr>
+      <td><strong>Non-finite feature guard (Isolation Forest)</strong></td>
+      <td>A NaN from <code>decision_function()</code> fails both threshold comparisons and falls through to <code>unhealthy</code> with score 1.0, so NULL/NaN feature aggregates produced spurious exclusions (which the quorum guard would then absorb). <code>engine.score()</code> now treats a non-finite/non-numeric feature vector as insufficient data (healthy), like the sample-count gate. The <code>threshold</code> engine does not share this footgun. 7 new hermetic unit tests.</td>
+      <td>v1.0.7aq</td>
+    </tr>
+    <tr>
+      <td><strong>Control-plane Flask apps → waitress (production WSGI)</strong></td>
+      <td>All 7 control-plane services ran the single-threaded Werkzeug <em>development</em> server (<code>app.run</code>) under <code>CMD python app.py</code>. Swapped to <code>waitress.serve(threads=8)</code> — single process keeps the stateful background run loop a singleton (a multi-worker gunicorn would fork it N times); the import is local to <code>__main__</code> so module import (runtime-import-smoke, tooling) is unaffected. operator-ui's stateless BFF stays on gunicorn. <code>waitress==3.0.2</code> pinned per service. May move the bench max-latency number (§34) — re-measure on the evidence batch.</td>
+      <td>v1.0.7ar</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>v1.0.7ao — 2026-06-13 — Doc&harr;code credibility reconciliation: operator-ui ops KPIs wired + stale anomaly-default claims fixed</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>operator-ui ops-summary KPIs wired to telemetry <code>/api/v1/metrics/rpm</code></strong></td>
+      <td>The BFF's <code>ui_metrics_ops()</code> had hardcoded <code>throughput_rpm</code> / <code>requests_total</code> to <code>null</code> behind a <code>TODO</code> awaiting a telemetry RPM endpoint that had already shipped (and is already consumed by <code>ui_metrics_throughput</code>). Wired both fields from <code>/api/v1/metrics/rpm</code> (<code>current_rpm</code> + <code>total_requests</code>) with the same graceful-degradation contract (upstream failure &rarr; <code>null</code> + a <code>notes[]</code> entry), so the Home-page KPIs stop rendering "&mdash;" for resolvable data.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>operator-ui README corrected (falsely claimed "does not run")</strong></td>
+      <td>The service README's Status read "Scaffolded only&hellip; Not yet in <code>docker-compose.yml</code>, does not run." The service is fully built and running — a multi-stage image (React 18 + TypeScript + Vite frontend, Flask BFF runtime), wired into compose on <code>:8090</code>, with a ~1230-line BFF and six pages. Status rewritten to reality + the genuine remaining backlog (#131 dashboards, #124 logs).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>PROJECT_STATE.md stale "isolation_forest is the default / #165 fully closed" summary claims reconciled</strong></td>
+      <td>The v1.0.7an revert (compose default <code>isolation_forest</code> &rarr; <code>threshold</code>) was already recorded in PROJECT_STATE's delta lines + decision-plane table and propagated to this SOT (§18 / §22 model rows), the README and the WALKTHROUGH — but seven high-visibility <em>present-tense summary</em> statements still asserted isolation_forest was the compose default and/or that #165 was "fully closed." All reconciled to: calibration closed (91.4% bench agreement); compose default reverted to <code>threshold</code> pending the over-exclusion follow-up; opt back in via <code>ANOMALY_ENGINE=isolation_forest</code>. No SOT / README / WALKTHROUGH content change was needed — those were already accurate; PROJECT_STATE was the lone straggler.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td><code>python -m py_compile services/operator-ui/bff/app.py</code> passes; the telemetry field-name contract (<code>current_rpm</code> / <code>total_requests</code>) was confirmed against <code>services/telemetry/app.py</code>. No route-level test was added for <code>ui_metrics_ops</code>: the operator-ui unit suite tests the pure-Python <code>aggregator.py</code> with injected IO and deliberately avoids importing Flask, so a Flask-test-client harness would be net-new infra disproportionate to a 15-line wiring change reusing an already-proven pattern (flagged here, not silently skipped). Behaviour-neutral truth-in-docs unit; no production decision path touched beyond the KPI read.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7an — 2026-06-13 — Anomaly-engine compose default reverted to threshold + bench unit-test CI hotfix</h3>
 <table>

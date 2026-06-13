@@ -650,7 +650,7 @@ It subscribes to **four channels**, each handled by a pure function in `services
 | Channel | Handler | What it does |
 | --- | --- | --- |
 | `smartload.routing` | `handle_routing` | RL/baseline policy publishes rankings + a mode (`shadow` / `active`). If `active` and `confidence ≥ rl_confidence_threshold`, convert rankings → integer NGINX weights and rewrite. |
-| `smartload.anomaly` | `handle_anomaly` | Anomaly-detector publishes an excluded-backend set. Adapter renders those rows as `server backend-X:8080 down;` so NGINX skips them without removing them from the pool. |
+| `smartload.anomaly` | `handle_anomaly` | Anomaly-detector publishes an excluded-backend set. Adapter renders those rows as `server backend-X:8080 down;` so NGINX skips them without removing them from the pool. **Quorum guard (v1.0.7ap):** an `unhealthy` event that would exclude the *last* active backend is refused (`action="noop"`) — an empty upstream 502s the whole pool and feeds back as more exclusions; the NGINX adapter also refuses to reload an all-excluded upstream as defence-in-depth. |
 | `smartload.policy` | `handle_policy` | Policy-manager publishes config changes (e.g. `operating_mode`, thresholds). Hot-reloads runtime knobs without restart. |
 | `smartload.scale` | `handle_scale` | **New in v1.0.7z (#164).** Autoscaler publishes `ScalingEvent` after `provision()` / `decommission()` succeeds. Re-queries the live Docker pool, regenerates an equal-weight upstream map, and writes. |
 
