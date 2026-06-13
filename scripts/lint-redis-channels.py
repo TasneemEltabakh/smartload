@@ -22,6 +22,12 @@ REGISTRY = REPO_ROOT / "docs" / "redis-channels.md"
 
 CHANNEL_RE = re.compile(r"""["']smartload\.[a-z_]+["']""")
 
+# `smartload.*` strings that are Docker label KEYS (autoscaler/cluster_client.py),
+# not Redis pub/sub channels. The regex above can't tell them apart — both are
+# quoted `smartload.<word>` literals — so list them here. Without this the lint
+# false-positives, demanding these labels be documented as channels (they aren't).
+NON_CHANNEL_LITERALS = {"smartload.dynamic", "smartload.role"}
+
 
 def find_channels_in_source() -> set[str]:
     found = set()
@@ -32,7 +38,7 @@ def find_channels_in_source() -> set[str]:
             continue
         for match in CHANNEL_RE.findall(text):
             found.add(match.strip("'\""))
-    return found
+    return found - NON_CHANNEL_LITERALS
 
 
 def channels_listed_in_registry() -> set[str]:

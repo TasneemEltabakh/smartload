@@ -26,6 +26,33 @@ jobs:
       - name: Run lint
         run: ruff check services test-backends
 
+  structure-lint:
+    # Anti-drift structural lints (stdlib-only, no extra deps). The Redis
+    # channel registry is ENFORCED (--strict). The service/feature structure
+    # and OpenAPI-route lints run PERMISSIVE (informational) — flipping them to
+    # --strict is #139, gated on resolving their current warnings (rl-engine
+    # classical-policy READMEs/tests, the adaptive-bench example scenario, and
+    # documenting the /api/v1/metrics/* endpoints in the OpenAPI spec).
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Redis channel registry (enforced)
+        run: python scripts/lint-redis-channels.py --strict
+
+      - name: Service / feature structure (permissive)
+        run: python scripts/lint-structure.py
+
+      - name: OpenAPI route coverage (permissive)
+        run: python scripts/lint-openapi.py
+
 
   unit-tests:
     # Pure-Python tests (envelope round-trip, drop-reason callback, SQL
@@ -65,6 +92,14 @@ jobs:
         # experiments/adaptive-bench/requirements-bench.txt (the host-side bench
         # env), not the per-service images, so install them explicitly here.
         run: pip install scipy pandas
+
+      - name: Install joblib for the anomaly-detector engine unit tests
+        # tests/unit/anomaly-detector/test_isolation_forest_engine.py imports
+        # the IF engine, whose module does `import joblib` at load. The test
+        # stubs the model (no sklearn needed) but guards its import with
+        # pytest.importorskip("joblib") — install joblib so it runs here
+        # instead of skipping.
+        run: pip install joblib
 
       - name: Run pure-Python tests
         run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py tests/integration/test_lb_otel_shipper.py -v
