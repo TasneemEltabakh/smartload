@@ -1,0 +1,82 @@
+{
+  "smoke": false,
+  "budgets": {
+    "sac": 150000,
+    "a2c": 400000,
+    "dqn": 150000
+  },
+  "episode_length": 128,
+  "gamma": 0.0,
+  "reward_eval_seeds": [
+    10000,
+    10059
+  ],
+  "gate_seeds": [
+    20000,
+    20039
+  ],
+  "gate_a_bar_ms": 43.205627994511495,
+  "gate_b_bar_ms": 324.6067870335788,
+  "rows": {
+    "round-robin": {
+      "mean_reward": -2.873723220980339,
+      "mean_served_latency_ms": 182.91111484899008,
+      "mean_shed": 0.06306005675725573,
+      "homogeneous_ms": 41.14821713762999,
+      "heterogeneous_ms": 206.07340162065935,
+      "degrading_ms": 275.0695540923278,
+      "gate_a": true,
+      "gate_b": true
+    },
+    "least-conn": {
+      "mean_reward": -2.498545268136823,
+      "mean_served_latency_ms": 246.89670308562802,
+      "mean_shed": 0.09408581857716314,
+      "homogeneous_ms": 41.14821713762999,
+      "heterogeneous_ms": 183.416371527354,
+      "degrading_ms": 309.14932098436077,
+      "gate_a": true,
+      "gate_b": true
+    },
+    "PPO-v2": {
+      "mean_reward": -2.0813542271392413,
+      "mean_served_latency_ms": 144.3040994760565,
+      "mean_shed": 0.07962670955229273,
+      "homogeneous_ms": 99.97126034392906,
+      "heterogeneous_ms": 120.3157788525089,
+      "degrading_ms": 198.6900413919055,
+      "gate_a": false,
+      "gate_b": true
+    },
+    "SAC": {
+      "mean_reward": -2.060022093239606,
+      "mean_served_latency_ms": 178.42012658059514,
+      "mean_shed": 0.11416460741380409,
+      "homogeneous_ms": 137.68812016470082,
+      "heterogeneous_ms": 167.72795251600343,
+      "degrading_ms": 223.91179101832896,
+      "gate_a": false,
+      "gate_b": true
+    },
+    "A2C": {
+      "mean_reward": -2.467842555516134,
+      "mean_served_latency_ms": 172.79227489985405,
+      "mean_shed": 0.09079631982392077,
+      "homogeneous_ms": 143.10267302517354,
+      "heterogeneous_ms": 193.50392802879287,
+      "degrading_ms": 279.62470397052596,
+      "gate_a": false,
+      "gate_b": true
+    },
+    "DQN-templates": {
+      "mean_reward": -1.975972834133087,
+      "mean_served_latency_ms": 165.77462448075858,
+      "mean_shed": 0.07263459338190008,
+      "homogeneous_ms": 41.55732943882172,
+      "heterogeneous_ms": 184.7010685853479,
+      "degrading_ms": 252.3833222670637,
+      "gate_a": true,
+      "gate_b": true
+    }
+  }
+}
