@@ -2120,7 +2120,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span></div>
     <h4>Resource Collector</h4>
     <div class="role">Host-resource shipper · Tasneem</div>
-    <p class="small">Polls the Docker Engine stats API for every container and emits <code>cpu_percent</code>/<code>memory_used_bytes</code>/<code>memory_limit_bytes</code>/<code>memory_percent</code> gauges on the same OTLP → collector → <code>metrics</code> pipeline as the access-log shipper. Fills the per-backend/per-service CPU + memory gap NGINX can't see. Read-only Docker socket.</p>
+    <p class="small">Polls the Docker Engine stats API for every container and emits <code>cpu_percent</code>/<code>memory_used_bytes</code>/<code>memory_limit_bytes</code>/<code>memory_percent</code> gauges on the same OTLP → collector → <code>metrics</code> pipeline as the access-log shipper. Fills the per-backend/per-service CPU + memory gap NGINX can't see. Reaches the Docker socket for <code>list()</code>/<code>stats()</code> only (least-privilege by code path — see deep dive).</p>
     <div class="deeplink"><a href="#mod-resource-collector">→ Deep dive</a></div>
   </article>
 
@@ -2524,7 +2524,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
 </ul>
 <h4>Inputs / Outputs</h4>
 <ul>
-  <li><strong>In:</strong> read-only mount of <code>/var/run/docker.sock</code> — the collector only <em>lists</em> containers and <em>reads</em> stats, never mutates state (contrast the autoscaler's read-write socket).</li>
+  <li><strong>In:</strong> <code>/var/run/docker.sock</code>, bind-mounted <code>:ro</code>. The collector only <em>lists</em> containers and <em>reads</em> stats — never create/exec/remove. <strong>Caveat:</strong> <code>:ro</code> on a unix socket only marks the socket <em>file</em> read-only; it does <em>not</em> restrict the Docker API calls made over it (any <code>docker.sock</code> access is root-equivalent on the host). Least privilege here is enforced by the <em>code path</em>, not the mount flag — a socket proxy scoped to <code>GET /containers</code>/<code>/stats</code> would enforce it at the boundary. The autoscaler mounts the same socket read-write and additionally <em>writes</em> (start/stop) to scale.</li>
   <li><strong>Out:</strong> OTLP/HTTP-JSON metric batches to the OTel Collector; stdout observability counters (cycles, containers_polled, stats_errors, batches_sent, batches_dropped) every 60 s.</li>
 </ul>
 <h4>Read API (downstream)</h4>
@@ -2540,7 +2540,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
   <thead><tr><th>Aspect</th><th>Status</th></tr></thead>
   <tbody>
     <tr><td>Zero-schema-change design (resource gauges on the existing <code>metrics</code> pipeline)</td><td><span class="pill pill-done">DECIDED</span></td></tr>
-    <tr><td>Collector code (<code>services/resource-collector/</code>) + compose wiring (read-only socket)</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td>Collector code (<code>services/resource-collector/</code>) + compose wiring (socket <code>:ro</code>; <code>list()</code>/<code>stats()</code> only)</td><td><span class="pill pill-done">DONE</span></td></tr>
     <tr><td>Telemetry <code>/api/v1/metrics/resources</code> + BFF <code>/api/ui/metrics/resources</code></td><td><span class="pill pill-done">DONE</span></td></tr>
     <tr><td>Tests (18 pure-Python maths/envelope + 2 live-stack) — verified live: 4 metrics × 19 instances</td><td><span class="pill pill-done">DONE</span></td></tr>
     <tr><td>Operator-UI surfaces CPU/memory on engine cards + service-health rows</td><td><span class="pill pill-done">DONE</span></td></tr>

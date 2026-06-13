@@ -394,8 +394,11 @@ services:
   # cpu_percent / memory_used_bytes / memory_limit_bytes / memory_percent gauges
   # on the same OTLP → collector → telemetry `metrics` pipeline as the
   # access-log shipper. Fills the per-backend / per-service CPU + memory gap the
-  # NGINX access log cannot see. Docker socket is mounted READ-ONLY — the
-  # collector only lists containers and reads stats, never mutates state.
+  # NGINX access log cannot see. The socket is bind-mounted :ro and the code
+  # only ever calls containers.list()/stats() — but note :ro on a unix socket
+  # marks the socket *file* read-only, it does NOT gate the Docker API (any
+  # docker.sock access is root-equivalent on the host). Least privilege is
+  # enforced by the code path, not the mount flag.
   resource-collector:
     build:
       context: ./services/resource-collector
