@@ -48,61 +48,11 @@ from training.closed_loop_sim import ClosedLoopSimulator, DEFAULT_EPISODE_LENGTH
 from training.reward_v2 import RewardConfig, compute_reward                       # noqa: E402
 from training.env_v2 import DEFAULT_NORM                                          # noqa: E402
 
-# Number of routing templates exposed as the discrete action set.
-N_TEMPLATES: int = 4
-
-
-def template_weights(template: int, state: list, n: int) -> np.ndarray:
-    """Map a template id + the current `state` (n live BackendStates) to a
-    normalised weight vector over the n live backends.
-
-    `state` is the simulator's list[BackendState]; we read each backend's
-    observed latency and eligibility (via build_action_mask, which sorts by
-    backend_id — the same order the simulator splits demand in). Templates only
-    ever place weight on eligible (healthy/degraded) backends; if none are
-    eligible the all-masked fallback unmasks the single least-bad backend.
-    """
-    mask = build_action_mask(state, N_MAX_BACKENDS)
-    if not mask.any():
-        mask = all_masked_fallback(state, N_MAX_BACKENDS)
-    mask = mask[:n]
-
-    # Latencies in the same (backend_id-sorted) order as the mask / sim split.
-    sorted_state = sorted(state, key=lambda s: s.backend_id)[:n]
-    lat = np.array([s.latency_ms for s in sorted_state], dtype=float)
-    # Pad if the live count is shorter than n (defensive; sim keeps n fixed).
-    if lat.shape[0] < n:
-        lat = np.concatenate([lat, np.full(n - lat.shape[0], np.inf)])
-
-    elig = np.where(mask)[0]
-    w = np.zeros(n, dtype=float)
-    if len(elig) == 0:
-        # Degenerate: uniform over all slots (sim re-normalises anyway).
-        return np.ones(n, dtype=float) / n
-
-    if template == 0:
-        # Uniform over eligible.
-        w[elig] = 1.0
-    elif template == 1:
-        # Inverse-latency over eligible.
-        w[elig] = 1.0 / np.maximum(lat[elig], 1.0)
-    elif template == 2:
-        # Exclude the single slowest eligible, uniform over the rest.
-        if len(elig) == 1:
-            w[elig] = 1.0
-        else:
-            slowest = elig[int(np.argmax(lat[elig]))]
-            keep = [i for i in elig if i != slowest]
-            w[keep] = 1.0
-    elif template == 3:
-        # Concentrate on the single fastest eligible.
-        fastest = elig[int(np.argmin(lat[elig]))]
-        w[fastest] = 1.0
-    else:
-        w[elig] = 1.0
-
-    total = w.sum()
-    return w / total if total > 0 else np.ones(n, dtype=float) / n
+# Routing templates live in the serving-safe `routing_templates` module so that
+# training (this env) and serving (policies/ppo/policy.py DQN branch) share ONE
+# definition and cannot drift apart. (The logic is unchanged from when the
+# algorithm comparison was run — it was extracted verbatim.)
+from routing_templates import N_TEMPLATES, template_weights  # noqa: E402,F401
 
 
 class SmartLoadDiscreteTemplatesEnv(gym.Env):

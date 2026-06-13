@@ -181,6 +181,12 @@ class PPOPolicy(RoutingPolicy):
             mode = "active" if self._operating_mode == "hybrid" else "shadow"
             return RoutingAction(mode=mode, rankings=rankings)
 
+        # DQN-templates artifact: the action is a template id; expand to weights.
+        if self._kind == "discrete_templates":
+            rankings = self._template_rankings(obs, sorted_state, live_n, eligible)
+            mode = "active" if self._operating_mode == "hybrid" else "shadow"
+            return RoutingAction(mode=mode, rankings=rankings)
+
         # Single forward pass — argmax over masked logits gives the chosen
         # backend in one shot. No second predict() call.
         raw_logits = self._get_logits(obs)
@@ -273,6 +279,10 @@ class PPOPolicy(RoutingPolicy):
                 # Closed-loop artifact: a plain SB3 PPO with a Box(weights) head.
                 from stable_baselines3 import PPO
                 self._model = PPO.load(str(self._model_zip.with_suffix("")))
+            elif self._kind == "discrete_templates":
+                # DQN that picks among routing templates (routing_templates.py).
+                from stable_baselines3 import DQN
+                self._model = DQN.load(str(self._model_zip.with_suffix("")))
             else:
                 from sb3_contrib import MaskablePPO  # local import — not in serving image until N2.5
                 self._model = MaskablePPO.load(str(self._model_zip.with_suffix("")))
@@ -329,6 +339,31 @@ class PPOPolicy(RoutingPolicy):
         if raw == "shadow":
             return "shadow"
         return "shadow"
+
+    def _template_rankings(
+        self,
+        obs: np.ndarray,
+        sorted_state: list[BackendState],
+        live_n: int,
+        eligible: list[BackendState],
+    ) -> list[Ranking]:
+        """DQN-templates serving: the deterministic action is a template id; map
+        it to a weight vector via the shared routing_templates.template_weights
+        (same rule used in training), then rank the eligible backends."""
+        from routing_templates import template_weights
+        raw, _ = self._model.predict(np.asarray(obs, dtype=np.float32), deterministic=True)
+        template = int(np.asarray(raw).reshape(-1)[0])
+        w = template_weights(template, sorted_state, live_n)
+        eligible_ids = {b.backend_id for b in eligible}
+        out = [
+            Ranking(backend_id=s.backend_id, score=float(w[i]))
+            for i, s in enumerate(sorted_state[:live_n])
+            if s.backend_id in eligible_ids
+        ]
+        ssum = sum(r.score for r in out) or 1.0
+        out = [Ranking(backend_id=r.backend_id, score=r.score / ssum) for r in out]
+        out.sort(key=lambda r: r.score, reverse=True)
+        return out
 
     def _continuous_weight_rankings(
         self,
