@@ -45,6 +45,8 @@ from shared.contracts import (  # noqa: E402
     make_envelope,
 )
 from shared.metrics import ServiceMetrics, metrics_response  # noqa: E402
+from shared import config                                       # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import POLICY_CHANGE_INSERT  # noqa: E402
 
 from validation import (  # noqa: E402
@@ -56,14 +58,12 @@ from validation import (  # noqa: E402
 
 # ── config ────────────────────────────────────────────────────────────────────
 
-SERVICE_NAME    = os.environ.get("SERVICE_NAME", "policy-manager")
-PORT            = int(os.environ.get("PORT", "8086"))
-REDIS_URL       = os.environ.get("REDIS_URL", "redis://redis:6379")
-TIMESCALEDB_URL = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-CONFIG_PATH     = os.environ.get("CONFIG_PATH", "/config/policy.yaml")
+# Env via the shared typed config helpers (v1.0.7av). Behaviour-preserving.
+SERVICE_NAME    = config.env_str("SERVICE_NAME", "policy-manager")
+PORT            = config.env_int("PORT", 8086)
+REDIS_URL       = config.redis_url()
+TIMESCALEDB_URL = config.timescaledb_url()
+CONFIG_PATH     = config.env_str("CONFIG_PATH", "/config/policy.yaml")
 POLICY_CHANNEL  = "smartload.policy"
 
 logging.basicConfig(
@@ -74,6 +74,8 @@ logging.basicConfig(
 log = logging.getLogger("policy-manager")
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143).
+install_correlation_middleware(app)
 
 # Prometheus own-metrics (#161). policy-manager is event-driven (publishes on
 # a successful POST /api/v1/policy), so only the publish_* surface is populated.

@@ -55,6 +55,8 @@ from shared.contracts import (  # noqa: E402
     parse_envelope,
 )
 from shared.metrics import ServiceMetrics, metrics_response  # noqa: E402
+from shared import bootstrap, config                            # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import (  # noqa: E402
     OBSERVED_RPS_QUERY,
     SCALING_AUDIT_QUERY,
@@ -76,14 +78,12 @@ from manual import ManualScaleError, plan_manual_scale  # noqa: E402
 
 # ── config ────────────────────────────────────────────────────────────────────
 
-SERVICE_NAME     = os.environ.get("SERVICE_NAME", "autoscaler")
-PORT             = int(os.environ.get("PORT", "8085"))
-TIMESCALEDB_URL  = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-REDIS_URL        = os.environ.get("REDIS_URL", "redis://redis:6379")
-POLICY_PATH      = os.environ.get("POLICY_PATH", "/config/policy.yaml")
+# Env via the shared typed config helpers (v1.0.7av). Behaviour-preserving.
+SERVICE_NAME     = config.env_str("SERVICE_NAME", "autoscaler")
+PORT             = config.env_int("PORT", 8085)
+TIMESCALEDB_URL  = config.timescaledb_url()
+REDIS_URL        = config.redis_url()
+POLICY_PATH      = config.env_str("POLICY_PATH", "/config/policy.yaml")
 FORECAST_CHANNEL = "smartload.forecast"
 POLICY_CHANNEL   = "smartload.policy"
 SCALE_CHANNEL    = "smartload.scale"
@@ -92,28 +92,26 @@ SCALE_CHANNEL    = "smartload.scale"
 # default — the legacy #148 routing bench harness relies on the toggle-only
 # path. Operators flip it ON via env var at the start of an adaptive-bench
 # run (see experiments/adaptive-bench/scripts/run.py) and OFF at teardown.
-PROVISIONING_ENABLED = os.environ.get(
-    "AUTOSCALER_PROVISIONING_ENABLED", "false"
-).lower() == "true"
-PROVISIONING_IMAGE   = os.environ.get(
+PROVISIONING_ENABLED = config.env_bool("AUTOSCALER_PROVISIONING_ENABLED", False)
+PROVISIONING_IMAGE   = config.env_str(
     "AUTOSCALER_PROVISIONING_IMAGE", "smartload-test-backend:latest"
 )
-PROVISIONING_NETWORK = os.environ.get(
+PROVISIONING_NETWORK = config.env_str(
     "AUTOSCALER_PROVISIONING_NETWORK", "smartload_smartload-net"
 )
-PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS = int(os.environ.get(
-    "AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS", "30"
-))
+PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS = config.env_int(
+    "AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS", 30
+)
 
 # How long to block on a single pubsub.get_message() call. Doubles as the
 # reactive-fallback poll interval — when no forecast arrives within this
 # window, we check whether to fall back on observed RPS.
-LOOP_TICK_SECONDS = float(os.environ.get("LOOP_TICK_SECONDS", "5.0"))
+LOOP_TICK_SECONDS = config.env_float("LOOP_TICK_SECONDS", 5.0)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
 # becomes visible.
-LIVENESS_STALE_SECONDS         = 5 * LOOP_TICK_SECONDS
+LIVENESS_STALE_SECONDS         = bootstrap.liveness_stale_seconds(LOOP_TICK_SECONDS)
 LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
 
 logging.basicConfig(
@@ -477,6 +475,8 @@ def _maybe_reactive_fallback(cluster, db_conn, redis_client) -> None:
 # ── Flask /health (main thread) ───────────────────────────────────────────────
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143).
+install_correlation_middleware(app)
 
 # Prometheus own-metrics (#161). The autoscaler is event-driven (forecast
 # messages + a reactive tick), so `cycle_*` counts each forecast-driven

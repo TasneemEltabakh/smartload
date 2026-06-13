@@ -58,6 +58,8 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         break
 from shared.contracts import parse_envelope        # noqa: E402
 from shared.metrics import ServiceMetrics, metrics_response  # noqa: E402
+from shared import bootstrap, config                            # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import BACKEND_HEALTH_QUERY    # noqa: E402
 
 from runloop import (  # noqa: E402
@@ -72,6 +74,8 @@ from runloop import (  # noqa: E402
 )
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143).
+install_correlation_middleware(app)
 
 # Prometheus own-metrics (#161). lb-sidecar is a consumer (it doesn't publish),
 # so MESSAGE_TOTAL — control-bus messages it acts on, by channel — is the
@@ -83,29 +87,27 @@ MESSAGE_TOTAL = Counter(
     ["channel"],
 )
 
-SERVICE_NAME          = os.environ.get("SERVICE_NAME", "lb-sidecar")
-PORT                  = int(os.environ.get("PORT", "8087"))
-REDIS_URL             = os.environ.get("REDIS_URL", "redis://redis:6379")
-TIMESCALEDB_URL       = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-NGINX_CONTAINER       = os.environ.get("NGINX_CONTAINER", "smartload-load-balancer-1")
-NGINX_CONF_PATH       = os.environ.get("NGINX_CONF_PATH", "/nginx-conf/upstream.conf")
-LB_ADAPTER            = os.environ.get("LB_ADAPTER", "nginx")
-POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
+# Env via the shared typed config helpers (v1.0.7av). Behaviour-preserving.
+SERVICE_NAME          = config.env_str("SERVICE_NAME", "lb-sidecar")
+PORT                  = config.env_int("PORT", 8087)
+REDIS_URL             = config.redis_url()
+TIMESCALEDB_URL       = config.timescaledb_url()
+NGINX_CONTAINER       = config.env_str("NGINX_CONTAINER", "smartload-load-balancer-1")
+NGINX_CONF_PATH       = config.env_str("NGINX_CONF_PATH", "/nginx-conf/upstream.conf")
+LB_ADAPTER            = config.env_str("LB_ADAPTER", "nginx")
+POLL_INTERVAL_SECONDS = config.env_float("POLL_INTERVAL_SECONDS", 5)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
 # becomes visible to docker healthcheck + /api/v1/status consumers.
-LIVENESS_STALE_SECONDS         = 5 * POLL_INTERVAL_SECONDS
+LIVENESS_STALE_SECONDS         = bootstrap.liveness_stale_seconds(POLL_INTERVAL_SECONDS)
 LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
 # Window passed to BACKEND_HEALTH_QUERY on startup hydration. The query
 # returns the latest row per backend within the window, so it should be
 # wider than the anomaly-detector publish interval but tight enough that
 # truly stale (hours-old) verdicts don't get applied to live state.
-HEALTH_HYDRATION_WINDOW_SECONDS = int(
-    os.environ.get("LB_SIDECAR_HEALTH_HYDRATION_WINDOW_SECONDS", "300")
+HEALTH_HYDRATION_WINDOW_SECONDS = config.env_int(
+    "LB_SIDECAR_HEALTH_HYDRATION_WINDOW_SECONDS", 300
 )
 # ALL_BACKENDS is now a cold-boot SEED used until the Docker daemon is
 # reachable + `discover_all_backends()` returns a non-empty live list.
@@ -125,7 +127,7 @@ ALL_BACKENDS_SEED = [b.strip() for b in ALL_BACKENDS_RAW.split(",") if b.strip()
 # discover_all_backends(_docker_client, seed_backends=ALL_BACKENDS).
 ALL_BACKENDS = ALL_BACKENDS_SEED
 
-RUNLOOP_ENABLED = os.environ.get("LB_SIDECAR_RUNLOOP_ENABLED", "false").lower() == "true"
+RUNLOOP_ENABLED = config.env_bool("LB_SIDECAR_RUNLOOP_ENABLED", False)
 
 ROUTING_CHANNEL = "smartload.routing"
 ANOMALY_CHANNEL = "smartload.anomaly"
@@ -233,11 +235,7 @@ def _hydrate_excluded_from_db(adapter, registry: BackendRegistry) -> int:
 # ── connectivity ──────────────────────────────────────────────────────────────
 
 def check_redis() -> tuple[bool, str | None]:
-    try:
-        redis_lib.from_url(REDIS_URL, socket_connect_timeout=3).ping()
-        return True, None
-    except Exception as exc:  # noqa: BLE001
-        return False, str(exc)
+    return bootstrap.check_redis(REDIS_URL)
 
 
 # ── run loop ──────────────────────────────────────────────────────────────────

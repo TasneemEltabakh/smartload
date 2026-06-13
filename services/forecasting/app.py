@@ -47,6 +47,8 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
 from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
+from shared import bootstrap, config                            # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import FORECAST_QUERY, FORECASTS_INSERT    # noqa: E402
 
 from runloop import (                                          # noqa: E402
@@ -61,27 +63,27 @@ from runloop import (                                          # noqa: E402
 )
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143).
+install_correlation_middleware(app)
 
 # Prometheus own-metrics (#161): forecasting_cycle_*/_publish_*/_up.
 METRICS = ServiceMetrics("forecasting")
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "forecasting")
-PORT = int(os.environ.get("PORT", "8083"))
-TIMESCALEDB_URL = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
+# Env via the shared typed config helpers (v1.0.7av). Behaviour-preserving.
+SERVICE_NAME = config.env_str("SERVICE_NAME", "forecasting")
+PORT = config.env_int("PORT", 8083)
+TIMESCALEDB_URL = config.timescaledb_url()
+REDIS_URL = config.redis_url()
 
-RUNLOOP_ENABLED       = os.environ.get("FORECAST_RUNLOOP_ENABLED", "false").lower() == "true"
-FORECAST_ENGINE       = os.environ.get("FORECAST_ENGINE", "moving_average")
-POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "60"))
-WINDOW_MINUTES        = int(os.environ.get("FORECAST_WINDOW_MINUTES", "60"))
+RUNLOOP_ENABLED       = config.env_bool("FORECAST_RUNLOOP_ENABLED", False)
+FORECAST_ENGINE       = config.env_str("FORECAST_ENGINE", "moving_average")
+POLL_INTERVAL_SECONDS = config.env_float("POLL_INTERVAL_SECONDS", 60)
+WINDOW_MINUTES        = config.env_int("FORECAST_WINDOW_MINUTES", 60)
 
 # Liveness threshold for /health (#163): if the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
 # becomes visible to docker healthchecks + /api/v1/status consumers.
-LIVENESS_STALE_SECONDS = 5 * POLL_INTERVAL_SECONDS
+LIVENESS_STALE_SECONDS = bootstrap.liveness_stale_seconds(POLL_INTERVAL_SECONDS)
 # Back-off when the catch-all in _run_loop swallows an exception. Short
 # enough to recover quickly from transient blips; long enough to avoid
 # hot-looping on a persistent failure.
@@ -121,19 +123,11 @@ def _set_engine_state(bootstrap) -> None:
 # ── connectivity checks ───────────────────────────────────────────────────────
 
 def check_redis() -> tuple[bool, str | None]:
-    try:
-        redis_lib.from_url(REDIS_URL, socket_connect_timeout=3).ping()
-        return True, None
-    except Exception as exc:                            # noqa: BLE001
-        return False, str(exc)
+    return bootstrap.check_redis(REDIS_URL)
 
 
 def check_timescaledb() -> tuple[bool, str | None]:
-    try:
-        psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5).close()
-        return True, None
-    except Exception as exc:                            # noqa: BLE001
-        return False, str(exc)
+    return bootstrap.check_timescaledb(TIMESCALEDB_URL)
 
 
 # ── inference cycle ───────────────────────────────────────────────────────────

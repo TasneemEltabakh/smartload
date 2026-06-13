@@ -61,6 +61,8 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
 from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
+from shared import bootstrap, config                            # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import RL_STATE_QUERY                      # noqa: E402
 
 from runloop import (                                          # noqa: E402
@@ -75,6 +77,8 @@ from runloop import (                                          # noqa: E402
 )
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143).
+install_correlation_middleware(app)
 
 # Prometheus own-metrics (#161). RL_ACTION_TOTAL is the decision distribution:
 # routing has no discrete action set, so we count inferences by policy +
@@ -87,27 +91,25 @@ RL_ACTION_TOTAL = Counter(
     ["policy", "mode"],
 )
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "rl-engine")
-PORT = int(os.environ.get("PORT", "8084"))
-TIMESCALEDB_URL = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
+# Env via the shared typed config helpers (v1.0.7av). Behaviour-preserving.
+SERVICE_NAME = config.env_str("SERVICE_NAME", "rl-engine")
+PORT = config.env_int("PORT", 8084)
+TIMESCALEDB_URL = config.timescaledb_url()
+REDIS_URL = config.redis_url()
 
-RUNLOOP_ENABLED       = os.environ.get("RL_RUNLOOP_ENABLED", "false").lower() == "true"
-RL_POLICY             = os.environ.get("RL_POLICY", "random_shadow")
-RL_MODE               = os.environ.get("RL_MODE", "shadow")
-RL_SERVICE            = os.environ.get("RL_SERVICE", "load-balancer")
-POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
-WINDOW_SECONDS        = int(os.environ.get("RL_WINDOW_SECONDS", "30"))
+RUNLOOP_ENABLED       = config.env_bool("RL_RUNLOOP_ENABLED", False)
+RL_POLICY             = config.env_str("RL_POLICY", "random_shadow")
+RL_MODE               = config.env_str("RL_MODE", "shadow")
+RL_SERVICE            = config.env_str("RL_SERVICE", "load-balancer")
+POLL_INTERVAL_SECONDS = config.env_float("POLL_INTERVAL_SECONDS", 5)
+WINDOW_SECONDS        = config.env_int("RL_WINDOW_SECONDS", 30)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
 # becomes visible.
-LIVENESS_STALE_SECONDS         = 5 * POLL_INTERVAL_SECONDS
+LIVENESS_STALE_SECONDS         = bootstrap.liveness_stale_seconds(POLL_INTERVAL_SECONDS)
 LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
-POLICY_MANAGER_URL    = os.environ.get("POLICY_MANAGER_URL", "http://policy-manager:8086")
+POLICY_MANAGER_URL    = config.env_str("POLICY_MANAGER_URL", "http://policy-manager:8086")
 
 ROUTING_CHANNEL = "smartload.routing"
 POLICY_CHANNEL  = "smartload.policy"
@@ -166,19 +168,11 @@ def _set_policy_state(bootstrap) -> None:
 # ── connectivity checks ───────────────────────────────────────────────────────
 
 def check_redis() -> tuple[bool, str | None]:
-    try:
-        redis_lib.from_url(REDIS_URL, socket_connect_timeout=3).ping()
-        return True, None
-    except Exception as exc:                            # noqa: BLE001
-        return False, str(exc)
+    return bootstrap.check_redis(REDIS_URL)
 
 
 def check_timescaledb() -> tuple[bool, str | None]:
-    try:
-        psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5).close()
-        return True, None
-    except Exception as exc:                            # noqa: BLE001
-        return False, str(exc)
+    return bootstrap.check_timescaledb(TIMESCALEDB_URL)
 
 
 # ── inference cycle ───────────────────────────────────────────────────────────

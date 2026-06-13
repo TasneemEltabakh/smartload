@@ -47,17 +47,19 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         sys.path.insert(0, _cand)
         break
 from shared.queries import METRICS_INSERT  # noqa: E402
+from shared import config                                       # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143).
+install_correlation_middleware(app)
 
-SERVICE_NAME    = os.environ.get("SERVICE_NAME", "telemetry")
-PORT            = int(os.environ.get("PORT", "8081"))
-TIMESCALEDB_URL = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-REDIS_URL          = os.environ.get("REDIS_URL", "redis://redis:6379")
-READ_API_ROW_LIMIT = int(os.environ.get("READ_API_ROW_LIMIT", "10000"))
+# Env via the shared typed config helpers (v1.0.7av). Behaviour-preserving.
+SERVICE_NAME    = config.env_str("SERVICE_NAME", "telemetry")
+PORT            = config.env_int("PORT", 8081)
+TIMESCALEDB_URL = config.timescaledb_url()
+REDIS_URL          = config.redis_url()
+READ_API_ROW_LIMIT = config.env_int("READ_API_ROW_LIMIT", 10000)
 
 
 # ── observability counters (SOT §8.3: rows written / dropped / mean batch) ───
