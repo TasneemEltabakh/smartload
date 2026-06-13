@@ -430,6 +430,32 @@ def handle_routing(
         )
 
 
+def _excluding_would_empty_pool(adapter, backend_name: str) -> bool:
+    """True only when we can *positively* determine that excluding
+    ``backend_name`` would leave the upstream with zero active servers.
+
+    Excluding the last serving backend makes NGINX 502 the entire pool;
+    the resulting error spike feeds straight back into the telemetry the
+    anomaly-detector scores, producing yet more ``unhealthy`` events — a
+    self-sustaining outage (the failure mode the v1.0.7an isolation_forest
+    revert worked around). A single slow backend still returning 200s
+    beats an empty upstream returning 502 on everything.
+
+    Defensive by construction: any uncertainty (no ``current_state``,
+    malformed state, unreadable pool) returns ``False`` so the exclusion
+    proceeds exactly as it did before this guard existed.
+    """
+    try:
+        state = adapter.current_state()
+        known = set(state.upstream_weights)
+        excluded = set(state.excluded_backends)
+    except Exception:  # noqa: BLE001 — the guard must never itself block dispatch
+        return False
+    if not known:
+        return False
+    return not (known - (excluded | {backend_name}))
+
+
 def handle_anomaly(
     payload: dict,
     registry: BackendRegistry,
@@ -438,6 +464,10 @@ def handle_anomaly(
     """Process an AnomalyEvent payload.
 
     Unhealthy → exclude_backend; healthy/degraded → include_backend.
+
+    Quorum guard: an ``unhealthy`` event that would exclude the *last*
+    active backend is refused (action="noop") rather than emptying the
+    upstream — see ``_excluding_would_empty_pool``.
     """
     raw_backend_id = payload.get("backend_id", "")
     status = payload.get("status", "healthy")
@@ -446,6 +476,13 @@ def handle_anomaly(
         backend_name = registry.translate_one(raw_backend_id)
 
         if status == "unhealthy":
+            if _excluding_would_empty_pool(adapter, backend_name):
+                return AnomalyOutcome(
+                    applied=False,
+                    backend_id=backend_name,
+                    action="noop",
+                    error="quorum guard: kept last active backend in service",
+                )
             adapter.exclude_backend(backend_name)
             return AnomalyOutcome(applied=True, backend_id=backend_name, action="exclude")
         else:

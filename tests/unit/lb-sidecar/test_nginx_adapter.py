@@ -14,7 +14,7 @@ Coverage:
   5. include_backend — restores server, triggers reload, idempotent.
   6. current_state — reflects in-memory state correctly.
   7. Atomic write — tmp file is cleaned up on error.
-  8. All-excluded fallback — conf is valid (comment placeholder).
+  8. All-excluded safety net — refuses empty upstream, keeps last-known-good.
   9. docker exec failure — raises RuntimeError.
   10. Rendering order — sorted by address for deterministic output.
 """
@@ -197,21 +197,45 @@ def test_current_state_reflects_mutations(tmp_path):
     assert state.excluded_backends == {"c:8080"}
 
 
-# ── All-excluded fallback ─────────────────────────────────────────────────────
+# ── All-excluded safety net (quorum) ──────────────────────────────────────────
 
-def test_all_excluded_conf_is_valid(tmp_path):
+def test_excluding_last_backend_keeps_last_known_good(tmp_path):
+    """Quorum safety net: the adapter refuses to render an upstream with
+    zero active servers (NGINX 502s an empty pool, which feeds back as more
+    anomaly exclusions). Excluding the only backend keeps the last-known-good
+    conf — b1 still serving — and defers the reload."""
+    docker = _make_docker()
+    adapter = NginxAdapter(
+        conf_path=tmp_path / "upstream.conf",
+        nginx_container="lb",
+        docker_client=docker,
+        all_backends=["b1:8080"],
+    )
+    adapter.set_upstream_weights({"b1:8080": 50})       # writes + reloads
+    reloads_after_write = docker.containers.get("lb").exec_run.call_count
+    adapter.exclude_backend("b1:8080")                  # would empty pool → refused
+    content = (tmp_path / "upstream.conf").read_text()
+    assert "upstream backend_pool {" in content
+    assert "b1:8080 down" not in content                # last-known-good retained
+    assert "weight=50" in content
+    # No reload was triggered for the refused exclusion.
+    assert docker.containers.get("lb").exec_run.call_count == reloads_after_write
+
+
+def test_excluding_one_of_several_still_renders(tmp_path):
+    """The safety net only fires when *all* backends would be excluded. With
+    a peer still active, exclusion renders normally."""
     adapter = NginxAdapter(
         conf_path=tmp_path / "upstream.conf",
         nginx_container="lb",
         docker_client=_make_docker(),
-        all_backends=["b1:8080"],
+        all_backends=["b1:8080", "b2:8080"],
     )
-    adapter.set_upstream_weights({"b1:8080": 50})
+    adapter.set_upstream_weights({"b1:8080": 50, "b2:8080": 50})
     adapter.exclude_backend("b1:8080")
     content = (tmp_path / "upstream.conf").read_text()
-    # upstream block must not be empty (NGINX would reject it)
-    assert "upstream backend_pool {" in content
-    assert "}" in content
+    assert "b1:8080 down" in content
+    assert "b2:8080 down" not in content
 
 
 # ── Docker exec failure ───────────────────────────────────────────────────────

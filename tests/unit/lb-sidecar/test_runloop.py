@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 _SERVICE = Path(__file__).resolve().parents[3] / "services" / "lb-sidecar"
@@ -310,12 +311,90 @@ def test_handle_routing_adapter_error_captured():
 
 # ── handle_anomaly ────────────────────────────────────────────────────────────
 
-def test_handle_anomaly_unhealthy_excludes():
+def _adapter_with_pool(weights, excluded=()):
+    """A mock adapter whose current_state() reports a real pool snapshot,
+    so the quorum guard in handle_anomaly can reason about it."""
     adapter = MagicMock()
+    adapter.current_state.return_value = SimpleNamespace(
+        upstream_weights=dict(weights),
+        excluded_backends=set(excluded),
+    )
+    return adapter
+
+
+def test_handle_anomaly_unhealthy_excludes():
+    # Two-backend pool: excluding backend-1 leaves backend-2 serving, so
+    # the quorum guard allows it.
+    adapter = _adapter_with_pool({"backend-1:8080": 1, "backend-2:8080": 1})
     registry = MagicMock(spec=BackendRegistry)
     registry.translate_one.return_value = "backend-1:8080"
     outcome = handle_anomaly(
         {"backend_id": "172.18.0.5:8080", "status": "unhealthy", "score": 0.9},
+        registry, adapter,
+    )
+    assert outcome.applied is True
+    assert outcome.action == "exclude"
+    adapter.exclude_backend.assert_called_once_with("backend-1:8080")
+
+
+def test_handle_anomaly_refuses_to_exclude_last_active_backend():
+    """Quorum guard: an unhealthy verdict on the only serving backend is
+    refused — excluding it would empty the upstream and 502 the pool (the
+    failure mode behind the v1.0.7an isolation_forest revert)."""
+    adapter = _adapter_with_pool({"backend-1:8080": 1})
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend-1:8080"
+    outcome = handle_anomaly(
+        {"backend_id": "172.18.0.5:8080", "status": "unhealthy", "score": 0.99},
+        registry, adapter,
+    )
+    assert outcome.applied is False
+    assert outcome.action == "noop"
+    assert "quorum guard" in (outcome.error or "")
+    adapter.exclude_backend.assert_not_called()
+
+
+def test_handle_anomaly_refuses_when_only_peer_already_excluded():
+    """Two-backend pool with one already excluded: the survivor going
+    unhealthy must not be excluded too."""
+    adapter = _adapter_with_pool(
+        {"backend-1:8080": 1, "backend-2:8080": 1},
+        excluded=["backend-2:8080"],
+    )
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend-1:8080"
+    outcome = handle_anomaly(
+        {"backend_id": "10.0.0.1:8080", "status": "unhealthy", "score": 0.9},
+        registry, adapter,
+    )
+    assert outcome.applied is False
+    assert outcome.action == "noop"
+    adapter.exclude_backend.assert_not_called()
+
+
+def test_handle_anomaly_excludes_when_a_healthy_peer_remains():
+    """With a healthy peer still in the pool, exclusion proceeds normally."""
+    adapter = _adapter_with_pool({"backend-1:8080": 1, "backend-2:8080": 1})
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend-1:8080"
+    outcome = handle_anomaly(
+        {"backend_id": "10.0.0.1:8080", "status": "unhealthy", "score": 0.9},
+        registry, adapter,
+    )
+    assert outcome.applied is True
+    assert outcome.action == "exclude"
+    adapter.exclude_backend.assert_called_once_with("backend-1:8080")
+
+
+def test_handle_anomaly_guard_degrades_safely_without_state():
+    """If current_state() is unavailable/malformed the guard must not block
+    dispatch — exclusion proceeds exactly as before the guard existed."""
+    adapter = MagicMock()
+    adapter.current_state.side_effect = RuntimeError("no state")
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend-1:8080"
+    outcome = handle_anomaly(
+        {"backend_id": "10.0.0.1:8080", "status": "unhealthy", "score": 0.9},
         registry, adapter,
     )
     assert outcome.applied is True

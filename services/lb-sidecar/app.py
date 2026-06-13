@@ -393,6 +393,10 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                             _excluded_backends = set(adapter.current_state().excluded_backends)
                         print(f"[{SERVICE_NAME}] anomaly: {outcome.action} "
                               f"{outcome.backend_id}", flush=True)
+                    elif outcome.action == "noop" and outcome.error:
+                        # Guard refusal (e.g. quorum), not a failure — log distinctly.
+                        print(f"[{SERVICE_NAME}] anomaly guard: {outcome.error} "
+                              f"({outcome.backend_id})", flush=True)
                     elif outcome.error:
                         print(f"[{SERVICE_NAME}] anomaly error: {outcome.error}",
                               flush=True)

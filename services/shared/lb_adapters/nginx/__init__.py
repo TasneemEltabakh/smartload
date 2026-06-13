@@ -150,6 +150,21 @@ class NginxAdapter(LoadBalancerAdapter):
         return "".join(lines)
 
     def _render_and_reload(self) -> None:
+        # Quorum safety net (defence-in-depth behind the lb-sidecar's
+        # handle_anomaly guard). NGINX serves 502 on an upstream block with
+        # no live `server` lines, and that error spike feeds back as more
+        # anomaly exclusions — a self-sustaining outage. If every known
+        # backend would be excluded we keep the last-known-good upstream and
+        # defer: a later include_backend / scale event re-triggers a valid
+        # render. (The in-memory `_excluded` intent is still recorded, so the
+        # backend renders `down;` again the moment a healthy peer reappears.)
+        if self._weights and all(b in self._excluded for b in self._weights):
+            _log.warning(
+                "refusing nginx reload — all %d backend(s) excluded; "
+                "keeping last-known-good upstream to avoid an empty pool",
+                len(self._weights),
+            )
+            return
         # #155 Risk 3 de-risk — NGINX resolves upstream hostnames at config
         # load time. If a dynamically-provisioned backend's hostname hasn't
         # propagated through Docker's embedded DNS yet, `nginx -s reload`
