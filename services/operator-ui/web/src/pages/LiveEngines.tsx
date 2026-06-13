@@ -14,10 +14,15 @@ import {
 import {
   ENGINES_STREAM_URL,
   api,
+  formatBytes,
+  resourcesByService,
   type EngineStateBody,
   type EngineStreamEvent,
   type EnginesSnapshot,
+  type ServiceResource,
 } from "../api";
+
+import { MemoryStick } from "lucide-react";
 
 const SNAPSHOT_REFRESH_MS = 5_000;
 const FEED_MAX = 200;
@@ -193,13 +198,38 @@ function IconFor({ name }: { name: string }) {
   return <Cpu size={16} strokeWidth={2} />;
 }
 
+function ResourceLine({ res }: { res: ServiceResource | undefined }) {
+  // CPU/memory from the resource-collector (v1.0.7bb). Hidden until the first
+  // sample arrives so a tile never renders a misleading "0%".
+  if (!res || (res.cpu_percent == null && res.memory_used_bytes == null)) return null;
+  const memPct = res.memory_percent != null && res.instances > 0
+    ? res.memory_percent / res.instances
+    : null;
+  return (
+    <div className="tile-metrics">
+      <span className="tile-metric" title="CPU — % of one core (summed across instances)">
+        <Cpu size={12} strokeWidth={2} />
+        {res.cpu_percent != null ? `${res.cpu_percent.toFixed(res.cpu_percent < 10 ? 1 : 0)}%` : "—"}
+      </span>
+      <span className="tile-metric" title="Memory used (summed across instances)">
+        <MemoryStick size={12} strokeWidth={2} />
+        {formatBytes(res.memory_used_bytes)}
+        {memPct != null ? <span className="tile-metric-sub"> ({memPct.toFixed(0)}%)</span> : null}
+      </span>
+      {res.instances > 1 ? <span className="tile-metric-sub">· {res.instances} inst</span> : null}
+    </div>
+  );
+}
+
 function EngineTile({
   name,
   body,
+  res,
   onOpenDetails,
 }: {
   name: string;
   body: EngineStateBody | undefined;
+  res: ServiceResource | undefined;
   onOpenDetails: () => void;
 }) {
   const status = statusOf(body);
@@ -262,6 +292,8 @@ function EngineTile({
         {eng ? <>{eng.kind === "policy" ? "Policy" : "Engine"}: <code>{eng.loaded}</code></> : null}
         {body.rl_mode_env ? <> · rl_mode_env <code>{body.rl_mode_env}</code></> : null}
       </div>
+
+      <ResourceLine res={res} />
 
       <div className="tile-footer">
         <div className="tile-chips">
@@ -343,6 +375,7 @@ function DetailsDrawer({
 
 export default function LiveEnginesPage() {
   const [snapshot, setSnapshot] = useState<EnginesSnapshot | null>(null);
+  const [resources, setResources] = useState<Record<string, ServiceResource>>({});
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [feed, setFeed] = useState<EngineStreamEvent[]>([]);
   const [streamState, setStreamState] = useState<"connecting" | "open" | "closed" | "error">("connecting");
@@ -355,9 +388,13 @@ export default function LiveEnginesPage() {
     let cancelled = false;
     async function tick() {
       try {
-        const s = await api.enginesSnapshot();
+        const [s, r] = await Promise.all([
+          api.enginesSnapshot(),
+          api.getResources().catch(() => null),
+        ]);
         if (!cancelled) {
           setSnapshot(s);
+          if (r) setResources(resourcesByService(r));
           setSnapshotError(null);
         }
       } catch (err: any) {
@@ -462,6 +499,7 @@ export default function LiveEnginesPage() {
               key={name}
               name={name}
               body={snapshot?.services[name]}
+              res={resources[name]}
               onOpenDetails={() => setDrawer(name)}
             />
           ))}

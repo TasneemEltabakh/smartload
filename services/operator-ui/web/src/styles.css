@@ -469,6 +469,14 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
 }
 .svc-row:last-child { border-bottom: 0; }
+.svc-row-head {
+  padding-top: 0;
+  padding-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-size: 10px;
+}
+.svc-row-head .small { font-size: 10px; }
 
 .svc-row .svc-name { font-weight: 500; color: var(--text); }
 .svc-row .svc-meta { color: var(--muted); font-size: 11px; }
@@ -1077,6 +1085,24 @@ table td.empty {
 }
 
 .engine-tile .secondary code { color: var(--text); }
+
+.engine-tile .tile-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: -4px 0 12px;
+}
+.engine-tile .tile-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.engine-tile .tile-metric svg { color: var(--muted); }
+.engine-tile .tile-metric-sub { color: var(--muted); font-size: 11px; }
 
 .engine-tile .tile-footer {
   display: flex;

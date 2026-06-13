@@ -548,6 +548,94 @@ def metrics_slo():
     }), 200
 
 
+_RESOURCE_METRICS = (
+    "cpu_percent",
+    "memory_used_bytes",
+    "memory_limit_bytes",
+    "memory_percent",
+)
+
+
+@app.route("/api/v1/metrics/resources", methods=["GET"])
+def metrics_resources():
+    """Latest CPU / memory sample per container instance.
+
+    ?window=N — how far back to look for a fresh sample, in seconds
+    (default 120, cap 3600). The resource-collector ships every ~15s, so a
+    2-minute window comfortably catches the most recent point per instance
+    while excluding instances that have gone silent (e.g. a stopped backend).
+
+    Pivots the long-format `metrics` rows into one object per instance:
+        {instances: [{instance, service, cpu_percent, memory_used_bytes,
+                      memory_limit_bytes, memory_percent, time}],
+         window_seconds, count}
+    DISTINCT ON keeps only the newest row per (instance, metric_name). Any DB
+    failure collapses to an empty list with HTTP 200 — same degrade-don't-error
+    rule as the rpm / latency / slo cards."""
+    try:
+        window = int(request.args.get("window", 120))
+    except (TypeError, ValueError):
+        window = 120
+    if window <= 0:
+        window = 120
+    window = min(window, 3600)
+    interval = f"{window} seconds"
+
+    empty = {"instances": [], "window_seconds": window, "count": 0}
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                # DISTINCT ON (instance, metric_name) + ORDER BY ... time DESC
+                # returns the freshest value of each metric for each instance
+                # in one scan. metric_name set is a bind param tuple.
+                cur.execute(
+                    """
+                    SELECT DISTINCT ON (instance, metric_name)
+                        instance, service, metric_name, value, time
+                    FROM metrics
+                    WHERE time > NOW() - %s::interval
+                      AND metric_name IN %s
+                    ORDER BY instance, metric_name, time DESC
+                    """,
+                    (interval, _RESOURCE_METRICS),
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] resources query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    if not rows:
+        return jsonify(empty), 200
+
+    # Pivot: one dict per instance, newest sample timestamp wins.
+    by_instance: dict[str, dict] = {}
+    for instance, service, metric_name, value, ts in rows:
+        rec = by_instance.setdefault(instance, {
+            "instance": instance,
+            "service":  service,
+            "cpu_percent":        None,
+            "memory_used_bytes":  None,
+            "memory_limit_bytes": None,
+            "memory_percent":     None,
+            "time": None,
+        })
+        rec[metric_name] = value
+        iso = ts.isoformat() if ts else None
+        if iso and (rec["time"] is None or iso > rec["time"]):
+            rec["time"] = iso
+
+    instances = sorted(by_instance.values(), key=lambda r: r["instance"])
+    return jsonify({
+        "instances":      instances,
+        "window_seconds": window,
+        "count":          len(instances),
+    }), 200
+
+
 @app.route("/api/v1/stats", methods=["GET"])
 def stats():
     with _stats_lock:

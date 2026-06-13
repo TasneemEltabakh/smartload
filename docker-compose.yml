@@ -389,6 +389,29 @@ services:
       - smartload-net
     restart: unless-stopped
 
+  # ── Resource Collector (host-resource shipper, SOT §8.1.2) ───────────────────
+  # Polls the Docker Engine stats API for every SmartLoad container and emits
+  # cpu_percent / memory_used_bytes / memory_limit_bytes / memory_percent gauges
+  # on the same OTLP → collector → telemetry `metrics` pipeline as the
+  # access-log shipper. Fills the per-backend / per-service CPU + memory gap the
+  # NGINX access log cannot see. Docker socket is mounted READ-ONLY — the
+  # collector only lists containers and reads stats, never mutates state.
+  resource-collector:
+    build:
+      context: ./services/resource-collector
+    environment:
+      OTEL_COLLECTOR_URL: http://otel-collector:4318/v1/metrics
+      SERVICE_NAME: resource-collector
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-smartload}
+      POLL_INTERVAL_S: ${RESOURCE_POLL_INTERVAL_S:-15}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - otel-collector
+    networks:
+      - smartload-net
+    restart: unless-stopped
+
   test-backend:
     build:
       context: ./test-backends

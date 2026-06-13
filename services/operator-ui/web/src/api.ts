@@ -240,6 +240,63 @@ export interface RelatedMetrics {
   rps_current: number | null;
 }
 
+// ── Per-container CPU / memory (resource-collector, v1.0.7bb) ─────────────────
+
+export interface ResourceSample {
+  instance: string;
+  service: string;
+  cpu_percent: number | null;
+  memory_used_bytes: number | null;
+  memory_limit_bytes: number | null;
+  memory_percent: number | null;
+  time: string | null;
+}
+
+export interface ResourcesResponse {
+  instances: ResourceSample[];
+  window_seconds: number;
+  count: number;
+}
+
+export interface ServiceResource {
+  cpu_percent: number | null;     // summed across the service's instances
+  memory_used_bytes: number | null;
+  memory_limit_bytes: number | null;
+  memory_percent: number | null;
+  instances: number;
+}
+
+// Aggregate the flat per-instance list into a {serviceName: rollup} map so the
+// engine cards / service-health rows can look a service up by name. Most
+// SmartLoad services are a single container; test-backend has several, so CPU
+// and used-memory are summed and the limit takes the max (per-container limits
+// are identical in the prototype).
+export function resourcesByService(
+  resp: ResourcesResponse | null | undefined,
+): Record<string, ServiceResource> {
+  const out: Record<string, ServiceResource> = {};
+  for (const s of resp?.instances ?? []) {
+    const cur =
+      out[s.service] ??
+      { cpu_percent: null, memory_used_bytes: null, memory_limit_bytes: null, memory_percent: null, instances: 0 };
+    cur.instances += 1;
+    if (s.cpu_percent != null) cur.cpu_percent = (cur.cpu_percent ?? 0) + s.cpu_percent;
+    if (s.memory_used_bytes != null) cur.memory_used_bytes = (cur.memory_used_bytes ?? 0) + s.memory_used_bytes;
+    if (s.memory_limit_bytes != null) cur.memory_limit_bytes = Math.max(cur.memory_limit_bytes ?? 0, s.memory_limit_bytes);
+    if (s.memory_percent != null) cur.memory_percent = (cur.memory_percent ?? 0) + s.memory_percent;
+    out[s.service] = cur;
+  }
+  return out;
+}
+
+// Compact byte formatter — MB up to 1 GiB, then GB. Null → em-dash.
+export function formatBytes(n: number | null | undefined): string {
+  if (n == null) return "—";
+  const mb = n / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
 async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const r = await fetch(input, {
     ...init,
@@ -344,6 +401,11 @@ export const api = {
 
   getRelatedMetrics: () =>
     _fetchJson<RelatedMetrics>("/api/ui/policy/related-metrics"),
+
+  getResources: (windowSeconds?: number) =>
+    _fetchJson<ResourcesResponse>(
+      `/api/ui/metrics/resources${windowSeconds ? `?window=${windowSeconds}` : ""}`,
+    ),
 };
 
 // SSE stream URL — opened by the LiveEngines page with new EventSource(...).

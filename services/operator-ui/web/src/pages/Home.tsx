@@ -18,11 +18,14 @@ import {
 
 import {
   api,
+  formatBytes,
+  resourcesByService,
   type ActivityItem,
   type HealthSummary,
   type OpsMetrics,
   type RoutingMetrics,
   type ServiceHealth,
+  type ServiceResource,
   type ThroughputResponse,
 } from "../api";
 
@@ -115,18 +118,20 @@ export default function HomePage() {
   const [throughput, setThroughput] = useState<ThroughputResponse | null>(null);
   const [routing, setRouting] = useState<RoutingMetrics | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [resources, setResources] = useState<Record<string, ServiceResource>>({});
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     async function tick() {
       try {
-        const [h, m, t, r, a] = await Promise.all([
+        const [h, m, t, r, a, res] = await Promise.all([
           api.health(),
           api.getOpsMetrics().catch(() => null),
           api.getThroughput(24).catch(() => null),
           api.getRoutingMetrics().catch(() => null),
           api.getActivity(12).catch(() => []),
+          api.getResources().catch(() => null),
         ]);
         if (cancelled) return;
         setHealth(h);
@@ -134,6 +139,7 @@ export default function HomePage() {
         setThroughput(t);
         setRouting(r);
         setActivity(a);
+        if (res) setResources(resourcesByService(res));
         setError(null);
       } catch (err: any) {
         if (!cancelled) setError(err.message || "load failed");
@@ -256,27 +262,40 @@ export default function HomePage() {
           {services.length === 0 ? (
             <div className="meta">Loading services…</div>
           ) : (
-            services.map(([name, svc]) => {
-              const cls = classFor(svc);
-              return (
-                <div className="svc-row" key={name}>
-                  <div>
-                    <div className="svc-name">{name}</div>
-                    <div className="svc-meta">
-                      {svc.status_code != null ? `HTTP ${svc.status_code}` : "no response"}
-                      {svc.error ? ` · ${svc.error}` : null}
+            <>
+              <div className="svc-row svc-row-head">
+                <div className="muted small">Service</div>
+                <div className="muted small">Status</div>
+                <div className="muted small" title="CPU — % of one core">CPU</div>
+                <div className="muted small" title="Memory used">Memory</div>
+              </div>
+              {services.map(([name, svc]) => {
+                const cls = classFor(svc);
+                const res = resources[name];
+                return (
+                  <div className="svc-row" key={name}>
+                    <div>
+                      <div className="svc-name">{name}</div>
+                      <div className="svc-meta">
+                        {svc.status_code != null ? `HTTP ${svc.status_code}` : "no response"}
+                        {svc.redis != null ? ` · redis:${svc.redis ? "ok" : "off"}` : ""}
+                        {svc.timescaledb != null ? ` · tsdb:${svc.timescaledb ? "ok" : "off"}` : ""}
+                        {svc.error ? ` · ${svc.error}` : null}
+                      </div>
                     </div>
+                    <span className={`svc-pill ${cls}`}>{svc.status}</span>
+                    <span className="mono small" title="CPU — % of one core">
+                      {res?.cpu_percent != null
+                        ? `${res.cpu_percent.toFixed(res.cpu_percent < 10 ? 1 : 0)}%`
+                        : "—"}
+                    </span>
+                    <span className="mono small" title="Memory used">
+                      {res?.memory_used_bytes != null ? formatBytes(res.memory_used_bytes) : "—"}
+                    </span>
                   </div>
-                  <span className={`svc-pill ${cls}`}>{svc.status}</span>
-                  <span className="muted small">
-                    {svc.redis != null ? `redis:${svc.redis ? "ok" : "off"}` : "—"}
-                  </span>
-                  <span className="muted small">
-                    {svc.timescaledb != null ? `tsdb:${svc.timescaledb ? "ok" : "off"}` : "—"}
-                  </span>
-                </div>
-              );
-            })
+                );
+              })}
+            </>
           )}
           {error ? <div className="meta" style={{ color: "var(--bad)", marginTop: 8 }}>{error}</div> : null}
         </div>

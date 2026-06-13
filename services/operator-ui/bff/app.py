@@ -1212,6 +1212,27 @@ def ui_policy_related_metrics():
     })
 
 
+@app.route("/api/ui/metrics/resources", methods=["GET"])
+def ui_metrics_resources():
+    """Per-instance CPU / memory for the engine cards + service-health rows.
+
+    Thin proxy to telemetry's /api/v1/metrics/resources (which pivots the
+    resource-collector's gauges into one record per container). `?window=N`
+    seconds is forwarded through; on any upstream failure we return an empty
+    instance list with HTTP 200 so the resource widgets degrade gracefully
+    rather than erroring the whole page."""
+    window = request.args.get("window", "120")
+    empty = {"instances": [], "window_seconds": window, "count": 0}
+    try:
+        r = _http.get(f"{SERVICE_URLS['telemetry']}/api/v1/metrics/resources",
+                      params={"window": window})
+        if r.status_code != 200:
+            return jsonify(empty), 200
+        return jsonify(r.json()), 200
+    except Exception:                                       # noqa: BLE001
+        return jsonify(empty), 200
+
+
 # ── BFF own health ────────────────────────────────────────────────────────────
 
 @app.route("/health")
