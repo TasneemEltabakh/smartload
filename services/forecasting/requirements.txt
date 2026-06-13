@@ -8,3 +8,4 @@ redis==5.0.4
 numpy==1.26.4
 pandas==2.2.2
 statsmodels==0.14.2
+prometheus-client==0.20.0

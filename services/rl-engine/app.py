@@ -49,7 +49,8 @@ from datetime import datetime, timezone
 
 import psycopg2
 import redis as redis_lib
-from flask import Flask, jsonify
+from flask import Flask, Response, jsonify
+from prometheus_client import Counter
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
 # (services/shared/ relative to this file). Same pattern as siblings.
@@ -59,6 +60,7 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         sys.path.insert(0, _cand)
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
+from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
 from shared.queries import RL_STATE_QUERY                      # noqa: E402
 
 from runloop import (                                          # noqa: E402
@@ -73,6 +75,17 @@ from runloop import (                                          # noqa: E402
 )
 
 app = Flask(__name__)
+
+# Prometheus own-metrics (#161). RL_ACTION_TOTAL is the decision distribution:
+# routing has no discrete action set, so we count inferences by policy +
+# effective mode (active / shadow / safe_mode) — the operationally meaningful
+# split (how many recommendations were actually applied vs observed).
+METRICS = ServiceMetrics("rl_engine")
+RL_ACTION_TOTAL = Counter(
+    "rl_engine_action_total",
+    "RL routing inferences by policy and effective mode",
+    ["policy", "mode"],
+)
 
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "rl-engine")
 PORT = int(os.environ.get("PORT", "8084"))
@@ -257,13 +270,15 @@ def _inference_cycle(db_conn, redis_client) -> tuple[int, bool]:
 
     mode = effective_mode(action.mode, RL_MODE, eng_policy)
     payload = action_to_event_payload(action, mode, eng_policy.policy_version)
+    RL_ACTION_TOTAL.labels(policy=RL_POLICY, mode=mode).inc()
 
-    publish_envelope(
-        redis_client,
-        channel=ROUTING_CHANNEL,
-        source=SERVICE_NAME,
-        payload=payload,
-    )
+    with METRICS.time_publish(ROUTING_CHANNEL):
+        publish_envelope(
+            redis_client,
+            channel=ROUTING_CHANNEL,
+            source=SERVICE_NAME,
+            payload=payload,
+        )
 
     with _state_lock:
         _last_inference_monotonic = time.monotonic()
@@ -386,7 +401,9 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
                 now = time.monotonic()
                 if now >= next_tick:
-                    published, db_ok = _inference_cycle(db_conn, redis_client)
+                    with METRICS.time_cycle() as _c:
+                        published, db_ok = _inference_cycle(db_conn, redis_client)
+                        _c["outcome"] = "published" if published else "idle"
                     if published:
                         print(f"[{SERVICE_NAME}] published routing recommendation "
                               f"(policy={_policy_name})", flush=True)
@@ -429,6 +446,12 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
+
+@app.route("/metrics")
+def metrics():
+    body, content_type = metrics_response()
+    return Response(body, mimetype=content_type)
+
 
 @app.route("/health")
 def health():

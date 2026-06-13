@@ -3,7 +3,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -21,10 +24,15 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "timescaledb"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -35,27 +43,62 @@
             "drawStyle": "line",
             "fillOpacity": 25,
             "gradientMode": "opacity",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
           "unit": "reqps"
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "options": {
-        "legend": {"calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "single", "sort": "none"}
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "title": "Request rate (req/s)",
       "type": "timeseries",
@@ -65,15 +108,23 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  count(*)::float * 1000.0 / $__interval_ms AS \"req/s\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'request_count'\nGROUP BY 1\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          }
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "timescaledb"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -84,29 +135,64 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineInterpolation": "linear",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
           "unit": "ms"
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
       "id": 2,
       "options": {
-        "legend": {"calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
-      "title": "Request latency — p50 / p95 / max",
+      "title": "Request latency \u2014 p50 / p95 / max",
       "type": "timeseries",
       "targets": [
         {
@@ -114,15 +200,23 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  percentile_disc(0.50) WITHIN GROUP (ORDER BY value) AS p50,\n  percentile_disc(0.95) WITHIN GROUP (ORDER BY value) AS p95,\n  max(value) AS max\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'request_latency_ms'\nGROUP BY 1\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          }
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "timescaledb"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -133,15 +227,26 @@
             "drawStyle": "line",
             "fillOpacity": 30,
             "gradientMode": "scheme",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineInterpolation": "stepAfter",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "none"},
-            "thresholdsStyle": {"mode": "area"}
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "area"
+            }
           },
           "mappings": [],
           "max": 100,
@@ -149,20 +254,45 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 1},
-              {"color": "red", "value": 5}
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
             ]
           },
           "unit": "percent"
         },
         "overrides": []
       },
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "id": 3,
       "options": {
-        "legend": {"calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "single", "sort": "none"}
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "title": "Error rate (%)",
       "type": "timeseries",
@@ -172,29 +302,56 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  avg(value) * 100.0 AS \"error %\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'error_rate'\nGROUP BY 1\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          }
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "timescaledb"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
       "id": 4,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "showPercentChange": false,
         "textMode": "auto",
         "wideLayout": true
@@ -207,35 +364,60 @@
           "format": "table",
           "rawQuery": true,
           "rawSql": "SELECT count(*) AS \"requests\"\nFROM metrics\nWHERE $__timeFilter(time)\n  AND metric_name = 'request_count'",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          }
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "timescaledb"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"color": "red", "value": null},
-              {"color": "green", "value": 1}
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 8},
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
       "id": 5,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
-        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
         "showPercentChange": false,
         "textMode": "auto",
         "wideLayout": true
@@ -248,15 +430,23 @@
           "format": "table",
           "rawQuery": true,
           "rawSql": "SELECT count(DISTINCT addr) AS \"instances\"\nFROM (\n  SELECT trim(unnest(string_to_array(instance, ','))) AS addr\n  FROM metrics\n  WHERE $__timeFilter(time)\n    AND service = 'load-balancer'\n    AND instance <> 'unknown'\n) sub\nWHERE addr ~ ':[0-9]+$'",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          }
         }
       ]
     },
     {
-      "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"},
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "timescaledb"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -267,26 +457,58 @@
             "drawStyle": "bars",
             "fillOpacity": 80,
             "gradientMode": "none",
-            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": {"type": "linear"},
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {"group": "A", "mode": "normal"},
-            "thresholdsStyle": {"mode": "off"}
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
           "mappings": [],
-          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 12},
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
       "id": 6,
       "options": {
-        "legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "title": "Telemetry rows ingested (by metric)",
       "type": "timeseries",
@@ -296,7 +518,95 @@
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "SELECT\n  time_bucket('$__interval', time) AS \"time\",\n  metric_name AS metric,\n  count(*) AS value\nFROM metrics\nWHERE $__timeFilter(time)\nGROUP BY 1, 2\nORDER BY 1",
-          "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "timescaledb"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Decision-plane publish rate (#161 own-metrics)",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Per-second envelope publish rate from each AI service's Prometheus /metrics endpoint (#161). Sourced from <service>_publish_total, scraped by Prometheus \u2014 not the TimescaleDB telemetry path.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(anomaly_detector_publish_total[5m]))",
+          "legendFormat": "anomaly-detector",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(forecasting_publish_total[5m]))",
+          "legendFormat": "forecasting",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(rl_engine_publish_total[5m]))",
+          "legendFormat": "rl-engine",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(autoscaler_publish_total[5m]))",
+          "legendFormat": "autoscaler",
+          "range": true,
+          "refId": "D"
         }
       ]
     }
@@ -304,9 +614,17 @@
   "preload": false,
   "refresh": "5s",
   "schemaVersion": 39,
-  "tags": ["smartload", "telemetry"],
-  "templating": {"list": []},
-  "time": {"from": "now-15m", "to": "now"},
+  "tags": [
+    "smartload",
+    "telemetry"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "",
   "title": "SmartLoad Overview",

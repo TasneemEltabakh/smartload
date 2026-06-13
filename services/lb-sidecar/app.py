@@ -48,7 +48,8 @@ import threading
 import time
 
 import redis as redis_lib
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
+from prometheus_client import Counter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 for _cand in (_HERE, os.path.dirname(_HERE)):
@@ -56,6 +57,7 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         sys.path.insert(0, _cand)
         break
 from shared.contracts import parse_envelope        # noqa: E402
+from shared.metrics import ServiceMetrics, metrics_response  # noqa: E402
 from shared.queries import BACKEND_HEALTH_QUERY    # noqa: E402
 
 from runloop import (  # noqa: E402
@@ -70,6 +72,16 @@ from runloop import (  # noqa: E402
 )
 
 app = Flask(__name__)
+
+# Prometheus own-metrics (#161). lb-sidecar is a consumer (it doesn't publish),
+# so MESSAGE_TOTAL — control-bus messages it acts on, by channel — is the
+# meaningful signal; the common publish_* surface stays at zero by design.
+METRICS = ServiceMetrics("lb_sidecar")
+MESSAGE_TOTAL = Counter(
+    "lb_sidecar_message_total",
+    "Control-bus messages consumed, by channel",
+    ["channel"],
+)
 
 SERVICE_NAME          = os.environ.get("SERVICE_NAME", "lb-sidecar")
 PORT                  = int(os.environ.get("PORT", "8087"))
@@ -326,6 +338,7 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                 channel = message.get("channel", b"")
                 if isinstance(channel, bytes):
                     channel = channel.decode()
+                MESSAGE_TOTAL.labels(channel=channel).inc()
 
                 raw = message.get("data")
                 parsed = parse_envelope(raw, channel=channel)
@@ -446,6 +459,12 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
+
+@app.route("/metrics")
+def metrics():
+    body, content_type = metrics_response()
+    return Response(body, mimetype=content_type)
+
 
 @app.route("/health")
 def health():

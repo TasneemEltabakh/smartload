@@ -29,7 +29,7 @@ from typing import Any
 import psycopg2
 import redis as redis_lib
 import yaml
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 
 # Resolve the canonical shared/ module across two layouts:
 #   container: /app/shared       (sibling of app.py — Dockerfile copies it)
@@ -44,6 +44,7 @@ from shared.contracts import (  # noqa: E402
     PolicyUpdate,
     make_envelope,
 )
+from shared.metrics import ServiceMetrics, metrics_response  # noqa: E402
 from shared.queries import POLICY_CHANGE_INSERT  # noqa: E402
 
 from validation import (  # noqa: E402
@@ -73,6 +74,10 @@ logging.basicConfig(
 log = logging.getLogger("policy-manager")
 
 app = Flask(__name__)
+
+# Prometheus own-metrics (#161). policy-manager is event-driven (publishes on
+# a successful POST /api/v1/policy), so only the publish_* surface is populated.
+METRICS = ServiceMetrics("policy_manager")
 
 
 # ── policy IO ─────────────────────────────────────────────────────────────────
@@ -233,7 +238,8 @@ def _publish_policy(
             changed_fields=changed_field_names or None,
         )
         envelope = make_envelope(source=SERVICE_NAME, payload=update)
-        redis_client.publish(POLICY_CHANNEL, json.dumps(asdict(envelope)))
+        with METRICS.time_publish(POLICY_CHANNEL):   # records outcome=error on raise
+            redis_client.publish(POLICY_CHANNEL, json.dumps(asdict(envelope)))
         return envelope.event_id
     except Exception:
         log.exception("smartload.policy publish failed")
@@ -280,6 +286,12 @@ def _check_timescaledb() -> tuple[bool, str | None]:
         return True, None
     except Exception as exc:
         return False, str(exc)
+
+
+@app.route("/metrics")
+def metrics():
+    body, content_type = metrics_response()
+    return Response(body, mimetype=content_type)
 
 
 @app.route("/health")

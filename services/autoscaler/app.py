@@ -37,7 +37,8 @@ from datetime import datetime, timezone
 import psycopg2
 import redis as redis_lib
 import yaml
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
+from prometheus_client import Counter
 
 # Resolve the canonical shared/ module across two layouts:
 #   container: /app/shared       (sibling of app.py — Dockerfile copies it)
@@ -53,6 +54,7 @@ from shared.contracts import (  # noqa: E402
     make_envelope,
     parse_envelope,
 )
+from shared.metrics import ServiceMetrics, metrics_response  # noqa: E402
 from shared.queries import (  # noqa: E402
     OBSERVED_RPS_QUERY,
     SCALING_AUDIT_QUERY,
@@ -289,7 +291,9 @@ def apply_decision(
         mechanism=mechanism,
     )
     envelope = make_envelope(source=SERVICE_NAME, payload=event)
-    redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))
+    with METRICS.time_publish(SCALE_CHANNEL):
+        redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))
+    SCALE_TOTAL.labels(direction=decision.action, mechanism=mechanism or "none").inc()
 
     with _state_lock:
         global _last_action_monotonic
@@ -392,14 +396,16 @@ def _handle_forecast_message(raw, cluster, db_conn, redis_client) -> None:
         policy                      = _policy
 
     current_count = cluster.get_backend_count()
-    decision = decide(
-        predicted_rps=predicted_rps,
-        current_count=current_count,
-        policy=policy,
-        seconds_since_last_action=seconds_since_action,
-        now_text="forecast",
-    )
-    apply_decision(decision, cluster, db_conn, redis_client, envelope_meta.get("event_id"))
+    with METRICS.time_cycle() as _c:
+        decision = decide(
+            predicted_rps=predicted_rps,
+            current_count=current_count,
+            policy=policy,
+            seconds_since_last_action=seconds_since_action,
+            now_text="forecast",
+        )
+        apply_decision(decision, cluster, db_conn, redis_client, envelope_meta.get("event_id"))
+        _c["outcome"] = decision.action
 
 
 def _handle_policy_message(raw) -> None:
@@ -472,6 +478,16 @@ def _maybe_reactive_fallback(cluster, db_conn, redis_client) -> None:
 
 app = Flask(__name__)
 
+# Prometheus own-metrics (#161). The autoscaler is event-driven (forecast
+# messages + a reactive tick), so `cycle_*` counts each forecast-driven
+# evaluation; SCALE_TOTAL is the decision distribution by direction + mechanism.
+METRICS = ServiceMetrics("autoscaler")
+SCALE_TOTAL = Counter(
+    "autoscaler_scale_total",
+    "Scaling decisions actuated, by direction and mechanism",
+    ["direction", "mechanism"],
+)
+
 
 def _check_redis():
     try:
@@ -489,6 +505,12 @@ def _check_timescaledb():
         return True, None
     except Exception as exc:
         return False, str(exc)
+
+
+@app.route("/metrics")
+def metrics():
+    body, content_type = metrics_response()
+    return Response(body, mimetype=content_type)
 
 
 @app.route("/health")

@@ -39,7 +39,7 @@
 
 NGINX serves traffic over the 5-backend test pool with `proxy_next_upstream` + `max_fails`. The lb-otel-shipper tails the JSON access log and POSTs OTLP/HTTP-JSON to the OTel Collector, which forwards to the telemetry service. Telemetry writes to TimescaleDB via the canonical `METRICS_INSERT` constant in `shared/queries.py`. The lb-sidecar consumes Redis envelopes across **four channels** — `smartload.routing` + `smartload.anomaly` + `smartload.policy` + `smartload.scale` (v1.0.7z, #164 closes the autoscaler → NGINX loop) — and atomically rewrites `upstream.conf` + triggers `nginx -s reload`. **Per-request fidelity is verified** at every layer by an integration test asserting `STDDEV(request_latency_ms) > 0` on live traffic. As of **v1.0.7ai** the shipper reverse-resolves NGINX's `$upstream_addr` (a backend IP) to the canonical `<container-name>:<port>` before labeling `metrics.instance`, so the anomaly/RL backend_ids derived from it now match the seed names every channel uses (removing the IP-vs-name impedance the demo-ui's `_ip_to_name_map` was working around).
 
-**One acknowledged gap:** AI services expose `/health` (JSON) only, not Prometheus `/metrics` (text format). Only the OTel Collector exposes scrapable Prometheus metrics on `:8889`. Operators rely on TimescaleDB-backed Grafana panels rather than Prometheus dashboards for service-internal observability.
+**Own-metrics — closed v1.0.7al (#161):** the six control-plane services (anomaly-detector, forecasting, rl-engine, autoscaler, policy-manager, lb-sidecar) now expose Prometheus `/metrics` (shared `services/shared/metrics.py`: `<svc>_up`/`_cycle_*`/`_publish_*` + per-service decision counters), scraped by Prometheus and rendered on the Overview dashboard. The per-process surface is now distinct from the per-request TimescaleDB telemetry path. (telemetry itself stays on `/health` until it grows a surface.)
 
 ### Decision plane — 86 %
 
@@ -52,7 +52,7 @@ Four services, all wired:
 | **rl-engine** | Random-shadow baseline + PPO policy (`policy.zip`, 156 KB) + four classical baselines (round_robin, least_connections, random_shadow). Anomaly-aware action-space filtering wired; `RL_MODE=shadow` is the safety pin (operator must explicitly opt in to `active`). Offline eval shows PPO ties round_robin on homogeneous Alibaba traces; v1.0.7t bench confirms the same on the heterogeneous workload. **A retrained PPO model is in progress on a separate machine** (Rghda's workstream) — the running stack uses the committed `policy.zip`; the demo-ui/bench routing numbers will move when it lands. |
 | **autoscaler** | T1.3 + T1.4 wired (forecast subscriber + Docker SDK scale + cooldown + reactive fallback + policy live reload + `/api/v1/audit/scaling` + `/api/v1/scale` manual). **v1.0.7v added** `provision()` / `decommission()` lifecycle pair behind `AUTOSCALER_PROVISIONING_ENABLED` feature flag (OFF by default; #156 will flip it ON for the adaptive bench). |
 
-**Material gaps**: ARIMA misses its KPI (`moving_average` stays default); PPO needs retraining on heterogeneous traces (the binding constraint per §34.6 — in progress elsewhere). None of the four services expose own-metrics in Prometheus format (#161). _(The Isolation Forest calibration gap is now closed — #165.)_
+**Material gaps**: ARIMA misses its KPI (`moving_average` stays default); PPO needs retraining on heterogeneous traces (the binding constraint per §34.6 — in progress elsewhere). _(Isolation Forest calibration closed — #165; AI-service Prometheus own-metrics closed — #161, v1.0.7al.)_
 
 ### Control plane + UI + integration — 90 %
 
@@ -92,7 +92,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 | Helm chart templates | #133 | Medium — required for K8s HPA comparison | — |
 | Raw K8s manifests | — | Low — explicitly Phase 2 | — |
 | ~~Redis exporter to Prometheus~~ | ~~#116~~ | **CLOSED** v1.0.7ac | — |
-| AI-service `/metrics` endpoints (Prometheus format) | #161 | Medium — closes observability gap | — |
+| ~~AI-service `/metrics` endpoints (Prometheus format)~~ | ~~#161~~ | **CLOSED** v1.0.7al (six services + shared helper + scrape + Overview panel) | — |
 | Architecture docs: `lb-adapter.md`, `failure-modes.md`, `versioning-policy.md`, `multi-tenancy.md` | #162 | Low — incremental as features stabilise | — |
 | Multi-run bench batching with per-metric CIs | #160 | **High** — biggest mover for publishable-evidence lens; harness now unblocked | — |
 
@@ -129,7 +129,7 @@ Docs: 8 feature manifests under `docs/features/` (policy / audit / manual-action
 
 | Area | Enhancement | Issue |
 |---|---|---|
-| Own-metrics | Add Prometheus-format `/metrics` to each AI service (publish count, cycle latency, decision distributions) | #161 |
+| ~~Own-metrics~~ | ~~Prometheus `/metrics` per AI service~~ — **DONE v1.0.7al** (#161): `<svc>_up`/`_cycle_*`/`_publish_*` + decision counters across 6 services | ~~#161~~ |
 | API versioning + deprecation | Formal `Sunset` / `Deprecation` header window mechanism | #134 |
 | Strict lint mode | Flip the three structural lints from permissive to enforcing | #139 |
 | DB migrations | Migrations folder + first migration script (today's ops rely on `init.sql` idempotency) | #141 |

@@ -3,3 +3,4 @@ psycopg2-binary==2.9.9
 redis==5.0.4
 docker==7.1.0
 PyYAML==6.0.2
+prometheus-client==0.20.0

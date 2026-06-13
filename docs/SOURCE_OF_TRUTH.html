@@ -5657,6 +5657,28 @@ docker compose logs -f anomaly-detector</code></pre>
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
 
+<h3>v1.0.7al — 2026-06-13 — AI-service Prometheus /metrics own-metrics (#161)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Six services now expose a Prometheus <code>/metrics</code> endpoint</strong></td>
+      <td>Closes the observability gap where only the OTel Collector (<code>:8889</code>) was scrapable and services exposed <code>/health</code> JSON only. New shared helper <code>services/shared/metrics.py</code> (<code>ServiceMetrics(prefix)</code> + <code>metrics_response()</code>) gives every service the same templatable surface — <code>&lt;svc&gt;_up</code>, <code>_cycle_total{outcome}</code>, <code>_cycle_duration_seconds</code>, <code>_publish_total{channel,outcome}</code>, <code>_publish_duration_seconds</code> — instrumented at each service's real run-loop / publish points. anomaly-detector, forecasting, rl-engine, autoscaler, policy-manager, lb-sidecar. Per-process health (decision rate, cycle duration, publish/scale counts) is now distinct from the per-request TimescaleDB telemetry path.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Decision-distribution counters + scrape + dashboard + docs</strong></td>
+      <td>Per-service counters: <code>anomaly_detector_isolate_total{backend,status}</code>, <code>rl_engine_action_total{policy,mode}</code>, <code>autoscaler_scale_total{direction,mechanism}</code>, <code>lb_sidecar_message_total{channel}</code> (the sidecar is a consumer, so its <code>publish_*</code> stays zero by design). <code>prometheus.yml</code> flips the five AI-service jobs from <code>/health</code> to <code>/metrics</code> + adds an <code>lb-sidecar</code> job (telemetry stays on <code>/health</code> until it grows a surface). New "Decision-plane publish rate" panel on the Overview Grafana dashboard renders <code>sum(rate(&lt;svc&gt;_publish_total[5m]))</code>. Documented in <code>docs/architecture/data-plane.md</code> (two-paths section). <code>prometheus-client</code> pinned into each service's requirements.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>8 unit tests for the shared helper (<code>tests/unit/shared/test_metrics.py</code>) pass. Rebuilt all six services; each <code>/metrics</code> returns <code>200</code> with its prefixed surface; Prometheus shows all six targets <code>up</code> and stores the new families (<code>*_cycle_total</code>, <code>rl_engine_action_total</code>, <code>autoscaler_scale_total</code>, <code>lb_sidecar_message_total</code>, the histograms). The issue text said "FastAPI" — the services are Flask, so it's a Flask route.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7ak — 2026-06-13 — live-stack test pins routing itself (RL-policy independent)</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>

@@ -36,7 +36,8 @@ import psycopg2
 import redis as redis_lib
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
+from prometheus_client import Counter
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
 # (services/shared/ relative to this file). Same pattern as telemetry/app.py.
@@ -46,6 +47,7 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         sys.path.insert(0, _cand)
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
+from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
 from shared.queries import (                                   # noqa: E402
     ANOMALY_QUERY,
     ANOMALY_DEFAULT_SERVICE,
@@ -64,6 +66,16 @@ from runloop import (                                          # noqa: E402
 )
 
 app = Flask(__name__)
+
+# Prometheus own-metrics (#161). METRICS provides the common surface
+# (anomaly_detector_cycle_*/_publish_*/_up); ISOLATE_TOTAL is the
+# service-specific decision distribution.
+METRICS = ServiceMetrics("anomaly_detector")
+ISOLATE_TOTAL = Counter(
+    "anomaly_detector_isolate_total",
+    "Anomaly verdicts published, by backend and status",
+    ["backend", "status"],
+)
 
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "anomaly-detector")
 PORT = int(os.environ.get("PORT", "8082"))
@@ -177,12 +189,14 @@ def _inference_cycle(db_conn, redis_client) -> int:
         cycle_outputs.append(score_to_event_payload(score, model_version))
         if not should_publish(score, policy):
             continue
-        publish_envelope(
-            redis_client,
-            channel=ANOMALY_CHANNEL,
-            source=SERVICE_NAME,
-            payload=score_to_event_payload(score, model_version),
-        )
+        with METRICS.time_publish(ANOMALY_CHANNEL):
+            publish_envelope(
+                redis_client,
+                channel=ANOMALY_CHANNEL,
+                source=SERVICE_NAME,
+                payload=score_to_event_payload(score, model_version),
+            )
+        ISOLATE_TOTAL.labels(backend=score.backend_id, status=score.status).inc()
         published += 1
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -275,7 +289,9 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
             now = time.monotonic()
             if now >= next_tick:
-                published = _inference_cycle(db_conn, redis_client)
+                with METRICS.time_cycle() as _c:
+                    published = _inference_cycle(db_conn, redis_client)
+                    _c["outcome"] = "published" if published else "idle"
                 if published:
                     print(f"[{SERVICE_NAME}] published {published} anomaly events", flush=True)
                 next_tick = now + POLL_INTERVAL_SECONDS
@@ -292,6 +308,12 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
+
+@app.route("/metrics")
+def metrics():
+    body, content_type = metrics_response()
+    return Response(body, mimetype=content_type)
+
 
 @app.route("/health")
 def health():

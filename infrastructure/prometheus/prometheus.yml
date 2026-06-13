@@ -18,34 +18,39 @@ scrape_configs:
     static_configs:
       - targets: ["redis-exporter:9121"]
 
-  # SmartLoad AI services — each exposes /metrics via Flask (future)
-  # For now Prometheus scrapes /health as a connectivity check
-  - job_name: telemetry
-    metrics_path: /health
-    static_configs:
-      - targets: ["telemetry:8081"]
-
+  # SmartLoad services — each exposes Prometheus /metrics via Flask (#161):
+  # <prefix>_up / _cycle_total / _cycle_duration_seconds / _publish_total /
+  # _publish_duration_seconds, plus per-service decision counters
+  # (rl_engine_action_total, anomaly_detector_isolate_total,
+  # autoscaler_scale_total, lb_sidecar_message_total). The default
+  # metrics_path (/metrics) applies.
   - job_name: anomaly-detector
-    metrics_path: /health
     static_configs:
       - targets: ["anomaly-detector:8082"]
 
   - job_name: forecasting
-    metrics_path: /health
     static_configs:
       - targets: ["forecasting:8083"]
 
   - job_name: rl-engine
-    metrics_path: /health
     static_configs:
       - targets: ["rl-engine:8084"]
 
   - job_name: autoscaler
-    metrics_path: /health
     static_configs:
       - targets: ["autoscaler:8085"]
 
   - job_name: policy-manager
-    metrics_path: /health
     static_configs:
       - targets: ["policy-manager:8086"]
+
+  - job_name: lb-sidecar
+    static_configs:
+      - targets: ["lb-sidecar:8087"]
+
+  # telemetry has no run loop / publish surface yet — scrape /health as a
+  # connectivity check until it grows own-metrics.
+  - job_name: telemetry
+    metrics_path: /health
+    static_configs:
+      - targets: ["telemetry:8081"]

@@ -36,7 +36,7 @@ import time
 import psycopg2
 import redis as redis_lib
 from datetime import datetime, timezone
-from flask import Flask, jsonify
+from flask import Flask, Response, jsonify
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
 # (services/shared/ relative to this file). Same pattern as anomaly-detector.
@@ -46,6 +46,7 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         sys.path.insert(0, _cand)
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
+from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
 from shared.queries import FORECAST_QUERY, FORECASTS_INSERT    # noqa: E402
 
 from runloop import (                                          # noqa: E402
@@ -60,6 +61,9 @@ from runloop import (                                          # noqa: E402
 )
 
 app = Flask(__name__)
+
+# Prometheus own-metrics (#161): forecasting_cycle_*/_publish_*/_up.
+METRICS = ServiceMetrics("forecasting")
 
 SERVICE_NAME = os.environ.get("SERVICE_NAME", "forecasting")
 PORT = int(os.environ.get("PORT", "8083"))
@@ -181,12 +185,13 @@ def _inference_cycle(db_conn, redis_client) -> int:
         print(f"[{SERVICE_NAME}] forecasts insert failed: {exc}", flush=True)
 
     if publish:
-        publish_envelope(
-            redis_client,
-            channel=FORECAST_CHANNEL,
-            source=SERVICE_NAME,
-            payload=payload,
-        )
+        with METRICS.time_publish(FORECAST_CHANNEL):
+            publish_envelope(
+                redis_client,
+                channel=FORECAST_CHANNEL,
+                source=SERVICE_NAME,
+                payload=payload,
+            )
 
     with _state_lock:
         _last_inference_monotonic = time.monotonic()
@@ -276,7 +281,9 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
             now = time.monotonic()
             if now >= next_tick:
-                published = _inference_cycle(db_conn, redis_client)
+                with METRICS.time_cycle() as _c:
+                    published = _inference_cycle(db_conn, redis_client)
+                    _c["outcome"] = "published" if published else "idle"
                 if published:
                     print(f"[{SERVICE_NAME}] published forecast "
                           f"(model={_engine_name})", flush=True)
@@ -295,6 +302,12 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
 
 # ── Flask routes ──────────────────────────────────────────────────────────────
+
+@app.route("/metrics")
+def metrics():
+    body, content_type = metrics_response()
+    return Response(body, mimetype=content_type)
+
 
 @app.route("/health")
 def health():

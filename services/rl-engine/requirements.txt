@@ -4,3 +4,4 @@ redis==5.0.4
 numpy>=1.24
 stable-baselines3>=2.3.0
 sb3-contrib>=2.3.0
+prometheus-client==0.20.0
