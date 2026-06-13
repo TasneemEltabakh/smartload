@@ -1,7 +1,7 @@
 {
   "policy_type": "dqn",
   "policy_kind": "discrete_templates",
-  "training_date": "2026-06-13T18:29:28.875936+00:00",
+  "training_date": "2026-06-13T19:13:01.255102+00:00",
   "n_max_backends": 5,
   "norm_params": {
     "latency_scale": 200.0,
@@ -10,22 +10,28 @@
   "reward_config": {
     "latency_scale": 200.0,
     "w_tail": 0.5,
-    "w_shed": 5.0
+    "w_shed": 5.0,
+    "w_spread": 0.3
   },
   "episode_length": 128,
   "gamma": 0.0,
-  "training_steps": 150000,
+  "training_steps": 200000,
   "sb3_version": "2.8.0",
+  "idle_fix": true,
   "eval": {
     "reward": {
-      "mean_reward": -1.975972834133087,
-      "mean_served_latency_ms": 165.77462448075858,
-      "mean_shed": 0.07263459338190008
+      "mean_reward": -1.7156953481627424,
+      "mean_served_latency_ms": 145.2772257923855,
+      "mean_shed": 0.05790816938886545
     },
     "per_scenario_served_latency_ms": {
-      "homogeneous": 41.55732943882172,
-      "heterogeneous": 184.7010685853479,
-      "degrading": 252.3833222670637
-    }
+      "homogeneous": 42.06391868572224,
+      "heterogeneous": 145.60338547922217,
+      "degrading": 206.89704770963243
+    },
+    "gate_a": false,
+    "gate_b": true,
+    "idle_template": 0,
+    "idle_uniform": true
   }
 }

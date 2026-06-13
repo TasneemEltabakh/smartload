@@ -45,11 +45,19 @@ def template_weights(template: int, state: list, n: int) -> np.ndarray:
     if template == 1:
         w[elig] = 1.0 / np.maximum(lat[elig], 1.0)
     elif template == 2:
-        if len(elig) == 1:
+        # Exclude the slowest eligible ONLY if it is a genuine outlier
+        # (meaningfully slower than the median). On a homogeneous / idle pool no
+        # backend qualifies, so this degrades to uniform — which keeps "exclude"
+        # from needlessly dropping a healthy backend (the Gate-A / idle issue).
+        if len(elig) <= 1:
             w[elig] = 1.0
         else:
+            med = float(np.median(lat[elig]))
             slowest = elig[int(np.argmax(lat[elig]))]
-            w[[i for i in elig if i != slowest]] = 1.0
+            if lat[slowest] > 1.5 * max(med, 1.0):
+                w[[i for i in elig if i != slowest]] = 1.0
+            else:
+                w[elig] = 1.0
     elif template == 3:
         w[elig[int(np.argmin(lat[elig]))]] = 1.0
     else:  # 0 / default → uniform

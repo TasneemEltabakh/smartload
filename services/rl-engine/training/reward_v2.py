@@ -29,10 +29,21 @@ class RewardConfig:
     latency_scale: float = 200.0   # ~SLO; latencies normalised against this
     w_tail: float = 0.5            # weight on the worst-backend latency
     w_shed: float = 5.0            # weight on shed fraction (overload is costly)
+    w_spread: float = 0.3          # small always-on preference for spreading load.
+                                   # Under load the latency terms dominate, so this
+                                   # doesn't distort adaptive routing; at idle (where
+                                   # latency is flat for every routing) it breaks the
+                                   # tie toward uniform — fixing the OOD concentration
+                                   # the live test exposed.
 
 
 def compute_reward(metrics, cfg: RewardConfig) -> float:
     """metrics: closed_loop_sim.StepMetrics for the window just served."""
     served = metrics.served_mean_latency_ms / cfg.latency_scale
     tail = metrics.max_backend_latency_ms / cfg.latency_scale
-    return float(-served - cfg.w_tail * tail - cfg.w_shed * metrics.shed_fraction)
+    return float(
+        -served
+        - cfg.w_tail * tail
+        - cfg.w_shed * metrics.shed_fraction
+        - cfg.w_spread * metrics.weight_hhi
+    )

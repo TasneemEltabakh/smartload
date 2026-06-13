@@ -59,3 +59,36 @@ the curriculum (or a uniform-default serving floor), then re-validate.
 
 Stack restored to the production artifact (`discrete_argmax`) after the test;
 nothing left swapped in.
+
+## Re-validation after the idle/OOD fix
+
+Fix applied (`retrain_dqn_idle.py` + the changes below) and the candidate
+retrained (200k steps), then re-deployed live:
+- **Curriculum:** ~20% of episodes are now near-idle/low-load (`closed_loop_sim
+  ._demand_curve`), so the policy sees the regime it went OOD on.
+- **Reward:** small always-on spread penalty (`reward_v2.w_spread=0.3` over a new
+  `StepMetrics.weight_hhi`). Under load the latency terms dominate; at idle
+  (latency flat) it breaks the tie toward uniform.
+- **Template:** `routing_templates` "exclude-slowest" now excludes a backend only
+  if it is a genuine outlier (>1.5× median latency); on a healthy/idle pool it
+  degrades to uniform, so templates 0/1/2 all spread when backends are equal.
+
+In-sim: idle behaviour now selects uniform (`[0.2]×5`); Gate B PASS; Gate A a
+marginal miss (homo 42.1 vs 41.6 bar — ~6% over round-robin vs the 5% tolerance,
+far better than the continuous policies' 2.3–3.3×).
+
+Live (re-deployed candidate_dqn):
+- **Idle:** `25/25/25/1/25` — spreads over four backends (it excludes one due to
+  idle telemetry noise tripping the outlier threshold). The dangerous
+  `100/1/1/1/1` concentration is **gone**.
+- **Homogeneous under load:** converges to **exact uniform** `20/20/20/20/20`.
+- **Degrade reroute:** with a slow-but-not-failing backend (+100 ms, so NGINX
+  `max_fails` doesn't pre-empt it), DQN reroutes off it live: weight
+  **20 → 8 → 5** over ~24 s. (A harder +250 ms degrade is instead handled by
+  NGINX `max_fails` ejection, which masks the policy's action.)
+
+**Net:** the OOD concentration the first live test exposed is fixed; the model
+routes uniform when healthy and reroutes off a genuinely-slow backend. Residual:
+a marginal Gate-A miss and a mild "exclude one backend at idle" from telemetry
+noise — both far less severe than the original concentration, and candidates for
+a serving floor / steadier idle telemetry. Stack restored to production after.

@@ -140,6 +140,15 @@ def _demand_curve(rng: np.random.Generator, n: int, base_cap: float) -> np.ndarr
     """Synthetic per-window arrival rate (rps). Pattern sampled per episode;
     scaled so peak load sits in a band that exercises both light and saturating
     regimes relative to total pool capacity `base_cap`."""
+    # ~20% of episodes are near-idle / very-low-load. The policy never saw this
+    # regime before and went OOD on it live (it concentrated when traffic was
+    # near zero). At idle the latency reward is flat, so the spread penalty in
+    # reward_v2 is what teaches "stay uniform when there's nothing to optimise".
+    if rng.random() < 0.20:
+        level = rng.uniform(0.01, 0.12)
+        noise = rng.normal(1.0, 0.05, size=n).clip(0.5, 1.5)
+        return (level * base_cap * noise).clip(min=0.0)
+
     pattern = rng.choice(["steady", "ramp", "burst", "diurnal"])
     t = np.arange(n)
     if pattern == "steady":
@@ -208,6 +217,10 @@ class StepMetrics:
     shed_fraction: float
     utilisation: np.ndarray        # per-backend rho
     routed_rps: np.ndarray         # per-backend arrival rate
+    weight_hhi: float = 0.2        # Herfindahl of the routing weights (1/n..1):
+                                   # 1/n = perfectly even, 1 = all on one backend.
+                                   # Lets the reward prefer spreading when latency
+                                   # is indifferent (e.g. at idle).
 
 
 class ClosedLoopSimulator:
@@ -272,6 +285,7 @@ class ClosedLoopSimulator:
             shed_fraction=shed_frac,
             utilisation=util,
             routed_rps=routed,
+            weight_hhi=float((w ** 2).sum()),
         )
 
     def step(self, weights: np.ndarray) -> tuple[list[BackendState], StepMetrics, bool]:
