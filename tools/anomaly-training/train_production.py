@@ -39,7 +39,6 @@ runtime scikit-learn (1.3.2), then `docker cp` the artifact onto the host:
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import datetime, timezone
 
 import joblib

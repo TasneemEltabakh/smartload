@@ -4,9 +4,9 @@ tools/anomaly-training/train_smd.py
 Offline training pipeline for the anomaly-detector's Isolation Forest engine,
 trained on the Server Machine Dataset (SMD / OmniAnomaly) -- REAL anomaly
 labels, replacing the invented "population-relative" labels used by
-train.py (MST-2021 pipeline; see training_log.json, run 2026-06-09,
-test_f1=0.10, ground truth computed from the same 4 features used to train,
-i.e. circular).
+superseded/train_mst_superseded.py (MST-2021 pipeline; see training_log.json,
+run 2026-06-09, test_f1=0.10, ground truth computed from the same 4 features
+used to train, i.e. circular).
 
 Pipeline:
     1. preprocess_smd.load_smd_machine_raw() loads each candidate machine's
@@ -86,6 +86,50 @@ N_ESTIMATORS_FINAL = 200
 RANDOM_STATE = 42
 F1_GATE = 0.80
 
+# LATENCY_DIM must remain among the LATENCY_DIM_MAX_RANK most
+# interpretation_label-implicated SMD dims for whatever machine set is being
+# evaluated. Holds for both current candidate sets (rank 5 of 28 dims for
+# ["machine-1-1"] and for ["machine-1-1", "machine-1-6"]). A future re-train
+# on a different machine set that no longer supports dim 0 as a
+# latency-relevant dim should fail loudly here rather than silently reusing
+# it (PR #158 item #8).
+LATENCY_DIM_MAX_RANK = 5
+
+
+def _interpretation_label_counts(smd_dir: Path, machines: list[str]) -> dict[int, int]:
+    """Count how often each 0-indexed SMD dim appears in interpretation_label/
+    anomaly-segment annotations for `machines`."""
+    counts: dict[int, int] = {}
+    for m in machines:
+        path = smd_dir / "interpretation_label" / f"{m}.txt"
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            _, dims = line.split(":", 1)
+            for d in dims.split(","):
+                d = d.strip()
+                if d:
+                    counts[int(d) - 1] = counts.get(int(d) - 1, 0) + 1
+    return counts
+
+
+def _assert_latency_dim_rank(smd_dir: Path, machines: list[str]) -> None:
+    """Fail loudly if LATENCY_DIM is no longer among the top
+    LATENCY_DIM_MAX_RANK interpretation_label-implicated dims for `machines`."""
+    counts = _interpretation_label_counts(smd_dir, machines)
+    ranked = sorted(counts, key=lambda d: counts[d], reverse=True)
+    rank = ranked.index(LATENCY_DIM) + 1 if LATENCY_DIM in ranked else len(ranked) + 1
+    if rank > LATENCY_DIM_MAX_RANK:
+        raise AssertionError(
+            f"LATENCY_DIM={LATENCY_DIM} (SMD dim{LATENCY_DIM + 1}) has "
+            f"interpretation_label rank {rank} for machines={machines} "
+            f"(requires <= {LATENCY_DIM_MAX_RANK}). Re-check the latency-dim "
+            f"choice before training on this machine set."
+        )
+
 
 def _evaluate(train_df: pd.DataFrame, eval_df: pd.DataFrame, contamination: float, n_estimators: int):
     scaler = StandardScaler().fit(train_df[FEATURE_COLUMNS].values)
@@ -103,6 +147,7 @@ def _evaluate(train_df: pd.DataFrame, eval_df: pd.DataFrame, contamination: floa
 
 
 def _search_machine_set(smd_dir: Path, machines: list[str]) -> dict:
+    _assert_latency_dim_rank(smd_dir, machines)
     raw_cache = {m: load_smd_machine_raw(smd_dir, m) for m in machines}
 
     results = []  # (tune_f1, error_dim, rolling_window, contamination)

@@ -1480,9 +1480,9 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.0.7bc &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.7bd &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-14 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bc pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bc pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -2908,11 +2908,11 @@ cur.execute(ANOMALY_QUERY,
     <div class="dc-row"><div class="key">Observability expectations</div><div class="val">Per-cycle metrics: cycle duration, count of DEGRADED, count of UNHEALTHY, model F1 (offline measurement). <code>/health</code> verifies DB + Redis.</div></div>
     <div class="dc-row"><div class="key">Security / safety expectations</div><div class="val">Detection latency target ≤ 2 monitoring intervals (~10 s). KPI: F1 &gt; 0.80 on test split.</div></div>
     <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Run loop wired in <code>app.py</code> + <code>runloop.py</code> via the <code>engine_base</code> ABC and <code>select_engine()</code> factory (#138). Subscribes to <code>smartload.policy</code> and reconstructs the engine on each update so policy-derived params (e.g. <code>anomaly_latency_multiplier</code>) take effect within one cycle. Threshold baseline ships and is wired to <code>ANOMALY_QUERY</code>; on every <code>POLL_INTERVAL_SECONDS</code>, the loop pivots rows into <code>BackendFeatures</code>, scores each backend, and publishes an <code>AnomalyEvent</code> envelope. Falls back to threshold automatically if the requested engine raises on load. Enabled by default since v1.0.7g (<code>ANOMALY_RUNLOOP_ENABLED=true</code>); revert with <code>=false</code> in <code>.env</code> for debugging. Unit tests live at <code>tests/unit/anomaly-detector/test_runloop.py</code>.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Isolation Forest plugin shipped (#101 closed v1.0.7ab) at <code>engines/isolation_forest/engine.py</code> with trained <code>.pkl</code> at <code>services/anomaly-detector/models/</code>, F1=0.8012 on SMD holdout, then <strong>re-calibrated in production-shape space (#165, v1.0.7ah — 91.4% bench agreement, model reacts live, shipped in the image)</strong>. Remaining before flipping the compose default: the <code>backend_pool</code> backend-id-granularity follow-up, auto-recovery cool-down before clearing UNHEALTHY status, and own-metrics scraped by Prometheus (<code>anomaly_detector_inferences_total</code>, <code>_inference_errors_total</code>, <code>_inference_latency_seconds</code>, <code>_engine_loaded</code>).</div></div>
+    <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Isolation Forest plugin shipped (#101 closed v1.0.7ab) at <code>engines/isolation_forest/engine.py</code> with trained <code>.pkl</code> at <code>services/anomaly-detector/models/</code>, F1=0.8012 on SMD holdout, then <strong>re-calibrated in production-shape space (#165, v1.0.7ah — 91.4% bench agreement, model reacts live, shipped in the image)</strong>. <strong>Auto-recovery cool-down (flip-confirmation stability gate) and per-cycle <code>backend_health</code> persistence shipped v1.0.7bd</strong>, with a live-stack acceptance test (<code>tests/integration/test_anomaly_isolation_forest.py</code>) and e2e/scenario coverage. A complementary <strong>Stage-B live-injection retrain/validation track</strong> (<code>tools/anomaly-training/collect_production_data.py</code> + <code>train_stage_b.py</code> + <code>evaluate_live.py</code>) sits alongside the shipped #165 production-shape recalibration without replacing it. Remaining before flipping the compose default: the <code>backend_pool</code> backend-id-granularity follow-up and own-metrics scraped by Prometheus (<code>anomaly_detector_inferences_total</code>, <code>_inference_errors_total</code>, <code>_inference_latency_seconds</code>, <code>_engine_loaded</code>).</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
         <li><s>Isolation Forest <code>engine.py</code> + trained <code>.pkl</code> drop-in (#101 &mdash; model handoff from Nada).</s> <strong>Shipped v1.0.7ab.</strong> Follow-up: production_scaler re-calibration to lift the 25% bench agreement above the 80% threshold needed to flip the compose default (#165).</li>
-        <li>Auto-recovery logic with cool-down before clearing UNHEALTHY.</li>
+        <li><s>Auto-recovery logic with cool-down before clearing UNHEALTHY.</s> <strong>Shipped v1.0.7bd</strong> — <code>runloop.apply_stability_gate</code> (B2: a status change must persist <code>flip_confirmation_cycles</code> consecutive cycles before publish/persist; B1: a low-sample cycle holds the last non-healthy verdict rather than reverting to healthy).</li>
         <li>Own-metrics emission (counters + latency histogram) + <code>/metrics</code> Prometheus endpoint.</li>
         <li>Flip <code>ANOMALY_RUNLOOP_ENABLED</code> default to <code>true</code> after dev-stack smoke.</li>
         <li>F1 measurement harness for the test split (Phase 2 evaluation gate).</li>
@@ -5752,6 +5752,33 @@ docker compose logs -f anomaly-detector</code></pre>
   </tbody>
 </table>
 
+<h3>v1.0.7bd — 2026-06-14 — Anomaly-detector slice closure: stability gate (auto-recovery cool-down) + per-cycle persistence + live/e2e tests + Stage-B live track</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Run-loop stability gate (closes the N2.1 auto-recovery cool-down follow-up)</strong></td>
+      <td><code>services/anomaly-detector/runloop.py</code> gains <code>BackendState</code> + <code>apply_stability_gate(raw, low_sample, state, confirmation_cycles)</code>. <strong>B1</strong>: a low-sample cycle preserves the backend's last non-healthy verdict instead of reverting to <code>healthy</code> (a fast-failing backend with few samples no longer reads healthy by construction). <strong>B2</strong>: a status flip must be observed for <code>flip_confirmation_cycles</code> (new <code>EnginePolicy</code> field, default 2; settable via <code>anomaly_flip_confirmation_cycles</code>) consecutive cycles before it is published/persisted. <code>app.py::_inference_cycle</code> now writes a <code>backend_health</code> row via <code>BACKEND_HEALTH_INSERT</code> every poll cycle for every backend (previously only the manual <code>/api/v1/isolate</code> path persisted), so lb-sidecar startup hydration always has fresh data. The #161 own-metrics (<code>anomaly_detector_isolate_total</code>, cycle/publish timers) and #163 liveness guard are preserved.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Live-stack + e2e + scenario triangulation</strong></td>
+      <td>New <code>tests/integration/test_anomaly_isolation_forest.py</code> (skipped unless <code>ANOMALY_ENGINE=isolation_forest</code> is loaded and ready) injects real latency via <code>POST /_admin/delay</code> and asserts the <code>backend_health</code> table flips <code>degraded</code>/<code>unhealthy</code> → <code>healthy</code> through the real <code>.pkl</code> and the stability gate; chaos-injection helpers factored into <code>tools/anomaly-training/live_collection.py</code> (re-exported by <code>tests/integration/_chaos.py</code>). New <code>tests/e2e/anomaly-detection/</code> and <code>examples/scenarios/anomaly-detection/anomaly_walk.py</code> exercise the customer-facing surface (<code>/health</code> engine fields, <code>client.engines.state()</code>, <code>client.isolate()</code>, <code>smartload.anomaly</code> delivery, lb-sidecar exclude/recover via <code>/api/v1/lb/state</code>).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Stage-B live-injection retrain/validation track (complementary to #165)</strong></td>
+      <td>New <code>tools/anomaly-training/collect_production_data.py</code> drives the live stack through alternating normal/latency-injected windows and records labeled <code>BackendFeatures</code> via the exact <code>ANOMALY_QUERY</code> + <code>build_features_from_rows</code> pivot the run loop uses; <code>train_stage_b.py</code> fits a single domain-consistent scaler + IsolationForest with a temporal holdout and injection-derived contamination (logs <code>pipeline="production_live"</code>); <code>evaluate_live.py</code> is an on-demand drift check against the shipped bundle. This is a parallel real-data track for validation / alternative retraining — the <strong>shipped</strong> bundle remains the #165 production-shape recalibration (<code>train_production.py</code>, <code>pipeline="production_synthetic"</code>); Stage-B does not auto-promote. The error-rate axis remains Stage-A (SMD)-sourced pending an error-injection endpoint (future work).</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Hygiene + docs</strong></td>
+      <td>Legacy MST-only trainer moved to <code>tools/anomaly-training/superseded/train_mst_superseded.py</code> (F1=0.10, <code>pipeline="mst"</code>); <code>train_smd.py</code> gains <code>_assert_latency_dim_rank()</code> so a future re-train on a different SMD machine set that no longer supports the hardcoded latency dim fails loudly. §25.9 anomaly slice row flipped to <em>Shipped</em>; <code>docs/features/anomaly-detection.md</code> checklist updated; <code>docs/planned/anomaly-detection-*.md</code> capture the known-weakness review and the closed items.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7bb — 2026-06-13 — Per-container CPU/memory telemetry: resource-collector daemon + resources endpoints</h3>
 <table>
   <thead><tr><th>Unit</th><th>What changed</th><th>Version</th></tr></thead>
@@ -7950,9 +7977,9 @@ flowchart TD
     </tr>
     <tr>
       <td><strong>Anomaly detection</strong></td>
-      <td>#138 engine-wrapper, #101 Isolation Forest model</td>
-      <td>pending</td>
-      <td><span class="pill pill-next">Next — after #138 + model handoff</span></td>
+      <td>#138 engine-wrapper, #101 Isolation Forest model, <code>docs/features/anomaly-detection.md</code></td>
+      <td><code>tests/e2e/anomaly-detection/</code></td>
+      <td><span class="pill pill-done">Shipped 2026-06-14 (v1.0.7bd) — webhook #130 still pending</span></td>
     </tr>
     <tr>
       <td><strong>Forecasting + autoscaler loop</strong></td>

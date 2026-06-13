@@ -43,6 +43,7 @@ from engine_base import (  # noqa: E402
 DEFAULT_LATENCY_MULTIPLIER = 3.0
 DEFAULT_ERROR_RATE_THRESHOLD = 0.05
 DEFAULT_MIN_SAMPLE_COUNT = 10
+DEFAULT_FLIP_CONFIRMATION_CYCLES = 2
 
 
 @dataclass
@@ -60,6 +61,10 @@ class EnginePolicy:
     safe_mode: bool = False
     anomaly_response: str = "auto-isolate"   # "auto-isolate" | "advisory"
     policy_version: int = 0
+    # Cycles a raw status change must persist before apply_stability_gate()
+    # confirms it (B2 fix). Not an engine constructor param -- excluded from
+    # engine_kwargs(), consumed directly by app.py's _inference_cycle.
+    flip_confirmation_cycles: int = DEFAULT_FLIP_CONFIRMATION_CYCLES
 
     def engine_kwargs(self) -> dict:
         return {
@@ -94,6 +99,7 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         safe_mode=bool(payload.get("safe_mode", fallback.safe_mode)),
         anomaly_response=str(payload.get("anomaly_response", fallback.anomaly_response)),
         policy_version=_int("policy_version", fallback.policy_version),
+        flip_confirmation_cycles=_int("anomaly_flip_confirmation_cycles", fallback.flip_confirmation_cycles),
     )
 
 
@@ -193,6 +199,73 @@ def should_publish(score: AnomalyScore, policy: EnginePolicy) -> bool:
     if policy.anomaly_response == "advisory":
         return True
     return score.status != "healthy"
+
+
+# ── stability gate (per-backend memory across cycles) ───────────────────────
+
+@dataclass
+class BackendState:
+    """Per-backend memory carried across inference cycles by
+    apply_stability_gate(). One instance per backend_id, owned by app.py's
+    run loop (not thread-shared)."""
+    last_status: str = "healthy"
+    last_score: float = 0.0
+    pending_status: str | None = None
+    pending_count: int = 0
+
+
+def apply_stability_gate(
+    raw: AnomalyScore,
+    low_sample: bool,
+    state: BackendState,
+    confirmation_cycles: int,
+) -> AnomalyScore:
+    """Wrap an engine's raw AnomalyScore with per-backend memory.
+
+    Fixes two operational gaps:
+
+    - B1 (sample-count blind spot): engines force "healthy"/0.0 when
+      features.sample_count < min_sample_count (see
+      IsolationForestEngine.score / ThresholdEngine.score) -- a backend
+      failing fast on every request produces few samples and would
+      otherwise be reported healthy. "No new evidence" should mean "no
+      change": if `low_sample` is True and the backend's last confirmed
+      status was non-healthy, that status/score is preserved instead.
+
+    - B2 (no hysteresis/cooldown): a status change away from
+      `state.last_status` must be observed for `confirmation_cycles`
+      consecutive cycles before it is confirmed (returned as-is). Until
+      confirmed, the previous stable status/score is returned, so a single
+      noisy sample can't flip a backend's published status.
+
+    Mutates `state` in place and returns the gated AnomalyScore. Evidence
+    fields (metric / observed_value / threshold) are carried from `raw` only
+    when the raw verdict is the one returned; a held/pending verdict reuses
+    the last confirmed status with no stale evidence attached.
+    """
+    if low_sample and state.last_status != "healthy":
+        return AnomalyScore(raw.backend_id, state.last_status, state.last_score)
+
+    if raw.status == state.last_status:
+        state.last_score = raw.score
+        state.pending_status = None
+        state.pending_count = 0
+        return raw
+
+    if state.pending_status == raw.status:
+        state.pending_count += 1
+    else:
+        state.pending_status = raw.status
+        state.pending_count = 1
+
+    if state.pending_count >= confirmation_cycles:
+        state.last_status = raw.status
+        state.last_score = raw.score
+        state.pending_status = None
+        state.pending_count = 0
+        return raw
+
+    return AnomalyScore(raw.backend_id, state.last_status, state.last_score)
 
 
 def _severity_for_status(status: str) -> str | None:

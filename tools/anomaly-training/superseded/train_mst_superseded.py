@@ -1,6 +1,16 @@
 """
-tools/anomaly-training/train.py
-──────────────────────────────────
+tools/anomaly-training/superseded/train_mst_superseded.py
+──────────────────────────────────────────────────────────
+SUPERSEDED -- retained only as a historical record (training_log.json,
+pipeline="mst", test_f1=0.10, recall=0.0526). Do NOT run this to produce the
+shipped model; it will not pass the F1 > 0.80 gate and its "anomaly_truth"
+labels are derived from the same 4 features used to train (circular).
+
+The current pipeline is tools/anomaly-training/train_smd.py (trains on SMD
+with real test_label/ ground truth, pipeline="smd", test_f1=0.8012).
+
+Original docstring follows, unmodified:
+
 Offline training pipeline for the anomaly-detector's Isolation Forest engine.
 
 Usage:
@@ -39,7 +49,7 @@ import sklearn
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import f1_score, precision_score, recall_score
 
-_HERE = Path(__file__).resolve().parent
+_HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 from preprocess_mst import ERROR_RT_THRESHOLD_MS, load_mst_features  # noqa: E402
 
@@ -224,7 +234,7 @@ def main(data_dir: str, contamination: float, n_estimators: int) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train the Isolation Forest anomaly engine")
+    parser = argparse.ArgumentParser(description="[SUPERSEDED] Train the Isolation Forest anomaly engine on MST-2021")
     parser.add_argument("--data-dir", default=str(_HERE.parent.parent / "datasets" / "alibaba" / "mst2021" / "MSCallGraph"),
                         help="Directory containing MSCallGraph_*.csv files")
     parser.add_argument("--contamination", type=float, default=0.1)
