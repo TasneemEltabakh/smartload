@@ -159,13 +159,16 @@ services:
       # Run loop defaults to off so the Phase-0 stub stays the default until
       # operators flip the flag explicitly. See SOT §8.5 + issue #138.
       ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-true}
-      # Default flipped to the trained Isolation Forest engine in v1.0.7aj
-      # (#165 — bench 91.4% agreement, zero under-reactions, live-stack green).
-      # It is stricter on absolute latency than the threshold rule (the
-      # value-add direction); revert with ANOMALY_ENGINE=threshold if its
-      # exclusions are too aggressive for a deployment. Falls back to threshold
+      # v1.0.7aj flipped the default to the trained Isolation Forest engine
+      # (#165). v1.0.7an reverted the default to `threshold`: under multi-run
+      # bench load (#160 smoke) the IF engine over-excluded the single seed
+      # backend every cycle, so the whole pool went `down` and the LB returned
+      # 502 on all traffic (a self-sustaining loop: excluded -> 502s -> high
+      # error metric -> re-flagged). `threshold` is the safe default while that
+      # over-exclusion is fixed (follow-up to #165); opt back in with
+      # ANOMALY_ENGINE=isolation_forest. Either engine falls back to threshold
       # automatically if the model .pkl is missing or fails to load.
-      ANOMALY_ENGINE: ${ANOMALY_ENGINE:-isolation_forest}
+      ANOMALY_ENGINE: ${ANOMALY_ENGINE:-threshold}
       ANOMALY_WINDOW_SECONDS: ${ANOMALY_WINDOW_SECONDS:-60}
     depends_on:
       timescaledb:

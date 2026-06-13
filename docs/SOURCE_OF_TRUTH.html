@@ -4903,7 +4903,7 @@ flowchart LR
     <tr><td><strong>Load Balancer</strong></td><td>NGINX</td><td><span class="pill pill-done">Implemented</span></td><td>Was Go (with Node.js fallback) in old plan; NGINX is the wired choice. <span class="badge badge-historical">Go superseded</span></td></tr>
     <tr><td><strong>Test backend</strong></td><td>Node.js Express</td><td><span class="pill pill-done">Implemented</span></td><td>Multiple instances scaled via compose.</td></tr>
     <tr><td><strong>AI services runtime</strong></td><td>Python 3.11-slim + Flask 3.0.3</td><td><span class="pill pill-done">Implemented</span></td><td>Per-service Dockerfile; <code>psycopg2-binary 2.9.9</code> + <code>redis 5.0.4</code>.</td></tr>
-    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. <strong>Re-calibrated in production-shape space v1.0.7ah (#165): bench agreement 25% &rarr; 91.4%, zero under-reactions, model reacts live. Compose default since v1.0.7aj</strong> (after the v1.0.7ai backend-id canonicalization closed the live-stack test). LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
+    <tr><td><strong>Anomaly model</strong></td><td>scikit-learn Isolation Forest</td><td><span class="pill pill-done">Shipped v1.0.7ab (#101, F1=0.8012 on SMD)</span></td><td>Threshold rule remains compose default; IF opt-in via <code>ANOMALY_ENGINE=isolation_forest</code>. <strong>Re-calibrated in production-shape space v1.0.7ah (#165): bench agreement 25% &rarr; 91.4%, zero under-reactions, model reacts live. Compose default v1.0.7aj &rarr; reverted to <code>threshold</code> v1.0.7an</strong> (after the v1.0.7ai backend-id canonicalization closed the live-stack test). <strong>The #160 multi-run smoke exposed an over-exclusion: under sustained bench load the IF engine flagged the single seed backend every cycle, the LB dropped the whole pool to <code>down</code> and returned 502 on all traffic (a feedback loop — excluded &rarr; 502s &rarr; high error metric &rarr; re-flagged). <code>threshold</code> is the safe compose default while that is fixed (follow-up to #165); opt back in with <code>ANOMALY_ENGINE=isolation_forest</code>.</strong> LSTM-AE deferred as &sect;35.6 architectural fallback.</td></tr>
     <tr><td><strong>Forecasting model</strong></td><td>ARIMA (statsmodels)</td><td><span class="pill pill-done">v1.0.7i (N2.2) — ships behind <code>FORECAST_ENGINE=arima</code> until MAPE&lt;20%</span></td><td>Moving average remains the default; ARIMA(3,0,1) ships with 25.0% test MAPE (+22.77% vs baseline). Tightening pass needed to cross the SOT KPI.</td></tr>
     <tr><td><strong>RL framework</strong></td><td>Stable-Baselines3 + PyTorch (PPO)</td><td><span class="pill pill-done">N2.3–N2.5 code complete</span></td><td>Custom Gym env <code>SmartLoadEnv</code> + <code>obs_builder.py</code> (shared train/serve); <code>PPOPolicy</code> serving plugin; <code>MaskablePPO</code> training script with 50k-step canary gate; <code>round_robin</code> + <code>least_connections</code> baselines; reproducible eval harness (<code>eval_seed_bank.json</code>). DQN fallback (<code>train_dqn.py</code>) ready. <strong>Pending:</strong> ~7-day training run to generate <code>policy.zip</code>.</td></tr>
     <tr><td><strong>Metrics DB</strong></td><td>TimescaleDB (PostgreSQL 16)</td><td><span class="pill pill-done">Implemented</span></td><td>Hypertables + continuous aggregates planned in V1 redesign (draft).</td></tr>
@@ -5656,6 +5656,28 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7an — 2026-06-13 — Anomaly-engine compose default reverted to threshold + bench unit-test CI hotfix</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Compose default <code>ANOMALY_ENGINE</code> reverted to <code>threshold</code></strong></td>
+      <td>The #160 multi-run smoke exposed an over-exclusion in the Isolation Forest engine (the v1.0.7aj default): under sustained bench load it flagged the single seed backend every cycle, so the lb-sidecar dropped the whole <code>backend_pool</code> to <code>down</code> and NGINX returned 502 on all traffic — a self-sustaining loop (excluded &rarr; 502s &rarr; high per-backend error metric &rarr; re-flagged). <code>docker-compose.yml</code> default flipped back to <code>threshold</code> (one line: <code>ANOMALY_ENGINE: ${ANOMALY_ENGINE:-threshold}</code>) so the stack is safe out of the box while the over-exclusion is fixed (follow-up to #165). Opt back in with <code>ANOMALY_ENGINE=isolation_forest</code>. The model + serving plugin are unchanged.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>CI hotfix: bench unit test skips when scipy is absent</strong></td>
+      <td>v1.0.7am's <code>tests/unit/experiments/test_bench_stats.py</code> errored on collection in CI's per-service <code>unit-tests</code> job, which installs each service's requirements but not <code>requirements-bench.txt</code> (no <code>scipy</code>/<code>pandas</code>). Added <code>pytest.importorskip("scipy")</code>/<code>("pandas")</code> at module top so the test skips cleanly there and still runs wherever the bench deps are installed (local dev, the compose-test job). Turns the red <code>unit-tests</code> job green; no production code touched.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Verification</strong></td>
+      <td>Running stack confirmed healthy on <code>threshold</code> (LB serves 200, detector publishes <code>healthy</code> for the seed backend). <code>tests/unit/experiments/test_bench_stats.py</code> still 11-pass locally; skips (not errors) without scipy. The publishable full-length bench re-run remains queued for when the retrained PPO is integrated (§35.7 / #39) — unaffected by this revert.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7am — 2026-06-13 — Multi-run bench batching with per-metric confidence intervals (#160, §35.3)</h3>
 <table>

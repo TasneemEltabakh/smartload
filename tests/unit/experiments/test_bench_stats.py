@@ -15,9 +15,17 @@ import math
 import sys
 from pathlib import Path
 
-import pandas as pd
 import pytest
-from scipy import stats
+
+# bench_stats ships its deps via experiments/adaptive-bench/requirements-bench.txt
+# (scipy / pandas), NOT the per-service unit-test env. Skip cleanly where they're
+# absent so CI's per-service unit-test job doesn't error on collection — the test
+# still runs anywhere the bench deps are installed (local dev, compose-test job).
+pytest.importorskip("scipy")
+pytest.importorskip("pandas")
+
+import pandas as pd          # noqa: E402
+from scipy import stats      # noqa: E402
 
 # Make experiments/_bench_common importable (same path trick the harnesses use).
 _EXPERIMENTS = Path(__file__).resolve().parents[3] / "experiments"
