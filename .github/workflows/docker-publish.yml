@@ -59,6 +59,13 @@ jobs:
         # cached by setup-python's pip wheel cache across runs.)
         run: pip install -r services/rl-engine/requirements.txt
 
+      - name: Install bench-harness deps for experiments unit tests
+        # tests/unit/experiments/test_bench_stats.py imports scipy / pandas via
+        # experiments/_bench_common/bench_stats.py (#160). These ship in
+        # experiments/adaptive-bench/requirements-bench.txt (the host-side bench
+        # env), not the per-service images, so install them explicitly here.
+        run: pip install scipy pandas
+
       - name: Run pure-Python tests
         run: pytest tests/integration/test_s2_baseline.py tests/integration/test_telemetry_parser.py tests/integration/test_lb_otel_shipper.py -v
 
