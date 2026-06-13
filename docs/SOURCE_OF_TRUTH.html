@@ -1482,7 +1482,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7bd &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-14 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bc pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bd pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -7729,7 +7729,7 @@ docker compose logs -f anomaly-detector</code></pre>
 </p>
 
 <div class="callout warn">
-  <strong>Phase scope.</strong> SmartLoad ships today as <strong>single-tenant middleware</strong>. <strong>SaaS adaptation</strong> — multi-tenancy (#129), tenant API keys + RBAC (#132), rate limiting and per-token quotas (#135), per-tenant Redis namespacing, and the managed-SaaS delivery shape — is a <strong>separate, deferred Phase 2 track</strong>. Sections 25.1's <em>Managed SaaS</em> row, 25.3's <em>Tenant integrator</em> row, 25.4 in its entirety, and Figure 12.8 describe that future track. <strong>Nothing in current-phase scope should assume <code>tenant_id</code> plumbing, API-key auth, or per-tenant channel suffixes exist.</strong> The present build serves one integrating customer.
+  <strong>Phase scope.</strong> SmartLoad ships today as <strong>single-tenant middleware</strong>. <strong>SaaS adaptation</strong> — multi-tenancy (#129), tenant API keys + RBAC (#132), rate limiting and per-token quotas (#135), per-tenant Redis namespacing, and the managed-SaaS delivery shape — is a <strong>separate, deferred Phase 2 track</strong>. Sections 25.1's <em>Managed SaaS</em> row, 25.3's <em>Tenant integrator</em> row, 25.4 in its entirety, and Figure 12.8 describe that future track. <strong>Nothing in current-phase scope should assume <code>tenant_id</code> plumbing, API-key auth, or per-tenant channel suffixes exist.</strong> The present build serves one integrating customer. A 2026-06-14 milestone audit widened this Phase 2 track beyond the tenancy primitives to include a set of product-maturity items — webhook delivery (#130), the HAProxy adapter (#147), embedded dashboards (#131), the Helm chart (#133), API versioning (#134), and external/operator auth (#56, #125) among them. The full deferred backlog is the grouped row at the foot of §25.9.
 </div>
 
 <h3>25.1 Three delivery shapes</h3>
@@ -7746,7 +7746,7 @@ docker compose logs -f anomaly-detector</code></pre>
       <td><strong>On-prem — Helm chart</strong></td>
       <td>Customer ops team on Kubernetes</td>
       <td><code>helm install smartload ./infrastructure/helm/smartload</code>. Single-tenant by default; multi-tenant by setting <code>tenancy.enabled=true</code> once #129 lands.</td>
-      <td><span class="badge badge-planned">Scaffolded, Chart.yaml/values.yaml present; templates pending issue #133</span></td>
+      <td><span class="badge badge-planned">Scaffolded, Chart.yaml/values.yaml present; templates pending issue #133 (Phase 2 — SaaS adaptation)</span></td>
     </tr>
     <tr>
       <td><strong>Managed SaaS</strong></td>
@@ -7778,7 +7778,7 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>Webhook delivery (outbound HTTP)</td>
       <td><code>docs/openapi/smartload-v1.yaml</code> (planned §11.3)</td>
       <td>HMAC-SHA256 signed; <code>X-SmartLoad-Signature</code> header; retry with exponential backoff</td>
-      <td><span class="badge badge-planned">Scaffolded; implementation tracked by #130</span></td>
+      <td><span class="badge badge-planned">Scaffolded; implementation tracked by #130 (Phase 2 — SaaS adaptation)</span></td>
     </tr>
     <tr>
       <td>Python SDK</td>
@@ -7989,9 +7989,9 @@ flowchart TD
     </tr>
     <tr>
       <td><strong>Webhook delivery</strong></td>
-      <td>#141 migrations, #134 API versioning</td>
-      <td>pending</td>
-      <td><span class="pill pill-next">Next — after foundation pass (#130)</span></td>
+      <td>#141 migrations <span class="pill pill-done">shipped</span>, #134 API versioning <span class="badge badge-planned">Phase 2</span></td>
+      <td>pending (#130)</td>
+      <td><span class="badge badge-planned">Phase 2 — SaaS adaptation (deferred 2026-06-14)</span></td>
     </tr>
     <tr>
       <td><strong>Live Engines page</strong> (OUI.3)</td>
@@ -8015,7 +8015,7 @@ flowchart TD
       <td><strong>Embedded metrics dashboards</strong> (OUI.8)</td>
       <td>—</td>
       <td>pending</td>
-      <td><span class="pill pill-upcoming">Future — low-risk follow-up (#131)</span></td>
+      <td><span class="badge badge-planned">Phase 2 — deferred 2026-06-14 (#131); Grafana covers these charts today</span></td>
     </tr>
     <tr>
       <td><strong>Consolidated status</strong> (OUI.9)</td>
@@ -8024,7 +8024,14 @@ flowchart TD
       <td><span class="pill pill-done">Shipped 2026-06-03 (slice #5; #149; v1.0.7q)</span></td>
     </tr>
     <tr>
-      <td colspan="4" style="opacity:.7;font-style:italic;">SaaS-track slices — deferred to Phase 2 per §25 <em>Phase scope</em> callout: OUI.7 Auth (#125), multi-tenancy plumbing (#129), tenant API keys + RBAC (#132), rate limiting + quotas (#135).</td>
+      <td colspan="4" style="opacity:.7;font-style:italic;">
+        <strong>Phase 2 — SaaS adaptation &amp; product-maturity backlog</strong> (deferred per the §25 <em>Phase scope</em> callout; GitHub milestone <em>Phase 2 — SaaS adaptation</em>). Milestone audit 2026-06-14 rebucketed these out of Sprint 6/7 — each is SaaS-coupled, dependent on a SaaS primitive, or too high-effort for too little current-phase return:
+        <br>· <strong>SaaS core:</strong> multi-tenancy plumbing (#129), tenant API keys + RBAC (#132), rate limiting + per-token quotas (#135), per-tenant Redis namespacing.
+        <br>· <strong>Auth:</strong> external API authentication model (#56), operator-UI authentication / OUI.7 (#125).
+        <br>· <strong>Eventing &amp; integration breadth:</strong> webhook delivery (#130), HAProxy LB adapter (#147), embedded metrics dashboards / OUI.8 (#131 — Grafana covers these charts today), service log viewer / OUI.6 (#124).
+        <br>· <strong>Deployment &amp; release maturity:</strong> Helm chart (#133), production/demo deployment setup (#37), API versioning + deprecation policy (#134), TimescaleDB backup/restore runbook (#142).
+        <br>Sprint 6 retains the release-critical and low-coupling items: named-strategy aliases (#150), single <code>smartload.yml</code> config (#145), dry-run simulate (#146), test reorg (#140), strict-lint flip (#139), DB migrations (#141 <span class="pill pill-done">shipped 2026-06-13</span>), and the benchmark/regression/release-package set (#39 / #43 / #42 / #46).
+      </td>
     </tr>
   </tbody>
 </table>
@@ -8036,8 +8043,8 @@ flowchart TD
   <thead><tr><th>Foundation</th><th>Unblocks</th><th>Issue</th></tr></thead>
   <tbody>
     <tr><td>Engine-wrapper integration — wire <code>engine_base</code> / <code>policy_base</code> ABCs into anomaly-detector, forecasting, rl-engine run loops behind <code>&lt;SVC&gt;_RUNLOOP_ENABLED</code> flags <span class="pill pill-done">3 of 3 wired — anomaly-detector ✓ + forecasting ✓ + rl-engine ✓ (all flag off; flip after dev smoke)</span></td><td>Anomaly, Forecasting, Live Engines, RL routing</td><td>#138</td></tr>
-    <tr><td>DB migrations folder + first script — schema deltas land as <code>infrastructure/timescaledb/migrations/&lt;n&gt;_&lt;name&gt;.sql</code>, not <code>init.sql</code> rewrites</td><td>Webhooks (new tables), every future schema-touching slice</td><td>#141</td></tr>
-    <tr><td>API versioning + deprecation policy — written contract for v2 + deprecation paths for HTTP, Redis envelopes, SDK, <code>policy.yaml</code></td><td>Webhooks, every future contract change</td><td>#134</td></tr>
+    <tr><td>DB migrations folder + first script — schema deltas land as <code>infrastructure/timescaledb/migrations/&lt;n&gt;_&lt;name&gt;.sql</code>, not <code>init.sql</code> rewrites</td><td>Webhooks (new tables), every future schema-touching slice</td><td>#141 <span class="pill pill-done">shipped 2026-06-13</span></td></tr>
+    <tr><td>API versioning + deprecation policy — written contract for v2 + deprecation paths for HTTP, Redis envelopes, SDK, <code>policy.yaml</code></td><td>Webhooks, every future contract change</td><td>#134 <span class="badge badge-planned">Phase 2 — deferred 2026-06-14</span></td></tr>
     <tr><td>End-to-end correlation ID — single trace ID per request flows through telemetry, anomaly, forecast, scale, policy</td><td>Live Engines (visualisation), every observability story</td><td>#143</td></tr>
     <tr><td>Tests reorg into <code>tests/e2e/&lt;feature&gt;/</code></td><td>Every future slice's e2e suite</td><td>#140</td></tr>
     <tr><td>Per-task acceptance test pattern + benchmark harness</td><td>Slice "done" gate; performance KPI tracking</td><td>#117</td></tr>
@@ -8067,7 +8074,7 @@ flowchart TD
     <tr>
       <td><strong>HAProxy adapter</strong> — implements <code>LoadBalancerAdapter</code> ABC for the existing stub folder</td>
       <td>Foundation pass — drops the third plugin into the lb_adapters layer (NGINX shipped; Envoy / ALB remain stubs)</td>
-      <td>#147</td>
+      <td>#147 <span class="badge badge-planned">Phase 2 — deferred 2026-06-14</span></td>
       <td><code>LB_ADAPTER=haproxy docker compose up</code> works end-to-end; <code>tests/conformance/lb_adapter/</code> suite passes against HAProxy with the same assertions as NGINX.</td>
     </tr>
     <tr>
