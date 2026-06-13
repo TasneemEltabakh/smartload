@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -87,8 +88,21 @@ class IsolationForestEngine(AnomalyEngine):
         if features.sample_count < self.min_sample_count:
             return AnomalyScore(features.backend_id, "healthy", 0.0)
 
-        raw_x = [[getattr(features, name) for name in FEATURE_ORDER]]
-        x = self.production_scaler.transform(raw_x)
+        vector = [getattr(features, name) for name in FEATURE_ORDER]
+        # A DB hiccup (NULL/NaN aggregates, an empty rolling window) can surface
+        # non-finite or non-numeric features. StandardScaler propagates NaN/inf
+        # and decision_function() then returns NaN, which fails BOTH comparisons
+        # below and falls through to "unhealthy" with score 1.0 — a spurious
+        # exclusion driven by bad data, not a sick backend (one the lb-sidecar
+        # quorum guard would then have to absorb). Treat a non-finite vector as
+        # insufficient data, exactly like the sample-count gate above.
+        try:
+            if not all(math.isfinite(v) for v in vector):
+                return AnomalyScore(features.backend_id, "healthy", 0.0)
+        except TypeError:
+            return AnomalyScore(features.backend_id, "healthy", 0.0)
+
+        x = self.production_scaler.transform([vector])
         raw = float(self.model.decision_function(x)[0])
 
         if raw > self.healthy_above:
