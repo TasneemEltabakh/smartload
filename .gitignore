@@ -213,6 +213,10 @@ __marimo__/
 # Node.js
 # =========================
 
+# test-backends/lib/ is hand-written Node source, not a Python build dir.
+# Re-include it: the Python-template `lib/` rule above otherwise swallows it.
+!test-backends/lib/
+
 node_modules/
 npm-debug.log*
 yarn-debug.log*

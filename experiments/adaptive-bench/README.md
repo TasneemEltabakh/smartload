@@ -11,6 +11,8 @@ Three-round benchmark programme that quantitatively answers RQ4 (forecast-driven
 
 R2 ships the raw artefacts; R3 the per-run analysis; #160 batches N independently-seeded runs and reports `mean ± confidence interval` so results survive a reviewer who discounts N=1.
 
+> **Backend model.** The pool is now closed-loop M/G/c queues (`test-backends/app.js`), so phase-C/D latency reflects real queue-wait under load and the phase-D `/_admin/delay` anomaly collapses a backend's throughput rather than adding flat latency (`anomaly_injector.py` documents the dynamics). The Locust shape is *closed-loop* and cannot hold a fixed arrival rate; `fortio/` adds a minimal standalone **open-loop** Fortio probe to chart the backend saturation curve + tail latency directly — see `fortio/README.md`. It does not replace Locust and is not wired into `run.py`.
+
 ## What R2 produces per run
 
 Eight artefacts under `results/<TIMESTAMP>/`:

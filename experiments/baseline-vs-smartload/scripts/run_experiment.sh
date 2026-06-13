@@ -51,6 +51,34 @@ ANOMALY_AT_SECS="${ANOMALY_AT_SECS:-120}"
 ANOMALY_HOLD_SECS="${ANOMALY_HOLD_SECS:-60}"
 SUSTAIN_END_SECS="${SUSTAIN_END_SECS:-360}"
 
+# Anomaly magnitude knobs. The test backends are now closed-loop queues
+# (test-backends/app.js — WORKERS service slots + a bounded QUEUE_MAX FIFO), so
+# an injected delay is NOT a flat latency add: it occupies a worker slot,
+# collapsing backend-1's throughput and building a queue, so observed latency
+# is delay + queue-wait (multi-second under load). The "slow but never fails"
+# premise this experiment depends on (no 5xx -> NGINX max_fails never trips ->
+# baseline RR cannot detect the degradation) holds ONLY while the slowed
+# backend never sheds 503. That is guaranteed by the invariant
+# QUEUE_MAX >= RAMP_USERS: a closed-loop generator has at most RAMP_USERS
+# requests in flight, so even if every user piles onto backend-1 the queue
+# (cap BACKEND_QUEUE_MAX) cannot overflow. With the defaults (64 >= 50) the
+# 200 ms spike is safe; raise RAMP_USERS past the queue and it would shed.
+BASELINE_SLOW_MS="${BASELINE_SLOW_MS:-15}"     # backend-1 constant slowness, whole run
+ANOMALY_DELAY_MS="${ANOMALY_DELAY_MS:-200}"    # backend-1 mid-run latency spike
+# Exported so an override binds the backend container (compose interpolates
+# ${BACKEND_QUEUE_MAX}) AND the guard below — keeping the two in lockstep.
+export BACKEND_QUEUE_MAX="${BACKEND_QUEUE_MAX:-64}"
+
+# Guard the no-shedding invariant. If the closed-loop client count can exceed
+# the backend queue, the slowed backend will shed 503, NGINX's max_fails CAN
+# eject it, and the "baseline can't detect a slow backend" contrast is lost.
+if (( RAMP_USERS > BACKEND_QUEUE_MAX )); then
+    echo "[run] WARN — RAMP_USERS=$RAMP_USERS > BACKEND_QUEUE_MAX=$BACKEND_QUEUE_MAX:" >&2
+    echo "[run]        backend-1 may shed 503 under load, changing the experiment" >&2
+    echo "[run]        (baseline RR could then eject it too). Lower RAMP_USERS or" >&2
+    echo "[run]        raise BACKEND_QUEUE_MAX to preserve the slow-but-not-failing case." >&2
+fi
+
 if [[ "${SHORT:-0}" == "1" ]]; then
     # Harness validation profile — total run = 180 s. Keeps the phase
     # structure but compressed so the operator can iterate on the script.
@@ -114,7 +142,11 @@ _set_backend_delay_via_exec() {
     # POST /_admin/delay {ms: N} on backend-1 from inside its own container
     # (the test-backend port isn't published on the host). Used for both the
     # baseline-heterogeneity setup (a constant per-side slowness) and the
-    # mid-run anomaly spike.
+    # mid-run anomaly spike. Under the closed-loop backend the ms is added to
+    # the per-request *service time*, so it holds a worker slot and cuts
+    # backend-1's effective capacity (~2 workers / (mean+N) ms) rather than
+    # adding flat latency — past the knee it builds a queue (see the
+    # QUEUE_MAX >= RAMP_USERS invariant in the knobs section).
     local target_ms="$1"
     docker exec smartload-test-backend-1 sh -c \
         "wget -q -O /dev/null --post-data='{\"ms\": ${target_ms}}' --header='Content-Type: application/json' http://localhost:8080/_admin/delay" \
@@ -125,13 +157,17 @@ _inject_anomaly_at() {
     # Schedule a latency-spike anomaly. At t=anomaly_at:
     #   1. POST /_admin/delay {ms: ANOMALY_DELAY_MS} on backend-1 via
     #      `docker exec` (we hit the in-container endpoint, not host:8080,
-    #      since backend-1 isn't published). The request still completes —
-    #      it's slow, not failed. This is the case where NGINX's passive
-    #      max_fails check NEVER trips (no 5xx, no timeout on the LB side),
-    #      so baseline RR keeps sending 1/5 of traffic to a slow backend
-    #      indefinitely. SmartLoad's lb-sidecar, in contrast, reacts to
-    #      the published AnomalyEvent within ~1 s and pulls the bad
-    #      backend out of rotation.
+    #      since backend-1 isn't published). Under the closed-loop backend the
+    #      delay occupies a worker slot, so backend-1's throughput collapses
+    #      and a queue forms: the request still completes (slow, not failed)
+    #      and returns 200 as long as the queue never overflows to a 503 shed.
+    #      That no-shed condition is the QUEUE_MAX >= RAMP_USERS invariant from
+    #      the knobs section — with it, NGINX's passive max_fails check NEVER
+    #      trips (no 5xx, no LB-side timeout), so baseline RR cannot detect the
+    #      degradation and keeps routing closed-loop users onto a backend whose
+    #      latency has ballooned to delay + queue-wait. SmartLoad's lb-sidecar,
+    #      in contrast, reacts to the published AnomalyEvent within ~1 s and
+    #      pulls the bad backend out of rotation.
     #   2. POST /api/v1/isolate to publish the AnomalyEvent that SmartLoad's
     #      signal flow needs (the anomaly-detector hasn't observed enough
     #      latency yet to fire on its own this early in the run).
@@ -207,9 +243,11 @@ _run_side() {
     _wait_for_status_not_down
 
     # Backend heterogeneity setup: backend-1 gets a constant baseline
-    # slowness of BASELINE_SLOW_MS (default 15 ms) for the full run.
-    # In baseline (NGINX RR) mode this means 1/5 of traffic eats the
-    # extra latency on every request — a deterministic p95/p99 drag.
+    # slowness of BASELINE_SLOW_MS (default 15 ms) for the full run. Under the
+    # closed-loop backend this raises backend-1's service mean (20 -> 35 ms,
+    # ~57 rps vs ~100 rps) — mild, sub-saturation heterogeneity. In baseline
+    # (NGINX RR) mode 1/5 of traffic eats the extra latency on every request —
+    # a deterministic p95/p99 drag.
     # In SmartLoad mode the RL engine + lb-sidecar can in principle
     # downweight the slow backend; whether the *currently trained*
     # PPO model actually does so depends on training data (see SOT

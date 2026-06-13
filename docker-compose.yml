@@ -395,6 +395,24 @@ services:
     environment:
       PORT: "8080"
       DEMO_TOKEN: ${DEMO_TOKEN:-}
+      # ── Closed-loop service model (test-backends/app.js + lib/config.js) ────
+      # Each replica is now a small M/G/c queue rather than a constant-delay
+      # echo: WORKERS concurrent service slots, a bounded QUEUE_MAX FIFO, and a
+      # 503 shed once the queue is full. Per-request service time is drawn from
+      # SERVICE_DIST (constant|exponential|lognormal) with mean SERVICE_MEAN_MS
+      # and coefficient-of-variation SERVICE_CV, so observed latency rises with
+      # load instead of being flat. SERVICE_SEED is XOR-folded with each
+      # replica's id, so the five containers sharing this env still draw
+      # independent-but-reproducible streams. Every default below equals the
+      # in-code default (lib/config.js) — override only to move the saturation
+      # operating point for an experiment; leaving them unset changes nothing.
+      SERVICE_MEAN_MS: ${SERVICE_MEAN_MS:-20}
+      SERVICE_DIST: ${SERVICE_DIST:-lognormal}
+      SERVICE_CV: ${SERVICE_CV:-1}
+      SERVICE_SEED: ${SERVICE_SEED:-1337}
+      WORKERS: ${BACKEND_WORKERS:-2}
+      QUEUE_MAX: ${BACKEND_QUEUE_MAX:-64}
+      CPU_BOUND: ${BACKEND_CPU_BOUND:-false}
       # SLOW_HOSTNAME / SLOW_DELAY_MS are intentionally NOT set here.
       # Docker scaled services don't get unique kernel hostnames (they
       # all see the short container ID), so a hostname-match wouldn't
@@ -425,8 +443,13 @@ services:
     # name doesn't resolve, so every replica must exist before NGINX
     # starts. `service_healthy` waits for every replica's healthcheck
     # to pass, which guarantees DNS resolves for the full set.
+    #
+    # Probe /health, NOT /: under the closed-loop model `/` goes through the
+    # worker pool and sheds 503 when saturated, which would flap a
+    # busy-but-healthy replica to `unhealthy` and pull it from the LB. /health
+    # is fast and unpooled, so the check reflects liveness, not load.
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5

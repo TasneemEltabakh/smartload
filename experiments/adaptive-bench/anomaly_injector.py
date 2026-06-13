@@ -13,10 +13,15 @@ When the 5-phase Locust shape transitions into D_anomaly_scale_down
      compose-provisioned `test-backend-*`.
   2. POST /_admin/delay {ms: 200} to the chosen backend via `docker exec`
      (the test-backend ports aren't host-published; we hit the in-container
-     endpoint). The request still completes — the response is just slow.
-     NGINX's passive `max_fails` does not trip on slow responses, so this
-     is the case where only SmartLoad's explicit anomaly signal can
-     downweight the slow backend.
+     endpoint). Under the closed-loop backend this delay occupies a worker
+     slot, collapsing the backend's throughput and building a queue, so its
+     latency balloons to delay + queue-wait rather than a flat +200 ms. The
+     request still completes (slow, not failed) and returns 200 as long as the
+     queue does not overflow to a 503 shed — true here because phase D holds
+     only ~30 users, well under the backend's QUEUE_MAX (default 64). NGINX's
+     passive `max_fails` therefore does not trip on the slow responses, so this
+     is the case where only SmartLoad's explicit anomaly signal can downweight
+     the slow backend.
   3. POST /api/v1/isolate to the anomaly-detector to publish a synthetic
      AnomalyEvent. The detector's run loop hasn't observed enough latency
      yet to fire on its own this early — the manual call short-circuits

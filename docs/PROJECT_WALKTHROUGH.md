@@ -1168,6 +1168,48 @@ def health():
 
 ---
 
+### 3.4 `test-backend` — closed-loop queue model
+
+#### What it is
+
+The pool of Node/Express containers NGINX proxies to (default 5 replicas, scaled by the autoscaler). It is the *workload* the whole control loop optimises against, so its behaviour under load matters as much as any SmartLoad service.
+
+Earlier it was a constant-delay echo: every request slept a fixed `RESPONSE_DELAY_MS` then replied, so latency was flat regardless of load and there was nothing for a load balancer to react to. It is now a small **M/G/c queue** per replica, which makes latency rise with load — the precondition for the LB having a real signal to optimise.
+
+#### How it works
+
+```
+test-backends/
+├── app.js              # Express wiring (pool + service-time model + endpoints)
+├── lib/
+│   ├── prng.js         # seeded mulberry32 PRNG (reproducible streams)
+│   ├── service_time.js # constant | exponential | lognormal sampler
+│   ├── pool.js         # WORKERS slots + bounded QUEUE_MAX FIFO + 503 shed
+│   └── config.js       # env parsing + backward-compat defaulting
+└── test/               # node --test unit tests (pool, service_time, config)
+```
+
+Each request to `/` acquires a slot from `pool` (`WORKERS` concurrent, default 2). Beyond that it waits in a FIFO of depth `QUEUE_MAX` (default 64); beyond *that* it is shed with **503** — the only path by which the backend returns an error under genuine overload. Admitted requests sleep a service time drawn from `SERVICE_DIST` (default `lognormal`) with mean `SERVICE_MEAN_MS` (default 20) and coefficient-of-variation `SERVICE_CV` (default 1). Observed latency is therefore **queue-wait + service-time**, which climbs as offered load approaches the pool's service rate.
+
+`SERVICE_SEED` (default 1337) is XOR-folded with each replica's id, so the five containers sharing one Compose env still draw independent-but-reproducible service-time streams.
+
+#### Endpoints
+
+| Endpoint | Pooled? | Purpose |
+|---|---|---|
+| `GET /` | yes | The workload path; 503 on queue overflow. |
+| `GET /health` | **no** | Liveness; fast and unpooled, so saturation of `/` can never flap health. The Compose healthcheck targets this. |
+| `GET /_admin/stats` | no | Live `in_flight` / `queue_depth` / `accepted` / `shed` / `total` snapshot. |
+| `GET\|POST /_admin/delay` | no | Runtime service-time offset (the bench harnesses' anomaly knob). |
+
+#### Backward-compatibility
+
+The legacy knobs still work: `RESPONSE_DELAY_MS` seeds the service mean when `SERVICE_MEAN_MS` is unset; `SLOW_HOSTNAME` / `SLOW_DELAY_MS` add a per-replica offset; `FAIL_ALL` / `FAIL_HEALTH` are unchanged. So `RESPONSE_DELAY_MS=2000` (used throughout the SOT demos) still produces a slow backend — it now does so by raising the service mean rather than by a flat sleep.
+
+> **Open- vs closed-loop note.** Locust (the benchmark driver) is *closed-loop* — a user waits for its reply before the next request — so it cannot hold a fixed arrival rate once latency rises. `experiments/adaptive-bench/fortio/` adds a minimal **open-loop** Fortio probe that fires at a constant QPS to chart the saturation curve and tail latency directly. It sits alongside Locust and is not wired into the benchmark.
+
+---
+
 ## 4. Decision plane
 
 The decision plane reads telemetry from TimescaleDB and emits events on Redis. The engine/policy plugin folders, abstract base classes, factories, and baseline implementations exist for all four services. The `autoscaler` is fully wired in T1.x. The `anomaly-detector` (round 1), `forecasting` (round 2), and `rl-engine` (round 3) are now all wired through their `engine_base` / `policy_base` ABCs and baseline engines, **enabled by default in `docker-compose.yml` since v1.0.7g**. To revert any one of them to its Phase-0 stub for debugging, set `<SVC>_RUNLOOP_ENABLED=false` in `.env`. **The #138 engine-wrapper cutover is complete.**

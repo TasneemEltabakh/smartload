@@ -29,6 +29,12 @@ Three phases (all knobs in `experiments/baseline-vs-smartload/locust/locustfile.
 
 Total wall clock per side: ~6 minutes. Both sides → ~12 minutes + a few minutes of recreate / teardown. Set `SHORT=1` for a 2-minute-per-side harness validation.
 
+## Backend model & the no-shed invariant
+
+The test backends are closed-loop M/G/c queues (`test-backends/app.js`): `WORKERS` service slots, a bounded `QUEUE_MAX` FIFO, and a 503 shed past that. This changes what the anomaly *is*. The mid-run `/_admin/delay {ms: ANOMALY_DELAY_MS}` (default 200) no longer adds flat latency — it occupies a worker slot, so backend-1's throughput collapses and a queue forms, and its observed latency balloons to **delay + queue-wait** (well past the raw 200 ms under load).
+
+The experiment's core premise — backend-1 is **slow but never returns 5xx**, so NGINX's passive `max_fails` never trips and baseline round-robin cannot detect it — survives only while the slowed backend never sheds. That is guaranteed by the invariant **`QUEUE_MAX (64) ≥ RAMP_USERS (50)`**: a closed-loop generator has at most `RAMP_USERS` requests in flight, so even if every user piles onto backend-1 the queue cannot overflow. `run_experiment.sh` emits a `WARN` if you raise `RAMP_USERS` above `BACKEND_QUEUE_MAX` (which would let backend-1 shed 503 and let baseline RR eject it too, changing the comparison).
+
 ## How to run
 
 ```bash

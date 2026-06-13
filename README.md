@@ -229,7 +229,7 @@ smartload/
 ├── scripts/                          # lint-*.py, seed-metrics.py, download-datasets.sh
 ├── config/                           # policy.yaml + .env.example
 ├── datasets/                         # public training data; fetched, gitignored
-├── test-backends/                    # Node.js stubs the autoscaler scales
+├── test-backends/                    # Node.js closed-loop queue backends (M/G/c) + unit tests
 └── docker-compose.yml
 ```
 

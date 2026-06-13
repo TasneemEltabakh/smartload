@@ -1481,7 +1481,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7az &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-13 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;az pre-Sprint-6 release hardening: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;ba pre-Sprint-6 release hardening: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + added an open-loop Fortio saturation probe, so the bench measures a real signal. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5656,6 +5656,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7ba — 2026-06-13 — Closed-loop test backends + open-loop Fortio probe</h3>
+<table>
+  <thead><tr><th>Unit</th><th>What changed</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Closed-loop backend model</strong></td>
+      <td><code>test-backends/</code> rebuilt from a constant-delay echo into a per-replica <strong>M/G/c queue</strong>: four pure modules under <code>lib/</code> (<code>prng.js</code> seeded mulberry32, <code>service_time.js</code> constant|exponential|lognormal sampler, <code>pool.js</code> <code>WORKERS</code> slots + bounded <code>QUEUE_MAX</code> FIFO + 503 shed, <code>config.js</code> env parsing) wired through <code>app.js</code>. Observed latency is now queue-wait + service-time, so it rises with load — the precondition for the LB having a real signal to optimise. Backward-compatible: <code>RESPONSE_DELAY_MS</code> / <code>SLOW_HOSTNAME</code> / <code>SLOW_DELAY_MS</code> / <code>FAIL_*</code> preserved. New unpooled <code>/_admin/stats</code>; <code>/_admin/delay</code> retained. <strong>Caught + fixed a latent gitignore bug</strong>: the stock Python <code>lib/</code> rule was silently excluding <code>test-backends/lib/</code> from git (a negation was added).</td>
+      <td>v1.0.7ba</td>
+    </tr>
+    <tr>
+      <td><strong>Unit tests + npm test</strong></td>
+      <td>18 <code>node --test</code> cases under <code>test-backends/test/</code> (pool admission/queue/shed/FIFO/idempotent-release; service-time distribution mean+CV and seed reproducibility; config defaulting + backward-compat). <code>package.json</code> <code>test</code> script wired to <code>node --test</code>.</td>
+      <td>v1.0.7ba</td>
+    </tr>
+    <tr>
+      <td><strong>Compose wiring + healthcheck</strong></td>
+      <td><code>docker-compose.yml</code> <code>test-backend</code> exposes the model knobs (<code>SERVICE_MEAN_MS</code>/<code>SERVICE_DIST</code>/<code>SERVICE_CV</code>/<code>SERVICE_SEED</code>/<code>WORKERS</code>/<code>QUEUE_MAX</code>/<code>CPU_BOUND</code>, every default equal to the in-code default). Healthcheck repointed from <code>/</code> to the fast, unpooled <code>/health</code> so saturation of <code>/</code> can no longer flap a busy-but-healthy replica to <code>unhealthy</code>.</td>
+      <td>v1.0.7ba</td>
+    </tr>
+    <tr>
+      <td><strong>Open-loop Fortio probe</strong></td>
+      <td>Minimal standalone constant-QPS probe at <code>experiments/adaptive-bench/fortio/</code> (runs <code>fortio load</code> via Docker by default). Charts the backend saturation curve + tail latency (offered vs achieved QPS, p50/p90/p99/p99.9, 2xx/503 split). Complements Locust's closed-loop model; <strong>does not replace it</strong> and is not wired into <code>run.py</code>.</td>
+      <td>v1.0.7ba</td>
+    </tr>
+    <tr>
+      <td><strong>Harness anomaly semantics + guard</strong></td>
+      <td>The closed-loop model changes what <code>/_admin/delay</code> does: the injected delay occupies a worker slot, collapsing throughput and building a queue, so observed latency is delay + queue-wait. Comments in <code>run_experiment.sh</code> and <code>anomaly_injector.py</code> corrected. The "slow but never fails" premise is preserved by the invariant <strong><code>QUEUE_MAX (64) ≥ RAMP_USERS (50)</code></strong> — a closed-loop generator cannot overflow the queue; <code>run_experiment.sh</code> now <code>WARN</code>s if that is broken. Defaults (200 ms / 15 ms) unchanged (safe by the invariant).</td>
+      <td>v1.0.7ba</td>
+    </tr>
+    <tr>
+      <td><strong>Doc sync</strong></td>
+      <td>Walkthrough <strong>§3.4</strong> (new <code>test-backend</code> subsection — queue model, endpoints, knobs, backward-compat, open/closed-loop note); README repo-tree line; both experiment READMEs (no-shed invariant + Fortio pointer); this §22 entry; status badge.</td>
+      <td>v1.0.7ba</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7as&ndash;az — 2026-06-13 — Pre-Sprint-6 hardening: migrations, CI/test, shared modules + adoption</h3>
 <table>
