@@ -48,6 +48,8 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
         break
 from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
 from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
+from shared import bootstrap, config                            # noqa: E402
+from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import (                                   # noqa: E402
     ANOMALY_QUERY,
     ANOMALY_DEFAULT_SERVICE,
@@ -66,6 +68,9 @@ from runloop import (                                          # noqa: E402
 )
 
 app = Flask(__name__)
+# Per-request correlation IDs (#143): mint/propagate X-Correlation-ID (or a W3C
+# traceparent trace-id) and echo it on the response.
+install_correlation_middleware(app)
 
 # Prometheus own-metrics (#161). METRICS provides the common surface
 # (anomaly_detector_cycle_*/_publish_*/_up); ISOLATE_TOTAL is the
@@ -77,24 +82,23 @@ ISOLATE_TOTAL = Counter(
     ["backend", "status"],
 )
 
-SERVICE_NAME = os.environ.get("SERVICE_NAME", "anomaly-detector")
-PORT = int(os.environ.get("PORT", "8082"))
-TIMESCALEDB_URL = os.environ.get(
-    "TIMESCALEDB_URL",
-    "postgresql://postgres:changeme@timescaledb:5432/smartloaddb",
-)
-REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379")
+# Env via the shared typed config helpers (v1.0.7av) — consistent parsing +
+# single-source defaults. Behaviour-preserving: same vars, same defaults.
+SERVICE_NAME = config.env_str("SERVICE_NAME", "anomaly-detector")
+PORT = config.env_int("PORT", 8082)
+TIMESCALEDB_URL = config.timescaledb_url()
+REDIS_URL = config.redis_url()
 
-RUNLOOP_ENABLED         = os.environ.get("ANOMALY_RUNLOOP_ENABLED", "false").lower() == "true"
-ANOMALY_ENGINE          = os.environ.get("ANOMALY_ENGINE", "threshold")
-POLL_INTERVAL_SECONDS   = float(os.environ.get("POLL_INTERVAL_SECONDS", "10"))
-WINDOW_SECONDS          = int(os.environ.get("ANOMALY_WINDOW_SECONDS", "60"))
-TELEMETRY_SERVICE       = os.environ.get("ANOMALY_TELEMETRY_SERVICE", ANOMALY_DEFAULT_SERVICE)
+RUNLOOP_ENABLED         = config.env_bool("ANOMALY_RUNLOOP_ENABLED", False)
+ANOMALY_ENGINE          = config.env_str("ANOMALY_ENGINE", "threshold")
+POLL_INTERVAL_SECONDS   = config.env_float("POLL_INTERVAL_SECONDS", 10)
+WINDOW_SECONDS          = config.env_int("ANOMALY_WINDOW_SECONDS", 60)
+TELEMETRY_SERVICE       = config.env_str("ANOMALY_TELEMETRY_SERVICE", ANOMALY_DEFAULT_SERVICE)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
 # becomes visible.
-LIVENESS_STALE_SECONDS         = 5 * POLL_INTERVAL_SECONDS
+LIVENESS_STALE_SECONDS         = bootstrap.liveness_stale_seconds(POLL_INTERVAL_SECONDS)
 LOOP_RECOVERY_BACKOFF_SECONDS  = 2.0
 
 ANOMALY_CHANNEL = "smartload.anomaly"
@@ -131,19 +135,12 @@ def _set_engine_state(bootstrap) -> None:
 # ── connectivity checks ───────────────────────────────────────────────────────
 
 def check_redis() -> tuple[bool, str | None]:
-    try:
-        redis_lib.from_url(REDIS_URL, socket_connect_timeout=3).ping()
-        return True, None
-    except Exception as exc:                            # noqa: BLE001
-        return False, str(exc)
+    # Delegates to the shared probe (v1.0.7aw); same (ok, detail) contract.
+    return bootstrap.check_redis(REDIS_URL)
 
 
 def check_timescaledb() -> tuple[bool, str | None]:
-    try:
-        psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5).close()
-        return True, None
-    except Exception as exc:                            # noqa: BLE001
-        return False, str(exc)
+    return bootstrap.check_timescaledb(TIMESCALEDB_URL)
 
 
 # ── inference cycle ───────────────────────────────────────────────────────────
