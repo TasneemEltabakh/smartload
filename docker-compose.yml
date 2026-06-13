@@ -129,6 +129,15 @@ services:
       dockerfile: telemetry/Dockerfile
     ports:
       - "8081:8081"
+    # /health liveness probe (additive — no depends_on changed). Reflects the
+    # #163 run-loop liveness verdict; lets dependents gate on service_healthy
+    # and `docker compose up --wait` work. Uses python (in the image) + stdlib.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8081"
       SERVICE_NAME: telemetry
@@ -150,6 +159,12 @@ services:
       dockerfile: anomaly-detector/Dockerfile
     ports:
       - "8082:8082"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8082"
       SERVICE_NAME: anomaly-detector
@@ -185,6 +200,12 @@ services:
       dockerfile: forecasting/Dockerfile
     ports:
       - "8083:8083"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8083"
       SERVICE_NAME: forecasting
@@ -216,6 +237,12 @@ services:
     init: true
     ports:
       - "8084:8084"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8084/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8084"
       SERVICE_NAME: rl-engine
@@ -245,6 +272,12 @@ services:
       dockerfile: autoscaler/Dockerfile
     ports:
       - "8085:8085"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8085/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8085"
       SERVICE_NAME: autoscaler
@@ -285,6 +318,12 @@ services:
       dockerfile: policy-manager/Dockerfile
     ports:
       - "8086:8086"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8086/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8086"
       SERVICE_NAME: policy-manager
@@ -414,6 +453,12 @@ services:
       dockerfile: lb-sidecar/Dockerfile
     ports:
       - "8087:8087"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8087/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     environment:
       PORT: "8087"
       SERVICE_NAME: lb-sidecar
