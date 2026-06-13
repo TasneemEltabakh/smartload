@@ -1480,9 +1480,9 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.0.7az &nbsp;·&nbsp;
-    <strong>Last updated:</strong> 2026-06-13 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bb pre-Sprint-6 release hardening: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + added an open-loop Fortio saturation probe, so the bench measures a real signal. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change) — the first slice of the operator-UI gap-closure. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.7bc &nbsp;·&nbsp;
+    <strong>Last updated:</strong> 2026-06-14 &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bc pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -2208,7 +2208,7 @@ flowchart TB
     <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-planned">OUI.1–5 — S4–S5</span></div>
     <h4>Operator UI</h4>
     <div class="role">Operator-side tool · Port 8087 · Tasneem</div>
-    <p class="small">Flask BFF + React/Vite SPA. Transparency + override surface: Home (aggregated <code>/health</code>), Live Engines (per-engine cards + SSE event feed colour-coded by channel; subscribes once to all four control-bus channels into an in-process ring buffer — #121 session 1), Policy editor with diff preview, Audit Log viewer (<code>policy_changes</code> + <code>scaling_events</code>), Manual Actions (scale / isolate, confirmation-modal'd). Embeds Grafana for charts. <strong>Not a SmartLoad layer</strong> — owns no channel, table, or decision path; pure read + thin REST client.</p>
+    <p class="small">Flask BFF + React/Vite SPA. Transparency + override surface: Home (aggregated <code>/health</code> + per-backend p95/req-min Service-Health table + per-container CPU/memory + structured Active Alerts — v1.0.7bb/bc), Live Engines (per-engine cards + SSE event feed colour-coded by channel; subscribes once to all four control-bus channels into an in-process ring buffer — #121 session 1), Policy editor with diff preview, Audit Log viewer (<code>policy_changes</code> + <code>scaling_events</code>, old/new columns + CSV export — v1.0.7bc), Manual Actions (scale / isolate, confirmation-modal'd). Aligned to the design mockups for every panel backed by real data (v1.0.7bc). Embeds Grafana for charts. <strong>Not a SmartLoad layer</strong> — owns no channel, table, or decision path; pure read + thin REST client.</p>
     <div class="deeplink"><a href="#mod-ui">→ Deep dive</a></div>
   </article>
 
@@ -2605,6 +2605,7 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
 <p>The OTel Collector forwards each metric batch to <code>POST /v1/metrics</code> via its <code>otlphttp/telemetry</code> exporter (<code>encoding: json</code>). The service walks the OTLP envelope, extracts gauge and sum data points into canonical <code>(time, service, instance, metric_name, value)</code> tuples, and persists them with <code>psycopg2.extras.execute_batch(METRICS_INSERT, rows, page_size=500)</code>. Histogram / summary / exponentialHistogram are out of the SmartLoad metric set and are counted as <code>rows_dropped_shape</code> rather than persisted.</p>
 <p>Backpressure containment: the ingress endpoint always returns 200 to the collector. DB-write failures bump <code>rows_dropped_db</code> and log; never silent and never propagated to the data plane.</p>
 <p>Read API: <code>GET /api/v1/metrics?service=&amp;window=</code> accepts Prometheus-style window strings (<code>30s / 5m / 1h / 2d</code>) and queries <code>metrics</code> with <code>%s::interval</code>, <code>%s</code>, <code>%s</code> bind params (SOT §11). Returns <code>{service, window, rows: [...]}</code>; row count capped at <code>READ_API_ROW_LIMIT</code> (default 10 000).</p>
+<p>Purpose-shaped dashboard endpoints sit alongside the generic reader, each degrading to an empty/zeroed body with HTTP 200 (never error a dashboard card): <code>/api/v1/metrics/rpm</code>, <code>/api/v1/metrics/latency</code>, <code>/api/v1/metrics/slo</code>, <code>/api/v1/metrics/resources</code> (per-container CPU/memory, v1.0.7bb), and <strong>v1.0.7bc</strong> <code>GET /api/v1/metrics/backends?window=N</code> (default 60 s, cap 3600). The backends endpoint does one scan over <code>GROUP BY GROUPING SETS ((instance), ())</code> — the <code>(instance)</code> grouping yields per-backend stats <code>{instance, p95_ms, rpm, error_rate_pct, samples}</code> (<code>p95_ms</code> null below a 10-sample floor; <code>percentile_cont(0.95)</code> a true windowed percentile) and the <code>()</code> grouping yields a grand-total <code>aggregate</code> (the load balancer's view across all backends) in the same result set. Only the load-balanced backends appear — request metrics are keyed by the NGINX upstream <code>instance</code>; control-plane services serve no proxied traffic.</p>
 <p>Observability: <code>GET /api/v1/stats</code> returns <code>rows_written / batches_written / rows_dropped_db / rows_dropped_shape</code> counters guarded by a <code>threading.Lock</code>.</p>
 <h4>Schema (canonical)</h4>
 <pre><code>CREATE TABLE metrics (
@@ -3267,6 +3268,13 @@ class AnomalyEvent:
     status: str          # healthy | degraded | unhealthy
     score: float
     timestamp: str       # ISO 8601
+    # optional provenance / evidence (all back-compatible):
+    features: dict | None        # per-feature debug map
+    model_version: str | None    # which model produced the score
+    metric: str | None           # signal that tripped, e.g. "latency_ms" (v1.0.7bc)
+    observed_value: float | None # measured value at decision time (v1.0.7bc)
+    threshold: float | None      # the boundary the value crossed (v1.0.7bc)
+    severity: str | None         # "critical" | "warning" — operator-UI bucket (v1.0.7bc)
 
 @dataclass
 class ForecastResult:
@@ -3411,7 +3419,7 @@ class RoutingRecommendation:
       </ul>
     </div></div>
     <div class="dc-row"><div class="key">Failure / fallback behavior</div><div class="val">If Grafana is down, the system continues to operate; operators fall back to direct SQL. If the Operator UI is down, every operator action remains reachable via <code>curl</code> (the UI is a client of the same REST surface). Neither tool is on a critical path.</div></div>
-    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Grafana provisioned; Overview dashboard shipped. Four remaining Grafana dashboards (Anomaly / Forecast / RL / Scaling) pending T2.2. <strong>Operator UI five pages live on port 8090 (BFF + React SPA)</strong>: Home (slice #1), Policy (slice #1), Audit (slice #2), Actions (slice #3), Live Engines (#121 session 1, 2026-05-24). Built and served from a single image (<code>services/operator-ui/</code>) with <code>bff/</code> (Flask) on port 8090 and <code>web/</code> built as a Vite SPA mounted under <code>/assets/*</code>. The BFF aggregates <code>/api/ui/health</code> + proxies <code>/api/ui/policy</code>, <code>/api/ui/audit/policy</code>, <code>/api/ui/audit/scaling</code>, <code>/api/ui/scale</code>, <code>/api/ui/isolate</code> to the right upstream services. For Live Engines, a daemon Redis-subscriber thread on the BFF consumes <code>smartload.{anomaly,forecast,routing,scale}</code> into an in-process per-channel <code>collections.deque(maxlen=100)</code>, fans out to per-SSE-client bounded queues, and exposes <code>GET /api/ui/engines/snapshot</code> (parallel fan-out to each AI service's <code>/api/v1/engine/state</code> + ring snapshot) and <code>GET /api/ui/engines/stream</code> (SSE: replay + live, 15&nbsp;s heartbeat comments; Gunicorn switched to <code>gthread</code> so long-lived streams don't block other requests). SPA fallback fixed (<code>static_url_path=\"/assets\"</code>) so direct URLs and hard refreshes on every page render correctly.</div></div>
+    <div class="dc-row split-current-target"><div class="key">Current state</div><div class="val">Grafana provisioned; Overview dashboard shipped. Four remaining Grafana dashboards (Anomaly / Forecast / RL / Scaling) pending T2.2. <strong>Operator UI five pages live on port 8090 (BFF + React SPA)</strong>: Home (slice #1), Policy (slice #1), Audit (slice #2), Actions (slice #3), Live Engines (#121 session 1, 2026-05-24). Built and served from a single image (<code>services/operator-ui/</code>) with <code>bff/</code> (Flask) on port 8090 and <code>web/</code> built as a Vite SPA mounted under <code>/assets/*</code>. The BFF aggregates <code>/api/ui/health</code> + proxies <code>/api/ui/policy</code>, <code>/api/ui/audit/policy</code>, <code>/api/ui/audit/scaling</code>, <code>/api/ui/scale</code>, <code>/api/ui/isolate</code> to the right upstream services. v1.0.7bb added <code>/api/ui/metrics/resources</code> (CPU/memory proxy); <strong>v1.0.7bc</strong> added <code>/api/ui/metrics/backends</code> (proxy to telemetry's per-backend GROUPING SETS endpoint, backing the Home Service-Health table) and <code>/api/ui/alerts?window=N</code> (a structured active-alerts feed read from the anomaly ring buffer — one row per backend, newest wins, carrying <code>severity</code> + the <code>metric</code>/<code>observed_value</code>/<code>threshold</code> evidence the anomaly engines now attach + a human <code>summary</code>), and <code>/api/ui/audit/counts</code> now also returns <code>actors_unique</code> (distinct actors across both audit streams). For Live Engines, a daemon Redis-subscriber thread on the BFF consumes <code>smartload.{anomaly,forecast,routing,scale}</code> into an in-process per-channel <code>collections.deque(maxlen=100)</code>, fans out to per-SSE-client bounded queues, and exposes <code>GET /api/ui/engines/snapshot</code> (parallel fan-out to each AI service's <code>/api/v1/engine/state</code> + ring snapshot) and <code>GET /api/ui/engines/stream</code> (SSE: replay + live, 15&nbsp;s heartbeat comments; Gunicorn switched to <code>gthread</code> so long-lived streams don't block other requests). SPA fallback fixed (<code>static_url_path=\"/assets\"</code>) so direct URLs and hard refreshes on every page render correctly.</div></div>
     <div class="dc-row split-current-target"><div class="key">Target state</div><div class="val">Five Grafana dashboards version-controlled as JSON; Operator UI six pages on port 8090 (current five + Embedded metrics) embeds Grafana for charts. Both tools restored on container restart via compose.</div></div>
     <div class="dc-row"><div class="key">Gap to close</div><div class="val">
       <ul>
@@ -5706,6 +5714,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7bc — 2026-06-14 — operator-ui mockup parity: per-backend metrics, structured alerts, audit old/new columns</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Per-backend metrics endpoint</strong></td>
+      <td><code>telemetry/app.py</code> gains <code>GET /api/v1/metrics/backends?window=N</code> (default 60 s, cap 3600). One scan over <code>GROUP BY GROUPING SETS ((instance), ())</code> returns per-backend request stats <code>{instance, p95_ms, rpm, error_rate_pct, samples}</code> (<code>p95_ms</code> null below a 10-sample floor; <code>p95</code> a true <code>percentile_cont(0.95)</code> over the window, not an average of per-instance p95s) <em>plus</em> a grand-total <code>aggregate</code> (the <code>()</code> grouping = the load balancer's view across all backends) in the same result set — no second round-trip. Only the load-balanced backends appear (request metrics are keyed by the NGINX upstream <code>instance</code>; control-plane services serve no proxied traffic — by design). Degrades to an empty list (HTTP 200) on DB error. <code>operator-ui/bff/app.py</code> proxies it at <code>GET /api/ui/metrics/backends</code>.</td>
+      <td>v1.0.7bc</td>
+    </tr>
+    <tr>
+      <td><strong>Structured alerts + AnomalyEvent evidence</strong></td>
+      <td><code>AnomalyEvent</code> (<code>shared/contracts.py</code>) gains 4 optional fields — <code>metric</code>, <code>observed_value</code>, <code>threshold</code> (the evidence behind the verdict) and <code>severity</code> (<code>"critical"</code>|<code>"warning"</code>, the UI bucket); all optional so backward-compatible. <code>AnomalyScore</code> (<code>engine_base.py</code>) carries the same evidence; the <strong>threshold</strong> engine attaches latency/error evidence (<code>observed_value</code> + <code>threshold = latency_multiplier × rolling_mean</code> / <code>error_rate_threshold</code>) and the <strong>isolation_forest</strong> engine attaches <code>anomaly_score</code> evidence (raw <code>decision_function</code> vs <code>healthy_above</code>/<code>unhealthy_below</code>). <code>runloop.py::score_to_event_payload()</code> threads the evidence onto the published payload and derives severity (<code>unhealthy→critical</code>, <code>degraded→warning</code>) via new <code>_severity_for_status()</code>. The BFF exposes <code>GET /api/ui/alerts?window=N</code> — one row per backend (newest wins) from the anomaly ring buffer, with severity + evidence + a human <code>summary</code> (new <code>_alert_summary()</code>); degrades to <code>[]</code>.</td>
+      <td>v1.0.7bc</td>
+    </tr>
+    <tr>
+      <td><strong>Audit actors + old/new columns + CSV</strong></td>
+      <td><code>GET /api/ui/audit/counts</code> now returns <code>actors_unique</code> (distinct actors across the policy + scaling audit streams). The <strong>Audit</strong> page gains an Actors KPI + live clock, colour-coded <strong>Old / New split columns</strong>, a client-side time-range filter, and CSV export.</td>
+      <td>v1.0.7bc</td>
+    </tr>
+    <tr>
+      <td><strong>UI mockup alignment (5 pages)</strong></td>
+      <td>The five operator-UI pages were walked against the design mockups and aligned for every panel backed by real data. <strong>Home</strong>: KPI subtexts, Service Health table (CPU for all services + p95/req-min for load-balanced backends, aggregate row from <code>/api/ui/metrics/backends</code>), structured Active Alerts panel, throughput range selector + delta, Policy Compliance donut, Routing &amp; Scaling card, Quick Actions. <strong>Live Engines</strong>: Active-Incidents KPI, per-tile Type/Mode/Channel meta, client-side forecast sparkline from the SSE feed, channel filters. <strong>Policy</strong>: KPIs, flat Validation &amp; Guardrails + field-level Change Impact, Recent Versions, Environment Scope, Related Metrics. <strong>Actions</strong>: wired quick actions (refresh / scale ± / safe-mode), JSON force-weights editor with clickable examples → <code>setLbWeights</code>, current LB-state reference. All five verified rendering against the live stack with real data, no console errors.</td>
+      <td>v1.0.7bc</td>
+    </tr>
+    <tr>
+      <td><strong>Intentionally-omitted widgets</strong></td>
+      <td><strong>Honest-data principle</strong>: a panel ships only if real data backs it. Mockup widgets with no source of truth were omitted by design, not missed — Home: composite platform-health score + factors (incl. a "Security" factor), Active Regions, Run Diagnostics; Policy: schema-version string, guardrail categories, qualitative impact ratings, version descriptions, Blocked-Violations / Policy-Actions, Simulate / Approve / Rollback; Audit: Saved Views / Settings tabs.</td>
+      <td>v1.0.7bc</td>
+    </tr>
+    <tr>
+      <td><strong>Tests + doc sync</strong></td>
+      <td><code>engines/threshold/test_engine.py</code> (+3 evidence tests) + <code>tests/unit/anomaly-detector/test_runloop.py</code> (payload severity/evidence tests). Anomaly-detector 34 + operator-ui 41 unit suites green; web <code>tsc --noEmit</code> + <code>vite build</code> clean. Docs synced: this §22 row + status badge; §8.3 telemetry + §8.11 operator-UI deep dives + §6 module cards; WALKTHROUGH BFF / telemetry / anomaly-detector sections; PROJECT_STATE delta. Stacks on the open PR #168 (v1.0.7bb); head before this unit is v1.0.7bb.</td>
+      <td>v1.0.7bc</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7bb — 2026-06-13 — Per-container CPU/memory telemetry: resource-collector daemon + resources endpoints</h3>
 <table>

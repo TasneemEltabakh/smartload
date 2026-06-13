@@ -295,9 +295,14 @@ class AnomalyEvent:
     timestamp: str = field(default_factory=_now_iso)
     features: dict | None = None        # debug only
     model_version: str | None = None
+    # evidence behind the verdict + UI severity bucket (v1.0.7bc, all optional):
+    metric: str | None = None           # signal that tripped, e.g. "latency_ms"
+    observed_value: float | None = None # measured value at decision time
+    threshold: float | None = None      # the boundary the value crossed
+    severity: str | None = None         # "critical" | "warning" (operator-UI bucket)
 ```
 
-`status` is a tri-state — "degraded" is the warning zone where the LB might down-weight but not exclude. `features` is a debug map (per-feature contributions to the score) that should never be relied on by routing logic.
+`status` is a tri-state — "degraded" is the warning zone where the LB might down-weight but not exclude. `features` is a debug map (per-feature contributions to the score) that should never be relied on by routing logic. The four evidence/severity fields added in v1.0.7bc are all optional, so the addition is fully backward compatible — a subscriber that predates them is unaffected, and the operator-UI alerts feed falls back to the bare status when an older event carries no evidence.
 
 ```python
 @dataclass
@@ -1193,7 +1198,7 @@ except Exception as exc:
 
 This endpoint can 503 on DB failure (unlike ingest, which always 200s). The read API is for human operators and downstream services — they need to know the database is down.
 
-Alongside the generic reader, telemetry exposes a few **purpose-shaped** read endpoints the operator UI consumes directly: `/api/v1/metrics/rpm` (per-minute throughput buckets), `/api/v1/metrics/latency` (p50/p95/p99 via `percentile_cont`), `/api/v1/metrics/slo` (compliance % against a latency budget), and `/api/v1/metrics/resources` (per-container CPU/memory, fed by the [resource-collector](#321-resource-collector--docker-stats--otlp) of §3.2.1). The resources endpoint pivots the long-format rows into one record per instance with a `SELECT DISTINCT ON (instance, metric_name) … ORDER BY … time DESC` so each instance carries its freshest sample of each metric. Unlike the generic reader these four **degrade to an empty/zeroed body with HTTP 200** rather than 503 — they back dashboard cards that should render "no data" gracefully, not error the whole page.
+Alongside the generic reader, telemetry exposes a few **purpose-shaped** read endpoints the operator UI consumes directly: `/api/v1/metrics/rpm` (per-minute throughput buckets), `/api/v1/metrics/latency` (p50/p95/p99 via `percentile_cont`), `/api/v1/metrics/slo` (compliance % against a latency budget), `/api/v1/metrics/resources` (per-container CPU/memory, fed by the [resource-collector](#321-resource-collector--docker-stats--otlp) of §3.2.1), and — as of **v1.0.7bc** — `/api/v1/metrics/backends` (per-backend request stats). The resources endpoint pivots the long-format rows into one record per instance with a `SELECT DISTINCT ON (instance, metric_name) … ORDER BY … time DESC` so each instance carries its freshest sample of each metric. The backends endpoint (`?window=N`, default 60 s, cap 3600) does **one scan** over `GROUP BY GROUPING SETS ((instance), ())`: the `(instance)` grouping yields per-backend stats `{instance, p95_ms, rpm, error_rate_pct, samples}` (`p95_ms` is null below a 10-sample floor, and is a true `percentile_cont(0.95)` over the window — not an average of per-instance p95s) and the `()` grouping yields a grand-total `aggregate` (the load balancer's view across all backends) in the same result set, so the Home Service-Health table gets both without a second round-trip. Only the load-balanced backends appear — the three request metrics are keyed by the NGINX upstream `instance` the lb-otel-shipper tags, and control-plane services serve no proxied traffic. Unlike the generic reader these endpoints **degrade to an empty/zeroed body with HTTP 200** rather than 503 — they back dashboard cards that should render "no data" gracefully, not error the whole page.
 
 #### Stats and health
 
@@ -1497,9 +1502,13 @@ class AnomalyScore:
     backend_id: str
     status: str  # "healthy" | "degraded" | "unhealthy"
     score: float
+    # optional evidence behind the verdict (v1.0.7bc):
+    metric: str | None = None           # signal that tripped, e.g. "latency_ms"
+    observed_value: float | None = None # measured value at decision time
+    threshold: float | None = None      # the boundary the value crossed
 ```
 
-`BackendFeatures` is the engine's *input* — built by the run loop from the `ANOMALY_QUERY` results. `AnomalyScore` is the *output* — converted to an `AnomalyEvent` envelope and published.
+`BackendFeatures` is the engine's *input* — built by the run loop from the `ANOMALY_QUERY` results. `AnomalyScore` is the *output* — converted to an `AnomalyEvent` envelope and published. As of **v1.0.7bc** a verdict can also carry the *evidence* that produced it: the threshold engine attaches `metric="latency_ms"`/`"error_rate"` with the `observed_value` and the `threshold` it crossed (`latency_multiplier × rolling_mean` / `error_rate_threshold`), and the isolation_forest engine attaches `metric="anomaly_score"` with the raw `decision_function` score against its `healthy_above`/`unhealthy_below` boundary. `runloop.score_to_event_payload()` threads that evidence onto the published `AnomalyEvent` and derives a `severity` bucket (`unhealthy → critical`, `degraded → warning`) via `_severity_for_status()` — which is what lets the operator-UI render a structured Active Alerts panel with a human reason per backend.
 
 ```python
 class AnomalyEngine(ABC):
@@ -2582,6 +2591,8 @@ A Flask "backend-for-frontend" that:
 - proxies `/api/ui/audit/scaling` to autoscaler (slice #2),
 - proxies `/api/ui/scale` to autoscaler and `/api/ui/isolate` to anomaly-detector (slice #3),
 - **Live Engines (#121 session 1)** — runs a daemon Redis-subscriber thread that consumes `smartload.{anomaly,forecast,routing,scale}` into an in-process per-channel ring buffer, exposes `GET /api/ui/engines/snapshot` (parallel fan-out to each AI service's `/api/v1/engine/state` + ring contents) and `GET /api/ui/engines/stream` (SSE replay-then-live with 15 s heartbeat comments),
+- proxies the telemetry dashboard endpoints: `/api/ui/metrics/resources` (per-container CPU/memory, v1.0.7bb) and `/api/ui/metrics/backends` (per-backend p95/req-min/error + a load-balancer aggregate, v1.0.7bc),
+- **structured active alerts (v1.0.7bc)** — `GET /api/ui/alerts?window=N` reads the anomaly ring buffer and returns one row per backend (newest wins) carrying `severity` + the `metric`/`observed_value`/`threshold` evidence the anomaly engines now attach + a human `summary` (`_alert_summary()`); `/api/ui/audit/counts` also returns `actors_unique` (distinct actors across both audit streams); both degrade to an empty body rather than error the page,
 - serves Swagger UI at `/api/docs` against the canonical OpenAPI spec,
 - serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/policy`, `/audit`, `/actions`, `/engines` 404 on hard refresh).
 

@@ -92,10 +92,10 @@ Integration patterns matrix (read-only console, synchronous operator, Redis list
 
 Web UI at `http://localhost:8090`:
 
-- **Home** — service-health grid for every SmartLoad service, polled every 10 s
+- **Home** — service-health grid (per-backend p95 / req-min + per-container CPU/memory), structured active alerts, and throughput, polled every 10 s
 - **Policy** — read / edit operating policy with diff preview and audit trail
-- **Audit** — unified view over policy changes + scaling events with kind / actor / action filters
-- **Actions** — operator overrides (scale to N backends, isolate a backend) with confirmation modals
+- **Audit** — unified view over policy changes + scaling events with kind / actor / action filters, old/new columns, and CSV export
+- **Actions** — operator overrides (scale to N backends, isolate a backend, force route weights) with confirmation modals
 - **Live Engines** — SSE stream of decision-plane envelopes (anomaly / forecast / routing / scale)
 
 The operator UI is a **transparency + override surface**, not an admin panel — programmatic integrators use the SDK / webhooks, not the UI. Full guide: [SOT §28](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui).
