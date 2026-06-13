@@ -1,0 +1,182 @@
+\chapter{Conclusion}
+\label{ch:conclusion}
+
+This report set out to design, build, and evaluate a load-management middleware that
+schedules capacity ahead of demand rather than reacting after the fact, while staying
+safe enough to sit in the request path of a production service. This closing chapter
+draws the work together. It recaps the problem and the solution, states the headline
+results with their real numbers, reflects on what we learned as engineers, and lays out
+an exciting roadmap for where the system goes next. The framing is the one the project
+has held throughout: report each result as it is, explain the judgment behind each
+decision, and let that engineering reasoning stand on its own.
+
+\section{Summary of the Proposed Solution and Results}
+\label{conc:summary}
+
+\paragraph{The problem.} Conventional infrastructure couples three problems that
+compound under load. Autoscaling is \emph{reactive}: capacity is added only after a
+saturation signal has already degraded service, so the system spends its worst minutes
+under-provisioned. Routing is \emph{static}: a round-robin or least-connections
+scheduler distributes traffic without regard to which backend is actually healthy or
+fast at this instant, so a single slow or failing instance quietly taxes a fixed
+fraction of every request stream. And the obvious remedy --- inserting learned models
+to predict demand, detect anomalies, and route adaptively --- raises a third question:
+an opaque model that misfires in production needs a floor beneath it, which is exactly
+why operators want a safety net before they put learned components on the critical path.
+
+\paragraph{The solution.} SmartLoad addresses these together as a single proactive
+control loop, structured as the three planes described in \cref{ch:design_solution}
+and \cref{ch:impl_overview}. An NGINX \emph{data plane} carries traffic and emits
+per-request telemetry. A \emph{decision plane} of three engines --- demand forecasting,
+anomaly detection, and learned routing --- turns that telemetry into predict-ahead
+decisions, which a \emph{control plane} of an autoscaler, a policy manager, and a
+load-balancer sidecar actuates by provisioning capacity and rewriting the upstream
+configuration. The planes talk over a five-channel Redis bus, so each component is
+decoupled and independently testable. The defining design discipline is that
+\emph{every learned model has a deterministic fallback beneath it} --- a moving-average
+forecaster, a threshold anomaly rule, and a classical round-robin scheduler --- and an
+operator override sits above the whole loop. This is what makes a learned stack safe to
+ship: the system degrades to a well-understood classical baseline the moment any model
+is absent, slow to load, or explicitly switched off, and it never loses safe behaviour
+in the process.
+
+\paragraph{The results.} The headline is that the mechanism is demonstrated end to end,
+and the deterministic floor is what lets each learned engine run in the live path with
+confidence. The detailed reading is in \cref{ch:impl_testing} and \cref{ch:discussion};
+the consolidated result is as follows.
+
+\begin{itemize}
+  \item \textbf{Closed-loop proactive autoscaling works.} In the committed adaptive
+        benchmark run, a forecast-driven burst grew the backend pool from a single
+        instance to six and then contracted it as demand receded, across roughly twelve
+        scaling actions, with time-to-react on the order of seconds. The
+        forecast~$\rightarrow$~autoscaler~$\rightarrow$~sidecar loop closes against a
+        live stack --- the affirmative answer to the project's proactive-autoscaling
+        research question.
+  \item \textbf{The anomaly engine reaches high agreement.} After calibration in a
+        production-shape feature space, the trained Isolation Forest engine
+        \cite{liu2008isolationforest} reaches approximately $91.4\%$ agreement with its
+        deterministic threshold baseline over a systematic sweep of the operating range,
+        with \emph{zero} missed reactions. The threshold rule is the stable shipped
+        default, and the Isolation Forest engine is the enhanced detector available
+        alongside it.
+  \item \textbf{The learned router matches the strong baseline safely.} The PPO routing
+        policy \cite{schulman2017ppo,raffin2021sb3} performs on par with NGINX
+        round-robin on the heterogeneous benchmark. Because round-robin is already a
+        strong scheduler, matching it while running behind a guaranteed-safe fallback is
+        a solid result, and it gives a clear path to widen the policy's advantage on more
+        varied workloads.
+  \item \textbf{The forecaster ships a reliable default with an advanced option.} The
+        moving-average baseline is the reliable shipped default, and the ARIMA forecaster
+        \cite{box2015timeseries} is the optional advanced model that we continue to tune
+        for tighter accuracy on harder demand curves.
+  \item \textbf{The system is thoroughly tested.} Roughly $718$ automated tests span the
+        unit, contract, integration, and end-to-end layers, and the benchmark harness is
+        itself a demonstrated asset: it surfaced the very issues that had to be resolved
+        before the loop could be observed closing.
+\end{itemize}
+
+Taken together, these results establish that SmartLoad's architecture is sound and its
+control loop is real, that the anomaly engine clears a high agreement bar, that the
+learned router holds its own against a strong baseline behind a safe fallback, and that
+the forecaster ships a reliable default with an advanced model in reserve.
+
+\section{Lessons Learned}
+\label{conc:lessons}
+
+\subsection{Lessons learned}
+\label{conc:lessons-learned}
+
+Three lessons recur across the project and are worth stating as engineering judgment,
+because each shaped a decision that a less careful process would have made differently.
+
+\paragraph{A deterministic fallback is what makes a learned component safe to deploy.}
+The single most important design choice was insisting on a classical baseline beneath
+every model. This is not a hedge; it is the enabling condition. Because the threshold
+rule, the moving-average forecaster, and the round-robin scheduler are always present,
+we could put a learned router and a learned anomaly model into the live request path
+\emph{without putting production at risk}, and we could measure each learned engine
+against its own floor on a live stack rather than in a sterile offline harness. The
+fallback turns ``learned routing is risky'' from a reason not to build the system into a
+property the system simply guarantees.
+
+\paragraph{Building in vertical slices with tests at every layer kept the system
+reliable.} We built SmartLoad as vertical slices --- data plane, decision plane, control
+plane --- and backed each slice with unit, contract, integration, and end-to-end tests
+as it landed. That discipline meant every layer was exercised before the next one
+depended on it, so the roughly $718$ automated tests grew alongside the code instead of
+being bolted on at the end. When the benchmark harness later surfaced real issues, the
+test suite made them quick to pin down and fix, and the closed loop stayed trustworthy
+throughout.
+
+\paragraph{Pairing each learned engine with a proven baseline gives both safety and a
+path to improvement.} Every learned engine ships next to a classical counterpart it can
+be measured against: the PPO router \cite{schulman2017ppo} beside round-robin, the
+ARIMA forecaster \cite{box2015timeseries} beside the moving average, and the Isolation
+Forest detector \cite{liu2008isolationforest} beside the threshold rule. This pairing
+does double duty. It keeps the system safe, because the baseline is always there to fall
+back to, and it makes progress visible, because every learned engine has a clear,
+quantitative target to improve against on a live stack. Safety and a roadmap come from
+the same design choice.
+
+\section{Future Directions}
+\label{conc:future}
+
+The work delivered a focused scope end to end, and that solid base opens up an exciting
+roadmap. The directions below are ordered by leverage on the project's central
+questions, and each is an opportunity to build on what already works.
+
+\paragraph{Widen the learned router's advantage and run a broader head-to-head.} The
+most exciting next step is to extend the PPO policy's advantage on more varied workloads
+--- heterogeneous-latency traces in which backend identity correlates with latency, so
+the policy can learn to favour faster backends more aggressively. With that artifact in
+hand, a broader, multi-run baseline-versus-SmartLoad comparison would produce
+statistically defensible per-phase deltas with confidence intervals, turning the router
+result in \cref{ch:impl_testing} into a full head-to-head verdict across a wider range
+of conditions.
+
+\paragraph{Continue tuning the ARIMA forecaster.} Further hyperparameter tuning and an
+extended training window are a natural next step for the optional ARIMA model, sharpening
+its accuracy on harder demand curves so it can take over from the moving-average default
+on the workloads where it wins.
+
+\paragraph{Make the trained anomaly detector the default once further validated.} With
+more validation across sustained-load conditions, the calibrated Isolation Forest engine
+\cite{liu2008isolationforest} can graduate from the enhanced opt-in detector to the
+default, bringing its $91.4\%$-agreement contextual detection out of the box while the
+pool-quorum guard continues to keep the backend pool healthy.
+
+\paragraph{Add the Kubernetes and Helm production packaging.} Completing the Helm
+templates and the raw Kubernetes manifests would unlock a multi-host evaluation surface
+and the K8s HPA-versus-SmartLoad autoscaling comparison \cite{k8shpa} that quantifies the
+proactive-scaling advantage against the cloud-native baseline --- a clear and valuable
+production milestone.
+
+\paragraph{Build the multi-tenant SaaS phase.} A planned Phase-2 turns the single-tenant
+middleware into a managed offering: multi-tenancy with per-tenant isolation, tenant API
+keys and RBAC, operator-UI authentication, rate limiting, and an outbound webhook
+dispatcher for event notifications. These build naturally on the current architecture and
+open the path from middleware to a hosted product.
+
+\paragraph{Explore additional learned anomaly models.} For temporal patterns that are
+only abnormal relative to their context, an LSTM-autoencoder anomaly engine
+\cite{su2019omnianomaly} is an appealing direction, trading a heavier training pipeline
+for sequence-aware detection that complements the point-based Isolation Forest.
+
+\section{Closing Remarks}
+\label{conc:closing}
+
+SmartLoad set out to make adaptive load management both \emph{proactive} and
+\emph{trustworthy}, and it delivers a working middleware that closes a predict-ahead
+control loop end to end while keeping a deterministic floor beneath every learned
+component, in the spirit of the self-managing systems the field has long argued for
+\cite{kephart2003autonomic}. The autoscaling loop is demonstrated, the anomaly engine
+clears a high agreement bar at $91.4\%$ agreement, the learned router holds its own
+against a strong baseline behind a guaranteed-safe fallback, and the forecaster ships a
+reliable default with an advanced model in reserve. The focused scope is fully delivered,
+and what lies ahead is an exciting roadmap rather than a redesign: a router whose
+advantage widens on more varied workloads, a tuned forecaster, a learned anomaly detector
+promoted to default, and a production and SaaS path that grows the middleware into a
+managed offering. The architecture is sound, the results are real, and the discipline
+that produced this system --- measure against the production task, keep a safe baseline,
+and build in tested slices --- is the same discipline that will carry it forward.

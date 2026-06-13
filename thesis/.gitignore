@@ -1,0 +1,18 @@
+# Large binary exports (Overleaf zips, etc.)
+*.zip
+
+# LaTeX build artifacts — regenerate with report/build.ps1
+report/*.aux
+report/*.bbl
+report/*.bcf
+report/*.blg
+report/*.fdb_latexmk
+report/*.fls
+report/*.lof
+report/*.log
+report/*.lot
+report/*.out
+report/*.run.xml
+report/*.synctex.gz
+report/*.toc
+report/main.pdf

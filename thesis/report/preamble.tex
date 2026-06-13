@@ -1,0 +1,130 @@
+% =====================================================================
+%  SmartLoad CIE 599 Final Report -- shared preamble
+%  Engine: XeLaTeX (fontspec + polyglossia for Arabic)
+%  Encodes every formatting rule mandated by the CIE 599 template.
+% =====================================================================
+
+% ---- Page geometry: US Letter, 1 inch margins all sides --------------
+\usepackage[letterpaper,margin=1in]{geometry}
+
+% ---- Mathematics (loaded before fontspec, per XeLaTeX guidance) ------
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% ---- Fonts: Times New Roman 12pt main text (class option sets 12pt) --
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+% Monospace falls back to the fontspec default (Latin Modern Mono) so the
+% build carries no extra system-font dependency for code listings.
+
+% ---- Languages: English main, Arabic for the mandated AR sections ----
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage{arabic}
+% Times New Roman ships Arabic glyphs, so the AR sections need no extra font.
+\newfontfamily\arabicfont[Script=Arabic]{Times New Roman}
+% Inline left-to-right run inside RTL text (e.g. Latin figures like "91.4%").
+\providecommand{\textLR}[1]{\LR{#1}}
+
+% ---- Line spacing: 1.5 throughout (single-spaced where the template
+%      asks: captions, ToC, lists of figures/tables, references) --------
+\usepackage{setspace}
+\onehalfspacing
+
+% ---- Paragraph shape: open spacing between paragraphs for readability --
+\setlength{\parskip}{6pt plus 2pt minus 1pt}
+\setlength{\parindent}{0pt}
+
+% ---- Headings: 14pt bold sections, bold numbered subheadings (N.M.K) --
+\usepackage{titlesec}
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+\titleformat{\chapter}[hang]
+  {\normalfont\fontsize{17}{21}\bfseries}{\chaptertitlename\ \thechapter}{1em}{}
+\titlespacing*{\chapter}{0pt}{0pt}{20pt}
+\titleformat{\section}
+  {\normalfont\fontsize{14}{17}\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\normalfont\fontsize{13}{16}\bfseries}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+  {\normalfont\fontsize{12}{15}\bfseries}{\thesubsubsection}{1em}{}
+
+% ---- Captions: Times New Roman, size 11, single-spaced ----------------
+\usepackage{caption}
+\captionsetup{font={small,singlespacing},labelfont=bf,labelsep=period}
+
+% ---- Graphics + figure search paths -----------------------------------
+\usepackage{graphicx}
+\graphicspath{{figures/}{figures/ui/}{figures/bench/}{figures/anomaly/}}
+
+% ---- Colour + brand accents (SmartLoad mint / muted) ------------------
+\usepackage{xcolor}
+\definecolor{slmint}{HTML}{2E8B57}   % print-safe mint (forecast / active)
+\definecolor{slmuted}{HTML}{5B6472}  % muted (actual / secondary)
+\definecolor{slbase}{HTML}{0E1116}   % base dark
+\definecolor{slbox}{HTML}{EFF3F6}    % light fill for diagram nodes
+\definecolor{tbdred}{HTML}{B00020}
+
+% ---- Tables -----------------------------------------------------------
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{multirow}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+% ---- Lists ------------------------------------------------------------
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+
+% ---- Diagrams: TikZ + libraries + Gantt for the WBS -------------------
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,calc,backgrounds,decorations.pathreplacing}
+\usepackage{pgfgantt}
+% Reusable node styles for the architecture / block diagrams.
+\tikzset{
+  slnode/.style   = {draw,rounded corners=2pt,fill=slbox,align=center,
+                      font=\footnotesize,minimum height=8mm,inner sep=4pt},
+  slplane/.style  = {draw,dashed,rounded corners=4pt,inner sep=6pt},
+  slflow/.style   = {-{Stealth[length=2mm]},thick},
+  slbus/.style    = {-{Stealth[length=2mm]},thick,slmint},
+}
+
+% ---- Code listings (appendices, pseudocode) ---------------------------
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=single,
+  rulecolor=\color{slmuted},
+  numbers=left,
+  numberstyle=\tiny\color{slmuted},
+  showstringspaces=false,
+  captionpos=b,
+}
+
+% ---- Cross-references, links, citations -------------------------------
+\usepackage[hidelinks]{hyperref}
+\usepackage[style=ieee,backend=biber]{biblatex}
+\addbibresource{references.bib}
+\usepackage{cleveref}
+
+% ---- Single-spaced front/back lists (ToC, LoF, LoT, bibliography) -----
+\AtBeginDocument{\addtocontents{toc}{\protect\singlespacing}}
+
+% =====================================================================
+%  Placeholder macros -- every genuinely-incomplete item is a VISIBLE
+%  marker, never silently fabricated.
+% =====================================================================
+% Inline "to be done" marker.
+\newcommand{\TBD}[1]{\textbf{\textcolor{tbdred}{[TO BE DONE: #1]}}}
+% Framed grey box standing in for a figure that does not yet exist.
+\newcommand{\figtbd}[1]{%
+  \begin{center}
+  \fcolorbox{slmuted}{slbox}{%
+    \parbox[c][28mm][c]{0.8\linewidth}{\centering
+      \textbf{\textcolor{tbdred}{[FIGURE TO BE DONE]}}\\[2pt]
+      \small #1}}%
+  \end{center}}

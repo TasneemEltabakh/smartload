@@ -1,0 +1,305 @@
+% =====================================================================
+%  SmartLoad final report -- bibliography (IEEE style, biber backend)
+%  Cite keys here are STABLE: chapter files cite these keys only.
+% =====================================================================
+
+% ---------- Load balancers / proxies / service mesh ------------------
+@misc{nginx,
+  author       = {{NGINX, Inc.}},
+  title        = {{NGINX} Reverse Proxy and Load Balancing Documentation},
+  howpublished = {\url{https://nginx.org/en/docs/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{haproxy,
+  author       = {{HAProxy Technologies}},
+  title        = {{HAProxy} -- The Reliable, High-Performance {TCP/HTTP} Load Balancer},
+  howpublished = {\url{https://www.haproxy.org/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{envoy,
+  author       = {{Envoy Project Authors}},
+  title        = {Envoy Proxy Documentation},
+  howpublished = {\url{https://www.envoyproxy.io/docs}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{istio,
+  author       = {{Istio Authors}},
+  title        = {Istio Service Mesh Documentation},
+  howpublished = {\url{https://istio.io/latest/docs/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+% ---------- Orchestration / autoscaling ------------------------------
+@article{burns2016borgomega,
+  author    = {Burns, Brendan and Grant, Brian and Oppenheimer, David and Brewer, Eric and Wilkes, John},
+  title     = {Borg, Omega, and Kubernetes},
+  journal   = {Communications of the ACM},
+  volume    = {59},
+  number    = {5},
+  pages     = {50--57},
+  year      = {2016},
+  publisher = {ACM}
+}
+
+@misc{k8shpa,
+  author       = {{The Kubernetes Authors}},
+  title        = {Horizontal Pod Autoscaling},
+  howpublished = {\url{https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{keda,
+  author       = {{KEDA Authors}},
+  title        = {{KEDA} -- Kubernetes Event-Driven Autoscaling},
+  howpublished = {\url{https://keda.sh/docs/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@inproceedings{verma2015borg,
+  author    = {Verma, Abhishek and Pedrosa, Luis and Korupolu, Madhukar and Oppenheimer, David and Tune, Eric and Wilkes, John},
+  title     = {Large-Scale Cluster Management at {Google} with {Borg}},
+  booktitle = {Proc. 10th European Conf. on Computer Systems (EuroSys)},
+  year      = {2015},
+  pages     = {1--17}
+}
+
+@inproceedings{tirmazi2020borg,
+  author    = {Tirmazi, Muhammad and Barker, Adam and Deng, Nan and Haque, Md E. and Qin, Zhijing Gene and Hand, Steven and Harchol-Balter, Mor and Wilkes, John},
+  title     = {{Borg}: The Next Generation},
+  booktitle = {Proc. 15th European Conf. on Computer Systems (EuroSys)},
+  year      = {2020},
+  pages     = {1--14}
+}
+
+@inproceedings{guo2019alibaba,
+  author    = {Guo, Jing and Chang, Zihao and Wang, Sa and Ding, Haiyang and Feng, Yihui and Mao, Liang and Bao, Yungang},
+  title     = {Who Limits the Resource Efficiency of My Datacenter: An Analysis of {Alibaba} Datacenter Traces},
+  booktitle = {Proc. IEEE/ACM Int. Symp. on Quality of Service (IWQoS)},
+  year      = {2019},
+  pages     = {1--10}
+}
+
+% ---------- Autoscaling research -------------------------------------
+@article{lorido2014autoscaling,
+  author    = {Lorido-Botran, Tania and Miguel-Alonso, Jose and Lozano, Jose A.},
+  title     = {A Review of Auto-Scaling Techniques for Elastic Applications in Cloud Environments},
+  journal   = {Journal of Grid Computing},
+  volume    = {12},
+  number    = {4},
+  pages     = {559--592},
+  year      = {2014}
+}
+
+@inproceedings{roy2011autoscaling,
+  author    = {Roy, Nilabja and Dubey, Abhishek and Gokhale, Aniruddha},
+  title     = {Efficient Autoscaling in the Cloud Using Predictive Models for Workload Forecasting},
+  booktitle = {Proc. IEEE 4th Int. Conf. on Cloud Computing (CLOUD)},
+  year      = {2011},
+  pages     = {500--507}
+}
+
+% ---------- Autonomic computing / MAPE-K -----------------------------
+@article{kephart2003autonomic,
+  author    = {Kephart, Jeffrey O. and Chess, David M.},
+  title     = {The Vision of Autonomic Computing},
+  journal   = {IEEE Computer},
+  volume    = {36},
+  number    = {1},
+  pages     = {41--50},
+  year      = {2003}
+}
+
+@techreport{ibm2005mapek,
+  author      = {{IBM}},
+  title       = {An Architectural Blueprint for Autonomic Computing},
+  institution = {IBM Corporation},
+  year        = {2005},
+  type        = {White Paper},
+  number      = {4th ed.}
+}
+
+% ---------- Reinforcement learning -----------------------------------
+@book{sutton2018rl,
+  author    = {Sutton, Richard S. and Barto, Andrew G.},
+  title     = {Reinforcement Learning: An Introduction},
+  edition   = {2},
+  publisher = {MIT Press},
+  year      = {2018}
+}
+
+@article{schulman2017ppo,
+  author  = {Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg},
+  title   = {Proximal Policy Optimization Algorithms},
+  journal = {arXiv preprint arXiv:1707.06347},
+  year    = {2017}
+}
+
+@article{raffin2021sb3,
+  author  = {Raffin, Antonin and Hill, Ashley and Gleave, Adam and Kanervisto, Anssi and Ernestus, Maximilian and Dormann, Noah},
+  title   = {{Stable-Baselines3}: Reliable Reinforcement Learning Implementations},
+  journal = {Journal of Machine Learning Research},
+  volume  = {22},
+  number  = {268},
+  pages   = {1--8},
+  year    = {2021}
+}
+
+% ---------- Anomaly detection ----------------------------------------
+@inproceedings{liu2008isolationforest,
+  author    = {Liu, Fei Tony and Ting, Kai Ming and Zhou, Zhi-Hua},
+  title     = {Isolation Forest},
+  booktitle = {Proc. 8th IEEE Int. Conf. on Data Mining (ICDM)},
+  year      = {2008},
+  pages     = {413--422}
+}
+
+@inproceedings{su2019omnianomaly,
+  author    = {Su, Ya and Zhao, Youjian and Niu, Chenhao and Liu, Rong and Sun, Wei and Pei, Dan},
+  title     = {Robust Anomaly Detection for Multivariate Time Series through Stochastic Recurrent Neural Networks},
+  booktitle = {Proc. 25th ACM SIGKDD Int. Conf. on Knowledge Discovery and Data Mining (KDD)},
+  year      = {2019},
+  pages     = {2828--2837}
+}
+
+% ---------- Forecasting ----------------------------------------------
+@book{box2015timeseries,
+  author    = {Box, George E. P. and Jenkins, Gwilym M. and Reinsel, Gregory C. and Ljung, Greta M.},
+  title     = {Time Series Analysis: Forecasting and Control},
+  edition   = {5},
+  publisher = {Wiley},
+  year      = {2015}
+}
+
+@book{hyndman2021forecasting,
+  author    = {Hyndman, Rob J. and Athanasopoulos, George},
+  title     = {Forecasting: Principles and Practice},
+  edition   = {3},
+  publisher = {OTexts},
+  year      = {2021},
+  note      = {\url{https://otexts.com/fpp3/}}
+}
+
+% ---------- Observability / telemetry --------------------------------
+@misc{opentelemetry,
+  author       = {{Cloud Native Computing Foundation}},
+  title        = {OpenTelemetry: An Observability Framework for Cloud-Native Software},
+  howpublished = {\url{https://opentelemetry.io/docs/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{prometheus,
+  author       = {{Prometheus Authors}},
+  title        = {Prometheus: Monitoring System and Time Series Database},
+  howpublished = {\url{https://prometheus.io/docs/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{grafana,
+  author       = {{Grafana Labs}},
+  title        = {Grafana: The Open Observability Platform},
+  howpublished = {\url{https://grafana.com/docs/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{timescaledb,
+  author       = {{Timescale, Inc.}},
+  title        = {{TimescaleDB}: Time-Series Database Built on {PostgreSQL}},
+  howpublished = {\url{https://docs.timescale.com/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+% ---------- Infrastructure -------------------------------------------
+@article{merkel2014docker,
+  author  = {Merkel, Dirk},
+  title   = {Docker: Lightweight {Linux} Containers for Consistent Development and Deployment},
+  journal = {Linux Journal},
+  volume  = {2014},
+  number  = {239},
+  year    = {2014}
+}
+
+@book{carlson2013redis,
+  author    = {Carlson, Josiah L.},
+  title     = {Redis in Action},
+  publisher = {Manning Publications},
+  year      = {2013}
+}
+
+% ---------- Load testing / progressive delivery / API ----------------
+@misc{locust,
+  author       = {{Locust Authors}},
+  title        = {Locust: An Open Source Load Testing Tool},
+  howpublished = {\url{https://locust.io/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{openapi,
+  author       = {{OpenAPI Initiative}},
+  title        = {{OpenAPI} Specification v3.1.0},
+  howpublished = {\url{https://spec.openapis.org/oas/v3.1.0}},
+  year         = {2021},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{flagger,
+  author       = {{Flagger Authors}},
+  title        = {Flagger: Progressive Delivery Operator for {Kubernetes}},
+  howpublished = {\url{https://flagger.app/}},
+  year         = {2024},
+  note         = {Accessed: 2026-06-13}
+}
+
+% ---------- Engineering ethics / standards / decision analysis -------
+@article{gotterbarn1999ethics,
+  author  = {Gotterbarn, Don and Miller, Keith and Rogerson, Simon},
+  title   = {Software Engineering Code of Ethics and Professional Practice},
+  journal = {Communications of the ACM},
+  volume  = {42},
+  number  = {10},
+  pages   = {102--107},
+  year    = {1999}
+}
+
+@misc{acm2018ethics,
+  author       = {{Association for Computing Machinery}},
+  title        = {{ACM} Code of Ethics and Professional Conduct},
+  howpublished = {\url{https://www.acm.org/code-of-ethics}},
+  year         = {2018},
+  note         = {Accessed: 2026-06-13}
+}
+
+@book{pugh1991totaldesign,
+  author    = {Pugh, Stuart},
+  title     = {Total Design: Integrated Methods for Successful Product Engineering},
+  publisher = {Addison-Wesley},
+  year      = {1991}
+}
+
+@misc{abet2025criteria,
+  author       = {{ABET}},
+  title        = {Criteria for Accrediting Engineering Programs, 2025--2026},
+  howpublished = {\url{https://www.abet.org/}},
+  year         = {2025},
+  note         = {Accessed: 2026-06-13}
+}
+
+@misc{gdpr2016,
+  author       = {{European Parliament and Council}},
+  title        = {Regulation (EU) 2016/679 (General Data Protection Regulation)},
+  howpublished = {Official Journal of the European Union},
+  year         = {2016}
+}
