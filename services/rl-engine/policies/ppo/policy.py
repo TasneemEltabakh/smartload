@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -123,6 +124,10 @@ class PPOPolicy(RoutingPolicy):
         # "continuous_weights" (closed-loop PPO that emits a weight vector).
         self._kind: str            = "discrete_argmax"
         self._action_bound: float  = 10.0
+        # Idle-load floor: below this total observed load the pool is treated as
+        # near-idle and routing defaults to uniform (see act()). Env override;
+        # set RL_IDLE_LOAD_FLOOR=0 to disable. Default derives from NormParams.
+        self._idle_floor_override  = os.environ.get("RL_IDLE_LOAD_FLOOR")
 
         # Resolve model path: default is <rl-engine root>/models/policy
         if model_path is None:
@@ -174,6 +179,18 @@ class PPOPolicy(RoutingPolicy):
         eligible = [s for s in sorted_state[:live_n] if is_eligible(s.health)]
         if not eligible:
             return RoutingAction(mode="shadow", rankings=[])
+
+        # No-signal guard (all policy kinds) -> uniform. A learned policy has
+        # nothing to beat an even split when there is no real signal to act on,
+        # and sparse telemetry noise there can make it single out a backend (the
+        # idle concentration the live test exposed). Default to uniform when
+        # either: load is below the idle floor (RL_IDLE_LOAD_FLOOR, default off),
+        # or no eligible backend's latency is a clear outlier (idle / homogeneous
+        # pool). Deviate only when a backend is genuinely slow — exactly the case
+        # routing should react to. Disable with RL_UNIFORM_SPREAD_RATIO=0.
+        if self._is_no_signal(eligible):
+            mode = "active" if self._operating_mode == "hybrid" else "shadow"
+            return RoutingAction(mode=mode, rankings=self._uniform_rankings(eligible))
 
         # Closed-loop artifact: emit the full weight vector, not an argmax pick.
         if self._kind == "continuous_weights":
@@ -339,6 +356,37 @@ class PPOPolicy(RoutingPolicy):
         if raw == "shadow":
             return "shadow"
         return "shadow"
+
+    def _is_no_signal(self, eligible: list[BackendState]) -> bool:
+        """True when there is nothing for a learned policy to beat uniform on:
+        load is below the idle floor, OR latencies are flat (no clear outlier),
+        OR there is essentially no latency signal at all."""
+        # (a) load floor — off by default; deployment-tunable via env.
+        try:
+            floor = float(self._idle_floor_override) if self._idle_floor_override is not None else 0.0
+        except (TypeError, ValueError):
+            floor = 0.0
+        if floor > 0 and sum(max(s.queue_depth, 0.0) for s in eligible) < floor:
+            return True
+        # (b) latency-spread — deployment-independent.
+        if len(eligible) < 2:
+            return True
+        try:
+            ratio = float(os.environ.get("RL_UNIFORM_SPREAD_RATIO", "1.4"))
+        except (TypeError, ValueError):
+            ratio = 1.4
+        if ratio <= 0:
+            return False
+        lats = [max(s.latency_ms, 0.0) for s in eligible]
+        med = float(np.median(lats))
+        if med <= 1.0:                       # ~no latency signal -> nothing to act on
+            return True
+        return max(lats) <= ratio * med      # no backend is a clear outlier
+
+    @staticmethod
+    def _uniform_rankings(eligible: list[BackendState]) -> list[Ranking]:
+        score = 1.0 / len(eligible)
+        return [Ranking(backend_id=b.backend_id, score=score) for b in eligible]
 
     def _template_rankings(
         self,

@@ -92,3 +92,28 @@ routes uniform when healthy and reroutes off a genuinely-slow backend. Residual:
 a marginal Gate-A miss and a mild "exclude one backend at idle" from telemetry
 noise — both far less severe than the original concentration, and candidates for
 a serving floor / steadier idle telemetry. Stack restored to production after.
+
+## Serving no-signal guard (closes the idle residual)
+
+Added a serving-side guard in `PPOPolicy.act()` (all policy kinds): default to
+**uniform** when there is no real signal to beat an even split —
+- load below an idle floor (`RL_IDLE_LOAD_FLOOR`, off by default), OR
+- **latencies are flat** (no eligible backend exceeds `RL_UNIFORM_SPREAD_RATIO`×
+  median, default 1.4) or there is essentially no latency telemetry.
+
+The latency-spread test is deployment-independent (it does not depend on the
+telemetry load scale, which differs between the training sim and the live
+60 s query window — the reason an absolute load floor was hard to calibrate).
+It deviates from uniform only when a backend is a genuine outlier — exactly the
+case routing should react to.
+
+Re-validated live with the guard:
+- **Idle:** `20/20/20/20/20` — exact uniform (the `…/1/…` and `100/1/1/1/1`
+  artefacts are both gone).
+- **Homogeneous under load:** `20/20/20/20/20`.
+- **Degrade (+100 ms, slow-not-failing):** weight `20 → 10 → 7` — still reroutes.
+
+So at idle/homogeneous it is provably uniform, and it keeps the adaptive reroute
+on a real degrade. Remaining for promotion: multi-seed confirmation, the
+marginal in-sim Gate-A, and a quieter measurement host — all Rghda-handoff items.
+Stack restored to the production artifact after the test.
