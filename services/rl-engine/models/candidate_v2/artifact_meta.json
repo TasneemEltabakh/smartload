@@ -1,0 +1,38 @@
+{
+  "policy_type": "ppo",
+  "policy_kind": "continuous_weights",
+  "training_date": "2026-06-13T16:57:23.117373+00:00",
+  "n_max_backends": 5,
+  "norm_params": {
+    "latency_scale": 200.0,
+    "request_count_scale": 100.0
+  },
+  "action_bound": 10.0,
+  "reward_config": {
+    "latency_scale": 200.0,
+    "w_tail": 0.5,
+    "w_shed": 5.0
+  },
+  "episode_length": 128,
+  "training_steps": 600000,
+  "sb3_version": "2.8.0",
+  "eval": {
+    "ppo": {
+      "mean_reward": -2.0813542271392413,
+      "mean_served_latency_ms": 144.3040994760565,
+      "mean_shed": 0.07962670955229273
+    },
+    "round_robin": {
+      "mean_reward": -2.873723220980339,
+      "mean_served_latency_ms": 182.91111484899008,
+      "mean_shed": 0.06306005675725573
+    },
+    "least_conn": {
+      "mean_reward": -2.498545268136823,
+      "mean_served_latency_ms": 246.89670308562802,
+      "mean_shed": 0.09408581857716314
+    },
+    "beats_round_robin": true
+  },
+  "sim": "closed_loop_sim (causal M/G/c, synthetic hetero demand)"
+}

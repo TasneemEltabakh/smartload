@@ -119,6 +119,10 @@ class PPOPolicy(RoutingPolicy):
         self._model                = None
         self._norm: NormParams     = _DEFAULT_NORM
         self._policy_ready: bool   = False
+        # Artifact kind: "discrete_argmax" (legacy MaskablePPO single-pick) or
+        # "continuous_weights" (closed-loop PPO that emits a weight vector).
+        self._kind: str            = "discrete_argmax"
+        self._action_bound: float  = 10.0
 
         # Resolve model path: default is <rl-engine root>/models/policy
         if model_path is None:
@@ -170,6 +174,12 @@ class PPOPolicy(RoutingPolicy):
         eligible = [s for s in sorted_state[:live_n] if is_eligible(s.health)]
         if not eligible:
             return RoutingAction(mode="shadow", rankings=[])
+
+        # Closed-loop artifact: emit the full weight vector, not an argmax pick.
+        if self._kind == "continuous_weights":
+            rankings = self._continuous_weight_rankings(obs, sorted_state, live_n, eligible)
+            mode = "active" if self._operating_mode == "hybrid" else "shadow"
+            return RoutingAction(mode=mode, rankings=rankings)
 
         # Single forward pass — argmax over masked logits gives the chosen
         # backend in one shot. No second predict() call.
@@ -247,6 +257,8 @@ class PPOPolicy(RoutingPolicy):
                 "Rebuild the artifact with the correct backend count."
             )
         self._norm = NormParams.from_dict(meta["norm_params"])
+        self._kind = str(meta.get("policy_kind", "discrete_argmax"))
+        self._action_bound = float(meta.get("action_bound", 10.0))
 
         # Step 2: load model
         if not self._model_zip.exists():
@@ -257,10 +269,16 @@ class PPOPolicy(RoutingPolicy):
             return
 
         try:
-            from sb3_contrib import MaskablePPO  # local import — not in serving image until N2.5
-            self._model = MaskablePPO.load(str(self._model_zip.with_suffix("")))
+            if self._kind == "continuous_weights":
+                # Closed-loop artifact: a plain SB3 PPO with a Box(weights) head.
+                from stable_baselines3 import PPO
+                self._model = PPO.load(str(self._model_zip.with_suffix("")))
+            else:
+                from sb3_contrib import MaskablePPO  # local import — not in serving image until N2.5
+                self._model = MaskablePPO.load(str(self._model_zip.with_suffix("")))
             self._policy_ready = True
-            _log.info("PPOPolicy: loaded %s (operating_mode=%s)", self._model_zip, self._operating_mode)
+            _log.info("PPOPolicy: loaded %s (kind=%s, operating_mode=%s)",
+                      self._model_zip, self._kind, self._operating_mode)
         except Exception as exc:  # noqa: BLE001
             _log.error("PPOPolicy: failed to load model: %s", exc)
             self._model = None
@@ -311,6 +329,36 @@ class PPOPolicy(RoutingPolicy):
         if raw == "shadow":
             return "shadow"
         return "shadow"
+
+    def _continuous_weight_rankings(
+        self,
+        obs: np.ndarray,
+        sorted_state: list[BackendState],
+        live_n: int,
+        eligible: list[BackendState],
+    ) -> list[Ranking]:
+        """Closed-loop serving: the deterministic action IS a per-backend weight
+        logit vector. Masked-softmax over eligible slots → a routing
+        distribution (no argmax concentration). Renormalised over eligibles."""
+        raw, _ = self._model.predict(np.asarray(obs, dtype=np.float32), deterministic=True)
+        raw = np.asarray(raw, dtype=float).flatten()[:N_MAX_BACKENDS]
+        mask = build_action_mask(sorted_state, N_MAX_BACKENDS)
+        masked = np.where(mask, raw, -1e9)
+        masked = masked - masked.max()
+        exp = np.exp(masked)
+        total = float(exp.sum())
+        weights = exp / total if np.isfinite(total) and total > 0 else mask.astype(float)
+
+        eligible_ids = {b.backend_id for b in eligible}
+        out = [
+            Ranking(backend_id=s.backend_id, score=float(weights[i]))
+            for i, s in enumerate(sorted_state[:live_n])
+            if s.backend_id in eligible_ids
+        ]
+        ssum = sum(r.score for r in out) or 1.0
+        out = [Ranking(backend_id=r.backend_id, score=r.score / ssum) for r in out]
+        out.sort(key=lambda r: r.score, reverse=True)
+        return out
 
     @staticmethod
     def _argmax_dominant_rankings(
