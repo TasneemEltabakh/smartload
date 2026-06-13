@@ -1,0 +1,46 @@
+{
+  "label": "rr60-rep1",
+  "qps_offered": 60,
+  "duration": "12s",
+  "lb": {
+    "offered_qps": 60,
+    "actual_qps": 58.77460154394383,
+    "count": 720,
+    "p50_ms": 87.5,
+    "p90_ms": 172.50000000000003,
+    "p99_ms": 244.2857142857143,
+    "p999_ms": 284.0233465200004,
+    "ok_pct": 100.0,
+    "shed_pct": 0.0,
+    "errors": 0
+  },
+  "distribution": {
+    "1": {
+      "accepted": 184,
+      "shed": 0,
+      "share_pct": 20.0
+    },
+    "2": {
+      "accepted": 184,
+      "shed": 0,
+      "share_pct": 20.0
+    },
+    "3": {
+      "accepted": 183,
+      "shed": 0,
+      "share_pct": 19.9
+    },
+    "4": {
+      "accepted": 183,
+      "shed": 0,
+      "share_pct": 19.9
+    },
+    "5": {
+      "accepted": 184,
+      "shed": 0,
+      "share_pct": 20.0
+    }
+  },
+  "pool_total_requests": 918,
+  "fortio_stderr_tail": []
+}

@@ -1,0 +1,529 @@
+{
+  "RunType": "HTTP",
+  "Labels": "load-balancer/ , 83a2993ee751",
+  "StartTime": "2026-06-13T15:39:04.500828209Z",
+  "RequestedQPS": "100",
+  "RequestedDuration": "10s",
+  "ActualQPS": 95.14936313766687,
+  "ActualDuration": 10509791837,
+  "NumThreads": 200,
+  "Version": "1.75.2",
+  "DurationHistogram": {
+    "Count": 1000,
+    "Min": 0.019357838,
+    "Max": 0.61915486,
+    "Sum": 225.80670794300008,
+    "Avg": 0.2258067079430001,
+    "StdDev": 0.12799366121443317,
+    "Data": [
+      {
+        "Start": 0.019357838,
+        "End": 0.02,
+        "Percent": 0.4,
+        "Count": 4
+      },
+      {
+        "Start": 0.02,
+        "End": 0.025,
+        "Percent": 1.9,
+        "Count": 15
+      },
+      {
+        "Start": 0.025,
+        "End": 0.03,
+        "Percent": 2.8,
+        "Count": 9
+      },
+      {
+        "Start": 0.03,
+        "End": 0.035,
+        "Percent": 4,
+        "Count": 12
+      },
+      {
+        "Start": 0.035,
+        "End": 0.04,
+        "Percent": 5.5,
+        "Count": 15
+      },
+      {
+        "Start": 0.04,
+        "End": 0.045,
+        "Percent": 6.8,
+        "Count": 13
+      },
+      {
+        "Start": 0.045,
+        "End": 0.05,
+        "Percent": 7.9,
+        "Count": 11
+      },
+      {
+        "Start": 0.05,
+        "End": 0.06,
+        "Percent": 9.8,
+        "Count": 19
+      },
+      {
+        "Start": 0.06,
+        "End": 0.07,
+        "Percent": 12,
+        "Count": 22
+      },
+      {
+        "Start": 0.07,
+        "End": 0.08,
+        "Percent": 15,
+        "Count": 30
+      },
+      {
+        "Start": 0.08,
+        "End": 0.09,
+        "Percent": 18.3,
+        "Count": 33
+      },
+      {
+        "Start": 0.09,
+        "End": 0.1,
+        "Percent": 20.6,
+        "Count": 23
+      },
+      {
+        "Start": 0.1,
+        "End": 0.12,
+        "Percent": 25.9,
+        "Count": 53
+      },
+      {
+        "Start": 0.12,
+        "End": 0.14,
+        "Percent": 30.8,
+        "Count": 49
+      },
+      {
+        "Start": 0.14,
+        "End": 0.16,
+        "Percent": 36.5,
+        "Count": 57
+      },
+      {
+        "Start": 0.16,
+        "End": 0.18,
+        "Percent": 40.8,
+        "Count": 43
+      },
+      {
+        "Start": 0.18,
+        "End": 0.2,
+        "Percent": 46.2,
+        "Count": 54
+      },
+      {
+        "Start": 0.2,
+        "End": 0.25,
+        "Percent": 56.7,
+        "Count": 105
+      },
+      {
+        "Start": 0.25,
+        "End": 0.3,
+        "Percent": 69.6,
+        "Count": 129
+      },
+      {
+        "Start": 0.3,
+        "End": 0.35000000000000003,
+        "Percent": 80.5,
+        "Count": 109
+      },
+      {
+        "Start": 0.35000000000000003,
+        "End": 0.4,
+        "Percent": 90,
+        "Count": 95
+      },
+      {
+        "Start": 0.4,
+        "End": 0.45,
+        "Percent": 96.1,
+        "Count": 61
+      },
+      {
+        "Start": 0.45,
+        "End": 0.5,
+        "Percent": 98.8,
+        "Count": 27
+      },
+      {
+        "Start": 0.5,
+        "End": 0.6,
+        "Percent": 99.9,
+        "Count": 11
+      },
+      {
+        "Start": 0.6,
+        "End": 0.61915486,
+        "Percent": 100,
+        "Count": 1
+      }
+    ],
+    "Percentiles": [
+      {
+        "Percentile": 50,
+        "Value": 0.2180952380952381
+      },
+      {
+        "Percentile": 90,
+        "Value": 0.4
+      },
+      {
+        "Percentile": 99,
+        "Value": 0.5181818181818183
+      },
+      {
+        "Percentile": 99.9,
+        "Value": 0.6
+      }
+    ]
+  },
+  "ErrorsDurationHistogram": {
+    "Count": 0,
+    "Min": 0,
+    "Max": 0,
+    "Sum": 0,
+    "Avg": 0,
+    "StdDev": 0,
+    "Data": null
+  },
+  "Exactly": 0,
+  "Jitter": false,
+  "Uniform": false,
+  "NoCatchUp": false,
+  "RunID": 0,
+  "AccessLoggerInfo": "",
+  "ID": "2026-06-13-153903_load_balancer_83a2993ee751",
+  "RetCodes": {
+    "200": 1000
+  },
+  "IPCountMap": {
+    "172.18.0.19:80": 200
+  },
+  "Insecure": false,
+  "MTLS": false,
+  "CACert": "",
+  "Cert": "",
+  "Key": "",
+  "UnixDomainSocket": "",
+  "URL": "http://load-balancer/",
+  "NumConnections": 1,
+  "Compression": false,
+  "DisableFastClient": false,
+  "HTTP10": false,
+  "H2": false,
+  "DisableKeepAlive": false,
+  "AllowHalfClose": false,
+  "FollowRedirects": false,
+  "Resolve": "",
+  "HTTPReqTimeOut": 3000000000,
+  "UserCredentials": "",
+  "ContentType": "",
+  "Payload": "",
+  "MethodOverride": "",
+  "LogErrors": true,
+  "SequentialWarmup": false,
+  "ConnReuseRange": [
+    0,
+    0
+  ],
+  "NoResolveEachConn": false,
+  "Offset": 0,
+  "Resolution": 0.001,
+  "Sizes": {
+    "Count": 1000,
+    "Min": 250,
+    "Max": 250,
+    "Sum": 250000,
+    "Avg": 250,
+    "StdDev": 0,
+    "Data": [
+      {
+        "Start": 250,
+        "End": 250,
+        "Percent": 100,
+        "Count": 1000
+      }
+    ]
+  },
+  "HeaderSizes": {
+    "Count": 1000,
+    "Min": 227,
+    "Max": 227,
+    "Sum": 227000,
+    "Avg": 227,
+    "StdDev": 0,
+    "Data": [
+      {
+        "Start": 227,
+        "End": 227,
+        "Percent": 100,
+        "Count": 1000
+      }
+    ]
+  },
+  "Sockets": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "SocketCount": 200,
+  "ConnectionStats": {
+    "Count": 200,
+    "Min": 7.3401e-05,
+    "Max": 0.032238932,
+    "Sum": 0.7204790589999998,
+    "Avg": 0.003602395294999999,
+    "StdDev": 0.008686412772793852,
+    "Data": [
+      {
+        "Start": 7.3401e-05,
+        "End": 0.001,
+        "Percent": 77,
+        "Count": 154
+      },
+      {
+        "Start": 0.001,
+        "End": 0.002,
+        "Percent": 88,
+        "Count": 22
+      },
+      {
+        "Start": 0.02,
+        "End": 0.025,
+        "Percent": 94,
+        "Count": 12
+      },
+      {
+        "Start": 0.03,
+        "End": 0.032238932,
+        "Percent": 100,
+        "Count": 12
+      }
+    ],
+    "Percentiles": [
+      {
+        "Percentile": 50,
+        "Value": 0.0006729650588235295
+      },
+      {
+        "Percentile": 90,
+        "Value": 0.021666666666666667
+      },
+      {
+        "Percentile": 99,
+        "Value": 0.031865776666666665
+      },
+      {
+        "Percentile": 99.9,
+        "Value": 0.032201616466666666
+      }
+    ]
+  },
+  "AbortOn": 0
+}

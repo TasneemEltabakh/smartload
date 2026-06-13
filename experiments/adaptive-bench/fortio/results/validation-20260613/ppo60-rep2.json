@@ -1,0 +1,46 @@
+{
+  "label": "ppo60-rep2",
+  "qps_offered": 60,
+  "duration": "12s",
+  "lb": {
+    "offered_qps": 60,
+    "actual_qps": 57.69432992480099,
+    "count": 720,
+    "p50_ms": 158.6666666666667,
+    "p90_ms": 479.4117647058823,
+    "p99_ms": 652.3076923076923,
+    "p999_ms": 700.13736772,
+    "ok_pct": 100.0,
+    "shed_pct": 0.0,
+    "errors": 0
+  },
+  "distribution": {
+    "1": {
+      "accepted": 624,
+      "shed": 0,
+      "share_pct": 68.6
+    },
+    "2": {
+      "accepted": 72,
+      "shed": 0,
+      "share_pct": 7.9
+    },
+    "3": {
+      "accepted": 71,
+      "shed": 0,
+      "share_pct": 7.8
+    },
+    "4": {
+      "accepted": 71,
+      "shed": 0,
+      "share_pct": 7.8
+    },
+    "5": {
+      "accepted": 71,
+      "shed": 0,
+      "share_pct": 7.8
+    }
+  },
+  "pool_total_requests": 909,
+  "fortio_stderr_tail": []
+}
