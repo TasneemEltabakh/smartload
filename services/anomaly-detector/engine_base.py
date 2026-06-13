@@ -46,11 +46,20 @@ class AnomalyScore:
 
     Run loop converts this to an AnomalyEvent envelope and publishes to
     smartload.anomaly.
+
+    The optional metric / observed_value / threshold triple lets a non-healthy
+    verdict carry the evidence that produced it (e.g. latency_ms=312 crossed a
+    250ms gate) so the operator UI can show "why" without re-deriving it. They
+    stay None for healthy verdicts and for engines that don't populate them.
     """
 
     backend_id: str
     status: str  # one of: "healthy" | "degraded" | "unhealthy"
     score: float
+    # ── optional evidence behind the verdict (UI alert detail) ───────────────
+    metric: str | None = None          # which signal tripped, e.g. "latency_ms"
+    observed_value: float | None = None  # the measured value
+    threshold: float | None = None     # the boundary it crossed
 
 
 class AnomalyEngine(ABC):

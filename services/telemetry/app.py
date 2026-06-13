@@ -636,6 +636,93 @@ def metrics_resources():
     }), 200
 
 
+@app.route("/api/v1/metrics/backends", methods=["GET"])
+def metrics_backends():
+    """Per-backend request stats (p95 latency, requests/min, error rate).
+
+    ?window=N — window length in seconds (default 60, cap 3600).
+
+    Request metrics (request_latency_ms / request_count / error_rate) are
+    keyed by `instance` = the NGINX upstream address the lb-otel-shipper tagged
+    (e.g. "test-backend-1:8080"). Control-plane services never serve proxied
+    traffic, so only the load-balanced backends appear here — by design.
+
+    One scan over GROUPING SETS ((instance), ()) yields both the per-instance
+    rows and a grand-total `aggregate` (the instance=NULL row), so the Home
+    Service Health table can show per-backend numbers and a single load-balancer
+    aggregate without a second round-trip. percentile_cont is a true percentile
+    over the window (not an average of per-instance p95s). Any DB failure
+    collapses to an empty list with HTTP 200 — same degrade-don't-error rule as
+    the rpm / latency / slo / resources cards."""
+    try:
+        window = int(request.args.get("window", 60))
+    except (TypeError, ValueError):
+        window = 60
+    if window <= 0:
+        window = 60
+    window = min(window, 3600)
+    interval = f"{window} seconds"
+    minutes = window / 60.0
+
+    empty = {"backends": [], "aggregate": None, "window_seconds": window}
+
+    def _row_to_rec(instance, p95, samples, req_count, err_rate):
+        samples = int(samples or 0)
+        return {
+            "instance":       instance,
+            # p95 needs a meaningful sample floor, same 10-sample rule as the
+            # latency endpoint, else a lone request reads as a confident p95.
+            "p95_ms":         int(round(p95)) if (p95 is not None and samples >= 10) else None,
+            "rpm":            round(float(req_count or 0) / minutes, 1) if minutes else 0.0,
+            "error_rate_pct": round(float(err_rate) * 100.0, 2) if err_rate is not None else 0.0,
+            "samples":        samples,
+        }
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        instance,
+                        percentile_cont(0.95) WITHIN GROUP (ORDER BY value)
+                            FILTER (WHERE metric_name = 'request_latency_ms') AS p95,
+                        COUNT(*)   FILTER (WHERE metric_name = 'request_latency_ms') AS samples,
+                        SUM(value) FILTER (WHERE metric_name = 'request_count')      AS req_count,
+                        AVG(value) FILTER (WHERE metric_name = 'error_rate')         AS err_rate
+                    FROM metrics
+                    WHERE time > NOW() - %s::interval
+                      AND metric_name IN ('request_latency_ms', 'request_count', 'error_rate')
+                    GROUP BY GROUPING SETS ((instance), ())
+                    ORDER BY instance NULLS LAST
+                    """,
+                    (interval,),
+                )
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] backends query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    backends: list[dict] = []
+    aggregate: dict | None = None
+    for instance, p95, samples, req_count, err_rate in rows or []:
+        rec = _row_to_rec(instance, p95, samples, req_count, err_rate)
+        if instance is None:                                # the GROUPING SETS () grand total
+            rec.pop("instance", None)
+            aggregate = rec
+        else:
+            backends.append(rec)
+
+    return jsonify({
+        "backends":       backends,
+        "aggregate":      aggregate,
+        "window_seconds": window,
+    }), 200
+
+
 @app.route("/api/v1/stats", methods=["GET"])
 def stats():
     with _stats_lock:

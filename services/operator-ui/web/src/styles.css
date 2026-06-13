@@ -1760,3 +1760,72 @@ table td.empty {
 @media (max-width: 900px) {
   .grafana-embeds { grid-template-columns: 1fr; }
 }
+
+/* ── Mockup-parity additions (v1.0.7bc) ───────────────────────────────────── */
+
+/* Capacity / utilisation bar (Routing & Scaling card). */
+.capacity-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+.capacity-bar .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--cyan));
+}
+.capacity-bar.warn .fill { background: linear-gradient(90deg, var(--amber), var(--warn)); }
+.capacity-bar.bad  .fill { background: linear-gradient(90deg, var(--bad), #ff7b72); }
+
+/* Small inline severity / status badge (Active Alerts, key-value rows). */
+.sev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.sev-badge.critical { background: rgba(248, 81, 73, 0.14);  color: var(--bad);  border-color: rgba(248, 81, 73, 0.35); }
+.sev-badge.warning  { background: rgba(210, 153, 34, 0.14); color: var(--warn); border-color: rgba(210, 153, 34, 0.35); }
+.sev-badge.info     { background: rgba(77, 171, 247, 0.14); color: var(--accent); border-color: rgba(77, 171, 247, 0.3); }
+
+/* Audit old → new value cells (color-coded diff in the audit table). */
+.audit-val {
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.audit-val.old { color: var(--muted); background: rgba(255, 255, 255, 0.03); text-decoration: line-through; }
+.audit-val.new { color: var(--ok); background: rgba(63, 185, 80, 0.10); }
+.audit-val.empty { color: var(--muted-2); text-decoration: none; background: transparent; }
+
+/* JSON examples helper (Actions force-weights editor). */
+.json-examples {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+  font-size: 11px;
+}
+.json-examples h4 { margin: 0 0 8px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.json-examples pre {
+  margin: 0 0 8px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color: var(--text);
+  white-space: pre-wrap;
+  cursor: pointer;
+}
+.json-examples pre:hover { color: var(--accent); }
+.json-examples .note { color: var(--muted); margin: 4px 0 0; }

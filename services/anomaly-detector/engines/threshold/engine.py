@@ -42,6 +42,9 @@ class ThresholdEngine(AnomalyEngine):
                 features.backend_id,
                 "unhealthy",
                 min(1.0, features.error_rate / self.error_rate_threshold),
+                metric="error_rate",
+                observed_value=features.error_rate,
+                threshold=self.error_rate_threshold,
             )
 
         if features.latency_rolling_mean_ms <= 0:
@@ -53,6 +56,9 @@ class ThresholdEngine(AnomalyEngine):
                 features.backend_id,
                 "degraded",
                 min(1.0, ratio / (self.latency_multiplier * 2)),
+                metric="latency_ms",
+                observed_value=features.latency_ms,
+                threshold=self.latency_multiplier * features.latency_rolling_mean_ms,
             )
 
         return AnomalyScore(features.backend_id, "healthy", 0.0)

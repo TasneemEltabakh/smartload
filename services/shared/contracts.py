@@ -261,7 +261,9 @@ class AnomalyEvent:
 
     SOT §11 channel-specific payload fields:
       required: backend_id, status, score
-      optional: features (debug map), model_version
+      optional: features (debug map), model_version,
+                metric / observed_value / threshold (evidence behind the
+                verdict), severity (UI bucket: "critical" | "warning")
     """
     backend_id: str
     status: str        # "healthy" | "degraded" | "unhealthy"
@@ -270,6 +272,11 @@ class AnomalyEvent:
     # ── optional debug / provenance ──────────────────────────────────────────
     features: dict | None = None        # per-feature contributions (debug only)
     model_version: str | None = None    # which model produced the score
+    # ── optional evidence behind the verdict (operator-ui alert detail) ──────
+    metric: str | None = None           # signal that tripped, e.g. "latency_ms"
+    observed_value: float | None = None  # the measured value at decision time
+    threshold: float | None = None      # the boundary the value crossed
+    severity: str | None = None         # "critical" | "warning" (UI bucket)
 
 
 @dataclass

@@ -9,7 +9,6 @@ import {
   Clock,
   Cpu,
   GitBranch,
-  Layers,
   Pencil,
   RefreshCw,
   ShieldAlert,
@@ -18,7 +17,6 @@ import {
   Sparkles,
   Target,
   TrendingUp,
-  Undo2,
   XCircle,
 } from "lucide-react";
 
@@ -44,7 +42,8 @@ function timeAgo(iso: string | null | undefined): string {
   const s = Math.max(0, (Date.now() - t) / 1000);
   if (s < 60) return `${Math.floor(s)}s ago`;
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  return `${Math.floor(s / 3600)}h ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
 }
 
 function fmt(v: unknown): string {
@@ -181,15 +180,20 @@ export default function PolicyPage() {
     return Array.from(map.entries()).sort((a, b) => b[0] - a[0]).slice(0, 6);
   }, [audit]);
 
-  const inputs = current ? Object.keys(current).length : 0;
-  const lastApplied = audit[0]?.time ?? null;
+  // Validation status drives the "Validation" KPI and the Guardrails panel.
+  // After a preview it reflects the server dry-run; before then it falls back
+  // to whether the draft parses as JSON at all.
+  const validationOk = preview ? preview.valid : parsedDraft.ok;
+  const lastUpdated = audit[0]?.time ?? null;
 
   return (
     <>
       <div className="page-header">
         <div>
           <h2>Policy Management</h2>
-          <div className="subtitle">Author and govern the policy that drives SmartLoad's decisions</div>
+          <div className="subtitle">
+            Configure routing, autoscaling, anomaly response, and safety guardrails.
+          </div>
         </div>
         <div className="header-actions">
           <span className="refresh-chip">
@@ -201,51 +205,55 @@ export default function PolicyPage() {
       {/* ── KPI row ────────────────────────────────────────────────── */}
       <div className="kpi-row">
         <div className="kpi cyan">
-          <div className="kpi-label"><span className="kpi-icon"><Sliders size={14} /></span> Inputs</div>
-          <div className="kpi-value">{inputs || "—"}</div>
-          <div className="kpi-trend">configurable fields</div>
+          <div className="kpi-label"><span className="kpi-icon"><Sliders size={14} /></span> Policy Version</div>
+          <div className="kpi-value">v{current?.policy_version ?? "—"}</div>
+          <div className="kpi-trend">current version</div>
         </div>
         <div className="kpi violet">
-          <div className="kpi-label"><span className="kpi-icon"><Cpu size={14} /></span> Operating mode</div>
+          <div className="kpi-label"><span className="kpi-icon"><Cpu size={14} /></span> Operating Mode</div>
           <div className="kpi-value" style={{ fontSize: 22 }}>{current?.operating_mode ?? "—"}</div>
-          <div className="kpi-trend">runtime decision layer</div>
+          <div className="kpi-trend">routing strategy</div>
         </div>
         <div className={`kpi ${current?.safe_mode ? "amber" : "green"}`}>
-          <div className="kpi-label"><span className="kpi-icon"><ShieldAlert size={14} /></span> Safe mode</div>
+          <div className="kpi-label"><span className="kpi-icon"><ShieldAlert size={14} /></span> Safe Mode</div>
           <div className="kpi-value" style={{ fontSize: 22 }}>
-            {current ? (current.safe_mode ? "ON / true" : "off / false") : "—"}
+            {current ? (current.safe_mode ? "on / true" : "off / false") : "—"}
           </div>
-          <div className="kpi-trend">override flag</div>
+          <div className="kpi-trend">{current?.safe_mode ? "guardrails enforced" : "guardrails relaxed"}</div>
         </div>
-        <div className={`kpi ${parsedDraft.ok ? "green" : "bad"}`}>
-          <div className="kpi-label"><span className="kpi-icon">{parsedDraft.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}</span> Schema validation</div>
-          <div className="kpi-value" style={{ fontSize: 22 }}>
-            {parsedDraft.ok ? "valid" : "invalid"}
+        <div className={`kpi ${validationOk ? "green" : "bad"}`}>
+          <div className="kpi-label">
+            <span className="kpi-icon">{validationOk ? <CheckCircle2 size={14} /> : <XCircle size={14} />}</span> Validation
           </div>
-          <div className="kpi-trend">{parsedDraft.ok ? "draft parses cleanly" : parsedDraft.error}</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>
+            {validationOk ? "valid" : "invalid"}
+          </div>
+          <div className="kpi-trend">
+            {preview ? "dry-run preview" : parsedDraft.ok ? "draft parses cleanly" : "draft does not parse"}
+          </div>
         </div>
         <div className="kpi pink">
-          <div className="kpi-label"><span className="kpi-icon"><Clock size={14} /></span> Last applied</div>
-          <div className="kpi-value" style={{ fontSize: 22 }}>{timeAgo(lastApplied)}</div>
-          <div className="kpi-trend">v{current?.policy_version ?? "—"}</div>
+          <div className="kpi-label"><span className="kpi-icon"><Clock size={14} /></span> Last Updated</div>
+          <div className="kpi-value" style={{ fontSize: 22 }}>{timeAgo(lastUpdated)}</div>
+          <div className="kpi-trend">most recent change</div>
         </div>
       </div>
 
       {/* ── Summary cards ─────────────────────────────────────────── */}
       <div className="card">
         <div className="card-head">
-          <h2>Current policy summary</h2>
-          <span className="meta">High-level view of the live policy values</span>
+          <h2>Current Policy Summary</h2>
+          <span className="meta">High-level overview of key policy settings and guardrails.</span>
         </div>
         <div className="policy-summary-grid">
           <div className="policy-summary-card anomaly">
             <div className="sc-head">
               <span className="sc-icon"><AlertTriangle size={14} /></span>
-              <h4>Anomaly detection</h4>
+              <h4>Anomaly Detection</h4>
             </div>
             <div className="sc-row"><span className="k">latency multiplier</span><span className="v">{current?.anomaly_latency_multiplier ?? "—"}</span></div>
             <div className="sc-row"><span className="k">recovery window</span><span className="v">{current?.anomaly_recovery_window_seconds != null ? `${current.anomaly_recovery_window_seconds}s` : "—"}</span></div>
-            <div className="sc-row"><span className="k">response</span><span className="v">{current?.anomaly_response ?? "default"}</span></div>
+            <div className="sc-row"><span className="k">response</span><span className="v">{current?.anomaly_response ?? "—"}</span></div>
           </div>
 
           <div className="policy-summary-card scaling">
@@ -253,28 +261,28 @@ export default function PolicyPage() {
               <span className="sc-icon"><TrendingUp size={14} /></span>
               <h4>Autoscaling</h4>
             </div>
+            <div className="sc-row"><span className="k">cooldown</span><span className="v">{current?.autoscaler_cooldown_seconds != null ? `${current.autoscaler_cooldown_seconds}s` : "—"}</span></div>
             <div className="sc-row"><span className="k">min backends</span><span className="v">{current?.min_backends ?? "—"}</span></div>
             <div className="sc-row"><span className="k">max backends</span><span className="v">{current?.max_backends ?? "—"}</span></div>
-            <div className="sc-row"><span className="k">cooldown</span><span className="v">{current?.autoscaler_cooldown_seconds != null ? `${current.autoscaler_cooldown_seconds}s` : "—"}</span></div>
           </div>
 
           <div className="policy-summary-card decision">
             <div className="sc-head">
               <span className="sc-icon"><Sparkles size={14} /></span>
-              <h4>Decision layer</h4>
+              <h4>RL / Decision Layer</h4>
             </div>
             <div className="sc-row"><span className="k">operating mode</span><span className="v">{current?.operating_mode ?? "—"}</span></div>
-            <div className="sc-row"><span className="k">rl exploration</span><span className="v">{current?.rl_exploration_rate ?? "—"}</span></div>
-            <div className="sc-row"><span className="k">rl confidence</span><span className="v">{current?.rl_confidence_threshold ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">confidence threshold</span><span className="v">{current?.rl_confidence_threshold ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">exploration rate</span><span className="v">{current?.rl_exploration_rate ?? "—"}</span></div>
           </div>
 
           <div className="policy-summary-card slo">
             <div className="sc-head">
               <span className="sc-icon"><Target size={14} /></span>
-              <h4>Service objective</h4>
+              <h4>Service Objective</h4>
             </div>
             <div className="sc-row"><span className="k">p95 latency target</span><span className="v">{current?.slo_p95_latency_ms != null ? `${current.slo_p95_latency_ms}ms` : "—"}</span></div>
-            <div className="sc-row"><span className="k">per-instance rps</span><span className="v">{current?.per_instance_capacity_rps ?? "—"}</span></div>
+            <div className="sc-row"><span className="k">per-instance capacity</span><span className="v">{current?.per_instance_capacity_rps != null ? `${current.per_instance_capacity_rps} rps` : "—"}</span></div>
             <div className="sc-row"><span className="k">policy version</span><span className="v">v{current?.policy_version ?? "—"}</span></div>
           </div>
         </div>
@@ -284,7 +292,7 @@ export default function PolicyPage() {
       <div className="grid-2 grid-stretch">
         <div className="card card-fill">
           <div className="card-head">
-            <h2>Edit policy (JSON)</h2>
+            <h2>Edit Policy JSON</h2>
             <span className="meta">Unknown fields are ignored. policy_version is server-managed.</span>
           </div>
           <div className="policy-editor-toolbar">
@@ -318,7 +326,7 @@ export default function PolicyPage() {
         <div className="stack card-fill">
           <div className="card">
             <div className="card-head">
-              <h2>Validation &amp; guardrails</h2>
+              <h2>Validation &amp; Guardrails</h2>
             </div>
             {!parsedDraft.ok ? (
               <div className="alert-row bad">
@@ -339,7 +347,7 @@ export default function PolicyPage() {
                     <div className="meta">
                       {preview.valid
                         ? `${preview.changed_fields.length} field(s) would change`
-                        : "Fix errors below before committing."}
+                        : "Fix the errors below before committing."}
                     </div>
                   </div>
                 </div>
@@ -349,6 +357,24 @@ export default function PolicyPage() {
                     <div><div className="title">{e}</div></div>
                   </div>
                 ))}
+                {preview.warnings.map((w, i) => (
+                  <div key={`w${i}`} className="alert-row warn">
+                    <span className="icon"><AlertTriangle size={16} /></span>
+                    <div><div className="title">{w}</div></div>
+                  </div>
+                ))}
+                {current ? (
+                  <div className="alert-row warn">
+                    <span className="icon"><ShieldAlert size={16} /></span>
+                    <div>
+                      <div className="title">
+                        {current.safe_mode
+                          ? "Safe mode is ON. Guardrails are enforced."
+                          : "Safe mode is OFF. Guardrails are relaxed."}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </>
             ) : (
               <div className="empty-state">
@@ -361,7 +387,7 @@ export default function PolicyPage() {
 
           <div className="card stretch">
             <div className="card-head">
-              <h2>Change impact preview</h2>
+              <h2>Change Impact Preview</h2>
               {preview ? <span className="meta">{preview.diff.length} field(s)</span> : null}
             </div>
             {preview && preview.diff.length > 0 ? (
@@ -374,22 +400,17 @@ export default function PolicyPage() {
                     <span className="mono small" style={{ color: "var(--cyan)" }}>{fmt(d.new)}</span>
                   </div>
                 ))}
-                {preview.warnings.length > 0 ? (
-                  <div style={{ marginTop: 8 }}>
-                    {preview.warnings.map((w, i) => (
-                      <div key={i} className="alert-row warn">
-                        <span className="icon"><AlertTriangle size={16} /></span>
-                        <div><div className="title">{w}</div></div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
               </>
+            ) : preview ? (
+              <div className="alert-row ok">
+                <span className="icon"><CheckCircle2 size={16} /></span>
+                <div><div className="title">No changes detected.</div></div>
+              </div>
             ) : (
               <div className="empty-state">
                 <Activity size={26} strokeWidth={1.5} />
                 <div>No pending changes</div>
-                <div className="empty-sub">Edit the policy on the left and click "Preview diff".</div>
+                <div className="empty-sub">Edit the policy on the left and click "Preview Diff".</div>
               </div>
             )}
           </div>
@@ -400,7 +421,7 @@ export default function PolicyPage() {
       <div className="grid-3">
         <div className="card">
           <div className="card-head">
-            <h2>Recent versions</h2>
+            <h2>Recent Versions</h2>
             <span className="meta">{versions.length} shown</span>
           </div>
           {versions.length === 0 ? (
@@ -423,37 +444,36 @@ export default function PolicyPage() {
 
         <div className="card">
           <div className="card-head">
-            <h2>Environment scope</h2>
+            <h2>Environment Scope</h2>
           </div>
-          <div className="svc-row">
-            <div className="svc-name">Active environment</div>
-            <span className={`svc-pill ${env?.active === "production" ? "ok" : "degraded"}`}>
-              {env?.active ?? "—"}
-            </span>
-            <span />
-            <span />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(env?.available ?? []).length === 0 ? (
+              <span className="muted small">—</span>
+            ) : (
+              env!.available.map((name) => {
+                const active = name === env!.active;
+                return (
+                  <span key={name} className={`svc-pill ${active ? "ok" : "degraded"}`}>
+                    {name}
+                  </span>
+                );
+              })
+            )}
           </div>
-          <div className="svc-row">
-            <div className="svc-name">Available</div>
-            <span className="muted small">{env?.available?.join(" · ") ?? "—"}</span>
-            <span />
-            <span />
-          </div>
-          <div className="svc-row">
-            <div className="svc-name">Source</div>
-            <span className="muted small">env vars</span>
-            <span />
-            <span />
+          <div className="meta" style={{ marginTop: 10 }}>
+            {env?.active
+              ? `This policy is active in ${env.active}.`
+              : "No environment scope reported."}
           </div>
         </div>
 
         <div className="card">
           <div className="card-head">
-            <h2>Related metrics</h2>
-            <span className="meta">live · 60s window</span>
+            <h2>Related Metrics</h2>
+            <span className="meta">live</span>
           </div>
           <div className="svc-row">
-            <div className="svc-name">SLO compliance (1h)</div>
+            <div className="svc-name">SLO compliance</div>
             <span className="mono">{related?.slo_compliance_pct != null ? `${related.slo_compliance_pct}%` : "—"}</span>
             <span />
             <span />
@@ -479,27 +499,25 @@ export default function PolicyPage() {
           <CheckCircle2 size={14} /> Validate
         </button>
         <button className="secondary" onClick={() => setShowDiff((v) => !v)} disabled={!parsedDraft.ok}>
-          <GitBranch size={14} /> {showDiff ? "Hide diff" : "Preview diff"}
+          <GitBranch size={14} /> {showDiff ? "Hide diff" : "Preview Diff"}
         </button>
         <button className="ghost" onClick={resetDraft} disabled={busy}>
           <RefreshCw size={14} /> Reset
         </button>
-        <button className="ghost" disabled title="Rollback lands with policy-manager versioned snapshots">
-          <Undo2 size={14} /> Rollback
-        </button>
         <span className="grow" />
         {error ? <span style={{ color: "var(--bad)", fontSize: 12 }}>{error}</span> : null}
         <button onClick={commit} disabled={busy || !parsedDraft.ok}>
-          {busy ? "committing…" : <>Commit changes <ArrowRight size={14} /></>}
+          {busy ? "committing…" : <>Commit Changes <ArrowRight size={14} /></>}
         </button>
       </div>
 
+      {/* ── Workflow ──────────────────────────────────────────────── */}
       <div className="workflow">
         <div className="step done"><span className="dot" /><Pencil size={11} /> Edit</div>
         <span className="arrow"><ArrowRight size={12} /></span>
         <div className={`step ${preview ? "done" : "active"}`}><span className="dot" /><CheckCircle2 size={11} /> Validate</div>
         <span className="arrow"><ArrowRight size={12} /></span>
-        <div className={`step ${preview ? "active" : ""}`}><span className="dot" /><Activity size={11} /> Preview impact</div>
+        <div className={`step ${preview ? "active" : ""}`}><span className="dot" /><Activity size={11} /> Preview</div>
         <span className="arrow"><ArrowRight size={12} /></span>
         <div className="step"><span className="dot" /><GitBranch size={11} /> Commit</div>
         <span className="arrow"><ArrowRight size={12} /></span>
@@ -509,9 +527,6 @@ export default function PolicyPage() {
       </div>
 
       {toast ? <div className={`toast ${toast.kind}`}>{toast.msg}</div> : null}
-
-      {/* Silence unused-import warnings for icons reserved for upcoming features. */}
-      <span style={{ display: "none" }}><Layers /></span>
     </>
   );
 }

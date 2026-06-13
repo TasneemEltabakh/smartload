@@ -188,7 +188,40 @@ export interface AuditCounts {
   scaling_actions: number;
   anomaly_events: number;
   active_alerts: number;
+  actors_unique: number;
   last_event_at: string | null;
+}
+
+// ── Per-backend request stats + structured alerts ────────────────────────────
+
+export interface BackendStat {
+  instance: string;
+  p95_ms: number | null;     // null until >= 10 samples in the window
+  rpm: number;               // requests per minute over the window
+  error_rate_pct: number;
+  samples: number;
+}
+
+// `aggregate` is the GROUPING SETS grand total (no `instance`) — the
+// load-balancer's view across every backend. null when no request traffic.
+export interface BackendMetrics {
+  backends: BackendStat[];
+  aggregate: Omit<BackendStat, "instance"> | null;
+  window_seconds: number;
+}
+
+export type AlertSeverity = "critical" | "warning";
+
+export interface AlertItem {
+  backend_id: string;
+  status: IsolateStatus;
+  severity: AlertSeverity;
+  metric: string | null;
+  observed_value: number | null;
+  threshold: number | null;
+  score: number | null;
+  time: string | null;
+  summary: string;
 }
 
 // ── Throughput, routing/scaling, environment, related metrics (#132 follow-up) ─
@@ -285,6 +318,44 @@ export function resourcesByService(
     if (s.memory_limit_bytes != null) cur.memory_limit_bytes = Math.max(cur.memory_limit_bytes ?? 0, s.memory_limit_bytes);
     if (s.memory_percent != null) cur.memory_percent = (cur.memory_percent ?? 0) + s.memory_percent;
     out[s.service] = cur;
+  }
+  return out;
+}
+
+export interface ServiceBackendStat {
+  p95_ms: number | null;   // worst (max) p95 across the service's instances
+  rpm: number;             // summed across instances
+  error_rate_pct: number;  // worst (max) across instances
+  samples: number;
+  instances: number;
+}
+
+// Derive a service name from a backend instance address. Instances are
+// "<container>:<port>" and replicas carry a "-<n>" suffix, so
+// "test-backend-1:8080" → "test-backend" and "load-balancer:80" →
+// "load-balancer". Keeps the Home table able to look a service up by name.
+export function serviceOfInstance(instance: string): string {
+  const host = instance.split(":")[0];
+  return host.replace(/-\d+$/, "");
+}
+
+// Roll the flat per-instance backend list into a {serviceName: rollup} map.
+// p95 / error take the worst instance (the SLO-relevant signal); rpm sums.
+export function backendsByService(
+  resp: BackendMetrics | null | undefined,
+): Record<string, ServiceBackendStat> {
+  const out: Record<string, ServiceBackendStat> = {};
+  for (const b of resp?.backends ?? []) {
+    const name = serviceOfInstance(b.instance);
+    const cur =
+      out[name] ??
+      { p95_ms: null, rpm: 0, error_rate_pct: 0, samples: 0, instances: 0 };
+    cur.instances += 1;
+    cur.rpm += b.rpm;
+    cur.samples += b.samples;
+    if (b.p95_ms != null) cur.p95_ms = Math.max(cur.p95_ms ?? 0, b.p95_ms);
+    cur.error_rate_pct = Math.max(cur.error_rate_pct, b.error_rate_pct);
+    out[name] = cur;
   }
   return out;
 }
@@ -405,6 +476,16 @@ export const api = {
   getResources: (windowSeconds?: number) =>
     _fetchJson<ResourcesResponse>(
       `/api/ui/metrics/resources${windowSeconds ? `?window=${windowSeconds}` : ""}`,
+    ),
+
+  getBackendMetrics: (windowSeconds?: number) =>
+    _fetchJson<BackendMetrics>(
+      `/api/ui/metrics/backends${windowSeconds ? `?window=${windowSeconds}` : ""}`,
+    ),
+
+  getAlerts: (windowSeconds?: number) =>
+    _fetchJson<AlertItem[]>(
+      `/api/ui/alerts${windowSeconds ? `?window=${windowSeconds}` : ""}`,
     ),
 };
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
+  Calendar,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -10,6 +10,7 @@ import {
   ScrollText,
   ShieldCheck,
   TrendingUp,
+  Users,
 } from "lucide-react";
 
 import {
@@ -23,9 +24,20 @@ const REFRESH_MS = 10_000;
 
 type RowClass = "policy" | "scaling";
 type ActionFilter = "all" | "scale_out" | "scale_in" | "update";
+type TimeRange = "1h" | "24h" | "7d" | "30d" | "all";
 
 const LIMIT_CHOICES = [25, 50, 100, 250, 500];
 const PAGE_SIZE = 12;
+
+const TIME_RANGES: Array<{ value: TimeRange; label: string; ms: number | null }> = [
+  { value: "1h", label: "Last hour", ms: 60 * 60 * 1000 },
+  { value: "24h", label: "Last 24 hours", ms: 24 * 60 * 60 * 1000 },
+  { value: "7d", label: "Last 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { value: "30d", label: "Last 30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+  { value: "all", label: "All", ms: null },
+];
+
+const EMDASH = "—";
 
 interface UnifiedRow {
   time: string;
@@ -33,13 +45,14 @@ interface UnifiedRow {
   action: string;
   version: number | null;
   field: string;
-  view: string;
+  oldValue: string | null;
+  newValue: string | null;
   actor: string;
   source: string;
 }
 
-function fmt(value: unknown): string {
-  if (value === null || value === undefined) return "—";
+function fmt(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
   if (typeof value === "string") return value;
   return JSON.stringify(value);
 }
@@ -48,14 +61,9 @@ function shortTime(iso: string): string {
   return iso.replace("T", " ").replace(/\.\d+.*/, "").replace(/\+.*$/, "");
 }
 
-function timeAgo(iso: string | null): string {
-  if (!iso) return "—";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 60) return `${Math.floor(s)}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  return `${Math.floor(s / 3600)}h ago`;
+// Live wall-clock (HH:MM:SS) for the "Last updated" KPI, matching the mockup.
+function clockNow(): string {
+  return new Date().toLocaleTimeString([], { hour12: false });
 }
 
 export default function AuditPage() {
@@ -66,11 +74,12 @@ export default function AuditPage() {
   const [kind, setKind] = useState<"all" | "policy" | "scaling">("all");
   const [actorFilter, setActorFilter] = useState<string>("");
   const [action, setAction] = useState<ActionFilter>("all");
+  const [range, setRange] = useState<TimeRange>("7d");
   const [limit, setLimit] = useState<number>(50);
   const [page, setPage] = useState<number>(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastLoaded, setLastLoaded] = useState<string | null>(null);
+  const [clock, setClock] = useState<string>(clockNow());
 
   async function loadAll() {
     setBusy(true);
@@ -84,7 +93,7 @@ export default function AuditPage() {
       setScalingRows(sca);
       setCounts(cts);
       setError(null);
-      setLastLoaded(new Date().toISOString().replace("T", " ").replace(/\..*/, ""));
+      setClock(clockNow());
     } catch (err: any) {
       setError(err?.message || "could not load audit data");
     } finally {
@@ -99,7 +108,15 @@ export default function AuditPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [limit]);
 
-  // Merge into a single time-ordered table.
+  // Live clock tick (independent of the data poll) for the "Last updated" KPI.
+  useEffect(() => {
+    const id = setInterval(() => setClock(clockNow()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Merge policy + scaling audit rows into one time-ordered table. Each kind
+  // maps onto a common shape; the change is carried as discrete old/new values
+  // so the table can render them as two color-coded columns.
   const unified: UnifiedRow[] = useMemo(() => {
     const rows: UnifiedRow[] = [];
     for (const r of policyRows) {
@@ -109,19 +126,23 @@ export default function AuditPage() {
         action: "update",
         version: r.policy_version,
         field: r.field,
-        view: `${fmt(r.old_value)} → ${fmt(r.new_value)}`,
+        oldValue: fmt(r.old_value),
+        newValue: fmt(r.new_value),
         actor: r.actor,
         source: "policy-manager",
       });
     }
     for (const r of scalingRows) {
+      // Scaling rows have no field-level diff; the new value is the resulting
+      // instance count and the reason rides along on the field cell.
       rows.push({
         time: r.time,
         cls: "scaling",
         action: r.action,
         version: null,
-        field: "instance_count",
-        view: `${r.instance_count} backend(s)${r.reason ? ` · ${r.reason}` : ""}`,
+        field: r.reason ? `instance_count (${r.reason})` : "instance_count",
+        oldValue: null,
+        newValue: String(r.instance_count),
         actor: "autoscaler",
         source: "autoscaler",
       });
@@ -132,13 +153,19 @@ export default function AuditPage() {
 
   const filtered = useMemo(() => {
     const needle = actorFilter.trim().toLowerCase();
+    const rangeMs = TIME_RANGES.find((t) => t.value === range)?.ms ?? null;
+    const floor = rangeMs == null ? null : Date.now() - rangeMs;
     return unified.filter((r) => {
       if (kind !== "all" && r.cls !== kind) return false;
       if (action !== "all" && r.action !== action) return false;
       if (needle && !`${r.actor} ${r.field}`.toLowerCase().includes(needle)) return false;
+      if (floor != null) {
+        const t = Date.parse(r.time);
+        if (!Number.isNaN(t) && t < floor) return false;
+      }
       return true;
     });
-  }, [unified, kind, action, actorFilter]);
+  }, [unified, kind, action, actorFilter, range]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -146,6 +173,52 @@ export default function AuditPage() {
   useEffect(() => {
     if (page >= pageCount) setPage(0);
   }, [pageCount, page]);
+
+  // Client-side CSV export of the currently-filtered rows.
+  function exportCsv() {
+    const headers = [
+      "time",
+      "kind",
+      "action",
+      "version",
+      "field",
+      "old",
+      "new",
+      "actor",
+      "source",
+    ];
+    const esc = (v: string | number | null) => {
+      const s = v == null ? "" : String(v);
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const lines = [headers.map(esc).join(",")];
+    for (const r of filtered) {
+      lines.push(
+        [
+          shortTime(r.time),
+          r.cls,
+          r.action,
+          r.version,
+          r.field,
+          r.oldValue,
+          r.newValue,
+          r.actor,
+          r.source,
+        ]
+          .map(esc)
+          .join(","),
+      );
+    }
+    const blob = new Blob([lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `smartload-audit-${filtered.length}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <>
@@ -157,10 +230,14 @@ export default function AuditPage() {
           </div>
         </div>
         <div className="header-actions">
-          <span className="refresh-chip">
-            <span className="pulse" /> Auto-refresh {REFRESH_MS / 1000}s
-          </span>
-          <button className="secondary" disabled title="CSV export ships next slice"><Download size={14} /> Export</button>
+          <button
+            className="secondary"
+            onClick={exportCsv}
+            disabled={filtered.length === 0}
+            title="Download the currently-filtered rows as CSV"
+          >
+            <Download size={14} /> Export
+          </button>
         </div>
       </div>
 
@@ -182,24 +259,31 @@ export default function AuditPage() {
           <div className="kpi-trend">autoscaler decisions</div>
         </div>
         <div className="kpi amber">
-          <div className="kpi-label"><span className="kpi-icon"><AlertTriangle size={14} /></span> Active alerts</div>
-          <div className="kpi-value">{counts?.active_alerts ?? 0}</div>
-          <div className="kpi-trend">5-min anomaly window</div>
+          <div className="kpi-label"><span className="kpi-icon"><Users size={14} /></span> Actors</div>
+          <div className="kpi-value">{counts?.actors_unique ?? EMDASH}</div>
+          <div className="kpi-trend">unique users / services</div>
         </div>
         <div className="kpi pink">
-          <div className="kpi-label"><span className="kpi-icon"><Clock size={14} /></span> Last event</div>
-          <div className="kpi-value" style={{ fontSize: 22 }}>{timeAgo(counts?.last_event_at ?? unified[0]?.time ?? null)}</div>
-          <div className="kpi-trend">{lastLoaded ? `loaded ${lastLoaded}` : "—"}</div>
+          <div className="kpi-label"><span className="kpi-icon"><Clock size={14} /></span> Last updated</div>
+          <div className="kpi-value">{clock}</div>
+          <div className="kpi-trend">{busy ? "refreshing…" : `auto-refresh ${REFRESH_MS / 1000}s`}</div>
         </div>
       </div>
 
       {/* ── Toolbar ────────────────────────────────────────────────── */}
       <div className="audit-toolbar">
-        <div className="chip-group" role="group" aria-label="Event class">
-          <span className="chip-label">Class</span>
+        <div className="chip-group" role="group" aria-label="Kind">
+          <span className="chip-label">Kind</span>
           <button className={kind === "all" ? "chip on" : "chip"} onClick={() => setKind("all")}>All</button>
           <button className={kind === "policy" ? "chip on" : "chip"} onClick={() => setKind("policy")}>Policy</button>
           <button className={kind === "scaling" ? "chip on" : "chip"} onClick={() => setKind("scaling")}>Scaling</button>
+        </div>
+
+        <div className="chip-group" role="group" aria-label="Action">
+          <span className="chip-label">Action</span>
+          <button className={action === "all" ? "chip on" : "chip"} onClick={() => setAction("all")}>All</button>
+          <button className={action === "scale_out" ? "chip on" : "chip"} onClick={() => setAction("scale_out")}>scale_out</button>
+          <button className={action === "scale_in" ? "chip on" : "chip"} onClick={() => setAction("scale_in")}>scale_in</button>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -207,17 +291,16 @@ export default function AuditPage() {
           <input
             value={actorFilter}
             onChange={(e) => setActorFilter(e.target.value)}
-            placeholder="e.g. demo-test, safe_mode"
-            style={{ minWidth: 200 }}
+            placeholder="e.g. demo-test, safe_mode, max_backends"
+            style={{ minWidth: 220 }}
           />
         </div>
 
-        <div className="chip-group" role="group" aria-label="Action">
-          <span className="chip-label">Action</span>
-          <button className={action === "all" ? "chip on" : "chip"} onClick={() => setAction("all")}>All</button>
-          <button className={action === "update" ? "chip on" : "chip"} onClick={() => setAction("update")}>update</button>
-          <button className={action === "scale_out" ? "chip on" : "chip"} onClick={() => setAction("scale_out")}>scale_out</button>
-          <button className={action === "scale_in" ? "chip on" : "chip"} onClick={() => setAction("scale_in")}>scale_in</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span className="chip-label"><Calendar size={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />Time range</span>
+          <select value={range} onChange={(e) => setRange(e.target.value as TimeRange)}>
+            {TIME_RANGES.map((t) => (<option key={t.value} value={t.value}>{t.label}</option>))}
+          </select>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -238,7 +321,7 @@ export default function AuditPage() {
           <div>
             <h3>Audit log</h3>
             <p className="meta">
-              Newest first · {filtered.length} matching row{filtered.length === 1 ? "" : "s"}
+              Showing {filtered.length} event{filtered.length === 1 ? "" : "s"} (one row per event, newest first)
               {error ? <span style={{ color: "var(--bad)" }}> · {error}</span> : null}
             </p>
           </div>
@@ -247,27 +330,37 @@ export default function AuditPage() {
           <thead>
             <tr>
               <th style={{ width: 170 }}>Time</th>
-              <th style={{ width: 90 }}>Class</th>
+              <th style={{ width: 90 }}>Kind</th>
               <th style={{ width: 110 }}>Action</th>
               <th style={{ width: 70 }}>Version</th>
-              <th style={{ width: 150 }}>Field</th>
-              <th>View</th>
-              <th style={{ width: 140 }}>Actor</th>
-              <th style={{ width: 130 }}>Source</th>
+              <th style={{ width: 180 }}>Field</th>
+              <th style={{ width: 110 }}>Old</th>
+              <th style={{ width: 110 }}>New</th>
+              <th style={{ width: 150 }}>Actor</th>
+              <th style={{ width: 150 }}>Source</th>
             </tr>
           </thead>
           <tbody>
             {pageRows.length === 0 ? (
-              <tr><td colSpan={8} className="empty">No events match the current filter.</td></tr>
+              <tr><td colSpan={9} className="empty">No events match the current filter.</td></tr>
             ) : (
               pageRows.map((row, i) => (
                 <tr key={`${row.time}-${i}`}>
                   <td><code>{shortTime(row.time)}</code></td>
                   <td><span className={`badge-class ${row.cls}`}>{row.cls}</span></td>
                   <td><span className={`badge-action ${row.action}`}>{row.action}</span></td>
-                  <td>{row.version != null ? <code>v{row.version}</code> : <span className="muted">—</span>}</td>
+                  <td>{row.version != null ? <code>v{row.version}</code> : <span className="muted">{EMDASH}</span>}</td>
                   <td><code>{row.field}</code></td>
-                  <td className="mono small">{row.view}</td>
+                  <td>
+                    {row.oldValue != null
+                      ? <span className="audit-val old">{row.oldValue}</span>
+                      : <span className="audit-val empty">{EMDASH}</span>}
+                  </td>
+                  <td>
+                    {row.newValue != null
+                      ? <span className="audit-val new">{row.newValue}</span>
+                      : <span className="audit-val empty">{EMDASH}</span>}
+                  </td>
                   <td>{row.actor}</td>
                   <td><code>{row.source}</code></td>
                 </tr>
@@ -279,7 +372,7 @@ export default function AuditPage() {
         {filtered.length > PAGE_SIZE ? (
           <div className="pager" style={{ padding: "10px 18px" }}>
             <span>
-              Page {page + 1} of {pageCount} · showing {pageRows.length} of {filtered.length}
+              {page * PAGE_SIZE + 1}{EMDASH}{Math.min(filtered.length, (page + 1) * PAGE_SIZE)} of {filtered.length} event{filtered.length === 1 ? "" : "s"}
             </span>
             <div className="pager-pages">
               <button onClick={() => setPage(0)} disabled={page === 0}><ChevronsLeft size={14} /></button>

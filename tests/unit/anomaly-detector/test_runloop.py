@@ -199,6 +199,8 @@ def test_publish_auto_isolate_only_publishes_non_healthy():
 # ── score_to_event_payload ───────────────────────────────────────────────────
 
 def test_payload_shape():
+    # A bare (no-evidence) non-healthy score still carries the derived UI
+    # severity but omits the metric/observed/threshold keys.
     score = AnomalyScore("backend_42", "degraded", 0.73)
     payload = score_to_event_payload(score, model_version="isolation_forest")
     assert payload == {
@@ -206,6 +208,40 @@ def test_payload_shape():
         "status":        "degraded",
         "score":         0.73,
         "model_version": "isolation_forest",
+        "severity":      "warning",
+    }
+
+
+def test_payload_healthy_has_no_severity_or_evidence():
+    # Healthy verdicts aren't alerts: no severity, no evidence keys.
+    payload = score_to_event_payload(
+        AnomalyScore("b1", "healthy", 0.0), model_version="threshold",
+    )
+    assert payload == {
+        "backend_id":    "b1",
+        "status":        "healthy",
+        "score":         0.0,
+        "model_version": "threshold",
+    }
+
+
+def test_payload_carries_evidence_and_severity():
+    # An evidence-bearing unhealthy score threads metric/observed/threshold
+    # through and maps unhealthy → critical.
+    score = AnomalyScore(
+        "backend_7", "unhealthy", 0.95,
+        metric="latency_ms", observed_value=312.0, threshold=250.0,
+    )
+    payload = score_to_event_payload(score, model_version="threshold")
+    assert payload == {
+        "backend_id":     "backend_7",
+        "status":         "unhealthy",
+        "score":          0.95,
+        "model_version":  "threshold",
+        "metric":         "latency_ms",
+        "observed_value": 312.0,
+        "threshold":      250.0,
+        "severity":       "critical",
     }
 
 

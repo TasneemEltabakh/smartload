@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeftRight,
   ArrowRight,
   Ban,
+  Info,
   Minus,
   Plus,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
 import {
   api,
   type IsolateStatus,
+  type LbState,
   type LbWeightOverrideResponse,
   type ManualIsolateResponse,
   type ManualScaleResponse,
@@ -35,6 +37,18 @@ type ResultCard =
 
 const STATUSES: IsolateStatus[] = ["healthy", "degraded", "unhealthy"];
 
+// Clickable JSON snippets for the force-weights editor.
+const EXAMPLE_EQUAL = JSON.stringify(
+  { "test-backend-1:8080": 1, "test-backend-2:8080": 1 },
+  null,
+  2,
+);
+const EXAMPLE_PREFER = JSON.stringify(
+  { "test-backend-1:8080": 70, "test-backend-2:8080": 30 },
+  null,
+  2,
+);
+
 function shortId(s: string): string {
   return s ? s.slice(0, 8) : "—";
 }
@@ -45,6 +59,9 @@ export default function ActionsPage() {
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [policyError, setPolicyError] = useState<string | null>(null);
 
+  const [lbState, setLbState] = useState<LbState | null>(null);
+  const [lbStateError, setLbStateError] = useState<string | null>(null);
+
   async function loadPolicy() {
     try {
       const p = await api.getPolicy();
@@ -54,38 +71,76 @@ export default function ActionsPage() {
       setPolicyError(err?.message || "could not load policy");
     }
   }
-  useEffect(() => { loadPolicy(); }, []);
+
+  async function loadLbState() {
+    try {
+      const s = await api.getLbState();
+      setLbState(s);
+      setLbStateError(null);
+    } catch (err: any) {
+      setLbStateError(err?.message || "could not load load-balancer state");
+    }
+  }
+
+  // Re-fetch all page data: live policy + current upstream weights.
+  async function refreshAll() {
+    await Promise.all([loadPolicy(), loadLbState()]);
+  }
+
+  useEffect(() => { refreshAll(); }, []);
 
   const [scaleTarget, setScaleTarget] = useState<string>("");
   const [scaleReason, setScaleReason] = useState<string>("");
+  const scaleTargetRef = useRef<HTMLInputElement>(null);
 
   const [backendId, setBackendId] = useState<string>("");
   const [isolateStatus, setIsolateStatus] = useState<IsolateStatus>("unhealthy");
   const [isolateReason, setIsolateReason] = useState<string>("");
 
-  // ── lb weight override form ─────────────────────────────────────────────
+  // ── lb weight override form (JSON editor) ───────────────────────────────
+  // Accepts a flat JSON object of backend → weight, e.g.
+  //   {"test-backend-1:8080": 5, "test-backend-2:8080": 1}
   const [lbWeightsRaw, setLbWeightsRaw] = useState<string>("");
-  const parsedLbWeights = useMemo<Record<string, number> | null>(() => {
-    if (!lbWeightsRaw.trim()) return null;
-    const entries = lbWeightsRaw.split(",").map((s) => s.trim()).filter(Boolean);
-    const out: Record<string, number> = {};
-    for (const e of entries) {
-      const eq = e.lastIndexOf("=");
-      if (eq < 1) return null;
-      const key = e.slice(0, eq).trim();
-      const val = parseInt(e.slice(eq + 1).trim(), 10);
-      if (!key || Number.isNaN(val) || val < 1) return null;
-      out[key] = val;
+
+  // Parse + validate the textarea into a flat Record<string, number>.
+  // Returns { weights } on success or { error } with a human-readable reason.
+  function parseLbWeights(
+    raw: string,
+  ): { weights: Record<string, number>; error?: undefined } | { error: string; weights?: undefined } {
+    const text = raw.trim();
+    if (!text) return { error: "Enter weights as a JSON object, e.g. {\"backend-1:8080\": 5}" };
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      return { error: "Weights are not valid JSON — check for trailing commas or missing quotes" };
     }
-    return Object.keys(out).length > 0 ? out : null;
-  }, [lbWeightsRaw]);
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      return { error: "Weights must be a JSON object of backend → number" };
+    }
+    const out: Record<string, number> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        return { error: `Weight for "${key}" must be a number` };
+      }
+      if (v < 0) {
+        return { error: `Weight for "${key}" must not be negative` };
+      }
+      out[key] = v;
+    }
+    if (Object.keys(out).length === 0) {
+      return { error: "Provide at least one backend weight" };
+    }
+    return { weights: out };
+  }
 
   function requestLbWeights() {
-    if (!parsedLbWeights) {
-      flashError("Enter weights as: backend-1:8080=80, backend-2:8080=60");
+    const result = parseLbWeights(lbWeightsRaw);
+    if (result.error || !result.weights) {
+      flashError(result.error ?? "Provide at least one backend weight");
       return;
     }
-    setPending({ kind: "lb_weights", weights: parsedLbWeights });
+    setPending({ kind: "lb_weights", weights: result.weights });
   }
 
 
@@ -93,6 +148,7 @@ export default function ActionsPage() {
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<ResultCard[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function recordResult(card: ResultCard) {
     setResults((prev) => [card, ...prev].slice(0, 10));
@@ -101,6 +157,11 @@ export default function ActionsPage() {
   function flashError(msg: string) {
     setError(msg);
     setTimeout(() => setError(null), 6_000);
+  }
+
+  function flashSuccess(msg: string) {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 5_000);
   }
 
   const parsedTarget = useMemo(() => {
@@ -117,10 +178,22 @@ export default function ActionsPage() {
     setPending({ kind: "scale", target_count: parsedTarget, reason: scaleReason.trim() });
   }
 
+  // Prefill the "Scale to N backends" form's target with the current cluster
+  // size ± 1 (clamped to policy bounds), then scroll/focus it so the operator
+  // reviews + confirms rather than firing a scale blindly.
   function quickScale(delta: number) {
-    const cur = policy?.min_backends ?? 1;
-    const target = Math.max(policy?.min_backends ?? 1, Math.min(policy?.max_backends ?? 99, cur + delta));
-    setPending({ kind: "scale", target_count: target, reason: delta > 0 ? "quick scale up" : "quick scale down" });
+    const min = policy?.min_backends ?? 1;
+    const max = policy?.max_backends ?? 99;
+    const current = lbState ? Object.keys(lbState.upstream_weights).length : min;
+    const base = current > 0 ? current : min;
+    const target = Math.max(min, Math.min(max, base + delta));
+    setScaleTarget(String(target));
+    setScaleReason(delta > 0 ? "scale up" : "scale down");
+    requestAnimationFrame(() => {
+      scaleTargetRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      scaleTargetRef.current?.focus();
+      scaleTargetRef.current?.select();
+    });
   }
 
   function requestIsolate() {
@@ -162,8 +235,9 @@ export default function ActionsPage() {
       } else if (pending.kind === "safe-mode") {
         const r = await api.setPolicy({ safe_mode: pending.enable }, actor);
         recordResult({ kind: "safe-mode", data: { enable: pending.enable, policy_version: r.policy_version } });
+        flashSuccess(`Safe mode ${pending.enable ? "enabled" : "disabled"} · policy v${r.policy_version}`);
       }
-      await loadPolicy();
+      await refreshAll();
     } catch (err: any) {
       const fieldHint = err?.field ? ` [field: ${err.field}]` : "";
       flashError(`${pending.kind} failed: ${err?.message || err}${fieldHint}`);
@@ -194,29 +268,29 @@ export default function ActionsPage() {
           <span className="meta">One-tap shortcuts for common operator flows</span>
         </div>
         <div className="quick-actions">
-          <button className="qa-tile" onClick={loadPolicy} disabled={busy}>
+          <button className="qa-tile" onClick={refreshAll} disabled={busy}>
             <span className="qa-icon"><RefreshCw size={16} /></span>
-            <span>Refresh state</span>
-            <span className="qa-sub">Reload policy &amp; bounds</span>
+            <span>Refresh backends</span>
+            <span className="qa-sub">Reload backend list from registry</span>
           </button>
           <button className="qa-tile green" onClick={() => quickScale(+1)} disabled={busy || !policy}>
             <span className="qa-icon"><Plus size={16} /></span>
             <span>Scale up</span>
-            <span className="qa-sub">Add one backend</span>
+            <span className="qa-sub">Increase backend replicas</span>
           </button>
           <button className="qa-tile amber" onClick={() => quickScale(-1)} disabled={busy || !policy}>
             <span className="qa-icon"><Minus size={16} /></span>
             <span>Scale down</span>
-            <span className="qa-sub">Remove one backend</span>
+            <span className="qa-sub">Decrease backend replicas</span>
           </button>
           <button
-            className={`qa-tile ${policy?.safe_mode ? "violet" : "bad"}`}
+            className="qa-tile violet"
             onClick={requestToggleSafeMode}
             disabled={busy || !policy}
           >
             <span className="qa-icon"><ShieldAlert size={16} /></span>
             <span>{policy?.safe_mode ? "Disable safe mode" : "Enable safe mode"}</span>
-            <span className="qa-sub">Fail-safe routing override</span>
+            <span className="qa-sub">Fallback to classical algorithms</span>
           </button>
         </div>
       </div>
@@ -226,11 +300,8 @@ export default function ActionsPage() {
         <div className="card-head">
           <h2>Manual actions</h2>
           <span className="meta">
-            {policy
-              ? <>Live policy: <code>min={policy.min_backends}</code> · <code>max={policy.max_backends}</code> · <code>v{policy.policy_version}</code></>
-              : policyError
-                ? <span style={{ color: "var(--bad)" }}>(could not load policy: {policyError})</span>
-                : "loading policy…"}
+            Override SmartLoad behaviour by executing manual operations. All actions are
+            audited in the <Link to="/audit" className="link">Audit log</Link>.
           </span>
         </div>
 
@@ -242,6 +313,13 @@ export default function ActionsPage() {
             placeholder="e.g. on-call, oncall@team"
           />
         </div>
+        <div className="meta" style={{ marginTop: 8 }}>
+          {policy
+            ? <>Live policy: <code>min={policy.min_backends}</code> · <code>max={policy.max_backends}</code> · <code>v{policy.policy_version}</code></>
+            : policyError
+              ? <span style={{ color: "var(--bad)" }}>(could not load policy: {policyError})</span>
+              : "loading policy…"}
+        </div>
       </div>
 
       {/* Scale */}
@@ -250,13 +328,14 @@ export default function ActionsPage() {
           <span className="ma-icon"><TrendingUp size={14} /></span>
           <div>
             <h3>Scale to N backends</h3>
-            <div className="ma-sub">Direct backend count override · bypasses cooldown · forecast resumes after</div>
+            <div className="ma-sub">Target total number of backends. SmartLoad will scale up or down automatically.</div>
           </div>
         </div>
         <div className="ma-body">
           <div className="field">
             <label>Target count</label>
             <input
+              ref={scaleTargetRef}
               type="number"
               inputMode="numeric"
               value={scaleTarget}
@@ -271,7 +350,7 @@ export default function ActionsPage() {
             <input
               value={scaleReason}
               onChange={(e) => setScaleReason(e.target.value)}
-              placeholder="e.g. traffic spike, oncall override"
+              placeholder="e.g. traffic spike, maintenance, test"
             />
           </div>
           <button onClick={requestScale} disabled={busy || parsedTarget === null}>Scale…</button>
@@ -284,20 +363,20 @@ export default function ActionsPage() {
           <span className="ma-icon"><Ban size={14} /></span>
           <div>
             <h3>Isolate backend</h3>
-            <div className="ma-sub">Temporarily remove a backend by publishing a synthetic AnomalyEvent</div>
+            <div className="ma-sub">Temporarily remove a backend from receiving traffic. The backend will be marked as unhealthy until isolation is removed.</div>
           </div>
         </div>
         <div className="ma-body">
           <div className="field">
-            <label>Backend ID</label>
+            <label>Backend ID / IP</label>
             <input
               value={backendId}
               onChange={(e) => setBackendId(e.target.value)}
-              placeholder="e.g. test-backend-3 or 172.18.0.5:8080"
+              placeholder="e.g. test-backend-3 or 172.18.0.3:8080"
             />
           </div>
           <div className="field" style={{ flex: 0.7 }}>
-            <label>Status</label>
+            <label>Status after isolation</label>
             <select
               value={isolateStatus}
               onChange={(e) => setIsolateStatus(e.target.value as IsolateStatus)}
@@ -310,7 +389,7 @@ export default function ActionsPage() {
             <input
               value={isolateReason}
               onChange={(e) => setIsolateReason(e.target.value)}
-              placeholder="e.g. demo, failover drill"
+              placeholder="e.g. high latency, error rate"
             />
           </div>
           <button className="danger" onClick={requestIsolate} disabled={busy || !backendId.trim()}>Isolate</button>
@@ -322,22 +401,76 @@ export default function ActionsPage() {
         <div className="ma-head">
           <span className="ma-icon"><ArrowLeftRight size={14} /></span>
           <div>
-            <h3>Force route weights</h3>
-            <div className="ma-sub">Override NGINX upstream weights via lb-sidecar · comma-separated <code>backend:port=weight</code> pairs</div>
+            <h3>Force route weights <span className="ma-sub" style={{ marginTop: 0 }}>(optional)</span></h3>
+            <div className="ma-sub">Override routing distribution by setting custom weights for backends. Leave empty to clear overrides.</div>
           </div>
         </div>
-        <div className="ma-body">
+
+        <div className="ma-body" style={{ alignItems: "stretch" }}>
           <div className="field" style={{ flex: 2 }}>
-            <label>Weights</label>
-            <input
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              Backend weights (JSON) <Info size={11} />
+            </label>
+            <textarea
               value={lbWeightsRaw}
               onChange={(e) => setLbWeightsRaw(e.target.value)}
-              placeholder="smartload-test-backend-1:8080=80, smartload-test-backend-2:8080=60"
+              rows={6}
+              spellCheck={false}
+              placeholder={'{\n  "test-backend-1:8080": 50,\n  "test-backend-2:8080": 30,\n  "test-backend-3:8080": 20\n}'}
+              style={{ fontFamily: "ui-monospace, monospace", fontSize: 12, resize: "vertical" }}
             />
           </div>
-          <button onClick={requestLbWeights} disabled={busy || !parsedLbWeights}>
-            Force weights…
+
+          <div className="field" style={{ flex: 1.4, justifyContent: "flex-start" }}>
+            <div className="json-examples">
+              <h4>Examples</h4>
+              <pre
+                title="Click to fill the editor"
+                onClick={() => setLbWeightsRaw(EXAMPLE_EQUAL)}
+              >{`• Equal weights: { "backend-1": 1, "backend-2": 1 }`}</pre>
+              <pre
+                title="Click to fill the editor"
+                onClick={() => setLbWeightsRaw(EXAMPLE_PREFER)}
+              >{`• Prefer backend-1: { "backend-1": 70, "backend-2": 30 }`}</pre>
+              <p className="note">Weights are normalized automatically.</p>
+            </div>
+          </div>
+
+          <button onClick={requestLbWeights} disabled={busy || !lbWeightsRaw.trim()}>
+            Apply weights
           </button>
+        </div>
+
+        {/* Current load-balancer state for reference. */}
+        <div className="meta" style={{ marginTop: 12 }}>
+          {lbStateError ? (
+            <span style={{ color: "var(--bad)" }}>(could not load load-balancer state: {lbStateError})</span>
+          ) : lbState ? (
+            <>
+              <div>
+                Current upstream weights:{" "}
+                {Object.keys(lbState.upstream_weights).length === 0 ? (
+                  <span className="muted">none (default round-robin)</span>
+                ) : (
+                  Object.entries(lbState.upstream_weights).map(([b, w]) => (
+                    <span key={b} style={{ marginRight: 8 }}><code>{b}={w}</code></span>
+                  ))
+                )}
+              </div>
+              <div style={{ marginTop: 4 }}>
+                Excluded backends:{" "}
+                {lbState.excluded_backends.length === 0 ? (
+                  <span className="muted">none</span>
+                ) : (
+                  lbState.excluded_backends.map((b) => (
+                    <span key={b} style={{ marginRight: 8 }}><code>{b}</code></span>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            "loading load-balancer state…"
+          )}
         </div>
       </div>
 
@@ -469,6 +602,16 @@ export default function ActionsPage() {
         </div>
       ) : null}
 
+      {/* ── Footer note ───────────────────────────────────────────── */}
+      <div className="meta" style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 6 }}>
+        <Info size={12} />
+        <span>
+          All manual actions are recorded in the{" "}
+          <Link to="/audit" className="link">Audit log</Link>.
+        </span>
+      </div>
+
+      {notice ? <div className="toast ok">{notice}</div> : null}
       {error ? <div className="toast bad">{error}</div> : null}
     </>
   );

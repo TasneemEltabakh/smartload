@@ -108,11 +108,21 @@ class IsolationForestEngine(AnomalyEngine):
         if raw > self.healthy_above:
             return AnomalyScore(features.backend_id, "healthy", 0.0)
         if raw >= self.unhealthy_below:
-            return AnomalyScore(features.backend_id, "degraded", 0.5)
+            return AnomalyScore(
+                features.backend_id,
+                "degraded",
+                0.5,
+                metric="anomaly_score",
+                observed_value=raw,
+                threshold=self.healthy_above,
+            )
         return AnomalyScore(
             features.backend_id,
             "unhealthy",
             min(1.0, abs(raw - self.unhealthy_below) / self.unhealthy_score_scale),
+            metric="anomaly_score",
+            observed_value=raw,
+            threshold=self.unhealthy_below,
         )
 
     def reload(self) -> None:

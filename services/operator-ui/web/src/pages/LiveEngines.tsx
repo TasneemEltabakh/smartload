@@ -6,9 +6,9 @@ import {
   CheckCircle2,
   Cpu,
   ExternalLink,
+  ShieldAlert,
   Sparkles,
   TrendingUp,
-  XCircle,
 } from "lucide-react";
 
 import {
@@ -198,6 +198,40 @@ function IconFor({ name }: { name: string }) {
   return <Cpu size={16} strokeWidth={2} />;
 }
 
+// Compact inline trend line, drawn from forecasted-RPS values accumulated off
+// the SSE feed. Pure presentation — no axes, no dependency on stream wiring.
+function MiniSparkline({ values }: { values: number[] }) {
+  if (values.length < 2) return null;
+  const W = 64;
+  const H = 22;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const step = W / (values.length - 1);
+  const points = values
+    .map((v, i) => `${(i * step).toFixed(1)},${(H - ((v - min) / span) * H).toFixed(1)}`)
+    .join(" ");
+  return (
+    <svg
+      className="tile-sparkline"
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke="var(--ch-forecast)"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function ResourceLine({ res }: { res: ServiceResource | undefined }) {
   // CPU/memory from the resource-collector (v1.0.7bb). Hidden until the first
   // sample arrives so a tile never renders a misleading "0%".
@@ -225,11 +259,13 @@ function EngineTile({
   name,
   body,
   res,
+  forecastTrend,
   onOpenDetails,
 }: {
   name: string;
   body: EngineStateBody | undefined;
   res: ServiceResource | undefined;
+  forecastTrend?: number[];
   onOpenDetails: () => void;
 }) {
   const status = statusOf(body);
@@ -275,8 +311,7 @@ function EngineTile({
               <ExternalLink size={11} strokeWidth={2} />
             </Link>
             <div className="tile-sub">
-              {body.channel ? <code>{body.channel}</code> : null}
-              {lastTickStr ? <> · {lastTickStr}</> : null}
+              {lastTickStr ?? <span className="headline-empty">no ticks yet</span>}
             </div>
           </div>
         </div>
@@ -285,12 +320,27 @@ function EngineTile({
 
       <div>
         <span className="headline-label">{headline.label}</span>
-        <div className="headline">{headline.value}</div>
+        <div className="headline" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span>{headline.value}</span>
+          {name === "forecasting" && forecastTrend && forecastTrend.length >= 2 ? (
+            <MiniSparkline values={forecastTrend} />
+          ) : null}
+        </div>
       </div>
 
-      <div className="secondary">
-        {eng ? <>{eng.kind === "policy" ? "Policy" : "Engine"}: <code>{eng.loaded}</code></> : null}
-        {body.rl_mode_env ? <> · rl_mode_env <code>{body.rl_mode_env}</code></> : null}
+      <div className="secondary" style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <span>
+          <span style={{ textTransform: "uppercase", letterSpacing: "0.6px", fontSize: 10, marginRight: 6 }}>Type</span>
+          {eng ? <code>{eng.kind === "policy" ? "policy" : "engine"}</code> : "—"}
+        </span>
+        <span>
+          <span style={{ textTransform: "uppercase", letterSpacing: "0.6px", fontSize: 10, marginRight: 6 }}>Mode</span>
+          {body.rl_mode_env ? <code>{body.rl_mode_env}</code> : eng ? <code>{eng.loaded}</code> : "—"}
+        </span>
+        <span>
+          <span style={{ textTransform: "uppercase", letterSpacing: "0.6px", fontSize: 10, marginRight: 6 }}>Channel</span>
+          {body.channel ? <code>{body.channel}</code> : "—"}
+        </span>
       </div>
 
       <ResourceLine res={res} />
@@ -440,6 +490,18 @@ export default function LiveEnginesPage() {
     return ordered.filter((e) => e.channel === filter);
   }, [feed, filter]);
 
+  // Forecasted-RPS trend for the forecasting tile sparkline — read off the
+  // events already buffered in `feed`, oldest→newest, last 24 points.
+  const forecastTrend = useMemo(() => {
+    const vals: number[] = [];
+    for (const ev of feed) {
+      if (ev.channel !== "smartload.forecast") continue;
+      const rps = (ev.payload as Record<string, unknown>).predicted_rps;
+      if (typeof rps === "number" && Number.isFinite(rps)) vals.push(rps);
+    }
+    return vals.slice(-24);
+  }, [feed]);
+
   const drawerBody = drawer ? snapshot?.services[drawer] : null;
 
   // Engine KPI counts.
@@ -448,6 +510,8 @@ export default function LiveEnginesPage() {
   const healthyCount  = ENGINE_ORDER.filter((n) => statusOf(services[n]) === "ok").length;
   const degradedCount = ENGINE_ORDER.filter((n) => statusOf(services[n]) === "warn").length;
   const unreachable   = ENGINE_ORDER.filter((n) => statusOf(services[n]) === "bad").length;
+  // Active incidents: any engine service that is not healthy (degraded + unreachable).
+  const activeIncidents = degradedCount + unreachable;
 
   return (
     <>
@@ -471,24 +535,24 @@ export default function LiveEnginesPage() {
 
       <div className="kpi-row">
         <div className="kpi cyan">
-          <div className="kpi-label"><span className="kpi-icon"><Cpu size={14} strokeWidth={2} /></span> Configured engines</div>
+          <div className="kpi-label"><span className="kpi-icon"><Cpu size={14} strokeWidth={2} /></span> Total Engines</div>
           <div className="kpi-value">{engineCount}</div>
-          <div className="kpi-trend">anomaly · forecast · rl</div>
+          <div className="kpi-trend">All configured engines</div>
         </div>
         <div className="kpi green">
           <div className="kpi-label"><span className="kpi-icon"><CheckCircle2 size={14} strokeWidth={2} /></span> Healthy</div>
           <div className="kpi-value">{healthyCount}</div>
-          <div className="kpi-trend up">reachable &amp; running</div>
+          <div className="kpi-trend up">Reachable &amp; running</div>
         </div>
         <div className="kpi amber">
           <div className="kpi-label"><span className="kpi-icon"><AlertTriangle size={14} strokeWidth={2} /></span> Degraded</div>
           <div className="kpi-value">{degradedCount}</div>
-          <div className="kpi-trend">fallback or runloop off</div>
+          <div className="kpi-trend">Needs attention</div>
         </div>
         <div className="kpi bad">
-          <div className="kpi-label"><span className="kpi-icon"><XCircle size={14} strokeWidth={2} /></span> Unreachable</div>
-          <div className="kpi-value">{unreachable}</div>
-          <div className="kpi-trend">requires attention</div>
+          <div className="kpi-label"><span className="kpi-icon"><ShieldAlert size={14} strokeWidth={2} /></span> Active Incidents</div>
+          <div className="kpi-value">{activeIncidents}</div>
+          <div className="kpi-trend">Requiring attention</div>
         </div>
       </div>
 
@@ -500,6 +564,7 @@ export default function LiveEnginesPage() {
               name={name}
               body={snapshot?.services[name]}
               res={resources[name]}
+              forecastTrend={name === "forecasting" ? forecastTrend : undefined}
               onOpenDetails={() => setDrawer(name)}
             />
           ))}
@@ -507,7 +572,16 @@ export default function LiveEnginesPage() {
 
         <aside className="feed-panel">
           <div className="feed-head">
-            <h3>Activity · {filteredFeed.length}{filter !== "all" ? ` of ${feed.length}` : ""}</h3>
+            <h3>Activity{filter !== "all" ? ` · ${filteredFeed.length} of ${feed.length}` : feed.length ? ` · ${feed.length}` : ""}</h3>
+            {filter !== "all" ? (
+              <button
+                className="refresh-chip"
+                style={{ cursor: "pointer", border: "none", background: "transparent" }}
+                onClick={() => setFilter("all")}
+              >
+                View all
+              </button>
+            ) : null}
           </div>
           <div className="feed-chips">
             {CHANNEL_FILTERS.map((c) => (

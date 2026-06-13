@@ -49,3 +49,29 @@ def test_healthy_when_rolling_mean_zero():
     engine = ThresholdEngine()
     score = engine.score(_features(latency=10.0, rolling_mean=0.0))
     assert score.status == "healthy"
+
+
+def test_latency_verdict_carries_evidence():
+    # A latency spike should attach the metric/observed/threshold that tripped
+    # it so the operator-ui Active Alerts panel can show "why".
+    engine = ThresholdEngine(latency_multiplier=3.0)
+    score = engine.score(_features(latency=100.0, rolling_mean=10.0))
+    assert score.metric == "latency_ms"
+    assert score.observed_value == 100.0
+    assert score.threshold == 30.0          # 3.0 × rolling_mean (10.0)
+
+
+def test_error_rate_verdict_carries_evidence():
+    engine = ThresholdEngine(error_rate_threshold=0.05)
+    score = engine.score(_features(error_rate=0.20))
+    assert score.metric == "error_rate"
+    assert score.observed_value == 0.20
+    assert score.threshold == 0.05
+
+
+def test_healthy_verdict_has_no_evidence():
+    engine = ThresholdEngine()
+    score = engine.score(_features(latency=12.0, rolling_mean=10.0))
+    assert score.metric is None
+    assert score.observed_value is None
+    assert score.threshold is None

@@ -751,6 +751,89 @@ def ui_activity():
     return jsonify(items[:limit])
 
 
+# ── Active alerts (structured) ────────────────────────────────────────────────
+
+def _alert_summary(payload: dict) -> str:
+    """Human one-liner for an alert row. Uses the evidence the anomaly engine
+    attached (metric / observed_value / threshold) when present, falling back
+    to the bare status when an older event predates the evidence fields."""
+    backend = payload.get("backend_id", "unknown")
+    metric  = payload.get("metric")
+    observed = payload.get("observed_value")
+    threshold = payload.get("threshold")
+    if metric is not None and observed is not None:
+        obs = f"{observed:.2f}".rstrip("0").rstrip(".") if isinstance(observed, (int, float)) else observed
+        if threshold is not None and isinstance(threshold, (int, float)):
+            thr = f"{threshold:.2f}".rstrip("0").rstrip(".")
+            return f"{backend}: {metric} {obs} (threshold {thr})"
+        return f"{backend}: {metric} {obs}"
+    return f"{backend} → {payload.get('status', 'unknown')}"
+
+
+@app.route("/api/ui/alerts", methods=["GET"])
+def ui_alerts():
+    """Structured active alerts for the Home page Active Alerts panel.
+
+    Reads smartload.anomaly envelopes from the engines ring buffer, keeps those
+    with status != "healthy" inside ?window=N seconds (default
+    ACTIVE_ALERT_WINDOW_SECONDS), and returns one row per backend (newest wins)
+    carrying severity + the metric/observed/threshold evidence. Degrades to an
+    empty list — never errors the page."""
+    _start_engines_subscriber()
+
+    try:
+        window = int(request.args.get("window", ACTIVE_ALERT_WINDOW_SECONDS))
+    except (TypeError, ValueError):
+        window = ACTIVE_ALERT_WINDOW_SECONDS
+    if window <= 0:
+        window = ACTIVE_ALERT_WINDOW_SECONDS
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=window)
+    latest_by_backend: dict[str, dict] = {}
+    try:
+        for entry in _engines_buf.recent():
+            if entry.get("channel") != "smartload.anomaly":
+                continue
+            ts_raw = entry.get("envelope", {}).get("timestamp")
+            ts = _parse_iso(ts_raw)
+            if ts is None or ts < cutoff:
+                continue
+            payload = entry.get("payload", {}) or {}
+            status = payload.get("status")
+            if not status or status == "healthy":
+                continue
+            backend = payload.get("backend_id", "unknown")
+            severity = payload.get("severity") or (
+                "critical" if status == "unhealthy" else "warning"
+            )
+            row = {
+                "backend_id":     backend,
+                "status":         status,
+                "severity":       severity,
+                "metric":         payload.get("metric"),
+                "observed_value": payload.get("observed_value"),
+                "threshold":      payload.get("threshold"),
+                "score":          payload.get("score"),
+                "time":           ts_raw,
+                "summary":        _alert_summary(payload),
+            }
+            prev = latest_by_backend.get(backend)
+            if prev is None or (row["time"] or "") > (prev["time"] or ""):
+                latest_by_backend[backend] = row
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("alerts: ring buffer read failed: %s", exc)
+        return jsonify([])
+
+    # Critical before warning, then newest first. Two stable sorts: newest-first
+    # by time, then by severity rank — ISO-8601 sorts lexically so a plain
+    # string compare is a correct chronological order.
+    rank = {"critical": 0, "warning": 1}
+    alerts = list(latest_by_backend.values())
+    alerts.sort(key=lambda a: a["time"] or "", reverse=True)
+    alerts.sort(key=lambda a: rank.get(a["severity"], 2))
+    return jsonify(alerts)
+
+
 # ── Policy dry-run preview (#132) ─────────────────────────────────────────────
 
 def _validate_policy_patch(merged: dict) -> list[str]:
@@ -887,6 +970,10 @@ def ui_audit_counts():
     policy_changes  = 0
     scaling_actions = 0
     last_event_at: str | None = None
+    # Distinct human/system actors across the audited sources. Scaling rows have
+    # no actor column (autoscaler acts autonomously) so they fold into a single
+    # "autoscaler" actor; policy rows carry the operator id.
+    actors: set[str] = set()
 
     def _track_last(ts: str | None) -> None:
         nonlocal last_event_at
@@ -905,6 +992,9 @@ def ui_audit_counts():
             policy_changes = len(rows)
             for row in rows:
                 _track_last(row.get("time"))
+                actor = row.get("actor")
+                if actor:
+                    actors.add(str(actor))
     except Exception as exc:                                # noqa: BLE001
         log.warning("audit counts: policy upstream failed: %s", exc)
 
@@ -916,6 +1006,8 @@ def ui_audit_counts():
         if r.status_code == 200:
             rows = r.json() or []
             scaling_actions = len(rows)
+            if rows:
+                actors.add("autoscaler")
             for row in rows:
                 _track_last(row.get("time"))
     except Exception as exc:                                # noqa: BLE001
@@ -937,6 +1029,7 @@ def ui_audit_counts():
         "scaling_actions": scaling_actions,
         "anomaly_events":  anomaly_events,
         "active_alerts":   active_alerts,
+        "actors_unique":   len(actors),
         "last_event_at":   last_event_at,
     })
 
@@ -1225,6 +1318,24 @@ def ui_metrics_resources():
     empty = {"instances": [], "window_seconds": window, "count": 0}
     try:
         r = _http.get(f"{SERVICE_URLS['telemetry']}/api/v1/metrics/resources",
+                      params={"window": window})
+        if r.status_code != 200:
+            return jsonify(empty), 200
+        return jsonify(r.json()), 200
+    except Exception:                                       # noqa: BLE001
+        return jsonify(empty), 200
+
+
+@app.route("/api/ui/metrics/backends", methods=["GET"])
+def ui_metrics_backends():
+    """Per-backend request stats (p95 / req-min / error rate) for the Home
+    Service Health table. Thin proxy to telemetry's /api/v1/metrics/backends.
+    `?window=N` seconds is forwarded; any upstream failure degrades to an empty
+    list with HTTP 200 so the table renders CPU-only rather than erroring."""
+    window = request.args.get("window", "60")
+    empty = {"backends": [], "aggregate": None, "window_seconds": window}
+    try:
+        r = _http.get(f"{SERVICE_URLS['telemetry']}/api/v1/metrics/backends",
                       params={"window": window})
         if r.status_code != 200:
             return jsonify(empty), 200

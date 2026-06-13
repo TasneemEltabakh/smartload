@@ -195,16 +195,42 @@ def should_publish(score: AnomalyScore, policy: EnginePolicy) -> bool:
     return score.status != "healthy"
 
 
+def _severity_for_status(status: str) -> str | None:
+    """Map the three-tier health status onto the operator-ui alert bucket.
+    healthy verdicts aren't alerts, so they get no severity."""
+    if status == "unhealthy":
+        return "critical"
+    if status == "degraded":
+        return "warning"
+    return None
+
+
 def score_to_event_payload(score: AnomalyScore, model_version: str) -> dict:
     """Serialise an AnomalyScore + model id into the AnomalyEvent dict shape
     expected by publish_envelope. model_version goes onto the envelope for
-    debug / provenance per the contracts.py docstring."""
-    return {
+    debug / provenance per the contracts.py docstring.
+
+    When the engine attached evidence (metric / observed_value / threshold) the
+    payload carries it through plus a derived UI severity, so the operator-ui
+    Active Alerts panel can render "latency_ms 312 (threshold 250)" without a
+    second round-trip. Evidence keys are omitted when absent to keep healthy /
+    legacy payloads unchanged."""
+    payload = {
         "backend_id":    score.backend_id,
         "status":        score.status,
         "score":         score.score,
         "model_version": model_version,
     }
+    if score.metric is not None:
+        payload["metric"] = score.metric
+    if score.observed_value is not None:
+        payload["observed_value"] = score.observed_value
+    if score.threshold is not None:
+        payload["threshold"] = score.threshold
+    severity = _severity_for_status(score.status)
+    if severity is not None:
+        payload["severity"] = severity
+    return payload
 
 
 # ── /api/v1/engine/state serialisation ───────────────────────────────────────
