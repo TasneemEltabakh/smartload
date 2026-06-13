@@ -1,0 +1,20 @@
+flowchart TD
+  START["policy.act() returns<br/>action.mode = 'shadow' | 'active'"]
+  Q1{"operating policy<br/>safe_mode == true ?"}
+  Q2{"RL_MODE env<br/>== 'active' ?"}
+  Q3{"action.mode<br/>== 'active' ?"}
+  PUB_S["publish mode='shadow'"]
+  PUB_A["publish mode='active'<br/>LB sidecar applies weights"]
+
+  START --> Q1
+  Q1 -- "yes (kill switch)" --> PUB_S
+  Q1 -- "no" --> Q2
+  Q2 -- "no (operator pin)" --> PUB_S
+  Q2 -- "yes" --> Q3
+  Q3 -- "no (policy declined)" --> PUB_S
+  Q3 -- "yes (all three agree)" --> PUB_A
+
+  classDef safe fill:#DCEFE4,stroke:#2E8B57,color:#0E1116;
+  classDef active fill:#EFF3F6,stroke:#5B6472,color:#0E1116;
+  class PUB_S safe;
+  class PUB_A active;

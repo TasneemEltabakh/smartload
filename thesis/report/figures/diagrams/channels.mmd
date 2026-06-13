@@ -1,0 +1,35 @@
+flowchart LR
+    AD["Anomaly<br/>Detector"]
+    FE["Forecasting<br/>Engine"]
+    RL["RL Engine"]
+    AS["Autoscaler"]
+    PM["Policy<br/>Manager"]
+    SC["LB Sidecar"]
+    OUI["Operator UI<br/>(Live Engines)"]
+    WHD["Webhook<br/>Dispatcher<br/>(planned #130)"]
+
+    AD ==>|"smartload.anomaly"| SC
+    AD -.->|"smartload.anomaly"| OUI
+    AD -.->|"smartload.anomaly"| WHD
+    FE ==>|"smartload.forecast"| AS
+    FE -.->|"smartload.forecast"| OUI
+    RL ==>|"smartload.routing"| SC
+    RL -.->|"smartload.routing"| OUI
+    AS ==>|"smartload.scale"| SC
+    AS -.->|"smartload.scale"| OUI
+    AS -.->|"smartload.scale"| WHD
+    PM ==>|"smartload.policy"| AD
+    PM ==> FE
+    PM ==> RL
+    PM ==> SC
+    PM ==> AS
+    PM -.-> OUI
+
+    classDef pub fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+    classDef sub fill:#EFF3F6,color:#0f172a,stroke:#5B6472;
+    classDef pmgr fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    classDef planned fill:#F1F3F5,color:#475569,stroke:#5B6472,stroke-dasharray:4 2;
+    class AD,FE,RL,AS pub
+    class SC,OUI sub
+    class PM pmgr
+    class WHD planned

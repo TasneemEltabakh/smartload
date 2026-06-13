@@ -1,0 +1,31 @@
+flowchart TB
+    Req["Incoming HTTP request"]
+    NG["NGINX picks backend<br/>from current upstream config"]
+    Out["Response to client"]
+
+    subgraph Sidecar["LB Sidecar — config render priority"]
+        direction TB
+        L1["<b>Anomaly exclusion</b><br/>Drop UNHEALTHY backends from upstream<br/><i>UNCONDITIONAL</i>"]
+        L2["<b>Active policy</b><br/>safe_mode reset · min/max bounds<br/><i>can short-circuit RL · cannot override anomaly</i>"]
+        L3["<b>RL recommendation</b><br/>Set weights from server_rankings<br/><i>only when mode=active, bounded by 1 and 2</i>"]
+        L4["<b>Classical fallback</b><br/>Round-robin / least-connections<br/><i>always available</i>"]
+        L1 ==>|"step 1"| L2
+        L2 ==>|"step 2"| L3
+        L3 ==>|"step 3"| L4
+    end
+
+    NoF["<b>Forecasts</b><br/>NEVER influence routing<br/><i>drive autoscaling only</i>"]
+
+    Req --> NG --> Out
+    Sidecar -. "renders nginx.conf<br/>nginx -s reload" .-> NG
+
+    classDef step1 fill:#F7E3E6,color:#0f172a,stroke:#B00020,stroke-width:2px;
+    classDef step2 fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    classDef step3 fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+    classDef step4 fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+    classDef forecast fill:#F1F3F5,color:#475569,stroke:#5B6472,stroke-dasharray:4 4;
+    class L1 step1
+    class L2 step2
+    class L3 step3
+    class L4 step4
+    class NoF forecast

@@ -1,0 +1,42 @@
+flowchart LR
+    subgraph DataNS["Data Plane"]
+        NGINX["nginx :80→8080"]
+        BE["test-backend × N"]
+    end
+
+    subgraph CtrlNS["Control Plane"]
+        SHP["lb-otel-shipper"]
+        TLM["telemetry :8081"]
+        AND["anomaly :8082"]
+        FCT["forecasting :8083"]
+        RLE["rl-engine :8084"]
+        ASL["autoscaler :8085"]
+        POL["policy :8086"]
+        OUI["operator-ui :8090"]
+        SDC["lb-sidecar"]
+    end
+
+    subgraph InfNS["Infrastructure"]
+        TDB[("timescaledb :5432<br/>healthcheck")]
+        RDS(["redis :6379<br/>healthcheck"])
+        RX["redis-exporter :9121<br/>(v1.0.7ac, #116)"]
+        OTC["otel-collector"]
+        PRM["prometheus"]
+        GRF["grafana :3000"]
+    end
+
+    Vols["Volumes: .env · policy.yaml · models · timescaledb-data · nginx-logs"]
+    Vols -.- POL
+    Vols -.- TDB
+    Vols -.- AND
+    Vols -.- NGINX
+    Vols -.- SHP
+
+    classDef data fill:#EFF3F6,color:#0f172a,stroke:#5B6472;
+    classDef ctrl fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    classDef infra fill:#F1F3F5,color:#0f172a,stroke:#5B6472;
+    classDef vol fill:#F1F3F5,color:#475569,stroke:#5B6472,stroke-dasharray:4 4;
+    class NGINX,BE data
+    class SHP,TLM,AND,FCT,RLE,ASL,POL,SDC ctrl
+    class TDB,RDS,RX,OTC,PRM,GRF infra
+    class Vols vol

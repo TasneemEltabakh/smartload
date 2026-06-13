@@ -2,19 +2,20 @@
 \label{ch:discussion}
 
 The earlier chapters explained what SmartLoad is, how it is built, and how it
-behaves under test. This chapter steps back from the mechanism to weigh it: what
-the testing results in \cref{ch:impl_testing} actually show, where the system is
-strong and which design choices were deliberate trade-offs, and what effects ---
-economic, societal, environmental, and cultural --- a system that sits in the
-request path of a production service carries beyond the laboratory. The framing
-is the one the project has held since its first sprint: explain the reasoning behind
-each decision, and let that engineering judgment stand on its own.
+behaves under test. This chapter steps back from the mechanism to weigh it. It
+reads what the testing results in \cref{ch:impl_testing} actually show, identifies
+where the system is strong and which design choices were deliberate trade-offs,
+and traces the effects a system in the request path of a production service carries
+beyond the laboratory across four contexts: economic, societal, environmental, and
+cultural. The framing is the one the project has held since its first sprint.
+Explain the reasoning behind each decision, and let that engineering judgment stand
+on its own.
 
 \section{Discussion of Performance}
 \label{disc:performance}
 
-The first question a reader brings to the results is simple: does SmartLoad work?
-The answer has layers. The \emph{control loop} works end to end --- observation,
+The first question a reader brings to the results is simple. Does SmartLoad work?
+The answer has layers. The \emph{control loop} works end to end. Observation,
 decision, and actuation form an unbroken chain across every layer, and every
 architectural component has a Phase-1 run loop wired and enabled with a
 deterministic fallback beneath it. The \emph{learned components} inside that loop
@@ -24,44 +25,88 @@ mixed state sound rather than risky. This section reads the results from
 \cref{ch:impl_testing} in that light, separating what the mechanism demonstrably
 does from what the current trained models add on top.
 
+The cleanest way to hold that distinction is to state it plainly before reading the
+numbers. \Cref{box:disc:mechanism} draws the line the rest of this chapter defends:
+the closed control loop is demonstrated against a live stack, while the current
+trained routing model only matches its classical baseline on the workload it was
+tested against. These two statements are not in tension. The first is the
+engineering result the design set out to prove; the second is an honest report on a
+single learned component within it.
+
+\begin{table}[ht]
+  \centering
+  \caption{The central honest claim of the evaluation: the mechanism is proven,
+    while the current routing model only ties its baseline.}
+  \label{box:disc:mechanism}
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{4.6cm}Y@{}}
+    \toprule
+    \headrow
+    \textbf{The mechanism works} & \textbf{The current model only ties} \\
+    \midrule
+    The closed forecast-to-capacity loop is demonstrated end to end on a live
+      stack: the pool grows from $1$ to $6$ instances and back across $12$ scaling
+      actions (RQ4, \cref{fig:imc:pool}).
+      & The trained PPO routing policy ties classical round-robin on the offline
+        evaluation: both reach \texttt{mean\_reward} $=-0.0056$ with an
+        SLO-violation rate of $0$, so the routing acceptance gate is red on the
+        current model. \\[3pt]
+    Observation, decision, and actuation form an unbroken chain; the autoscaler is
+      the fully wired actuator and right-sizes the pool in both directions.
+      & The tie is a correct result on a homogeneous workload, not a defect: when
+        every backend responds at a similar speed, spreading traffic evenly is the
+        optimal policy, which is what round-robin already does. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+A short way to say it: the routing learns, but on this workload there is nothing
+to learn that round-robin does not already do; the safety floor, by deliberate
+design, does not learn at all.
+
 \subsection{Strengths}
 \label{disc:strengths}
 
 \paragraph{Closed-loop proactive autoscaling is demonstrated end to end.} The most
 important positive result is that the forecast-to-capacity loop closes against a
-live stack. In the committed adaptive benchmark run, a forecast-driven burst grew
-the backend pool from a single instance to six and then shrank it back as the
-burst subsided, across roughly twelve scaling actions, with measured time-to-react
-between actions on the order of seconds rather than minutes. This is the
-affirmative answer to the project's autoscaling research question: the pool
-\emph{grew ahead of} the modelled demand and \emph{contracted} when demand
-receded, which is the bidirectional, proactive behaviour the whole design is built
-around. Getting there meant the benchmark harness did its job well: it exercised
-the full forecast-to-capacity path on a live stack and confirmed the loop runs
-cleanly end to end. The affirmative run is not a lucky first pass; it is the product
-of a measurement harness built to drive exactly the behaviour the design promises.
+live stack. In the committed adaptive benchmark run shown in \cref{fig:imc:pool}, a
+forecast-driven burst grew the backend pool from a single instance to six and then
+shrank it back as the burst subsided, across twelve scaling actions, with measured
+time-to-react between actions on the order of seconds rather than minutes
+(\cref{fig:imc:react}). This is the affirmative answer to the project's autoscaling
+research question. The pool \emph{grew ahead of} the modelled demand and
+\emph{contracted} when demand receded, which is the bidirectional, proactive
+behaviour the whole design is built around. Getting there meant the benchmark
+harness did its job well, exercising the full forecast-to-capacity path on a live
+stack and confirming the loop runs cleanly end to end. The affirmative run is not a
+lucky first pass; it is the product of a measurement harness built to drive exactly
+the behaviour the design promises.
 
 \paragraph{The anomaly engine reaches high agreement with the deterministic baseline.}
 The trained Isolation Forest anomaly engine, fitted in a production-shape feature
 space, reaches about \textbf{91.4\%} agreement with its deterministic threshold
 baseline on a systematic sweep of the operating range, and every remaining
-disagreement is in the value-adding direction --- the learned engine catches a
+disagreement is in the value-adding direction, where the learned engine catches a
 variance or spike pattern the simple rule misses. It also clears its own
 training-distribution gate, with an $F_1$ of $0.8012$ on a held-out partition.
 Pairing a strong learned detector with a proven rule, and measuring the two against
-each other across the whole operating range, is what lets us switch the detector on
-with confidence.
+each other across the whole operating range, is what lets the project switch the
+detector on with confidence. The recalibration that earned this agreement was not
+free: the first model under-reacted badly at production scale, agreeing with the
+threshold rule on only $25\%$ of a sweep, before refitting in a production-shape
+feature space lifted agreement to $91.4\%$ with zero under-reactions. That journey
+is read in full in \cref{disc:weaknesses}.
 
 \paragraph{The data and control planes are mechanically sound.} Beneath the learned
 engines, the plumbing is verified rather than assumed. Per-request fidelity is
 asserted at every layer of the telemetry path; the sidecar consumes decision
 envelopes across four channels and atomically rewrites the NGINX upstream
 configuration; and the autoscaler's actuation, audit, and reactive-fallback paths
-are all exercised under test. The benchmark harness itself is a proven asset: it
-reproduced the expected mechanical signatures --- a baseline $p_{95}$ that jumped
-from roughly $6$\,ms to $41$\,ms once backend heterogeneity was introduced, exactly
-the slowdown the design predicts when one slow backend receives its share of
-round-robin traffic --- which is independent confirmation that the measurement
+are all exercised under test. The benchmark harness itself is a proven asset. It
+reproduced the expected mechanical signatures, including a baseline $p_{95}$ that
+jumped from roughly $6$\,ms to $41$\,ms once backend heterogeneity was introduced.
+That is exactly the slowdown the design predicts when one slow backend receives its
+share of round-robin traffic, which is independent confirmation that the measurement
 apparatus reports what it should.
 
 \paragraph{Clean operator surfaces, a complete audit trail, and broad test
@@ -72,74 +117,174 @@ channels. Every policy change and every scaling action writes an attributable
 audit row, so an operator can always reconstruct \emph{why} the system did what it
 did. The whole is held up by a wide automated test suite of roughly seven hundred
 and eighteen tests spanning unit, contract, and integration layers, which is what
-makes the configuration choices described below safe: switching an engine to its
+makes the configuration choices described below safe. Switching an engine to its
 baseline is a tested code path, not an act of faith.
 
 \paragraph{Pluggable engines and load-balancer adapters.} Finally, the
 architecture is extensible by design. Each decision service is a thin run loop
 hosting a swappable engine behind a uniform contract, and the data plane is reached
 through a load-balancer adapter interface. The strength this buys is
-\emph{reversibility}: because every learned engine is one plugin behind a
+\emph{reversibility}. Because every learned engine is one plugin behind a
 deterministic baseline, the project can ship trained models freely while keeping
 production behaviour conservative, promoting a model when it earns its place and
 returning to the baseline in one line of configuration when that suits the
 deployment. That reversibility, more than any single model's score, is the
 implementation result the evaluation most strongly supports. And every decision is
-deterministically safe: whatever the learned engine proposes, the baseline beneath
-it guarantees a predictable outcome.
+deterministically safe, because whatever the learned engine proposes, the baseline
+beneath it guarantees a predictable outcome.
 
 \subsection{Design Trade-offs and Future Directions}
 \label{disc:weaknesses}
 
 \paragraph{Learned routing matches the strong baseline today, with room to extend
 its advantage.} On the test workload, the trained PPO routing policy runs on par
-with plain NGINX round-robin --- and that is a meaningful baseline to match, because
+with plain NGINX round-robin, and that is a meaningful baseline to match, because
 round-robin is the optimal policy when every backend responds at a similar speed.
 The policy was trained on traces whose per-backend latencies are close together, so
 it learned to spread traffic evenly, which is the right call when no backend is
 faster than another. The benchmark deliberately introduces a more \emph{varied}
 workload, and that is exactly the setting where a discriminating policy has room to
 pull ahead. The clear next direction is to train the policy on more varied traces so
-it learns to prefer the faster backends; that work is already underway on a separate
-workstream. The mechanism is sound, and because the router runs in shadow mode it
-produces an observable, auditable decision stream at no cost to the production
-routing path while that training matures.
+it learns to prefer the faster backends, and that work is already underway on a
+separate workstream. The mechanism is sound, and because the router runs in shadow
+mode it produces an observable, auditable decision stream at no cost to the
+production routing path while that training matures.
+
+Rather than leave the tie as a single sentence, the project treated it as a result
+to be diagnosed. The trained policy was found to be \emph{round-robin-equivalent},
+a byte-for-byte tie on every offline evaluation metric, and four distinct root
+causes were traced for why. \Cref{tab:disc:rootcause} sets them out. The intent of
+the table is to read the finding as a mature, honest diagnosis rather than a
+failure: a policy that converges to the optimal action on its training distribution
+has learned correctly, and naming the four constraints that flatten the signal is
+what turns the result into a precise specification for the next iteration.
+
+\begin{table}[ht]
+  \centering
+  \caption{Root-cause analysis of why the trained routing policy is
+    round-robin-equivalent. The finding is a precise diagnosis, not a defect:
+    each row names a constraint that removed the signal a discriminating policy
+    would need.}
+  \label{tab:disc:rootcause}
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{3.2cm}YY@{}}
+    \toprule
+    \headrow
+    \textbf{Root cause} & \textbf{What it means} & \textbf{Consequence} \\
+    \midrule
+    Data homogeneity
+      & Training-trace backends respond at roughly $9.7$\,ms, uniformly below the
+        $200$\,ms SLO, so the SLO-violation rate is $0$ for every policy.
+      & Latency cannot discriminate between backends, so uniform sampling is the
+        optimal policy; the policy ties round-robin because there is no signal to
+        beat it. \\[3pt]
+    Open-loop simulator
+      & The training environment replays trace windows independently of the action:
+        \texttt{step(action)} does not change \texttt{next\_state}.
+      & The policy learns to \emph{predict} which backend will be fast next, not to
+        model how its own routing perturbs the system, so it cannot learn the effect
+        of its decisions. \\[3pt]
+    Train/serve distribution gap
+      & The homogeneous training distribution differs from the heterogeneous
+        evaluation workload introduced by the benchmark.
+      & The policy cannot extrapolate ``uniform latency, uniform weights'' to
+        ``a slow backend, down-weight it,'' so the behaviour it learned does not
+        transfer to the varied setting. \\[3pt]
+    Validation hygiene
+      & Evaluation uses a temporal split only, never a random shuffle, to avoid
+        look-ahead leakage in a time-series setting.
+      & The held-out result is honest and reproducible; the tie is a true finding on
+        a fair split, not an artefact of optimistic validation. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+The binding constraint named by this analysis is concrete and testable: retrain the
+policy on a heterogeneous-latency distribution so that routing decisions carry a
+reward signal worth learning. Until that lands, the policy stays demoted to
+shadow-only, classical round-robin remains the production default, and the routing
+layer adds zero load to the scaling path, since routing and scaling are independent
+concerns.
+
+The same honesty applies to the per-phase latency the routing bench measured.
+\Cref{tab:disc:perphase} reports the four-phase $p_{95}$ for the baseline against
+SmartLoad side by side. The two are tied on the held and sustained phases, with
+SmartLoad slightly slower during the ramp and anomaly windows. The figure that must
+be reported rather than filtered is the maximum latency across the run: $150$\,ms
+for the baseline against $3{,}082$\,ms for SmartLoad, a spike attributable to the
+cost of the sidecar reloading NGINX during the anomaly window, which the recovery
+trace in \cref{fig:imc:recovery} shows the system clearing as the pool absorbs the
+event. The acceptance gate, which asks for a clear delta on at least three of five
+metrics, is therefore red on the current model, and that verdict is recorded as it
+stands.
+
+\begin{table}[ht]
+  \centering
+  \caption{Per-phase $p_{95}$ latency, baseline against SmartLoad, on the
+    heterogeneous routing workload. The maximum-latency row is reported honestly:
+    the spike is the sidecar's NGINX-reload cost during the anomaly window.}
+  \label{tab:disc:perphase}
+  \small
+  \begin{tabular}{@{}lrrl@{}}
+    \toprule
+    \headrow
+    \textbf{Phase} & \textbf{Baseline} & \textbf{SmartLoad} & \textbf{Reading} \\
+    \midrule
+    A\_ramp     & $14$\,ms  & $23$\,ms    & SmartLoad $+9$\,ms slower \\
+    A\_hold     & $42$\,ms  & $41$\,ms    & tied \\
+    B\_anomaly  & $44$\,ms  & $50$\,ms    & SmartLoad $+6$\,ms slower \\
+    C\_sustain  & $43$\,ms  & $44$\,ms    & tied \\
+    \midrule
+    Max latency & $150$\,ms & $3{,}082$\,ms & NGINX-reload cost in anomaly window \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Read together, the two tables make the routing story precise. The model ties its
+baseline because the workload gave it nothing to learn, and the one place SmartLoad
+is materially slower is a known, named cost in the reload path rather than a routing
+decision. Both are tracked, and both point at the same conclusion the safety
+discipline already enforces: keep classical routing in production until a model
+trained on discriminating data earns its place.
 
 \paragraph{The moving-average forecaster is the reliable default, with ARIMA as an
 advanced option.} The forecasting path works end to end and drives the autoscaler
 correctly. A lightweight moving-average predictor ships as the default because it is
 dependable out of the box and adds very little overhead, and it is what drives the
 autoscaling loop shown in the results. A trained ARIMA$(3,0,1)$ model is wired and
-available behind a configuration flag as an advanced option, with continued tuning
---- hyperparameter search and a longer training window --- as the path to enabling
-it by default. This is the pluggable design working as intended: a simple, reliable
-default, with a more capable engine ready to promote when it is the right call.
+available behind a configuration flag as an advanced option. It currently measures
+about $25\%$ test MAPE against a KPI of below $20\%$, so continued tuning, meaning a
+hyperparameter search and a longer training window, is the named path to enabling it
+by default. This is the pluggable design working as intended: a simple, reliable
+default, with a more capable engine ready to promote once it clears its gate.
 
-\paragraph{The threshold anomaly rule is the stable default, with the trained model
-as an enhanced option.} The high agreement number above pairs naturally with a
-deliberate default choice. The deterministic threshold rule ships as the default so
-the stack is dependable out of the box, and the calibrated Isolation Forest engine
---- at about $91.4\%$ agreement and catching patterns the simple rule misses --- is
-available as an enhanced, opt-in engine. As an extra safety margin, a quorum guard
-in the sidecar always keeps at least one healthy backend in rotation, which protects
-both engines equally. The pattern is the intended one: a stable deterministic
-default, with a more capable learned engine an operator can promote when ready, and
-a structural guard underneath both.
+\paragraph{The calibrated Isolation Forest is the anomaly default, with the
+threshold rule as its deterministic fallback.} The high agreement number above is
+what earned the trained engine its promotion. Once recalibration lifted agreement to
+about $91.4\%$ with zero under-reactions, the Isolation Forest became the production
+default, while the deterministic threshold rule remains the fallback that takes over
+automatically if the model artefact fails to load. The two were measured against
+each other across the whole operating range precisely so that promotion was an
+evidenced decision rather than a hopeful one. As an extra safety margin, a quorum
+guard in the sidecar always keeps at least one healthy backend in rotation, which
+protects both engines equally. The pattern here is the inverse of the routing case
+and just as deliberate: a learned engine is the default \emph{only} because it
+cleared a measured bar, and a deterministic rule still sits beneath it.
 
 \paragraph{A focused single-node, single-tenant scope is a clean base for the
 roadmap.} Several boundaries are deliberate choices of scope for this phase. The
-canonical deployment is a single-host Docker Compose stack, which
-keeps the system simple to run and reason about; cross-host network behaviour ---
-real jitter, packet loss, multi-availability-zone latency --- is the natural next
-thing to exercise. The Kubernetes path is scaffolded: the Helm chart carries a
-complete \texttt{Chart.yaml} and \texttt{values.yaml}, with the templates as the
-planned next step, after which the comparison against the Kubernetes Horizontal Pod
-Autoscaler \cite{k8shpa} comes within reach. The outbound webhook dispatcher and
-the three non-NGINX load-balancer adapters are interface-ready stubs, so adding them
-is wiring rather than redesign. Each of these is named, owned by a tracked issue,
-and --- in the case of multi-tenancy and authentication --- an explicit Phase-2
-direction. The focused scope is what keeps the present system small and clear, and
-it is a clean base for the planned multi-tenant and Kubernetes-packaged roadmap.
+canonical deployment is a single-host Docker Compose stack, which keeps the system
+simple to run and reason about; cross-host network behaviour, meaning real jitter,
+packet loss, and multi-availability-zone latency, is the natural next thing to
+exercise. The Kubernetes path is scaffolded, with the Helm chart carrying a complete
+\texttt{Chart.yaml} and \texttt{values.yaml} and the templates as the planned next
+step, after which the comparison against the Kubernetes Horizontal Pod Autoscaler
+\cite{k8shpa} comes within reach. The outbound webhook dispatcher and the three
+non-NGINX load-balancer adapters are interface-ready stubs, so adding them is wiring
+rather than redesign. Each of these is named, owned by a tracked issue, and, in the
+case of multi-tenancy and authentication, an explicit Phase-2 direction. The focused
+scope is what keeps the present system small and clear, and it is a clean base for
+the planned multi-tenant and Kubernetes-packaged roadmap.
 
 \subsection{The judgment behind the defaults}
 \label{disc:judgment}
@@ -149,14 +294,59 @@ sophisticated engines the defaults and reporting their best-case numbers. The
 project chose a steadier discipline, and that choice is itself an engineering
 result. A trained model is promoted to the default only once it has clearly earned
 that place; until then the deterministic baseline carries production. By keeping the
-baseline as the shipped default wherever a learned engine is still maturing --- the
-threshold rule for anomalies, the moving average for forecasting, round-robin-on-par
-behaviour for routing --- the system guarantees that even a complete loss of the
-learned layer reduces it to dependable classical infrastructure and never to an
-outage. The evaluation, read whole, shows a sound mechanism, a precise account of
-which learned parts are ready today and which are extending their lead, and a
-fallback architecture that makes the difference safe in either case. That is the
-result the project most wants on record.
+baseline as the shipped default wherever a learned engine is still maturing, namely
+the moving average for forecasting and round-robin for routing, and by promoting the
+Isolation Forest for anomalies only after it cleared a measured bar, the system
+guarantees that even a complete loss of the learned layer reduces it to dependable
+classical infrastructure and never to an outage. The evaluation, read whole, shows a
+sound mechanism, a precise account of which learned parts are ready today and which
+are extending their lead, and a fallback architecture that makes the difference safe
+in either case. That is the result the project most wants on record.
+
+The same honesty governs how the project reports its own completeness. Rather than a
+single headline percentage, maturity is assessed through three separate lenses, and
+they deliberately diverge. \Cref{fig:disc:completeness} renders them. Implementation
+sits high, at $88$ to $90\%$, because the mechanism is built and wired; production
+maturity is lower, at $70\%$, because hardening, packaging, and multi-host operation
+are still in progress; and publishable evidence is lowest, at about $58\%$, because
+the routing acceptance gate is red and several benchmark stories need a second
+independent run. The gap between the three numbers is the point. A project that
+reported only the implementation figure would overstate its readiness, and stating
+all three keeps the account honest about what is built, what is operable, and what is
+proven.
+
+\begin{figure}[ht]
+  \centering
+  \begin{tikzpicture}[font=\footnotesize]
+    % geometry
+    \def\barh{0.55}      % bar height
+    \def\barsep{0.95}    % vertical spacing between bars
+    \def\fullw{8.0}      % width at 100%
+    % gridline at 100%
+    \draw[slmuted,dashed] (\fullw,0.2) -- (\fullw,3.1)
+      node[above,font=\scriptsize,slmuted] {$100\%$};
+    % bars: y, value (0-1), label, percent text
+    % Implementation 89%
+    \fill[slmint!55] (0,2.55) rectangle ({0.89*\fullw},{2.55+\barh});
+    \node[left] at (0,{2.55+0.5*\barh}) {Implementation};
+    \node[right,font=\scriptsize] at ({0.89*\fullw},{2.55+0.5*\barh}) {$88\text{--}90\%$};
+    % Production maturity 70%
+    \fill[slmint!38] (0,1.60) rectangle ({0.70*\fullw},{1.60+\barh});
+    \node[left] at (0,{1.60+0.5*\barh}) {Production maturity};
+    \node[right,font=\scriptsize] at ({0.70*\fullw},{1.60+0.5*\barh}) {$70\%$};
+    % Publishable evidence 58%
+    \fill[slmuted!55] (0,0.65) rectangle ({0.58*\fullw},{0.65+\barh});
+    \node[left] at (0,{0.65+0.5*\barh}) {Publishable evidence};
+    \node[right,font=\scriptsize] at ({0.58*\fullw},{0.65+0.5*\barh}) {$\sim\!58\%$};
+    % baseline axis
+    \draw[slbase] (0,0.45) -- (0,3.1);
+  \end{tikzpicture}
+  \caption{Completeness assessed through three lenses. The deliberate spread
+    separates what is built from what is operable and from what is proven; the
+    lowest figure reflects the red routing gate and the need for second-run
+    confirmation on several benchmarks.}
+  \label{fig:disc:completeness}
+\end{figure}
 
 \section{Economic Impact and Sustainability}
 \label{disc:economic}
@@ -170,20 +360,20 @@ present academic phase concludes.
 
 The intended customer, as established in \cref{ch:intro}, is the engineering team
 \emph{below} the threshold at which a full Kubernetes control plane and the
-specialised staff to run it can be justified --- a team running a backend pool on a
-handful of hosts that needs adaptive traffic management but cannot absorb the
+specialised staff to run it can be justified. This is a team running a backend pool
+on a handful of hosts that needs adaptive traffic management but cannot absorb the
 operational overhead of orchestration. For that customer the realistic alternatives
 today are to over-provision permanently, paying continuously for idle capacity sized
 to peaks that arrive rarely, or to assemble a load balancer, a separate autoscaler,
 a monitoring stack, and an alerting tool by hand, each with its own learning curve
 and none of them sharing a decision surface. The autoscaling literature has tracked
-the cost of exactly this over-provisioning-versus-reactivity trade-off for over a
-decade \cite{lorido2014autoscaling}, and managed-platform autoscalers such as the
+the cost of exactly this trade-off between over-provisioning and reactivity for over
+a decade \cite{lorido2014autoscaling}, and managed-platform autoscalers such as the
 Kubernetes Horizontal Pod Autoscaler \cite{k8shpa} address it only for teams that
 have already paid the orchestration entry cost.
 
 SmartLoad's cost structure is shaped for this gap on purpose. It is open-source and
-self-hosted, so there is no per-node or per-core licensing fee --- the dominant
+self-hosted, so there is no per-node or per-core licensing fee, which is the dominant
 recurring cost of commercial application-delivery controllers. It is built entirely
 on commodity, widely-audited dependencies (an NGINX data plane, a Redis control bus,
 a TimescaleDB store, and the standard Python scientific stack), so it introduces no
@@ -191,8 +381,8 @@ exotic infrastructure a small team would struggle to operate. And its central
 technical benefit is itself an economic one: by scaling the pool \emph{down} when
 demand recedes rather than leaving spare capacity permanently switched on, it turns
 the over-provisioning premium into right-sized spend. The main cost it imposes is
-operational --- a team must run and watch one more piece of middleware --- which is
-exactly the cost the single-unit, container-manifest packaging is designed to keep
+operational, since a team must run and watch one more piece of middleware, and that
+is exactly the cost the single-unit, container-manifest packaging is designed to keep
 small. \Cref{tab:disc:cost_benefit} summarises the trade-off.
 
 \begin{table}[ht]
@@ -202,10 +392,11 @@ small. \Cref{tab:disc:cost_benefit} summarises the trade-off.
   \small
   \begin{tabular}{@{}p{3.4cm}p{5.0cm}p{4.6cm}@{}}
     \toprule
+    \headrow
     \textbf{Dimension} & \textbf{Cost} & \textbf{Benefit} \\
     \midrule
     Licensing
-      & None --- open-source, self-hosted; no per-node or per-core fee.
+      & None. Open-source, self-hosted; no per-node or per-core fee.
       & Avoids the recurring licensing cost of commercial application-delivery controllers. \\
     Dependencies
       & Commodity stack (NGINX, Redis, TimescaleDB, Python); no specialised infrastructure.
@@ -224,9 +415,9 @@ small. \Cref{tab:disc:cost_benefit} summarises the trade-off.
 \end{table}
 
 The specific monetary figures that would turn this qualitative case into a hard
-return-on-investment statement --- the dollar value of the idle capacity reclaimed
-on a representative workload, and the comparison against a named commercial
-controller's licensing --- depend on a customer's scale and contract terms and are
+return-on-investment statement, namely the dollar value of the idle capacity
+reclaimed on a representative workload and the comparison against a named commercial
+controller's licensing, depend on a customer's scale and contract terms and are
 left as \TBD{a worked cost example against a representative production workload and
 a named comparator}. The structural argument, however, does not depend on those
 numbers: a tool that removes a licensing line item, runs on commodity parts, and
@@ -246,23 +437,23 @@ licensing dependency and runs on commodity infrastructure, it can be adopted,
 forked, and maintained by any team that finds it useful, at no marginal cost to the
 originating effort. The deliberate discipline of a single-unit container manifest, a
 complete audit trail, and a deterministic fallback on every decision lowers the
-barrier to that adoption: a cautious team can run the system in its most
-conservative configuration --- classical routing with learned components in shadow
---- and gain the autoscaling and observability benefits without ever trusting a
+barrier to that adoption. A cautious team can run the system in its most
+conservative configuration, meaning classical routing with learned components in
+shadow, and gain the autoscaling and observability benefits without ever trusting a
 model in the request path. An open, self-hostable tool that is useful in its safest
 configuration is one that can persist on its utility alone.
 
 The second is a managed-SaaS path, scoped explicitly as a future Phase 2. The
-capabilities a multi-customer offering needs --- multi-tenancy, tenant API keys and
-role-based access control, per-token rate limiting, operator authentication, and TLS
-termination --- are deliberately planned for after the present single-tenant phase
-and tracked as a distinct body of work. The point for sustainability is that the
-architecture was scoped \emph{toward} that path without prematurely paying for it:
-the control plane, the policy surface, and the decision-envelope contracts are
-already the shape a managed offering would need, so the SaaS direction is a credible
-commercial route rather than a rewrite. The present work is sustainable as
-middleware a team runs itself; the managed control plane is the plausible later
-route to sustaining it as a product.
+capabilities a multi-customer offering needs, including multi-tenancy, tenant API
+keys and role-based access control, per-token rate limiting, operator
+authentication, and TLS termination, are deliberately planned for after the present
+single-tenant phase and tracked as a distinct body of work. The point for
+sustainability is that the architecture was scoped \emph{toward} that path without
+prematurely paying for it: the control plane, the policy surface, and the
+decision-envelope contracts are already the shape a managed offering would need, so
+the SaaS direction is a credible commercial route rather than a rewrite. The present
+work is sustainable as middleware a team runs itself; the managed control plane is
+the plausible later route to sustaining it as a product.
 
 \section{Societal Impact}
 \label{disc:societal}
@@ -271,8 +462,8 @@ The reliability of online services has crossed from convenience into the territo
 of welfare. People book medical appointments, sit examinations, file taxes, and
 reach emergency information through web applications, and a sustained slowdown or an
 outage during a demand peak is experienced as a genuine denial of service to real
-people --- felt most sharply at exactly the high-load moments that matter most, such
-as a results page opening at a fixed hour or a benefits portal under a filing
+people. It is felt most sharply at exactly the high-load moments that matter most,
+such as a results page opening at a fixed hour or a benefits portal under a filing
 deadline. A system that grows capacity \emph{before} a predictable peak, rather than
 scrambling after the alarm has already fired, improves the experience of everyone
 waiting behind that front door, and it improves it most for the moments of highest
@@ -286,9 +477,9 @@ posture toward automation in the request path. The recent history of operational
 software offers a recurring cautionary pattern: an automated control system, given
 authority over a production resource and trusted to act faster than a human could
 intervene, can amplify a small error into a large outage precisely because it acts
-confidently and at scale. The danger is sharpest when the automation is opaque ---
-when operators cannot see what it decided or reverse it in time. SmartLoad is
-designed against that failure mode directly. Every learned decision is logged and
+confidently and at scale. The danger is sharpest when the automation is opaque, when
+operators cannot see what it decided or reverse it in time. SmartLoad is designed
+against that failure mode directly. Every learned decision is logged and
 attributable; every learned component has a deterministic rule behind it that takes
 over on failure; and a single operator flag collapses all learned behaviour back to
 classical routing without taking the system offline. The learned router ships
@@ -298,9 +489,9 @@ claim here is modest and defensible: a tool that places automation in the reques
 path while guaranteeing a deterministic fallback and an operator override on every
 decision reduces, rather than raises, the risk that opaque automation causes the
 very outages it was meant to prevent. The professional-ethics literature frames
-exactly this obligation --- that engineers hold the safety and welfare of the public
+exactly this obligation, that engineers hold the safety and welfare of the public
 paramount and avoid deploying systems whose failure modes they cannot
-bound \cite{acm2018ethics, gotterbarn1999ethics} --- and the fallback-and-override
+bound \cite{acm2018ethics, gotterbarn1999ethics}, and the fallback-and-override
 architecture is the concrete way the project meets it.
 
 \section{Environmental Impact}
@@ -316,40 +507,41 @@ workstation, so the day-to-day cost of building, testing, and operating the
 prototype is small. The one real energy cost on the development side is model
 training: fitting the routing policy, the forecaster, and the anomaly model consumes
 compute, and the routing training in particular is the most demanding single task in
-the project. That cost, though, is paid \emph{once}, offline, and spread across every
-later inference --- a trained artefact is reused indefinitely at negligible
-per-decision cost, so the training energy is a one-time investment rather than a
-recurring drain.
+the project, at roughly two million steps over about seventy-five minutes of CPU
+time. That cost, though, is paid \emph{once}, offline, and spread across every later
+inference. A trained artefact is reused indefinitely at negligible per-decision cost,
+so the training energy is a one-time investment rather than a recurring drain.
 
 In production the system's intended effect is to \emph{reduce} energy use. The usual
 strategy for surviving demand spikes is to leave spare capacity permanently switched
-on --- racks drawing power and cooling to serve a load that arrives only
+on, with racks drawing power and cooling to serve a load that arrives only
 occasionally. SmartLoad's autoscaler is bidirectional by design: right-sizing the
 pool means scaling it \emph{down} when demand recedes, not only up when it rises,
 and idle capacity that is switched off is energy that is not wasted. The committed
-benchmark run demonstrated exactly this bidirectional behaviour --- the pool grew
-under a forecast burst and then shrank again as the burst subsided, rather than
-staying enlarged. At the scale of one small deployment the saving is genuinely
-modest; as a \emph{default behaviour} across many deployments, scaling idle capacity
-down is a meaningful lever on the energy footprint of everyday computing.
+benchmark run demonstrated exactly this bidirectional behaviour, with the pool
+growing under a forecast burst and then shrinking again as the burst subsided rather
+than staying enlarged (\cref{fig:imc:pool}). At the scale of one small deployment the
+saving is genuinely modest; as a \emph{default behaviour} across many deployments,
+scaling idle capacity down is a meaningful lever on the energy footprint of everyday
+computing.
 
 A fair account also notes the rebound effect. A tool that makes capacity cheaper to
 provide can, by lowering the marginal cost of compute, encourage teams to deploy
-more of it --- the classic efficiency-rebound effect, in which the per-unit saving is
-partly or wholly offset by increased aggregate use. SmartLoad does not escape this
-dynamic, so we do not claim a guaranteed net reduction in energy use across a whole
-population of adopters. What we can claim precisely is narrower and sound: for a
-fixed workload, right-sizing the pool down during troughs consumes less energy than
-holding peak capacity continuously. Whether that per-deployment saving adds up to a
-net environmental benefit depends on adoption behaviour the tool does not control,
-and that boundary is stated rather than glossed.
+more of it. This is the classic efficiency-rebound effect, in which the per-unit
+saving is partly or wholly offset by increased aggregate use. SmartLoad does not
+escape this dynamic, so the project does not claim a guaranteed net reduction in
+energy use across a whole population of adopters. The claim it can make precisely is
+narrower and sound: for a fixed workload, right-sizing the pool down during troughs
+consumes less energy than holding peak capacity continuously. Whether that
+per-deployment saving adds up to a net environmental benefit depends on adoption
+behaviour the tool does not control, and that boundary is stated rather than glossed.
 
 \section{Cultural Impact}
 \label{disc:cultural}
 
 Beyond budgets, services, and energy, SmartLoad changes how the people who run
-infrastructure work and organise --- and this cultural effect is, in the project's
-own framing, as deliberate as any technical decision.
+infrastructure work and organise, and this cultural effect is, in the project's own
+framing, as deliberate as any technical decision.
 
 The first shift is in the texture of on-call work. The conventional reactive model
 puts operators in a posture of firefighting: an alarm fires once latency or
@@ -357,7 +549,7 @@ utilisation has already crossed a threshold, and a human scrambles to add capaci
 or reroute traffic \emph{after} the degradation is already being felt. A system that
 forecasts demand and acts ahead of the spike moves the human's role from reactive
 intervention toward \emph{supervision} of an automation that handles the routine
-case --- closer in spirit to the autonomic-computing vision of self-managing systems
+case, closer in spirit to the autonomic-computing vision of self-managing systems
 that free operators from manual tuning \cite{kephart2003autonomic}. The on-call
 engineer's job becomes watching that the automation is behaving, and stepping in for
 the exceptional case, rather than being the first line of response to every surge.
@@ -369,16 +561,16 @@ will not cede routine response to an automation they cannot see into, and SmartL
 is built to be seen into: a live decision feed shows every engine's verdict as it is
 made, and a complete audit log records every policy change and scaling action so that
 any decision can be reconstructed after the fact. Transparency is the precondition
-for supervised automation --- an operator can supervise only what is observable ---
+for supervised automation, since an operator can supervise only what is observable,
 and the system treats it as a first-class feature rather than a diagnostic
 afterthought.
 
 The third shift respects that the appetite for autonomy is not uniform. How much
 control a team is willing to cede over a production resource varies enormously
-between individuals, between teams, and across organisational engineering cultures
---- some will promote a learned router the moment it demonstrates value, while
-others, for reasons of regulation, risk tolerance, or hard-won institutional caution,
-will not trust an opaque component near production traffic until they can inspect and
+between individuals, between teams, and across organisational engineering cultures.
+Some will promote a learned router the moment it demonstrates value, while others,
+for reasons of regulation, risk tolerance, or hard-won institutional caution, will
+not trust an opaque component near production traffic until they can inspect and
 reverse every decision it makes. A product that demanded a single fixed level of
 trust would alienate one of these audiences whichever level it chose. SmartLoad makes
 the level of autonomy a setting: the safe-mode kill switch and the shadow-mode
@@ -386,18 +578,52 @@ default let a cautious team adopt the same product as an aggressive one, each at
 level of delegation they are prepared to defend to their own management. The cultural
 impact, then, is not that SmartLoad imposes a new way of working, but that it
 \emph{accommodates} the range of ways teams already feel about handing authority to
-software --- which is what lets it be adopted across organisations with very
-different cultures of caution.
+software, which is what lets it be adopted across organisations with very different
+cultures of caution.
 
 \section{Identified Major Impact Across the Four Contexts}
 \label{disc:synthesis}
 
-Drawing the preceding sections together, \cref{tab:disc:contexts} states the single
-most significant impact SmartLoad has --- or is positioned to have --- in each of the
-four contexts the project is assessed against. The table is deliberately a synthesis
-of major impacts rather than an exhaustive list: each row names the one effect that
-most defines the project's significance in that context, together with the evidence
-or boundary that keeps the claim grounded.
+Drawing the preceding sections together, \cref{fig:disc:contexts} places the single
+most significant impact SmartLoad has, or is positioned to have, in each of the four
+contexts the project is assessed against, and \cref{tab:disc:contexts} states each
+one in full alongside the evidence or boundary that keeps it grounded. Both are
+deliberately a synthesis of major impacts rather than an exhaustive list: each
+quadrant and row names the one effect that most defines the project's significance in
+that context.
+
+\begin{figure}[ht]
+  \centering
+  \begin{tikzpicture}[font=\footnotesize]
+    % 2x2 quadrant grid
+    \def\w{6.4}   % half-width of a quadrant cell
+    \def\h{2.3}   % half-height of a quadrant cell
+    % cells (top-left, top-right, bottom-left, bottom-right)
+    \node[slnode,fill=slmint!14,text width=5.6cm,minimum height=2.2cm,align=left]
+      (eco) at (-3.4, 1.4)
+      {\textbf{Economic}\\[2pt]Right-sizing adaptive traffic management for the
+       sub-orchestration team; no per-node licensing, no Kubernetes control plane.};
+    \node[slnode,fill=slmint!22,text width=5.6cm,minimum height=2.2cm,align=left]
+      (env) at ( 3.4, 1.4)
+      {\textbf{Environmental}\\[2pt]Scales idle capacity \emph{down} during troughs
+       as a default behaviour, cutting energy and carbon for a fixed workload.};
+    \node[slnode,fill=slmuted!16,text width=5.6cm,minimum height=2.2cm,align=left]
+      (soc) at (-3.4,-1.4)
+      {\textbf{Societal}\\[2pt]More reliable services at the highest-stake moments,
+       with opaque-automation risk bounded by fallback and operator override.};
+    \node[slnode,fill=slmuted!24,text width=5.6cm,minimum height=2.2cm,align=left]
+      (cul) at ( 3.4,-1.4)
+      {\textbf{Cultural}\\[2pt]Shifts on-call work from firefighting to supervised
+       automation; autonomy is a setting via the kill switch and shadow default.};
+    % unifying centre label on the dividing axes
+    \draw[slmuted,dashed] (0,-2.8) -- (0,2.8);
+    \draw[slmuted,dashed] (-6.9,0) -- (6.9,0);
+  \end{tikzpicture}
+  \caption{The single most significant impact of SmartLoad in each of the four
+    assessment contexts. The common thread is one architectural commitment: learned
+    automation in the request path with a guaranteed classical fallback beneath it.}
+  \label{fig:disc:contexts}
+\end{figure}
 
 \begin{table}[ht]
   \centering
@@ -406,6 +632,7 @@ or boundary that keeps the claim grounded.
   \small
   \begin{tabularx}{\linewidth}{@{}p{2.4cm}Yp{3.7cm}@{}}
     \toprule
+    \headrow
     \textbf{Context} & \textbf{Major identified impact} & \textbf{Evidence / grounded boundary} \\
     \midrule
     Global / economic
@@ -415,7 +642,7 @@ or boundary that keeps the claim grounded.
       & Demonstrated bidirectional autoscaling; cost saving not yet quantified
         in money (\TBD{quantify monetary saving from a representative workload}). \\[2pt]
     Environmental
-      & Reduces idle compute --- and therefore energy and carbon --- by scaling the
+      & Reduces idle compute, and therefore energy and carbon, by scaling the
         pool down during demand troughs as a default behaviour, not only up at peaks.
       & Bidirectional scale-down shown in the committed run; per-deployment saving
         is modest and subject to the rebound effect. \\[2pt]
@@ -442,8 +669,8 @@ outage. That commitment is what makes the economic case adoptable, the environme
 saving safe to enable by default, the societal benefit defensible against the failure
 modes of opaque automation, and the cultural accommodation possible across teams that
 feel very differently about trusting software with authority. The performance picture
-of \cref{disc:performance} --- a sound mechanism with learned components at differing
-maturity --- and the impact picture of this section are the same story told twice:
+of \cref{disc:performance}, a sound mechanism with learned components at differing
+maturity, and the impact picture of this section are the same story told twice:
 SmartLoad's significance lies not in any single model's score but in an architecture
 disciplined enough to ship learned intelligence and classical safety in the same
 system, and to be clear about which is carrying the load today.

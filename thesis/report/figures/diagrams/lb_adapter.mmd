@@ -1,0 +1,52 @@
+flowchart LR
+    subgraph Decision["Decision plane (NGINX-agnostic)"]
+        AD["anomaly-detector<br/>(exclude_backend)"]
+        RL["rl-engine<br/>(set_upstream_weights)"]
+        PM["policy-manager<br/>(safe_mode reset)"]
+    end
+
+    ABC["<b>LoadBalancerAdapter</b><br/>(ABC)<br/>set_upstream_weights()<br/>exclude_backend()<br/>include_backend()<br/>current_state()"]
+
+    subgraph Plugins["Plugin per folder (services/shared/lb_adapters/)"]
+        NGX["<b>nginx/</b><br/>nginx.conf rewrite<br/>+ nginx -s reload"]
+        ENV["envoy/<br/><i>NotImplementedError</i>"]
+        HAP["haproxy/<br/><i>NotImplementedError</i>"]
+        ALB["alb/<br/><i>NotImplementedError</i>"]
+    end
+
+    subgraph Backends["Backend topology (varies per adapter)"]
+        NGINX_BE["NGINX upstream<br/>(test-backend pool)"]
+        ENVOY_BE["Envoy clusters"]
+        HAP_BE["HAProxy backend"]
+        ALB_BE["AWS ALB target group"]
+    end
+
+    Conf["Conformance tests<br/>tests/conformance/lb_adapter/"]
+
+    AD ==> ABC
+    RL ==> ABC
+    PM ==> ABC
+
+    ABC --> NGX
+    ABC --> ENV
+    ABC --> HAP
+    ABC --> ALB
+
+    NGX --> NGINX_BE
+    ENV -. future .-> ENVOY_BE
+    HAP -. future .-> HAP_BE
+    ALB -. future .-> ALB_BE
+
+    Conf -. exercise contract .-> NGX
+    Conf -. exercise contract .-> ENV
+    Conf -. exercise contract .-> HAP
+    Conf -. exercise contract .-> ALB
+
+    classDef abc   fill:#F1F3F5,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+    classDef wired fill:#DCEFE4,color:#0f172a,stroke:#2E8B57;
+    classDef stub  fill:#F1F3F5,color:#475569,stroke:#5B6472,stroke-dasharray:4 2;
+    classDef decision fill:#DCE7EE,color:#0f172a,stroke:#5B6472;
+    class ABC abc
+    class NGX,NGINX_BE wired
+    class ENV,HAP,ALB,ENVOY_BE,HAP_BE,ALB_BE stub
+    class AD,RL,PM decision

@@ -1,0 +1,38 @@
+sequenceDiagram
+    participant C as Client
+    participant N as NGINX
+    participant B as Backend
+    participant L as Access log (shared volume)
+    participant SH as lb-otel-shipper
+    participant OC as OTel Collector
+    participant TS as Telemetry Service
+    participant T as TimescaleDB
+    participant E as Engine
+    participant R as Redis
+    participant S as Routing Sidecar
+
+    rect rgba(37, 99, 235, 0.08)
+    Note over C,L: Data plane (per request, < 5 ms overhead)
+    C->>N: HTTP request
+    N->>B: forward
+    B-->>N: response
+    N-->>C: response
+    N--)L: append JSON access log line
+    end
+
+    rect rgba(4, 120, 87, 0.08)
+    Note over L,T: Telemetry pipeline (off the request path, fire-and-forget)
+    L--)SH: tail
+    SH--)OC: OTLP/HTTP-JSON (per request)
+    OC--)TS: forward
+    TS--)T: METRICS_INSERT
+    end
+
+    rect rgba(180, 83, 9, 0.08)
+    Note over T,S: Control plane (engine cycle, every 5-60 s)
+    E->>T: query metrics
+    T-->>E: snapshot
+    E->>R: publish event
+    R->>S: deliver
+    S->>N: regenerate nginx.conf + reload
+    end

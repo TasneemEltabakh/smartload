@@ -1,0 +1,17 @@
+flowchart TB
+    M["<b>MONITOR</b><br/>NGINX + Backends emit OTLP<br/>Telemetry Service writes metrics"]
+    A["<b>ANALYZE</b><br/>Anomaly (5s) · Forecast (60s) · RL (5s)<br/>read metrics, publish signals to Redis"]
+    P["<b>PLAN — LB Sidecar</b><br/>merges signals in priority order:<br/>anomaly → policy → RL → classical"]
+    E["<b>EXECUTE</b><br/>regenerate nginx.conf · nginx -s reload<br/>Autoscaler scales backends"]
+
+    M --> A --> P --> E
+    E -. "new state observed" .-> M
+
+    classDef mon fill:#EFF3F6,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+    classDef ana fill:#F1F3F5,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+    classDef plan fill:#DCEFE4,color:#0f172a,stroke:#2E8B57,stroke-width:2px;
+    classDef exe fill:#DCE7EE,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+    class M mon
+    class A ana
+    class P plan
+    class E exe

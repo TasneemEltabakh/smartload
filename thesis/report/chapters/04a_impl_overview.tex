@@ -8,16 +8,16 @@ controls. This chapter shows how we actually built and deployed that shape.
 It is the first of three parts. Part~A (this part) gives the deployed-system
 overview and walks through the data, control, and actuation surfaces that carry
 every request and every operator decision. Part~B continues with the
-decision-plane services --- the anomaly detector, the forecaster, the routing
-engine, and the autoscaler --- and the models behind them. Part~C closes with
+decision-plane services (the anomaly detector, the forecaster, the routing
+engine, and the autoscaler) and the models behind them. Part~C closes with
 the test, benchmark, and observability machinery we used to validate the whole.
 
 Throughout, we describe the system as it runs: a single \texttt{docker compose}
 deployment of roughly a dozen cooperating services, each a small process with one
-job. The focus here is on the modules an operator or an integrator touches first
---- the load balancer and its telemetry pipeline, the policy surface, the
-sidecar that applies decisions to NGINX, and the operator interface --- and on
-the step-by-step slice discipline we used to grow them.
+job. The focus here is on the modules an operator or an integrator touches first,
+namely the load balancer and its telemetry pipeline, the policy surface, the
+sidecar that applies decisions to NGINX, and the operator interface, together
+with the step-by-step slice discipline we used to grow them.
 
 \section{Solution Overview}
 \label{sec:ima:overview}
@@ -38,72 +38,24 @@ log into metrics, and the telemetry-ingest service that stores those metrics. Th
 forecaster, the routing engine, and the autoscaler. The \emph{control plane}
 holds the operating policy and exposes the system to people: the policy manager,
 the operator UI, and the actuation sidecar that applies decisions to NGINX. Two
-pieces of shared infrastructure --- TimescaleDB as the metric store and Redis as
-the control bus --- sit underneath all three, and the OpenTelemetry Collector
+pieces of shared infrastructure, TimescaleDB as the metric store and Redis as
+the control bus, sit underneath all three, and the OpenTelemetry Collector
 bridges the data plane into the metric store.
 
-\cref{fig:ima:stack} shows the full stack grouped by plane. Solid arrows are the
-request and telemetry path; the mint arrows are the Redis control bus that
-carries decisions to the actuation sidecar.
+\cref{fig:ima:stack} shows the full stack grouped by plane, with the published
+port of each service alongside it. The solid path carries client traffic and the
+telemetry derived from it; the control bus then carries decisions back to the
+actuation sidecar, which is the only writer of the NGINX upstream configuration.
 
-\begin{figure}[t]
+\begin{figure}[p]
 \centering
-\begin{tikzpicture}[node distance=6mm and 12mm]
-  % ---- Data plane ----
-  \node[slnode] (clients) {\textbf{Clients}\\HTTP/1.1};
-  \node[slnode,right=18mm of clients] (nginx) {load-balancer\\(NGINX)};
-  \node[slnode,right=of nginx] (pool) {test-backend\\pool ($\times N$)};
-  \node[slnode,below=8mm of nginx] (shipper) {lb-otel-shipper};
-  \node[slnode,right=of shipper] (otel) {otel-collector};
-  \node[slnode,right=of otel] (tele) {telemetry};
-  \node[slplane,fit=(nginx)(pool)(shipper)(otel)(tele),
-        label={[font=\footnotesize\bfseries]above:DATA PLANE}] (dp) {};
-
-  % ---- Stores ----
-  \node[slnode,below=12mm of shipper] (db) {TimescaleDB};
-  \node[slnode,right=of db] (redis) {Redis\\control bus};
-
-  % ---- Decision plane ----
-  \node[slnode,below=12mm of db] (anom) {anomaly-\\detector};
-  \node[slnode,right=of anom] (fore) {forecasting};
-  \node[slnode,right=of fore] (rl) {rl-engine};
-  \node[slnode,right=of rl] (as) {autoscaler};
-  \node[slplane,fit=(anom)(fore)(rl)(as),
-        label={[font=\footnotesize\bfseries]above:DECISION PLANE}] (decp) {};
-
-  % ---- Control plane ----
-  \node[slnode,below=12mm of anom] (pm) {policy-\\manager};
-  \node[slnode,right=of pm] (sidecar) {lb-sidecar};
-  \node[slnode,right=of sidecar] (ui) {operator-ui\\(BFF + React)};
-  \node[slplane,fit=(pm)(sidecar)(ui),
-        label={[font=\footnotesize\bfseries]above:CONTROL PLANE}] (cp) {};
-  \node[slnode,right=10mm of ui] (op) {Operator\\browser};
-
-  % ---- Request + telemetry flows ----
-  \draw[slflow] (clients) -- (nginx);
-  \draw[slflow] (nginx) -- (pool);
-  \draw[slflow] (nginx) -- (shipper);
-  \draw[slflow] (shipper) -- (otel);
-  \draw[slflow] (otel) -- (tele);
-  \draw[slflow] (tele) -- (db);
-  \draw[slflow] (db) -- (anom.north -| db);
-
-  % ---- Control bus flows ----
-  \draw[slbus] (anom) |- (redis);
-  \draw[slbus] (fore) |- (redis);
-  \draw[slbus] (rl)   |- (redis);
-  \draw[slbus] (as)   |- (redis);
-  \draw[slbus] (pm.north) -- (redis.south -| pm);
-  \draw[slbus] (redis) -- (sidecar.north -| redis);
-  \draw[slbus] (sidecar) -- (nginx.south -| sidecar);
-  \draw[slflow] (op) -- (ui);
-\end{tikzpicture}
-\caption[The deployed Docker Compose stack, grouped by plane]{The deployed
-Docker Compose stack, grouped by plane. Solid arrows trace the request and
-telemetry path; mint arrows are the Redis control bus. Shared stores
-(TimescaleDB, Redis) and the OpenTelemetry Collector underpin all three planes.
-The autoscaler also actuates the backend pool directly through the Docker
-daemon (omitted here for clarity; see \cref{sec:ima:sidecar}).}
+\includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{system_design}
+\caption[The full stack grouped by plane]{The full stack grouped by plane: the
+SmartLoad services together with the infrastructure containers, with ports
+matching docker-compose. The LB sidecar is the only writer of the NGINX upstream
+configuration; NGINX reloads gracefully. The lb-otel-shipper tails the NGINX JSON
+access log over a shared volume and emits one OTLP data point per request, never
+on the request path.}
 \label{fig:ima:stack}
 \end{figure}
 
@@ -140,7 +92,7 @@ lb-sidecar       & Control & Python     & Applies routing / exclusion / scale de
 operator-ui      & Control & Python/TS  & Operator surface: health, policy, audit, actions, live feed \\
 \midrule
 TimescaleDB      & Shared  & PostgreSQL & Time-series store for metrics and audit history \\
-Redis            & Shared  & ---        & Pub/sub control bus between services \\
+Redis            & Shared  & (server)   & Pub/sub control bus between services \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -150,19 +102,100 @@ come up again through the rest of the chapter. First, \emph{the decision plane
 never sits in the request path}. A failure in the anomaly detector or the
 forecaster does not stop traffic; it stops \emph{adaptation}, and NGINX keeps
 serving under its last applied configuration. Second, \emph{every cross-service
-interaction flows through one of exactly two contracts} --- an HTTP REST surface
+interaction flows through one of exactly two contracts}: an HTTP REST surface
 under \texttt{/api/v1} for operators and integrators, and a Redis pub/sub surface
 for inter-service events. Both contracts are defined once, in a shared in-tree
 module, and every service imports them rather than redefining the wire format.
 That single source of truth is what keeps a twelve-service deployment from
 drifting into a dozen incompatible message formats.
 
+\subsection{Third-party infrastructure}
+\label{sec:ima:thirdparty}
+
+SmartLoad's own services run on a base of established, vendor-neutral
+infrastructure rather than bespoke components, which is what lets the whole stack
+stand up from a single composition on any Docker host.
+\cref{tab:ima:thirdparty} lists the external images the deployment pulls, the
+pinned version of each, and the role it plays. The choices are deliberately
+conservative: a PostgreSQL-derived time-series store, a single-node Redis for the
+control bus, the reference OpenTelemetry Collector, and the standard
+Prometheus and Grafana pair for service-health observability. The data plane
+adds one more, NGINX, built into a custom image but configured rather than
+forked. The machine-learning libraries that the decision engines depend on
+(scikit-learn, statsmodels, Stable-Baselines3, and PyTorch) are a separate
+concern and are inventoried with their justification in \cref{ch:impl_overview},
+Part~B (\cref{tab:imb:tooling}); they are runtime dependencies of individual
+services, not stack-level infrastructure.
+
+\begin{table}[t]
+\centering
+\caption{Third-party infrastructure the deployment depends on, with the pinned
+image and the role each plays. SmartLoad configures these components rather than
+modifying them.}
+\label{tab:ima:thirdparty}
+\small
+\begin{tabularx}{\linewidth}{@{}l l Y@{}}
+\toprule
+\textbf{Component} & \textbf{Image / version} & \textbf{Role in the stack} \\
+\midrule
+TimescaleDB    & \texttt{timescale/timescaledb:latest-pg16} & Hypertable store for per-request metrics and audit history \\
+Redis          & \texttt{redis:7-alpine}                    & Pub/sub control bus for inter-service decisions \\
+redis-exporter & \texttt{oliver006/redis\_exporter:v1.62.0-alpine} & Exposes control-bus health to Prometheus \\
+OTel Collector & \texttt{otel/opentelemetry-collector-contrib} & Receives OTLP from the log shipper, forwards to telemetry \\
+Prometheus     & \texttt{prom/prometheus}                   & Scrapes the per-service \texttt{/metrics} surfaces and exporters \\
+Grafana        & \texttt{grafana/grafana}                   & Renders the six operational dashboards \\
+NGINX          & custom build over \texttt{nginx}           & The data-plane load balancer (configured, not forked) \\
+Docker Compose & (engine)                                   & Single-host orchestration of the whole stack \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{External surfaces and the port map}
+\label{sec:ima:ports}
+
+Because the deployment is a single composition, the set of ports it publishes is
+also the complete list of ways the outside world reaches it.
+\cref{tab:ima:ports} is that map. It separates the three surfaces an operator or
+integrator uses directly, namely the ingress on \texttt{:8080}, the operator UI
+on \texttt{:8090}, and the demo console on \texttt{:8091}, from the
+observability and tooling surfaces (Grafana, Prometheus, Locust) and from the
+per-service \texttt{/api/v1} ports that the operator UI and SDK consume. Only the
+ingress carries client traffic; every other surface is a control, observability,
+or diagnostic plane that can fail without affecting a single request.
+
+\begin{table}[t]
+\centering
+\caption{Published external surfaces of the deployment. Only \texttt{:8080}
+carries client traffic; the rest are control, observability, or tooling planes.}
+\label{tab:ima:ports}
+\small
+\begin{tabularx}{\linewidth}{@{}l l Y@{}}
+\toprule
+\textbf{Port} & \textbf{Service} & \textbf{Surface} \\
+\midrule
+\texttt{:8080} & load-balancer    & Client ingress (NGINX, the only request path) \\
+\texttt{:8090} & operator-ui      & Operator transparency and override UI \\
+\texttt{:8091} & demo-ui          & Developer ``Dev Console'' (benchmarks, one-click load) \\
+\texttt{:8089} & traffic-simulator& Locust load-generation UI \\
+\texttt{:3000} & grafana          & Operational dashboards \\
+\texttt{:9090} & prometheus       & Metric query and scrape target browser \\
+\texttt{:8081} & telemetry        & OTLP ingest and read API \\
+\texttt{:8082} & anomaly-detector & Decision-engine \texttt{/api/v1} and \texttt{/metrics} \\
+\texttt{:8083} & forecasting      & Decision-engine \texttt{/api/v1} and \texttt{/metrics} \\
+\texttt{:8084} & rl-engine        & Routing-engine \texttt{/api/v1} and \texttt{/metrics} \\
+\texttt{:8085} & autoscaler       & Autoscaler \texttt{/api/v1} and \texttt{/metrics} \\
+\texttt{:8086} & policy-manager   & Policy \texttt{/api/v1} and audit reads \\
+\texttt{:8087} & lb-sidecar       & Sidecar state and \texttt{/metrics} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 \section{Data Plane and Telemetry Pipeline}
 \label{sec:ima:dataplane}
 
 The data plane answers one question end to end: how does a client request become
 a row of telemetry the decision plane can reason over? The path crosses five
-services, and we chose each link to preserve \emph{per-request fidelity} --- the
+services, and we chose each link to preserve \emph{per-request fidelity}: the
 property that the decision plane sees one record per request, not a
 pre-aggregated summary.
 
@@ -188,7 +221,7 @@ location / {
 
 Two directives carry the resilience contract. \texttt{max\_fails=3
 fail\_timeout=10s} tells NGINX to take a backend out of rotation after three
-failures inside a ten-second window --- a deterministic, built-in circuit
+failures inside a ten-second window. This is a deterministic, built-in circuit
 breaker that works with no help from the decision plane.
 \texttt{proxy\_next\_upstream} makes failure graceful: if the chosen backend
 returns a 5xx or times out, NGINX quietly retries the next backend instead of
@@ -212,8 +245,8 @@ misreporting the load balancer's state.
 \label{sec:ima:shipper}
 
 NGINX is configured to emit one JSON object per request in a custom
-\texttt{smartload\_json} log format --- timestamp, status, the upstream that
-served the request, and the request latency. Rather than use NGINX's native
+\texttt{smartload\_json} log format, carrying the timestamp, status, the upstream
+that served the request, and the request latency. Rather than use NGINX's native
 metrics module, which aggregates into histograms before the database, SmartLoad
 ships the \emph{log} itself. The reason is fidelity: the anomaly and routing
 queries compute standard deviations and maxima over rolling windows, and those
@@ -223,10 +256,10 @@ path is the only one that keeps the individual record.
 The \texttt{lb-otel-shipper} is a Python sidecar that runs alongside NGINX,
 tails the access log on a shared volume, and emits one OpenTelemetry data
 point~\cite{opentelemetry} per request per metric over OTLP/HTTP-JSON. Each log
-line becomes three canonical metrics --- \texttt{request\_count},
-\texttt{request\_latency\_ms}, and \texttt{error\_rate} --- the last one computed
-by the shipper because NGINX does not emit it directly (any status $\geq 500$ is
-an error). The metric names are the contract: the decision-plane SQL filters on
+line becomes three canonical metrics, \texttt{request\_count},
+\texttt{request\_latency\_ms}, and \texttt{error\_rate}, the last of which is
+computed by the shipper because NGINX does not emit it directly (any status
+$\geq 500$ is an error). The metric names are the contract: the decision-plane SQL filters on
 exactly these strings. The shipper batches points and flushes every second or
 every five hundred points, whichever comes first, and is strictly
 fire-and-forget: if the collector is unreachable, the shipper counts and drops
@@ -247,11 +280,37 @@ and summaries are counted, not silently discarded), and inserts the surviving
 rows through the canonical \texttt{METRICS\_INSERT} statement as a batched write.
 Two policies keep the ingest path safe: a malformed payload returns a distinct
 status from an unsupported content type, and a database write failure returns
-success to the collector anyway --- the drop is counted and surfaced in a stats
-endpoint, but back-pressure is again kept away from the upstream. Only the
+success to the collector anyway, so the drop is counted and surfaced in a stats
+endpoint while back-pressure is again kept away from the upstream. Only the
 human-facing read API is allowed to fail loudly, returning a 503 when the
 database is unreachable, because an operator or downstream service needs to know
 the store is down.
+
+The \texttt{metrics} table is one of five base hypertables that make up the
+persistence layer, each with a single authoritative writer.
+\cref{fig:ima:schema} lays them out. The \texttt{metrics} table uses a
+wide-narrow shape, one row per reading carrying a \texttt{metric\_name} and a
+\texttt{value}, so a new kind of metric needs no schema change; the same write
+path that records \texttt{request\_latency\_ms} today records any future signal
+tomorrow. On top of it sits \texttt{metrics\_1min}, a continuous aggregate
+materialised every minute, which lets the decision engines and the dashboards ask
+minute-resolution questions without scanning the raw rows. The remaining tables,
+\texttt{backend\_health}, \texttt{scaling\_events}, \texttt{forecasts}, and
+\texttt{policy\_changes}, are each owned by the one service that produces them,
+which is the same single-writer discipline applied to history rather than to
+live telemetry.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{schema}
+\caption[The persistence schema and its writers]{The five TimescaleDB
+hypertables plus the \texttt{metrics\_1min} continuous aggregate. Each base table
+has exactly one authoritative writer. The \texttt{metrics} table uses a
+wide-narrow shape, one row per reading, so new metric kinds need no schema
+change; \texttt{metrics\_1min} is materialised every minute for cheap
+minute-resolution queries.}
+\label{fig:ima:schema}
+\end{figure}
 
 \cref{fig:ima:dataflow} traces the complete request-plus-telemetry path. The
 request path (top) is synchronous and on the critical path; the telemetry path
@@ -294,6 +353,27 @@ than touching live traffic.}
 \label{fig:ima:dataflow}
 \end{figure}
 
+Read along the time axis rather than as a topology, the same path falls into
+three regions, shown in \cref{fig:ima:request_seq}. The data-plane region is the
+only one a client waits on, and it ends not by calling the telemetry pipeline but
+by appending a single line to the shared access log. Everything downstream of
+that line, the tail, the OTLP hops, and the database write, runs in its own time,
+while the control-plane engine cycle runs on a separate clock again and reaches
+NGINX only through the sidecar reload. The separation is what keeps the
+per-request overhead small and bounded regardless of how slow the rest of the
+system happens to be.
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{request_seq}
+\caption[The request sequence in three regions]{The request sequence in three
+regions: the data plane (per request, under 5\,ms overhead) ends by appending one
+JSON line to the shared log; the telemetry pipeline is fire-and-forget and
+entirely off the request path; the control-plane engine cycle, every 5 to 60
+seconds, reloads NGINX without blocking in-flight requests.}
+\label{fig:ima:request_seq}
+\end{figure}
+
 One subtle point in the pipeline is backend identity. NGINX logs the upstream
 \emph{address} (\texttt{\$upstream\_addr}), which resolves to an
 \texttt{ip:port} rather than a container name; the shipper carries that address
@@ -305,16 +385,57 @@ that the identity flowing through the metrics matches the identity the sidecar
 and the operator UI use. Without it, an anomaly verdict and a routing weight
 could refer to the same backend under two different names.
 
+\subsection{Two observability paths}
+\label{sec:ima:twopaths}
+
+The pipeline above is only half of what the deployment observes. The design
+chapter argued for keeping per-request telemetry and per-process health on
+separate, vendor-neutral standards (\cref{dsa:sec:standards-telemetry}); the
+implementation realises that split as two distinct paths that run side by side
+and never share a transport. \cref{tab:ima:observability} contrasts them. The
+first path is the high-volume workload telemetry just described: one record per
+request, carried over OTLP into TimescaleDB, where the decision engines read it.
+The second is the low-volume service own-metrics path, closed under v1.0.7al:
+each service exposes a Prometheus \texttt{/metrics} endpoint that Prometheus
+scrapes directly, surfacing not only liveness and per-cycle timing but the
+decision counters that make the engines auditable, for instance
+\texttt{anomaly\_detector\_isolate\_total} and \texttt{autoscaler\_scale\_total}.
+Keeping the two apart means a flood of request telemetry cannot crowd out the
+signal that tells an operator whether the engines themselves are alive.
+
+\begin{table}[t]
+\centering
+\caption{The two observability paths that run side by side. Workload telemetry
+answers ``what is the traffic doing''; service own-metrics answer ``are the
+services and engines themselves healthy''.}
+\label{tab:ima:observability}
+\small
+\begin{tabularx}{\linewidth}{@{}l Y Y@{}}
+\toprule
+ & \textbf{Workload telemetry} & \textbf{Service own-metrics} \\
+\midrule
+Question     & What the \emph{traffic} is doing & Whether the \emph{services} are healthy \\
+Granularity  & One record per request           & One scrape per service per interval \\
+Standard     & OpenTelemetry / OTLP \cite{opentelemetry} & Prometheus exposition \cite{prometheus} \\
+Transport    & Log shipper, collector, telemetry & Direct \texttt{/metrics} scrape \\
+Store        & TimescaleDB \texttt{metrics} hypertable & Prometheus time-series DB \\
+Read by      & The decision engines (SQL) & Operators, via Grafana \cite{grafana} \\
+Example signals & \texttt{request\_latency\_ms}, \texttt{error\_rate} & \texttt{<svc>\_up}, \texttt{<svc>\_cycle\_total}, \texttt{autoscaler\_scale\_total} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
 \section{Control Plane: Policy Management and Audit}
 \label{sec:ima:policy}
 
 The control plane begins at the policy manager, the single service that owns the
 operating policy. It is the only writer of \texttt{config/policy.yaml}, the only
 publisher on the \texttt{smartload.policy} channel, and the owner of the policy
-audit trail. Every adaptive behaviour in the system --- the latitude the
-autoscaler has, the latency multiplier that defines ``degraded'', the confidence
-threshold the routing engine must clear before it can act --- is a field in this
-one policy document, and the policy manager is the only place it can be changed.
+audit trail. Every adaptive behaviour in the system, whether the latitude the
+autoscaler has, the latency multiplier that defines ``degraded'', or the
+confidence threshold the routing engine must clear before it can act, is a field
+in this one policy document, and the policy manager is the only place it can be
+changed.
 
 \subsection{Reading, validating, and writing policy}
 \label{sec:ima:policyrw}
@@ -333,10 +454,11 @@ succeeds and a non-empty diff is computed does the service write.
 
 The write is atomic. The new policy is serialised to a temporary file in the same
 directory and then renamed over the canonical path, a rename that is atomic on
-both POSIX and Windows. One subtlety of Docker single-file bind mounts --- which
+both POSIX and Windows. Docker single-file bind mounts add a subtlety: they
 mount the inode, not the directory entry, and so reject the rename with
-\texttt{EBUSY} --- is handled by a documented fallback to a single buffered
-overwrite, which bounds the partial-read window to one operating-system write.
+\texttt{EBUSY}. The service handles this with a documented fallback to a single
+buffered overwrite, which bounds the partial-read window to one operating-system
+write.
 The on-disk YAML is treated as the source of truth: the two steps that follow the
 write, the audit record and the bus publish, are both best-effort. If both fail,
 the operator's commit has still landed, and subscribers pick up the change on
@@ -350,11 +472,11 @@ Each committed change writes one row per changed field into the
 (JSON-encoded so the column holds any type), the policy version, the timestamp,
 and the actor taken from an \texttt{X-Actor} header. One row per field, rather
 than one row per commit, is what lets the audit answer field-level questions
-directly --- ``who last changed \texttt{safe\_mode}, and to what?'' becomes a
+directly: ``who last changed \texttt{safe\_mode}, and to what?'' becomes a
 single filtered query rather than a diff over snapshots.
 
 After the write and audit, the policy manager publishes the full canonical policy
-snapshot --- every field, not a delta --- on the \texttt{smartload.policy}
+snapshot, every field rather than a delta, on the \texttt{smartload.policy}
 Redis~\cite{carlson2013redis} channel, wrapped in the standard event envelope.
 The snapshot carries a monotonically increasing \texttt{policy\_version} and a
 \texttt{changed\_fields} list, so each subscriber can log what changed without
@@ -367,9 +489,9 @@ The audit log the operator sees is the union of two streams that deliberately
 stay in separate tables owned by separate services: \texttt{policy\_changes} on
 the policy manager and \texttt{scaling\_events} on the autoscaler. The principle
 is that the owner of a write is the owner of its read. They are unified only at
-the surface --- the SDK and the operator UI present one logical audit view ---
-not consolidated server-side, which keeps each service authoritative over its own
-history.
+the surface, where the SDK and the operator UI present one logical audit view,
+and never consolidated server-side, which keeps each service authoritative over
+its own history.
 
 \section{The lb-sidecar: Applying Decisions to NGINX}
 \label{sec:ima:sidecar}
@@ -380,14 +502,14 @@ translates control-plane events into live NGINX configuration. It is the bridge
 between the abstract intent of the decision plane and the concrete upstream block
 NGINX serves from. The sidecar subscribes to four Redis channels and, on every
 message, atomically rewrites an \texttt{upstream.conf} on a shared volume and
-sends NGINX a reload signal (\texttt{nginx -s reload}), which swaps the upstream
-block live without dropping in-flight connections.
+sends NGINX a reload signal (\texttt{nginx -s reload}). The reload swaps the
+upstream block live without dropping in-flight connections.
 
 \subsection{The four-channel dispatch loop}
 \label{sec:ima:dispatch}
 
 Each channel maps to one pure handler, and the dispatch loop is a single branch
-on the channel name. \cref{tab:ima:channels} lists the four. Crucially, before
+on the channel name. \cref{tab:ima:channels} lists the four. Before
 every handler runs, the sidecar re-queries the live container set from the Docker
 daemon rather than trusting the count carried in the event. This is what makes
 the loop closed: every rewrite reflects the containers that actually exist, not
@@ -411,43 +533,26 @@ layer never appears in the upstream block.
 \end{tabularx}
 \end{table}
 
-\cref{fig:ima:dispatch} shows one cycle of the loop. An envelope arrives on one
-of the four channels; the sidecar discovers the live backend set; the matching
-handler computes a new weight map (or exclusion set); the NGINX file adapter
-writes \texttt{upstream.conf} and signals the reload --- unless the computed map
-is identical to the one already on disk, in which case the adapter
-short-circuits and no reload occurs.
+\cref{fig:ima:dispatch} traces a message through the loop. An envelope arrives on
+one of the four channels; the sidecar re-queries the live backend set; the
+matching handler computes a new weight map (or exclusion set); the NGINX file
+adapter writes \texttt{upstream.conf} and signals the reload. All four handlers
+converge on that single adapter, which short-circuits when the computed map is
+identical to the one already on disk, so no reload occurs. The figure also makes
+the closed scaling path explicit: the \texttt{smartload.scale} channel turns an
+autoscaler action into a regenerated equal-weight map and a live reload.
 
-\begin{figure}[t]
+\begin{figure}[p]
 \centering
-\begin{tikzpicture}[node distance=6mm and 10mm,
-    decision/.style={draw,diamond,aspect=2,fill=slbox,align=center,
-                     font=\scriptsize,inner sep=1pt}]
-  \node[slnode] (msg) {envelope on one of\\4 channels};
-  \node[slnode,below=of msg] (discover) {discover\_all\_backends()\\(query Docker daemon)};
-  \node[decision,below=of discover] (empty) {pool\\empty?};
-  \node[slnode,right=18mm of empty] (pin) {safety pin:\\keep last good\\config, applied=false};
-  \node[slnode,below=of empty] (handler) {channel handler\\(routing / anomaly /\\policy / scale)};
-  \node[decision,below=of handler] (same) {map ==\\on disk?};
-  \node[slnode,right=18mm of same] (noop) {idempotent\\no-op (no reload)};
-  \node[slnode,below=of same] (write) {write upstream.conf\\(atomic tmp+rename)};
-  \node[slnode,below=of write] (reload) {nginx -s reload\\(live swap)};
-
-  \draw[slflow] (msg) -- (discover);
-  \draw[slflow] (discover) -- (empty);
-  \draw[slflow] (empty) -- node[font=\scriptsize,above]{yes} (pin);
-  \draw[slflow] (empty) -- node[font=\scriptsize,left]{no} (handler);
-  \draw[slflow] (handler) -- (same);
-  \draw[slflow] (same) -- node[font=\scriptsize,above]{yes} (noop);
-  \draw[slflow] (same) -- node[font=\scriptsize,left]{no} (write);
-  \draw[slflow] (write) -- (reload);
-\end{tikzpicture}
-\caption[The lb-sidecar dispatch loop]{One cycle of the lb-sidecar dispatch
-loop. The live backend set is re-queried from the Docker daemon before every
-handler, closing the loop over the real container set. Two guards bound the
-behaviour: an empty pool triggers a safety pin that preserves the last good
-configuration, and an unchanged weight map short-circuits to an idempotent no-op
-with no reload.}
+\includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{lb_dispatch}
+\caption[The lb-sidecar four-channel dispatch]{The lb-sidecar dispatch. Each of
+the four control channels maps to one pure handler, and every handler reads the
+live backend set re-queried from the Docker daemon before it runs, which closes
+the loop over the real container set. The handlers feed a single NGINX file
+adapter that rewrites \texttt{upstream.conf} and is idempotent on an unchanged
+map. The \texttt{smartload.scale} channel completes the autoscaling path: an
+autoscaler action becomes an equal-weight upstream map and a graceful NGINX
+reload.}
 \label{fig:ima:dispatch}
 \end{figure}
 
@@ -459,8 +564,8 @@ survive partial routing updates}. A routing recommendation may rank only a subse
 of backends; if the handler simply wrote those, a previously excluded backend
 could be silently restored. Instead, each routing rewrite starts from a
 floor-weight baseline over the full known pool and overlays the routing engine's
-values, so an excluded backend always still appears in the file --- rendered as
-\texttt{down;} by the adapter --- no matter which handler triggered the rewrite.
+values, so an excluded backend always still appears in the file, rendered as
+\texttt{down;} by the adapter, no matter which handler triggered the rewrite.
 Anomaly-excluded backends are running containers that happen to be unhealthy, so
 they stay in the live pool and the adapter's exclusion path renders them
 \texttt{down} whatever the cause of the rewrite.
@@ -473,9 +578,9 @@ silently lapsing. This step is non-fatal: if the database is unreachable, the
 sidecar starts with an empty exclusion set and rebuilds it from the next round of
 anomaly events.
 
-The dispatch path also encodes two safety guards visible in
-\cref{fig:ima:dispatch}. If the Docker query returns zero backends --- a daemon
-outage or a network partition --- the handler refuses to write an empty upstream
+The dispatch path also encodes two safety guards that bound the loop of
+\cref{fig:ima:dispatch}. If the Docker query returns zero backends, whether from
+a daemon outage or a network partition, the handler refuses to write an empty upstream
 block and leaves the previous configuration intact, so NGINX keeps serving the
 last known good pool rather than 502-ing every request. And a quorum guard
 refuses an exclusion that would empty the pool entirely: an \texttt{unhealthy}
@@ -490,7 +595,7 @@ The operator UI is the human face of the control plane. Following the design
 lock, it is a \emph{transparency and override} layer, not an administration
 panel: it lets an operator see what the decision plane is doing, propose a policy
 change with a diff preview, browse the audit history, and trigger manual
-interventions --- but it never holds authority the API does not. It is built as a
+interventions, but it never holds authority the API does not. It is built as a
 Flask backend-for-frontend (BFF) serving a React front end compiled by Vite, and
 it deploys as a single multi-stage container in which the Node build stage
 produces static assets that the Python runtime stage serves alongside its API.
@@ -498,8 +603,21 @@ produces static assets that the Python runtime stage serves alongside its API.
 The BFF plays three roles. It fans out \texttt{/health} across the whole stack in
 parallel for the Home page; it proxies the policy, actions, and audit APIs so the
 browser talks to a single origin; and it runs a Redis subscriber thread that
-feeds a live event stream. The React app ships five pages, shown in
-\crefrange{fig:ima:ui-home}{fig:ima:ui-engines}.
+feeds a live event stream. \cref{fig:ima:operator_ui_bff} shows the shape this
+imposes on operator traffic: the browser reaches only the BFF, and the BFF
+reaches the rest of the stack on its behalf, so there is no direct
+browser-to-service edge anywhere in the diagram. The React app ships five pages,
+shown in \crefrange{fig:ima:ui-home}{fig:ima:ui-engines}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{operator_ui_bff}
+\caption[Operator UI traffic through the BFF]{Operator UI traffic. The browser
+reaches the backend-for-frontend, which reaches the rest of the stack; there is
+no direct browser-to-service connection, so authentication, CORS, and rate
+limiting are consolidated in one place.}
+\label{fig:ima:operator_ui_bff}
+\end{figure}
 
 \subsection{The five pages}
 \label{sec:ima:pages}
@@ -531,8 +649,8 @@ written.}
 \label{fig:ima:ui-policy}
 \end{figure}
 
-\textbf{Audit} (\cref{fig:ima:ui-audit}) brings the two history streams ---
-policy changes and scaling events --- into one filterable view, with filters on
+\textbf{Audit} (\cref{fig:ima:ui-audit}) brings the two history streams,
+policy changes and scaling events, into one filterable view, with filters on
 kind, actor, action, and time. This is the investigation surface: it makes
 questions like ``which forecast triggered the last scale-out?'' single-query
 operations.
@@ -547,8 +665,8 @@ range.}
 \end{figure}
 
 \textbf{Actions} (\cref{fig:ima:ui-actions}) is the manual-override surface. An
-operator can scale the pool to a specific count --- bypassing the forecast
-subscription and the cooldown timer --- or mark a backend healthy, degraded, or
+operator can scale the pool to a specific count, bypassing the forecast
+subscription and the cooldown timer, or mark a backend healthy, degraded, or
 unhealthy, publishing a synthetic anomaly event so the rest of the system reacts
 as though the engine had spoken. Both actions land in the audit log with a
 \texttt{manual:<actor>:} prefix, so operator intent stays distinguishable from
@@ -597,9 +715,9 @@ most recent row from each audit stream. The fan-out is parallel with a two-secon
 per-service timeout, so one hung service can only delay the response by that bound
 rather than serialising into an unbounded wait; an unreachable service shows up as
 \texttt{down} in the per-service map, and an \texttt{overall} field rolls the
-whole stack up into a single pill. The endpoint always returns 200 --- callers
-route on the \texttt{overall} field and per-service status, not the HTTP code ---
-so a status read never itself becomes a point of failure.
+whole stack up into a single pill. The endpoint always returns 200, since callers
+route on the \texttt{overall} field and per-service status rather than the HTTP
+code, so a status read never itself becomes a point of failure.
 
 \subsection{The Python SDK}
 \label{sec:ima:sdk}
@@ -610,8 +728,8 @@ sub-clients, one per concern. Five are fully implemented: \texttt{PolicyClient}
 (read, set with diff, subscribe to changes), \texttt{StatusClient} (the
 consolidated status read), \texttt{ActionsClient} (manual scale and isolate),
 \texttt{AuditClient} (both history streams), and \texttt{EnginesClient} (engine
-snapshots and a live subscription). Two further sub-clients ---
-\texttt{MetricsClient} and \texttt{WebhooksClient} --- are deliberately stubbed:
+snapshots and a live subscription). Two further sub-clients,
+\texttt{MetricsClient} and \texttt{WebhooksClient}, are deliberately stubbed:
 they raise \texttt{NotImplementedError} and are planned for Phase~2, because raw
 metric access and outbound webhook delivery build on the multi-tenancy and
 API-key work scheduled for that phase. This deferral is a clear scope choice,
@@ -622,7 +740,7 @@ declared in the code rather than left implicit.
 
 None of the modules described above was built in one pass. We grew the control
 plane and operator UI through a deliberate \emph{vertical slice} discipline: each
-feature was driven end to end --- through every product surface at once --- before
+feature was driven end to end, through every product surface at once, before
 the next began. A slice was not done when its service code compiled; it was done
 when the same behaviour existed as an HTTP endpoint in the canonical
 OpenAPI~\cite{openapi} specification, as a method on the Python SDK, as a runnable
@@ -648,12 +766,12 @@ read. Finally, the \emph{lb-sidecar} (\cref{sec:ima:sidecar}) closed the
 actuation loop, turning the decisions that all the earlier surfaces could observe
 into live changes to the NGINX upstream.
 
-We refined each of these slices repeatedly after its first landing --- the
+We refined each of these slices repeatedly after its first landing. The
 sidecar alone gained exclusion preservation, confidence gating, startup
 hydration, a scale channel, and a quorum guard across several follow-on
 iterations, each a small, separately tested increment rather than a rewrite. That
-cadence --- ship the thinnest end-to-end slice, then harden it in place under a
-running stack --- is the development process that produced the deployed system
+cadence, namely shipping the thinnest end-to-end slice and then hardening it in
+place under a running stack, is the development process that produced the deployed system
 this chapter has described. The decision-plane services and the models they run,
 which the slice discipline kept observable from their first day through the Live
 Engines page, are the subject of Part~B.

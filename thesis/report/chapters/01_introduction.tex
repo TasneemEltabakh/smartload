@@ -28,6 +28,14 @@ does not}. This chapter explains why the problem matters, what makes it hard,
 what we did and did not set out to do, how the method works in plain terms, what
 the prototype achieved, and how the rest of the report is organised.
 
+\slpitch{\textbf{SmartLoad} is a self-hosted middleware that inserts a
+telemetry-driven decision layer between client traffic and a pool of backend
+services. It keeps a classical NGINX load balancer as its data plane and adds an
+out-of-band control plane that detects misbehaving backends, forecasts demand,
+learns a routing policy from real traffic, and scales the pool ahead of
+saturation, all behind a \texttt{safe\_mode} switch that pins every engine to its
+deterministic fallback.}
+
 \section{Motivation}
 \label{sec:intro:motivation}
 
@@ -186,6 +194,28 @@ and an outbound webhook dispatcher are all planned for a future Phase~2 aimed at
 managed, multi-customer offering. These are scope decisions, and they sit outside
 the present phase so the work can demonstrate the core adaptive control loop end
 to end rather than spreading thinly across a wide feature set.
+\Cref{tab:intro:scope} summarises the boundary.
+
+\begin{table}[ht]
+  \centering
+  \caption{What the current single-tenant phase delivers, and what is deferred to the Phase~2 managed, multi-customer offering.}
+  \label{tab:intro:scope}
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.46\linewidth}Y@{}}
+    \toprule
+    \headrow
+    \textbf{In scope (this phase)} & \textbf{Out of scope (Phase~2)} \\
+    \midrule
+    Anomaly detection over backend health & Multi-tenant isolation across customers \\
+    Short-horizon demand forecasting       & Role-based access control \\
+    Learned request routing (shadow by default) & Operator authentication \\
+    Proactive, bidirectional autoscaling   & TLS termination at the load balancer \\
+    Central policy and control surface     & Per-token rate limiting \\
+    Telemetry pipeline feeding every engine & Outbound webhook dispatcher \\
+    Deterministic fallback and operator override at every layer & Managed control plane as a hosted service \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 Several assumptions bound the work. We assume HTTP/1.1 reverse proxying without
 session affinity, so the request path carries no hidden per-client state and any
@@ -195,6 +225,36 @@ signal can tolerate its absence. We assume backends are interchangeable members
 of a pool rather than functionally distinct services. And we assume the operator,
 not the system, is the final authority: SmartLoad recommends and acts within a
 policy, but a human can always inspect, override, or disable any decision.
+
+Within this scope, the evaluation is organised around four research questions, set
+out in \cref{tab:intro:rqs}. They ask, in turn, whether enabling the decision
+plane improves end-to-end outcomes over plain round-robin, whether the learned
+router beats the classical baselines offline, whether health-based exclusion
+reacts faster than passive load-balancer health checks, and whether the forecast
+arrives early enough to pre-warm capacity before saturation. Each question maps to
+a specific benchmark harness, and the answers are reported in
+\cref{ch:discussion}.
+
+\begin{table}[ht]
+  \centering
+  \caption{The four research questions and the evaluation surface that answers each. Wording follows the project specification.}
+  \label{tab:intro:rqs}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l Y l@{}}
+    \toprule
+    \headrow
+    \textbf{\#} & \textbf{Research question} & \textbf{Surface} \\
+    \midrule
+    RQ1 & On identical infrastructure (same NGINX, backend pool, and workload), does enabling the SmartLoad decision plane produce measurably better tail-latency and failure-rate outcomes than plain NGINX round-robin? & System bench \\
+    \addlinespace
+    RQ2 & Does the trained PPO routing policy, evaluated offline on held-out trace partitions, outperform the classical baselines (round-robin, least-connections) on per-window p50/p95/p99 latency and SLO-violation rate? & Offline RL eval \\
+    \addlinespace
+    RQ3 & Does the load-balancer sidecar pull a misbehaving backend out of rotation faster than NGINX's passive health checks, when the backend is slow but still returns 200 OK so passive checks never trip? & System bench, anomaly phase \\
+    \addlinespace
+    RQ4 & Does the forecasting service publish a predicted-RPS curve far enough ahead of saturation that the autoscaler can pre-warm a new backend before the ramp tops out? & Adaptive bench \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
 
 \section{Proposed Methodology}
 \label{sec:intro:method}
@@ -250,6 +310,39 @@ architecture is the subject of \cref{ch:design_solution}.
 \end{tikzpicture}
 \caption{The SmartLoad control loop. Telemetry is observed, demand is predicted, routing and scaling are decided by learned components each backed by a deterministic fallback, and the decisions are applied to the NGINX data plane. The act step feeds the next observation, closing a MAPE-K-style loop.}
 \label{fig:intro:loop}
+\end{figure}
+
+Where \cref{fig:intro:loop} shows the rhythm of the loop, the decide step itself
+rests on three learned capabilities that all share one common floor.
+\Cref{fig:intro:pillars} draws that arrangement: anomaly-aware routing,
+forecast-driven autoscaling, and a learned shadow router, each able to collapse
+onto the same deterministic baseline that the \texttt{safe\_mode} switch can pin
+the whole system to at any moment.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=7mm and 8mm]
+  % The three learned pillars
+  \node[slnode] (p1) {\textbf{Anomaly-aware}\\\textbf{routing}\\Isolation Forest\\flags sick\\backends out};
+  \node[slnode,right=of p1] (p2) {\textbf{Forecast-driven}\\\textbf{autoscaling}\\predict demand,\\grow / shrink\\the pool ahead};
+  \node[slnode,right=of p2] (p3) {\textbf{Learned (shadow)}\\\textbf{routing}\\PPO ranks\\backends;\\sidecar ignores\\until promoted};
+  \node[slplane,fit=(p1)(p2)(p3),label={[font=\footnotesize\bfseries]above:LEARNED DECISION PLANE (off the request path)}] (learned) {};
+
+  % The deterministic safety floor underneath
+  \node[slnode,fill=slmint!12,below=12mm of p2,minimum width=0.86\linewidth] (floor)
+    {\textbf{Deterministic fallback floor}\\threshold health rule $\;\cdot\;$ moving-average forecast $\;\cdot\;$ NGINX round-robin\\\textit{the baseline has no model, cannot raise, and is never deprecated}};
+
+  % safe_mode gate on the side
+  \node[slnode,fill=slbox,right=10mm of floor.east,anchor=west,xshift=-2mm,text width=18mm] (safe)
+    {\texttt{safe\_mode}\\collapses to\\the floor};
+
+  % Each pillar drops to the floor
+  \draw[slflow] (p1.south) -- (p1.south |- floor.north);
+  \draw[slflow] (p2.south) -- (floor.north);
+  \draw[slflow] (p3.south) -- (p3.south |- floor.north);
+\end{tikzpicture}
+\caption{The three learned pillars of SmartLoad and the deterministic floor beneath them. Anomaly-aware routing, forecast-driven autoscaling, and a shadow-mode learned router all run off the request path; each degrades onto a simple, predictable baseline, and the \texttt{safe\_mode} switch pins the whole system to that floor on demand. This expresses the central discipline that routing may learn while safety does not.}
+\label{fig:intro:pillars}
 \end{figure}
 
 \section{Summary of the Implementation and Results}

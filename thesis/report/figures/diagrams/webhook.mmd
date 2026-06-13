@@ -1,0 +1,27 @@
+sequenceDiagram
+    autonumber
+    participant Engine as Producer<br/>(anomaly-detector)
+    participant Redis as Redis<br/>(smartload.anomaly)
+    participant Dispatcher as webhook-<br/>dispatcher
+    participant DB as webhooks table<br/>+ webhook_delivery_failures
+    participant Customer as Customer<br/>webhook URL
+
+    Engine->>Redis: PUBLISH AnomalyEvent envelope
+    Redis-->>Dispatcher: SUBSCRIBE delivers envelope
+    Dispatcher->>DB: SELECT webhooks WHERE event_type<br/>= 'anomaly' AND tenant_id = $1
+    DB-->>Dispatcher: rows (url, secret, scopes)
+    loop For each registered webhook
+        Dispatcher->>Dispatcher: Compute HMAC-SHA256<br/>X-SmartLoad-Signature
+        Dispatcher->>Customer: POST <url> (signed)
+        alt Success (2xx)
+            Customer-->>Dispatcher: 200 OK
+            Dispatcher->>DB: UPDATE last_delivery_at
+        else Failure (4xx/5xx/timeout)
+            Customer-->>Dispatcher: error
+            Dispatcher->>Dispatcher: Exponential backoff<br/>(up to 5 attempts ~10 min)
+            alt Final failure
+                Dispatcher->>DB: INSERT webhook_delivery_failures
+                Dispatcher->>Redis: emit dispatcher metric
+            end
+        end
+    end

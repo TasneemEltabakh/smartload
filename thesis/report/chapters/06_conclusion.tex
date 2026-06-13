@@ -19,23 +19,23 @@ saturation signal has already degraded service, so the system spends its worst m
 under-provisioned. Routing is \emph{static}: a round-robin or least-connections
 scheduler distributes traffic without regard to which backend is actually healthy or
 fast at this instant, so a single slow or failing instance quietly taxes a fixed
-fraction of every request stream. And the obvious remedy --- inserting learned models
-to predict demand, detect anomalies, and route adaptively --- raises a third question:
+fraction of every request stream. And the obvious remedy, inserting learned models
+to predict demand, detect anomalies, and route adaptively, raises a third question:
 an opaque model that misfires in production needs a floor beneath it, which is exactly
 why operators want a safety net before they put learned components on the critical path.
 
 \paragraph{The solution.} SmartLoad addresses these together as a single proactive
 control loop, structured as the three planes described in \cref{ch:design_solution}
 and \cref{ch:impl_overview}. An NGINX \emph{data plane} carries traffic and emits
-per-request telemetry. A \emph{decision plane} of three engines --- demand forecasting,
-anomaly detection, and learned routing --- turns that telemetry into predict-ahead
-decisions, which a \emph{control plane} of an autoscaler, a policy manager, and a
-load-balancer sidecar actuates by provisioning capacity and rewriting the upstream
-configuration. The planes talk over a five-channel Redis bus, so each component is
-decoupled and independently testable. The defining design discipline is that
-\emph{every learned model has a deterministic fallback beneath it} --- a moving-average
-forecaster, a threshold anomaly rule, and a classical round-robin scheduler --- and an
-operator override sits above the whole loop. This is what makes a learned stack safe to
+per-request telemetry. A \emph{decision plane} of three engines, namely demand
+forecasting, anomaly detection, and learned routing, turns that telemetry into
+predict-ahead decisions, which a \emph{control plane} of an autoscaler, a policy
+manager, and a load-balancer sidecar actuates by provisioning capacity and rewriting
+the upstream configuration. The planes talk over a five-channel Redis bus, so each
+component is decoupled and independently testable. The defining design discipline is
+that \emph{every learned model has a deterministic fallback beneath it}, namely a
+moving-average forecaster, a threshold anomaly rule, and a classical round-robin
+scheduler, and an operator override sits above the whole loop. This is what makes a learned stack safe to
 ship: the system degrades to a well-understood classical baseline the moment any model
 is absent, slow to load, or explicitly switched off, and it never loses safe behaviour
 in the process.
@@ -51,8 +51,8 @@ the consolidated result is as follows.
         instance to six and then contracted it as demand receded, across roughly twelve
         scaling actions, with time-to-react on the order of seconds. The
         forecast~$\rightarrow$~autoscaler~$\rightarrow$~sidecar loop closes against a
-        live stack --- the affirmative answer to the project's proactive-autoscaling
-        research question.
+        live stack, which is the affirmative answer to the project's
+        proactive-autoscaling research question.
   \item \textbf{The anomaly engine reaches high agreement.} After calibration in a
         production-shape feature space, the trained Isolation Forest engine
         \cite{liu2008isolationforest} reaches approximately $91.4\%$ agreement with its
@@ -81,6 +81,58 @@ control loop is real, that the anomaly engine clears a high agreement bar, that 
 learned router holds its own against a strong baseline behind a safe fallback, and that
 the forecaster ships a reliable default with an advanced model in reserve.
 
+\subsection{Summary of contributions}
+\label{conc:contributions}
+
+\Cref{tab:conc:contributions} names the principal contributions of the work and the
+evidence that supports each. Three deserve to be read as first-class results rather
+than as a single headline. The closed-loop autoscaling result is the demonstrated win.
+The deterministic-fallback discipline is the design property that made it safe to put
+learned components in the live path at all. And the honest, product-shaped evaluation
+of the learned router is itself a contribution: measuring a learned policy against the
+production task and reporting that it ties the strong baseline, with the cause named, is
+a more useful result than a tuned number with the conditions hidden.
+
+\begin{table}[ht]
+  \centering
+  \caption{Principal contributions and their supporting evidence. The honest evaluation
+  of the learned router stands alongside the working autoscaling loop and the
+  deterministic-fallback discipline as a first-class contribution.}
+  \label{tab:conc:contributions}
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{4.0cm} Y@{}}
+    \toprule
+    \headrow
+    \textbf{Contribution} & \textbf{Evidence} \\
+    \midrule
+    Closed-loop proactive autoscaling
+      & Forecast-driven loop grows the pool from one instance to six and contracts it
+        again across roughly twelve scaling actions on a live stack
+        (\cref{ch:impl_testing}). \\
+    Deterministic-fallback discipline
+      & A moving-average forecaster, a threshold anomaly rule, and round-robin routing
+        sit beneath each learned engine; the baseline plugin holds no artifact and
+        cannot raise, so the loop degrades to a known baseline rather than failing. \\
+    Honest, product-shaped evaluation of a learned router
+      & The PPO policy \cite{schulman2017ppo,raffin2021sb3} is measured against
+        NGINX round-robin on the production routing task, ties it, and the cause is
+        named: uniform sampling is optimal on a homogeneous training distribution. \\
+    Calibrated learned anomaly detection
+      & Isolation Forest \cite{liu2008isolationforest} reaches roughly $91.4\%$
+        agreement with the threshold baseline after recalibration, with zero missed
+        reactions, and ships as the default alongside its threshold fallback. \\
+    Decoupled three-plane architecture
+      & Decision and control planes sit out of the request path and communicate over a
+        five-channel Redis bus, so a decision-service failure stops adaptation, not
+        traffic (\cref{ch:design_solution}). \\
+    Test and benchmark harness
+      & Roughly $718$ automated tests across unit, contract, integration, and
+        end-to-end layers, plus reusable benchmark harnesses that surfaced the issues
+        resolved before the loop was observed closing. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
 \section{Lessons Learned}
 \label{conc:lessons}
 
@@ -101,9 +153,9 @@ fallback turns ``learned routing is risky'' from a reason not to build the syste
 property the system simply guarantees.
 
 \paragraph{Building in vertical slices with tests at every layer kept the system
-reliable.} We built SmartLoad as vertical slices --- data plane, decision plane, control
-plane --- and backed each slice with unit, contract, integration, and end-to-end tests
-as it landed. That discipline meant every layer was exercised before the next one
+reliable.} We built SmartLoad as vertical slices, namely data plane, decision plane,
+and control plane, and backed each slice with unit, contract, integration, and
+end-to-end tests as it landed. That discipline meant every layer was exercised before the next one
 depended on it, so the roughly $718$ automated tests grew alongside the code instead of
 being bolted on at the end. When the benchmark harness later surfaced real issues, the
 test suite made them quick to pin down and fix, and the closed loop stayed trustworthy
@@ -119,6 +171,58 @@ back to, and it makes progress visible, because every learned engine has a clear
 quantitative target to improve against on a live stack. Safety and a roadmap come from
 the same design choice.
 
+\subsection{Honest limitations}
+\label{conc:limitations}
+
+Reporting each result as it stands also means stating plainly where the work stops.
+\Cref{tab:conc:limitations} sets out the principal limitations across the model,
+evaluation, deployment, and scope dimensions, each paired with the concrete step that
+would close it. None is a flaw in the architecture; each is a bounded next increment on
+a working base.
+
+\begin{table}[ht]
+  \centering
+  \caption{Honest limitations across four dimensions, each with the concrete step that
+  would close it.}
+  \label{tab:conc:limitations}
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{2.0cm} Y Y@{}}
+    \toprule
+    \headrow
+    \textbf{Dimension} & \textbf{Limitation} & \textbf{What would close it} \\
+    \midrule
+    Model
+      & The PPO router ties round-robin because its homogeneous training distribution
+        carries no latency signal to learn from, so the policy stays shadow-only.
+      & Retrain on heterogeneous-latency traces in which backend identity correlates
+        with latency, so the policy can learn to favour faster backends. \\
+    \addlinespace
+    Model
+      & The ARIMA forecaster measures roughly $25\%$ test MAPE against a $<20\%$ target,
+        so the moving-average model remains the shipped default.
+      & Further hyperparameter tuning and a longer training window to bring MAPE below
+        the gate on harder demand curves. \\
+    \addlinespace
+    Evaluation
+      & Headline results come from single committed benchmark runs, without
+        multi-run confidence intervals or a full-length head-to-head across workloads.
+      & A multi-run baseline-versus-SmartLoad campaign producing per-phase deltas with
+        confidence intervals. \\
+    \addlinespace
+    Deployment
+      & The system is exercised under Docker Compose on a single host; there is no
+        Kubernetes packaging or multi-host evaluation surface.
+      & Helm templates and raw Kubernetes manifests, enabling a Kubernetes HPA versus
+        SmartLoad autoscaling comparison \cite{k8shpa}. \\
+    \addlinespace
+    Scope
+      & The middleware is single-tenant: no multi-tenancy, no per-tenant
+        authentication or RBAC, no rate limiting or outbound event dispatch.
+      & The planned Phase-2 SaaS layer described in \cref{conc:future}. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
 \section{Future Directions}
 \label{conc:future}
 
@@ -127,9 +231,10 @@ roadmap. The directions below are ordered by leverage on the project's central
 questions, and each is an opportunity to build on what already works.
 
 \paragraph{Widen the learned router's advantage and run a broader head-to-head.} The
-most exciting next step is to extend the PPO policy's advantage on more varied workloads
---- heterogeneous-latency traces in which backend identity correlates with latency, so
-the policy can learn to favour faster backends more aggressively. With that artifact in
+most exciting next step is to extend the PPO policy's advantage on more varied
+workloads, using heterogeneous-latency traces in which backend identity correlates with
+latency, so the policy can learn to favour faster backends more aggressively. With that
+artifact in
 hand, a broader, multi-run baseline-versus-SmartLoad comparison would produce
 statistically defensible per-phase deltas with confidence intervals, turning the router
 result in \cref{ch:impl_testing} into a full head-to-head verdict across a wider range
@@ -149,19 +254,148 @@ pool-quorum guard continues to keep the backend pool healthy.
 \paragraph{Add the Kubernetes and Helm production packaging.} Completing the Helm
 templates and the raw Kubernetes manifests would unlock a multi-host evaluation surface
 and the K8s HPA-versus-SmartLoad autoscaling comparison \cite{k8shpa} that quantifies the
-proactive-scaling advantage against the cloud-native baseline --- a clear and valuable
-production milestone.
+proactive-scaling advantage against the cloud-native baseline, a clear and valuable
+production milestone. \Cref{fig:conc:k8s} sketches the target topology for this planned
+work. It is not the deployment the system runs on today: the evaluated stack runs under
+Docker Compose on a single host, as recorded in \cref{tab:conc:limitations}. In the
+planned layout each service becomes its own Deployment, the stateful components move to
+StatefulSets or managed equivalents, and a Kubernetes Horizontal Pod Autoscaler stands in
+for the SmartLoad autoscaler so the two scaling strategies can be measured side by side.
 
 \paragraph{Build the multi-tenant SaaS phase.} A planned Phase-2 turns the single-tenant
 middleware into a managed offering: multi-tenancy with per-tenant isolation, tenant API
 keys and RBAC, operator-UI authentication, rate limiting, and an outbound webhook
 dispatcher for event notifications. These build naturally on the current architecture and
-open the path from middleware to a hosted product.
+open the path from middleware to a hosted product. The system shipped in this report is
+single-tenant, so the two designs that follow describe target behaviour rather than
+implemented features. \Cref{fig:conc:mt} shows the proposed isolation model, in which
+tenant identity is resolved once at the API edge and then carried through every storage
+write and every event channel, and \cref{fig:conc:webhook} shows the proposed webhook
+delivery path for customers who cannot subscribe to the internal Redis bus directly.
 
 \paragraph{Explore additional learned anomaly models.} For temporal patterns that are
 only abnormal relative to their context, an LSTM-autoencoder anomaly engine
 \cite{su2019omnianomaly} is an appealing direction, trading a heavier training pipeline
 for sequence-aware detection that complements the point-based Isolation Forest.
+
+\subsection{Phase-2 product roadmap}
+\label{conc:roadmap}
+
+Beyond sharpening the learned models, a separate track turns the single-tenant
+middleware into a managed offering. \Cref{tab:conc:roadmap} groups the planned
+Phase-2 work into four themes, each of which extends the current architecture rather
+than reworking it.
+
+\begin{table}[ht]
+  \centering
+  \caption{Phase-2 product roadmap. Each theme builds on the current architecture; the
+  load-balancer adapters extend the existing \texttt{LoadBalancerAdapter} interface.}
+  \label{tab:conc:roadmap}
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{3.4cm} Y@{}}
+    \toprule
+    \headrow
+    \textbf{Theme} & \textbf{Planned work} \\
+    \midrule
+    Multi-tenant SaaS
+      & Per-tenant isolation, tenant API keys with role-based access control,
+        operator-UI authentication, and per-tenant rate limiting. \\
+    Load-balancer adapters
+      & Additional back ends behind the existing adapter interface: HAProxy
+        \cite{haproxy}, Envoy \cite{envoy}, and a cloud application load balancer,
+        alongside the shipped NGINX \cite{nginx} adapter. \\
+    Event integration
+      & An outbound webhook dispatcher that subscribes to the scaling and anomaly
+        channels and forwards events to external systems. \\
+    Packaging and deployment
+      & Helm templates and raw Kubernetes manifests for a multi-host deployment and a
+        Kubernetes HPA \cite{k8shpa} comparison surface. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+The two diagrams below detail the multi-tenant SaaS theme from
+\cref{tab:conc:roadmap}, and a third details its packaging theme. All three depict the
+target Phase-2 design and not the system evaluated in this report, which remains
+single-tenant and runs under Docker Compose on a single host.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{mt_isolation}
+  \caption{Planned multi-tenant isolation (Phase~2), not implemented in the system
+  evaluated in this report. Tenant identity is resolved at the API edge from the bearer
+  key, stamped on every storage write, and embedded in every Redis channel suffix;
+  subscribers filter on the tenant id. Single-tenant deployments default to tenant
+  \texttt{default}. This is target behaviour for the multi-tenant SaaS theme of
+  \cref{tab:conc:roadmap}; the shipped middleware is single-tenant.}
+  \label{fig:conc:mt}
+\end{figure}
+
+\begin{figure}[p]
+  \centering
+  \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{webhook}
+  \caption{Planned webhook delivery (Phase~2), not yet built. Customers who cannot
+  subscribe to Redis receive outbound HTTP POSTs from a webhook dispatcher, each signed
+  with HMAC-SHA256 so the origin can be verified without trusting the transport. Final
+  failures are queryable from a dead-letter view. This sequence describes the target
+  event-integration theme of \cref{tab:conc:roadmap} and is not part of the current
+  single-tenant middleware.}
+  \label{fig:conc:webhook}
+\end{figure}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{k8s}
+  \caption{Planned Helm and Kubernetes topology (Phase~2), not the deployment used for the
+  results in this report, which runs under Docker Compose on a single host. Each service
+  becomes a Deployment; TimescaleDB and Redis are StatefulSets or managed services; the
+  policy ships as a ConfigMap and secrets as Kubernetes Secrets. A Horizontal Pod
+  Autoscaler mirrors what the SmartLoad autoscaler does in Compose mode. This is the target
+  packaging theme of \cref{tab:conc:roadmap}.}
+  \label{fig:conc:k8s}
+\end{figure}
+
+\Cref{fig:conc:roadmap} places these directions on a forward-looking timeline. It is
+deliberately distinct from the retrospective work breakdown structure in
+\cref{fig:imc:wbs}: where that chart records how the system was built across the
+academic year, this one marks the delivered phases against the planned hardening,
+production, and SaaS increments that follow.
+
+\begin{figure}[ht]
+  \centering
+  \resizebox{\linewidth}{!}{%
+  \begin{ganttchart}[
+    hgrid, vgrid,
+    bar/.style={fill=slmint!40, draw=slmint!70},
+    bar height=0.5,
+    bar incomplete/.style={fill=slmint!12, draw=slmint!40},
+    group/.style={fill=slmuted, draw=slmuted},
+    milestone/.style={fill=tbdred, draw=tbdred},
+    title height=1,
+    y unit chart=0.55cm,
+    y unit title=0.6cm,
+    time slot format=isodate-yearmonth,
+  ]{2026-02}{2026-09}
+    \gantttitlecalendar{year, month=shortname} \\
+    \ganttgroup{Delivered}{2026-02}{2026-06} \\
+    \ganttbar{Phase 0: integration foundation}{2026-02}{2026-04} \\
+    \ganttbar{Phase 1A: skeleton decision plane}{2026-04}{2026-05} \\
+    \ganttbar{Phase 1B: skeleton control plane}{2026-05}{2026-05} \\
+    \ganttbar{Phase 2: real ML engines}{2026-05}{2026-06} \\
+    \ganttbar{Phase 3A: tests \& benchmarks}{2026-06}{2026-06} \\
+    \ganttgroup{In progress \& planned}{2026-06}{2026-09} \\
+    \ganttbar[progress=40]{Phase 3B: hardening \& release}{2026-06}{2026-07} \\
+    \ganttbar[progress=20]{Phase 3C: report \& presentation}{2026-06}{2026-07} \\
+    \ganttbar{Kubernetes \& Helm packaging}{2026-07}{2026-08} \\
+    \ganttbar{Phase-2 multi-tenant SaaS}{2026-08}{2026-09}
+  \end{ganttchart}%
+  }
+  \caption{Forward-looking roadmap timeline. Solid bars are delivered phases; partially
+  filled bars are in progress; later bars are planned increments. This complements,
+  rather than repeats, the retrospective work breakdown structure in
+  \cref{fig:imc:wbs}.}
+  \label{fig:conc:roadmap}
+\end{figure}
 
 \section{Closing Remarks}
 \label{conc:closing}
@@ -178,5 +412,5 @@ and what lies ahead is an exciting roadmap rather than a redesign: a router whos
 advantage widens on more varied workloads, a tuned forecaster, a learned anomaly detector
 promoted to default, and a production and SaaS path that grows the middleware into a
 managed offering. The architecture is sound, the results are real, and the discipline
-that produced this system --- measure against the production task, keep a safe baseline,
-and build in tested slices --- is the same discipline that will carry it forward.
+that produced this system, namely measure against the production task, keep a safe
+baseline, and build in tested slices, is the same discipline that will carry it forward.

@@ -1,0 +1,35 @@
+flowchart LR
+    Client["Clients<br/>HTTP/1.1"]
+    Operator["Operator"]
+    Grafana["Grafana<br/>Dashboards"]
+    OUI["Operator UI<br/>(transparency + override)"]
+
+    subgraph SL["SmartLoad Middleware"]
+        direction TB
+        Ing["Ingress"]
+        Dec["Decision Layer"]
+        Act["Actuation"]
+        Ing -.- Dec
+        Dec -.- Act
+    end
+
+    Pool["Backend Service Pool"]
+
+    Client -- "requests" --> Ing
+    Ing -- "proxy" --> Pool
+    Pool -- "responses" --> Ing
+    Ing -- "responses" --> Client
+
+    Operator -- "policy / config<br/>updates" --> Dec
+    Operator -. "YAML edit<br/>(out-of-band)" .-> Dec
+    SL -- "alerts & dashboard" --> OUI
+    SL -- "telemetry" --> Grafana
+    OUI -- "embeds" --> Grafana
+    Operator <--> OUI
+
+    classDef external fill:#EFF3F6,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef middleware fill:#DCEFE4,color:#0E1116,stroke:#2E8B57,stroke-width:1.5px;
+    classDef pool fill:#DCE7EE,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    class Client,Operator,Grafana,OUI external
+    class SL,Ing,Dec,Act middleware
+    class Pool pool

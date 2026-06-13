@@ -35,6 +35,14 @@
 \setlength{\parskip}{6pt plus 2pt minus 1pt}
 \setlength{\parindent}{0pt}
 
+% ---- Line breaking: let long monospace tokens (file paths, Redis channel
+%      names, identifiers) move to the next line instead of running into the
+%      margin. emergencystretch adds a final relaxed pass; the higher
+%      tolerance avoids overfull boxes on lines with unbreakable \texttt runs.
+\setlength{\emergencystretch}{3em}
+\tolerance=1000
+\hyphenpenalty=2000
+
 % ---- Headings: 14pt bold sections, bold numbered subheadings (N.M.K) --
 \usepackage{titlesec}
 \setcounter{secnumdepth}{3}
@@ -51,11 +59,13 @@
 
 % ---- Captions: Times New Roman, size 11, single-spaced ----------------
 \usepackage{caption}
+\usepackage{subcaption}
 \captionsetup{font={small,singlespacing},labelfont=bf,labelsep=period}
 
 % ---- Graphics + figure search paths -----------------------------------
 \usepackage{graphicx}
-\graphicspath{{figures/}{figures/ui/}{figures/bench/}{figures/anomaly/}}
+\usepackage{float}
+\graphicspath{{figures/}{figures/ui/}{figures/bench/}{figures/anomaly/}{figures/diagrams/}}
 
 % ---- Colour + brand accents (SmartLoad mint / muted) ------------------
 \usepackage{xcolor}
@@ -71,7 +81,11 @@
 \usepackage{tabularx}
 \usepackage{longtable}
 \usepackage{multirow}
+\usepackage{colortbl}   % \rowcolor for lightly shaded header rows
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+% Shared light fill for table header rows (use \rowcolor{slhead} on header).
+\definecolor{slhead}{HTML}{DCE7EE}
+\newcommand{\headrow}{\rowcolor{slhead}}
 
 % ---- Lists ------------------------------------------------------------
 \usepackage{enumitem}
@@ -127,4 +141,15 @@
     \parbox[c][28mm][c]{0.8\linewidth}{\centering
       \textbf{\textcolor{tbdred}{[FIGURE TO BE DONE]}}\\[2pt]
       \small #1}}%
+  \end{center}}
+
+% =====================================================================
+%  Presentation helpers (shared by all chapters).
+% =====================================================================
+% Highlighted "pitch"/key-idea box for a short framed statement. Short
+% content only (does not break across pages).
+\newcommand{\slpitch}[1]{%
+  \begin{center}
+  \fcolorbox{slmint}{slbox}{%
+    \parbox{0.92\linewidth}{\small #1}}%
   \end{center}}

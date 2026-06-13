@@ -4,14 +4,14 @@
 The two preceding chapters established \emph{why} adaptive, safety-bounded load
 management is worth building and \emph{where} the existing market and research
 leave a gap. This chapter and the next begin the engineering answer. They form a
-single Proposed Design chapter split into two halves: the present half states the
+single Proposed Design chapter split into two halves. The present half states the
 problem formally and derives, from that statement, the standards the design must
 honour, the wider contexts it must answer to, the requirements and specifications
 it must meet, the constraints it operates under, and the risks it sets out to
 manage. The second half (\cref{ch:design_solution}) takes those requirements and
-develops the concrete architecture --- the three-plane separation, the
+develops the concrete architecture, namely the three-plane separation, the
 cross-service contracts, the routing safety hierarchy, and the
-deterministic-fallback discipline --- that satisfies them. We keep the present
+deterministic-fallback discipline that satisfies them. We keep the present
 half requirements-focused and defer the large architecture diagrams to
 \cref{ch:design_solution}, so that the solution can be read as a direct response
 to a problem that has already been pinned down.
@@ -26,28 +26,90 @@ to a problem that has already been pinned down.
 A pool of interchangeable backend services behind a single load balancer is the
 standard architecture for serving a web application, and it has a standard limit.
 The load balancer distributes requests across the pool using a fixed,
-deterministic rule --- typically round-robin or least-connections --- and the size
+deterministic rule, typically round-robin or least-connections, and the size
 of the pool is held constant or adjusted only \emph{after} a monitoring threshold
 is breached. Both decisions are blind to where demand is heading and to the live
 health of the individual backends. When demand rises faster than a reactive
 autoscaler can provision new capacity, requests queue and users experience the
-peak as latency or errors. When one backend in the pool degrades --- a slow disk,
-a warm-up stall, a noisy co-tenant on a shared host --- a blind scheduler keeps
-sending it its share of traffic, and every request unlucky enough to land there is
-penalised. The conventional remedy, permanently over-provisioning the pool so that
-peaks and sick instances are absorbed by slack, trades a reliability problem for a
-cost-and-energy problem: capacity is paid for and powered continuously to serve
-load that arrives only occasionally.
+peak as latency or errors. When one backend in the pool degrades, whether through
+a slow disk, a warm-up stall, or a noisy co-tenant on a shared host, a blind
+scheduler keeps sending it its share of traffic, and every request unlucky enough
+to land there is penalised. The conventional remedy, permanently over-provisioning
+the pool so that peaks and sick instances are absorbed by slack, trades a
+reliability problem for a cost-and-energy problem: capacity is paid for and powered
+continuously to serve load that arrives only occasionally.
 
-The engineering problem this project addresses is therefore: \emph{how can the
-routing and capacity decisions at the front door of a backend pool be made
-adaptive --- driven by live telemetry and short-horizon demand forecasts, and able
-to learn from backend behaviour --- without giving up the deterministic
+The reactive limb of that limit is worth making concrete, because it is structural
+rather than a tuning oversight. A threshold-driven autoscaler can only act once a
+metric has already crossed its trigger, after which a stabilisation window guards
+against flapping and only then does the replica count move. The new instance is not
+useful the moment it is requested either: it must start its container and warm its
+caches before it can carry traffic. \Cref{dsa:fig:lag} traces this sequence on a
+single time axis. The lag between load arriving and fresh capacity becoming useful
+is bounded below by container start plus warm-up, commonly on the order of
+30 to 90 seconds for typical web workloads \cite{verma2015borg}. By the
+time the new backend is serving, the spike it was provisioned for has already been
+absorbed as user-visible latency. Reacting after the alarm is, by construction, too
+late; the only way to have capacity ready when the spike lands is to commit to it
+\emph{before} the threshold is crossed, which is what a forecast-driven scaler sets
+out to do.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[x=1.05cm,y=1cm]
+  % time axis
+  \draw[slbus,-{Stealth[length=3mm]}] (0,0) -- (12.6,0)
+    node[below=5pt,font=\footnotesize\itshape] {time};
+  \foreach \x in {0,1.6,4.6,7.6,9.6,11.4} { \draw[slmuted] (\x,0.1) -- (\x,-0.1); }
+
+  % demand curve (the spike) sitting above the axis
+  \draw[thick,slbase]
+    plot[smooth,tension=0.7] coordinates
+    {(0,0.55) (1.6,0.65) (3.0,2.55) (4.6,3.05) (6.0,2.55) (7.6,1.45) (9.6,0.8) (11.4,0.65)};
+  \node[font=\footnotesize\itshape,slbase] at (4.6,3.45) {demand};
+
+  % event markers along the axis
+  \node[slnode,fill=slbox,font=\scriptsize,text width=1.9cm,align=center,anchor=north]
+    at (1.6,-0.45) {load begins to rise};
+  \node[slnode,fill=slhead,font=\scriptsize,text width=2.2cm,align=center,anchor=north]
+    at (4.6,-0.45) {threshold breached;\\ stabilisation wait};
+  \node[slnode,fill=slhead,font=\scriptsize,text width=2.1cm,align=center,anchor=north]
+    at (7.6,-0.45) {container start\\ \texttt{+} warm-up};
+  \node[slnode,fill=slmint,font=\scriptsize,text width=2.1cm,align=center,anchor=north]
+    at (10.5,-0.45) {capacity ready\\ \& serving};
+
+  % the lag span (reaction interval)
+  \draw[decorate,decoration={brace,amplitude=5pt,mirror},slmuted]
+    (4.6,-2.5) -- (10.5,-2.5)
+    node[midway,below=6pt,font=\scriptsize,align=center,text width=5cm]
+    {reaction lag bounded below by\\ container start \texttt{+} warm-up
+     (typically 30--90\,s)};
+
+  % the "already hurt" region
+  \draw[densely dashed,tbdred] (4.6,0) -- (4.6,3.05);
+  \draw[densely dashed,tbdred] (10.5,0) -- (10.5,-1.9);
+  \node[font=\scriptsize\itshape,tbdred,align=center,text width=3.2cm]
+    at (6.6,1.9) {spike served as\\ user-visible latency\\ during the lag};
+\end{tikzpicture}
+\caption{The structural lag in reactive scaling. An autoscaler can act only after a
+metric crosses its threshold, and the requested instance becomes useful only after
+container start and cache warm-up. The interval between the breach and useful
+capacity, bounded below by start-plus-warm-up at roughly 30 to 90 seconds
+for typical web workloads \cite{verma2015borg}, is exactly the interval over which
+the spike is absorbed as degraded service. This is the gap a forecast-driven scaler
+is designed to close by committing capacity before the threshold is crossed.}
+\label{dsa:fig:lag}
+\end{figure}
+
+The engineering problem this project addresses is therefore the following: \emph{how
+can the routing and capacity decisions at the front door of a backend pool be made
+adaptive, driven by live telemetry and short-horizon demand forecasts and able
+to learn from backend behaviour, without giving up the deterministic
 guarantees that make a classical load balancer safe to put in the request path?}
 The tension is built in. The very adaptiveness that lets a system act ahead of a
 surge, or steer traffic away from a sick instance, also introduces a learned
 component that can be wrong, and a wrong decision in the request path is not a
-wrong answer in a report --- it is live user traffic sent to the wrong place. A
+wrong answer in a report. It is live user traffic sent to the wrong place. A
 design that resolves this tension must let the adaptive parts be exercised only
 inside bounds that a deterministic baseline and a human operator can always
 re-assert.
@@ -62,13 +124,62 @@ operated as separate tools: a load-balancing data plane, anomaly detection over
 backend health, short-horizon demand forecasting, proactive and bidirectional
 autoscaling, learned request routing, a centralised policy and audit surface for
 operators, and the telemetry pipeline that feeds every one of those decisions. The
-unifying design commitment --- the property that sets SmartLoad apart from a
-loose assembly of those tools --- is that each adaptive decision sits on top of a
+unifying design commitment, the property that sets SmartLoad apart from a
+loose assembly of those tools, is that each adaptive decision sits on top of a
 deterministic fallback and under an operator override. The canonical project
 definition records this directly: loss of any intelligent component must reduce the
 system to classical routing, never to an outage. That commitment is what makes the
 learned parts defensible in the request path, and it is the thread this chapter
 follows from problem to requirement to constraint.
+
+That commitment resolves into four design principles that the requirements and the
+architecture both answer to. \Cref{dsa:fig:principles} states them together because
+they are mutually supporting rather than independent. A \emph{deterministic floor}
+under every adaptive decision is only safe to rely on if the request path is also
+\emph{stateless}, so that any backend can serve any request and the floor can reroute
+freely; the floor is only swappable for a learned upgrade because every engine sits
+behind a uniform \emph{plugin contract}; and the combination of a floor, a stateless
+path, and a contract is what delivers \emph{graceful degradation}, the property that
+losing an intelligent component costs adaptation rather than availability. The four
+recur throughout the chapter: the deterministic floor as the baseline column of
+\cref{dsa:tab:fr}, graceful degradation as NFR-1, the plugin contract as NFR-6, and
+the stateless path as the first bounding assumption of \cref{dsa:sec:problem-scope}.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  prin/.style={slnode,fill=slbox,text width=3.5cm,align=center,
+               minimum height=1.9cm,inner sep=5pt,rounded corners=2pt},
+  core/.style={slnode,fill=slmint,text width=2.6cm,align=center,
+               minimum height=1.5cm,inner sep=4pt},
+  link/.style={slmuted,-{Stealth[length=2mm]}},
+]
+  \node[core] (c) at (0,0) {Adaptive decision\\ under deterministic\\ bound};
+  \node[prin] (p1) at (-4.2, 2.0)
+    {\textbf{Deterministic floor}\\[2pt] a baseline backs every engine and cannot
+     raise};
+  \node[prin] (p2) at ( 4.2, 2.0)
+    {\textbf{Graceful degradation}\\[2pt] losing an engine stops adaptation, not
+     traffic};
+  \node[prin] (p3) at (-4.2,-2.0)
+    {\textbf{Stateless request path}\\[2pt] any backend serves any request, so
+     rerouting is free};
+  \node[prin] (p4) at ( 4.2,-2.0)
+    {\textbf{Plugin contract}\\[2pt] each engine is swappable behind one typed
+     interface};
+  \draw[link] (c) -- (p1);
+  \draw[link] (c) -- (p2);
+  \draw[link] (c) -- (p3);
+  \draw[link] (c) -- (p4);
+\end{tikzpicture}
+\caption{The four design principles that make an adaptive decision safe to place in
+the request path. They are mutually supporting: a deterministic floor and a stateless
+path together make rerouting on failure free, a uniform plugin contract makes the
+floor swappable for a learned upgrade, and the three together yield graceful
+degradation. Each principle is traced to a concrete requirement later in the chapter.}
+\label{dsa:fig:principles}
+\end{figure}
 
 \subsection{Scope: what is solved and what is deferred}
 \label{dsa:sec:problem-scope}
@@ -86,7 +197,7 @@ the prototype solves from what it deliberately defers.
 \centering
 \caption{Project scope. The right-hand column lists deliberate Phase~2 deferrals,
 which are scope decisions oriented toward a future managed, multi-customer
-offering --- not unfinished work within the present phase.}
+offering rather than unfinished work within the present phase.}
 \label{dsa:tab:scope}
 \small
 \begin{tabular}{@{}p{0.46\linewidth}p{0.46\linewidth}@{}}
@@ -116,7 +227,7 @@ Production-grade Kubernetes operator and HPA integration \\
 The deferrals share a theme: every item in the right-hand column belongs to turning
 a self-hosted middleware into a managed, multi-customer service. Excluding them in
 this phase is what allows the present effort to demonstrate the core adaptive
-control loop end to end --- the genuinely novel and demanding part --- rather than
+control loop end to end, the genuinely novel and demanding part, rather than
 spreading thin across a product surface whose hard problems are well understood.
 The work also rests on four bounding assumptions that the scope makes explicit: the
 request path carries no per-client session state (no sticky sessions), so any
@@ -172,12 +283,12 @@ Every operator and integrator interaction with SmartLoad that is not a fire-and-
 event happens over HTTP, and that surface is specified against OpenAPI~3.1
 \cite{openapi} in a single canonical document, \texttt{docs/openapi/smartload-v1.yaml}.
 The specification is not aspirational: it enumerates each shipped \texttt{/api/v1/*}
-route --- policy read and write (\texttt{GET}/\texttt{POST /api/v1/policy}), the
+route, namely policy read and write (\texttt{GET}/\texttt{POST /api/v1/policy}), the
 append-only audit reads (\texttt{/api/v1/audit/policy}, \texttt{/api/v1/audit/scaling}),
 the manual operator overrides (\texttt{/api/v1/scale}, \texttt{/api/v1/isolate}), the
 load-balancer state and override endpoints (\texttt{/api/v1/lb/state},
 \texttt{/api/v1/lb/weights}, \texttt{/api/v1/lb/algorithm}), the telemetry reads, and
-the consolidated \texttt{/api/v1/status} aggregate --- together with their request and
+the consolidated \texttt{/api/v1/status} aggregate, together with their request and
 response schemas and error shapes. Because the contract is machine-readable, it
 serves three concrete design purposes: the Python client SDK and the operator UI
 both consume it as their source of truth, a continuous-integration lint validates
@@ -192,14 +303,14 @@ version bump and a \texttt{Sunset} header on the deprecated version.
 SmartLoad adopts a vendor-neutral observability stack rather than emitting telemetry
 in a private format, because the value of the decision plane is bounded by the
 quality and portability of the telemetry beneath it. Two distinct surfaces use two
-distinct standards. Per-\emph{request} telemetry --- the per-backend latencies,
-status codes, and request counts that the decision engines reason over --- is
+distinct standards. Per-\emph{request} telemetry, meaning the per-backend latencies,
+status codes, and request counts that the decision engines reason over, is
 shipped in OpenTelemetry's OTLP format \cite{opentelemetry}: a log shipper tails the
 load balancer's structured access log and posts OTLP/HTTP-JSON to a collector, which
 forwards it to the telemetry service for storage in TimescaleDB
 \cite{timescaledb}. Adopting OTLP means this stream can flow into any conformant
-collector rather than a bespoke agent. Per-\emph{process} health --- each service's
-own liveness, cycle counters, and decision counters --- is published separately in
+collector rather than a bespoke agent. Per-\emph{process} health, meaning each
+service's own liveness, cycle counters, and decision counters, is published separately in
 the Prometheus exposition format \cite{prometheus} on a \texttt{/metrics} endpoint,
 scraped by Prometheus and visualised in Grafana \cite{grafana}. Separating the two
 surfaces, each on its own standard, keeps the high-volume per-request path
@@ -213,10 +324,10 @@ Where HTTP carries synchronous operator interactions, the inter-service control-
 messaging is asynchronous and event-driven, and it is governed by an internal but
 strictly enforced contract: every decision an engine emits travels as a typed,
 versioned envelope on one of exactly five named Redis \cite{carlson2013redis}
-channels. These channels --- \texttt{smartload.policy} (policy updates),
+channels. These channels, namely \texttt{smartload.policy} (policy updates),
 \texttt{smartload.anomaly} (backend health verdicts), \texttt{smartload.forecast}
 (demand forecasts), \texttt{smartload.routing} (routing recommendations), and
-\texttt{smartload.scale} (scaling actions) --- are catalogued in
+\texttt{smartload.scale} (scaling actions), are catalogued in
 \texttt{docs/redis-channels.md}, which records for each channel its single publisher,
 its subscribers, its envelope type, and its publish cadence. The contract is evidence
 of incorporation in two senses: the envelopes are defined once as typed structures in
@@ -230,13 +341,13 @@ first-class architectural element in \cref{ch:design_solution}.
 \label{dsa:sec:standards-rest}
 
 Two further conventions shape the surfaces above. The HTTP API follows RESTful
-conventions --- resource-oriented paths, conventional verb semantics, and a
+conventions: resource-oriented paths, conventional verb semantics, and a
 disciplined use of status codes (a uniform \texttt{200}/\texttt{400}/\texttt{404}/\texttt{503}
 vocabulary, with the consolidated status endpoint deliberately always returning
 \texttt{200} and rolling per-service failures into its body rather than failing the
 whole call). Semantic versioning is applied consistently across all four contract
-artefacts --- the HTTP API, the policy schema, the Redis envelope, and the client SDK
---- so that a consumer can reason about compatibility from a version number alone, and
+artefacts, the HTTP API, the policy schema, the Redis envelope, and the client SDK,
+so that a consumer can reason about compatibility from a version number alone, and
 so that the obligation to bump a version on a breaking change is uniform rather than
 per-surface. Together these conventions make the contract surfaces predictable to an
 outside integrator, which is the precondition for the portability concern raised in
@@ -259,7 +370,7 @@ The dominant economic concern the design answers is the cost of standing capacit
 The conventional way to survive demand spikes is to leave spare backends permanently
 running so that slack absorbs the peak; that slack is paid for continuously to serve
 load that arrives only occasionally. SmartLoad's economic purpose is to replace
-standing slack with \emph{right-sized} compute --- growing the pool ahead of a
+standing slack with \emph{right-sized} compute, growing the pool ahead of a
 forecast peak and, equally importantly, shrinking it again when demand recedes. This
 concern is the direct origin of the requirement that the autoscaler be bidirectional
 and forecast-driven rather than merely reactive (\cref{dsa:sec:reqs-functional}). A
@@ -275,7 +386,7 @@ in reserve draw power and cooling to serve a load that is not present; capacity 
 is scaled down and switched off is energy that is not wasted. The environmental
 dividend is therefore not a separate feature but the same bidirectional-scaling
 mechanism viewed through a different lens: the autoscaler's commitment to scaling the
-pool \emph{down} as demand subsides --- not only up as it rises --- is an
+pool \emph{down} as demand subsides, not only up as it rises, is an
 energy-footprint decision as much as a cost decision. At the scale of one small
 deployment the saving is modest; as a default behaviour replicated across many
 deployments, scaling idle capacity down is a meaningful lever on the energy cost of
@@ -288,9 +399,9 @@ through web applications, and a sustained slowdown during a demand peak is felt 
 real denial of service to real people. This concern places an asymmetric weight on
 safety: a system inserted into the request path of such services must never make
 them \emph{less} reliable than the classical baseline it replaces. That asymmetry is
-the societal origin of the design's single most important property --- the
+the societal origin of the design's single most important property, the
 deterministic fallback and operator override on every adaptive decision
-(\cref{dsa:sec:reqs-nonfunctional}) --- and of the decision to keep the decision
+(\cref{dsa:sec:reqs-nonfunctional}), and of the decision to keep the decision
 plane off the critical request path, so that a failed engine stops adaptation rather
 than traffic.
 
@@ -312,10 +423,10 @@ adapter choices are selected to guarantee.
 
 The requirements below are derived directly from the problem statement of
 \cref{dsa:sec:problem} and the contextual concerns of \cref{dsa:sec:contexts}. They
-are split into functional requirements --- what the system must \emph{do}, organised
-around the capabilities the prototype delivers --- and non-functional requirements
---- the qualities every part of the system must \emph{exhibit}, of which safety is
-first among equals. Each requirement is numbered so that the architecture of
+are split into functional requirements, meaning what the system must \emph{do},
+organised around the capabilities the prototype delivers, and non-functional
+requirements, meaning the qualities every part of the system must \emph{exhibit}, of
+which safety is first among equals. Each requirement is numbered so that the architecture of
 \cref{ch:design_solution} and the evaluation of \cref{ch:discussion} can refer back
 to it.
 
@@ -325,7 +436,7 @@ to it.
 \Cref{dsa:tab:fr} enumerates the functional requirements. Each one corresponds to a
 capability that is realised as a service or a contract in the architecture, and each
 is paired in the rightmost column with the deterministic behaviour it must degrade
-to --- because, for this system, the fallback is part of the requirement, not a
+to, because, for this system, the fallback is part of the requirement, not a
 separate concern.
 
 \begin{table}[ht]
@@ -356,8 +467,8 @@ FR-5 & Produce learned routing recommendations across the healthy backends, oper
 in a passive \emph{shadow} mode (observe only) or an \emph{active} mode (influence
 traffic). & Classical scheduler (round-robin / least-connections) is the floor;
 shadow is the default and active requires explicit opt-in. \\
-FR-6 & Manage a single operating policy --- read, validated write, idempotent no-op
-detection --- and publish every accepted change, recording a per-field audit row. &
+FR-6 & Manage a single operating policy (read, validated write, idempotent no-op
+detection) and publish every accepted change, recording a per-field audit row. &
 Atomic write; a change matching on-disk state produces no audit row and no publish. \\
 FR-7 & Present an operator UI exposing system health, the active policy, the audit
 trail, manual override actions, and a live view of the decision engines. & The UI is
@@ -370,7 +481,7 @@ FR-9 & Guarantee a deterministic fallback per engine: if a trained model is disa
 fails to load, or is overridden, its dependency-free baseline silently takes its
 place. & A ``no decision available'' state must never arise; the baseline is always
 present. \\
-FR-10 & Expose a consolidated status read --- one call returning every service's
+FR-10 & Expose a consolidated status read, one call returning every service's
 health, the active policy, and the most recent audit events. & Always returns
 \texttt{200}; per-service failures surface inside the body, bounded by a per-service
 timeout. \\
@@ -391,6 +502,71 @@ absent any operator action the system degrades to its baseline rather than to a
 failure. These three properties are what make the functional surface defensible in
 the request path, and they recur as the safety hierarchy detailed in
 \cref{ch:design_solution}.
+
+FR-2 deserves a closer look, because it answers two backend-degradation modes that a
+blind scheduler and the load balancer's own health checks both miss.
+\Cref{dsa:fig:failclass} sets the two side by side. In the first, a backend carries a
+persistent latency penalty, for example a steady extra 15~ms from a
+slow disk or a noisy co-tenant, yet keeps answering every request successfully. A
+round-robin scheduler assumes every backend is interchangeable, so it keeps handing
+the slow instance its full share of traffic, and the slow instance silently drags the
+pool's tail latency up for as long as it stays in rotation. In the second, a backend
+suffers a sharp latency spike, on the order of an added 200~ms, but
+still returns \texttt{200~OK} on every request. NGINX's passive health check trips only
+on connection failures and error responses through its \texttt{max\_fails} counter, so
+a backend that is merely slow while still succeeding never crosses that counter and is
+never excluded. Both mechanisms are invisible to the classical data plane precisely
+because nothing fails in the sense the data plane checks for; what changes is latency,
+which the scheduler does not measure and the passive check does not watch. FR-2 exists
+to close exactly this gap by classifying backends on their latency and error-rate
+telemetry and excluding a degraded one that the data plane would otherwise keep
+serving.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  box/.style={slnode,fill=slbox,text width=4.2cm,align=left,inner sep=5pt,minimum height=1.0cm},
+  blind/.style={slnode,fill=slhead,text width=4.2cm,align=center,inner sep=4pt},
+  miss/.style={slnode,fill=tbdred!18,draw=tbdred,text width=4.2cm,align=center,inner sep=4pt},
+  lbl/.style={font=\footnotesize\bfseries},
+  arr/.style={slflow,-{Stealth[length=2.5mm]}},
+]
+  % left column: persistent heterogeneity
+  \node[lbl] (la) at (0,0) {(a) Persistent heterogeneity};
+  \node[box,below=3pt of la] (a1)
+    {Backend carries a steady latency penalty (e.g.\ \texttt{+}15~ms),
+     but every request still returns \texttt{200~OK}.};
+  \node[blind,below=8pt of a1] (a2)
+    {Round-robin assumes interchangeable backends and keeps sending the slow one its
+     \(1/N\) share.};
+  \node[miss,below=8pt of a2] (a3)
+    {Pool tail latency rises and stays high for as long as the backend is in rotation.};
+  \draw[arr] (a1) -- (a2);
+  \draw[arr] (a2) -- (a3);
+
+  % right column: latency spike, still 200 OK
+  \node[lbl] (lb) at (6.4,0) {(b) Latency spike, still \texttt{200~OK}};
+  \node[box,below=3pt of lb] (b1)
+    {Backend latency spikes (e.g.\ \texttt{+}200~ms) during a window,
+     yet responses remain \texttt{200~OK}.};
+  \node[blind,below=8pt of b1] (b2)
+    {NGINX \texttt{max\_fails} counts only failed responses, so a slow-but-successful
+     backend never trips it.};
+  \node[miss,below=8pt of b2] (b3)
+    {Passive health check never excludes the backend; the spike is served to users.};
+  \draw[arr] (b1) -- (b2);
+  \draw[arr] (b2) -- (b3);
+\end{tikzpicture}
+\caption{Two backend-degradation mechanisms that a blind round-robin scheduler and
+NGINX's passive health check both miss, because in each case the backend keeps
+returning \texttt{200~OK} while only its latency degrades. (a)~A persistent latency
+penalty keeps a backend in rotation and lifts the pool's tail latency. (b)~A latency
+spike that still returns success never trips the \texttt{max\_fails} counter. FR-2
+exists to detect both from latency and error-rate telemetry and exclude the degraded
+backend that the classical data plane would otherwise keep serving.}
+\label{dsa:fig:failclass}
+\end{figure}
 
 \subsection{Non-Functional Requirements}
 \label{dsa:sec:reqs-nonfunctional}
@@ -447,9 +623,9 @@ The non-functional requirements are not independent wishes; several reinforce on
 another around the safety thesis. NFR-1 (safety) is made achievable by NFR-2 and
 NFR-8: because decisions are computed off the request path (NFR-2) and the data plane
 is decoupled from the intelligence (NFR-8), a failed engine genuinely cannot take
-traffic down --- it can only stop the system adapting. NFR-3 (hot reconfiguration)
-carries an explicit safety clause --- a reconfiguration must never empty the pool ---
-because dropping the last healthy backend is exactly the kind of edge case a
+traffic down; it can only stop the system adapting. NFR-3 (hot reconfiguration)
+carries an explicit safety clause, namely that a reconfiguration must never empty the
+pool, because dropping the last healthy backend is exactly the kind of edge case a
 request-path component must be engineered against from the start; the design's
 defence against it is described under the risks of \cref{dsa:sec:risks}. NFR-6
 (extensibility) is what lets the design ship a deterministic baseline and a trained
@@ -489,9 +665,9 @@ deferred to Phase~2 (\cref{dsa:sec:problem-scope}) rather than attempted thinly.
 Standards & The external surfaces are constrained to the established standards of
 \cref{dsa:sec:standards}; the design may not invent private wire formats where a
 vendor-neutral standard exists. \\
-Maintainability & Cross-service interactions must be typed, documented contracts ---
-a single shared module for message envelopes, a single shared module for SQL --- so
-that the system remains comprehensible and changeable by a small team; ad-hoc JSON and
+Maintainability & Cross-service interactions must be typed, documented contracts,
+namely a single shared module for message envelopes and a single shared module for SQL,
+so that the system remains comprehensible and changeable by a small team; ad-hoc JSON and
 scattered query strings are prohibited by convention and checked in CI. \\
 Extensibility & Decision engines and load-balancer back-ends must be replaceable behind
 their contracts (NFR-6), so that a research engine under active iteration can be swapped
@@ -515,12 +691,12 @@ being instantaneous. \\
 \end{table}
 
 Two constraints deserve a closing word because they are felt most sharply in the
-chapters that follow. The schedule constraint --- one year, three people --- is the
+chapters that follow. The schedule constraint, one year and three people, is the
 reason the project draws a clear line between the adaptive control loop (built and
 demonstrated) and the SaaS surface (deferred), and it is a stated constraint that we
 own openly: the deferred items are named and planned, not silently dropped. The
 tooling-imposed constraints are the reason several of the risks in
-\cref{dsa:sec:risks} are worth naming at all --- the single-node deployment bounds the
+\cref{dsa:sec:risks} are worth naming at all. The single-node deployment bounds the
 scale at which results can be measured, and the in-memory bus is the reason every
 consumer of an adaptive signal is required, by NFR-1, to tolerate that signal's
 absence.
@@ -581,7 +757,7 @@ Confidence bounds accompany every forecast (FR-3); the reactive sliding-window f
 
 \paragraph{Routing risk: a learned policy may not beat a strong baseline everywhere.}
 The most consequential routing risk is that a learned policy will not improve on a
-strong deterministic baseline on every workload --- on a heterogeneous mix, plain
+strong deterministic baseline on every workload; on a heterogeneous mix, plain
 round-robin is already a tough opponent. The design answers this risk by construction
 rather than by hope. Because FR-9 guarantees a deterministic fallback and FR-5 pins
 the learned router in shadow mode by default, the learned policy runs behind a proven
@@ -589,7 +765,7 @@ classical scheduler and a fallback at all times. The classical scheduler carries
 traffic; the learned policy observes and records what it would have done; and an
 operator promotes it to active only once it demonstrates a clear benefit on the target
 workload. Routing is therefore always at least as good as the established approach
-while the learned policy is refined --- which is exactly the guarantee the safety
+while the learned policy is refined, which is exactly the guarantee the safety
 thesis sets out to provide. The full quantitative comparison of the learned router
 against the classical baselines is reported in \cref{ch:discussion}; the modelling
 choices behind the policy are discussed in \cref{ch:litreview}.

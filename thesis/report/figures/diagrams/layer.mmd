@@ -1,0 +1,59 @@
+flowchart TB
+    subgraph DP["DATA PLANE"]
+        NG["NGINX Load Balancer<br/>port 80 (container)<br/>port 8080 (host)"]
+        BE["Backend Pool<br/>(test-backend × N)"]
+    end
+
+    subgraph CP["CONTROL PLANE"]
+        direction TB
+
+        subgraph TLM["Telemetry &amp; Observability"]
+            SHP["lb-otel-shipper<br/>(sidecar, tails NGINX log)"]
+            OT["OTel Collector"]
+            TS["Telemetry Service"]
+            DB[("TimescaleDB<br/>metrics · backend_health<br/>· scaling_events · forecasts · policy_changes")]
+            RX["redis-exporter<br/>(v1.0.7ac, #116)"]
+            PR["Prometheus"]
+            GF["Grafana"]
+        end
+
+        subgraph DI["Decision Intelligence"]
+            AD["Anomaly<br/>Detector"]
+            FE["Forecasting<br/>Engine"]
+            RL["RL<br/>Engine"]
+        end
+
+        subgraph CA["Control &amp; Actuation"]
+            BUS(["Redis<br/>Control Bus"])
+            AS["Autoscaler"]
+            PM["Policy<br/>Manager"]
+            SC["LB Sidecar"]
+        end
+    end
+
+    NG --> BE
+    NG -. "JSON access log<br/>(shared volume)" .-> SHP
+    SHP -. "OTLP/HTTP-JSON<br/>per request, fire-and-forget" .-> OT
+    OT --> TS --> DB
+    DB --> AD
+    DB --> FE
+    DB --> RL
+    AD --> BUS
+    FE --> BUS
+    RL --> BUS
+    PM --> BUS
+    BUS --> SC
+    BUS --> AS
+    AS --> BUS
+    BUS -. "redis INFO" .-> RX
+    RX -. "/metrics" .-> PR
+    OT --> PR
+    PR --> GF
+    SC ==> |"writes nginx.conf<br/>nginx -s reload"| NG
+
+    classDef dataplane fill:#EFF3F6,color:#0f172a,stroke:#5B6472,stroke-width:2px;
+    classDef ctrl fill:#DCE7EE,color:#0f172a,stroke:#5B6472,stroke-width:1px;
+    classDef bridge fill:#DCEFE4,color:#0f172a,stroke:#2E8B57,stroke-width:2px;
+    class NG,BE dataplane
+    class SHP,OT,TS,DB,RX,PR,GF,AD,FE,RL,BUS,AS,PM ctrl
+    class SC bridge
