@@ -123,7 +123,8 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | Service | Language | Port | Role |
 |---|---|---|---|
 | `load-balancer` | NGINX | 8080 | Client traffic ingress; reload-on-write of `upstream.conf` |
-| `lb-otel-shipper` | Python | sidecar | Tails NGINX log, ships OTLP/HTTP-JSON |
+| `lb-otel-shipper` | Python | sidecar | Tails NGINX log, ships per-request OTLP/HTTP-JSON |
+| `resource-collector` | Python | daemon | Polls Docker stats API, ships per-container CPU/memory as OTLP gauges (read-only socket) |
 | `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
 | `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
 | `anomaly-detector` | Python | 8082 | Threshold baseline (default) + trained Isolation Forest (opt-in via `ANOMALY_ENGINE=isolation_forest`) |
@@ -178,6 +179,7 @@ smartload/
 ├── services/                         # one folder per deployable service
 │   ├── load-balancer/                # NGINX
 │   ├── lb-otel-shipper/              # NGINX log → OTLP shipper
+│   ├── resource-collector/          # Docker stats → OTLP (CPU/memory)
 │   ├── lb-sidecar/                   # dynamic upstream rewriter
 │   ├── telemetry/                    # OTLP ingress + read API
 │   ├── anomaly-detector/             # plugin-per-folder under engines/

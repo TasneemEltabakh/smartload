@@ -15,6 +15,7 @@ A file-by-file tour of every service, every shared module, every infrastructure 
 - [3. Data plane](#3-data-plane)
   - [3.1 `load-balancer` — NGINX](#31-load-balancer--nginx)
   - [3.2 `lb-otel-shipper` — log tail → OTLP](#32-lb-otel-shipper--log-tail--otlp)
+  - [3.2.1 `resource-collector` — Docker stats → OTLP](#321-resource-collector--docker-stats--otlp)
   - [3.3 `telemetry` — OTLP ingest + read API](#33-telemetry--otlp-ingest--read-api)
 - [4. Decision plane](#4-decision-plane)
   - [4.1 `anomaly-detector` (plugin-per-engine)](#41-anomaly-detector-plugin-per-engine)
@@ -939,6 +940,51 @@ def main():
 
 A daemon thread logs counters every 30 s. That's the entire "observability surface" of the shipper — there's deliberately no `/health` endpoint at T1.2 because process-restart on Docker handles liveness, and DB-row arrival in `metrics` is the integration test.
 
+### 3.2.1 `resource-collector` — Docker stats → OTLP
+
+#### What it is
+
+The host-resource sibling of the access-log shipper. Where `lb-otel-shipper` turns NGINX's *request* log into metrics, `resource-collector` turns the Docker Engine's *cgroup* accounting into metrics — the CPU and memory figures NGINX structurally cannot report. It is a standalone daemon (`services/resource-collector/app.py`) built on the same fire-and-forget OTLP shape.
+
+```
+[docker engine stats API]  ──►  [resource-collector]  ── OTLP ──►  [otel-collector]  ──►  [telemetry] ──► metrics
+```
+
+#### Why it's separate (and why there's no new table)
+
+Two design choices worth calling out:
+
+1. **Its own daemon, not a thread in the autoscaler.** The autoscaler already holds a Docker client, so folding stats collection into it was tempting — but the autoscaler's remit is *scaling decisions*, and entangling a telemetry cadence with the control loop is exactly the coupling the service split exists to avoid. A separate process keeps the single-responsibility shape the shipper established.
+2. **No schema change.** The `metrics` hypertable is long-format — `(time, service, instance, metric_name, value)` — and the telemetry OTLP parser (`parse_otlp_to_rows`) accepts *any* metric name. So the four resource gauges (`cpu_percent`, `memory_used_bytes`, `memory_limit_bytes`, `memory_percent`) are just new `metric_name` values flowing down the pipeline that already exists. Nothing in TimescaleDB had to change.
+
+#### The maths
+
+CPU uses the standard Docker delta formula. A single `container.stats(stream=False)` carries both the current `cpu_stats` and the prior `precpu_stats`, so one call yields a delta:
+
+```python
+cpu_delta    = cpu_total - precpu_total
+system_delta = system_cur - system_pre
+cpu_percent  = (cpu_delta / system_delta) * online_cpus * 100.0   # 100 = one full core
+```
+
+Two guards matter. A container's *first* stats read has a zeroed `precpu` baseline; the delta would be the whole cumulative usage, so `cpu_percent` is suppressed for that one cycle (memory still ships). A non-positive `system_delta` also returns `None` rather than dividing.
+
+Memory subtracts reclaimable page cache so the number matches what `docker stats` shows — cgroup v2 exposes it as `inactive_file`, cgroup v1 as `cache`:
+
+```python
+used = usage - stats.get("inactive_file", stats.get("cache", 0))
+```
+
+#### Instance keying — the join trick
+
+The per-datapoint `instance` attribute is deliberately keyed to *match* the shipper's canonical value: `test-backend` replicas become `<name>:8080` (the same string the shipper derives from NGINX's `$upstream_addr`), and every other service uses its bare container name. That alignment is what lets the operator UI put CPU next to rps and latency for the *same* backend row — they share the `instance` key in `metrics`.
+
+#### The loop
+
+Every `POLL_INTERVAL_S` (default 15 s) the daemon lists running containers in the Compose project (`com.docker.compose.project=<COMPOSE_PROJECT>`, minus itself), fans the stats reads across a small thread pool (one slow or broken container can't sink the cycle), and POSTs one OTLP batch. The Docker socket is mounted **read-only** — unlike the autoscaler's read-write mount — because this daemon only ever *lists* and *reads*, never starts or stops anything. Like the shipper, there's no `/health`; counters (`cycles`, `containers_polled`, `stats_errors`, `batches_sent`, `batches_dropped`) log every 60 s and row arrival in `metrics` is the liveness signal.
+
+The read side lives in telemetry (`GET /api/v1/metrics/resources`, see §3.3) and is proxied by the operator-UI BFF at `/api/ui/metrics/resources`.
+
 ### 3.3 `telemetry` — OTLP ingest + read API
 
 #### What it is
@@ -1146,6 +1192,8 @@ except Exception as exc:
 ```
 
 This endpoint can 503 on DB failure (unlike ingest, which always 200s). The read API is for human operators and downstream services — they need to know the database is down.
+
+Alongside the generic reader, telemetry exposes a few **purpose-shaped** read endpoints the operator UI consumes directly: `/api/v1/metrics/rpm` (per-minute throughput buckets), `/api/v1/metrics/latency` (p50/p95/p99 via `percentile_cont`), `/api/v1/metrics/slo` (compliance % against a latency budget), and `/api/v1/metrics/resources` (per-container CPU/memory, fed by the [resource-collector](#321-resource-collector--docker-stats--otlp) of §3.2.1). The resources endpoint pivots the long-format rows into one record per instance with a `SELECT DISTINCT ON (instance, metric_name) … ORDER BY … time DESC` so each instance carries its freshest sample of each metric. Unlike the generic reader these four **degrade to an empty/zeroed body with HTTP 200** rather than 503 — they back dashboard cards that should render "no data" gracefully, not error the whole page.
 
 #### Stats and health
 

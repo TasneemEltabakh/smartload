@@ -1379,6 +1379,7 @@
       <ol>
         <li><a href="#mod-load-balancer">8.1 Load Balancer (NGINX)</a></li>
         <li><a href="#mod-lb-otel-shipper">8.1.1 LB OTel Shipper (sidecar)</a></li>
+        <li><a href="#mod-resource-collector">8.1.2 Resource Collector (daemon)</a></li>
         <li><a href="#mod-classical-routing">8.2 Classical Routing Engine</a></li>
         <li><a href="#mod-telemetry">8.3 Telemetry Service</a></li>
         <li><a href="#mod-metrics-db">8.4 Metrics Database (TimescaleDB)</a></li>
@@ -1481,7 +1482,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7az &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-13 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;ba pre-Sprint-6 release hardening: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + added an open-loop Fortio saturation probe, so the bench measures a real signal. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bb pre-Sprint-6 release hardening: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + added an open-loop Fortio saturation probe, so the bench measures a real signal. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change) — the first slice of the operator-UI gap-closure. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -2095,7 +2096,7 @@ flowchart TB
   <p>This directory is the <em>map</em>, not the architecture. It enumerates every container in the wired stack and links to the canonical design contract for each. Use it to find a module quickly; use §8 (Deep Dives) to understand what each module is supposed to be.</p>
 </div>
 
-<p>The wired stack is <strong>~16 containers</strong> (modulo test-backend scaling): 10 SmartLoad services (load-balancer + lb-otel-shipper + lb-sidecar + telemetry + anomaly-detector + forecasting + rl-engine + autoscaler + policy-manager + operator-ui) + 6 infrastructure (TimescaleDB, Redis, <strong>redis-exporter</strong> v1.0.7ac, OTel Collector, Prometheus, Grafana) + test-backend (scaled, default 5 replicas) + traffic-simulator (Locust). All SmartLoad services share <code>services/shared/contracts.py</code> and <code>services/shared/queries.py</code> — these are the only cross-service imports allowed (principle 11).</p>
+<p>The wired stack is <strong>~17 containers</strong> (modulo test-backend scaling): 11 SmartLoad services (load-balancer + lb-otel-shipper + resource-collector + lb-sidecar + telemetry + anomaly-detector + forecasting + rl-engine + autoscaler + policy-manager + operator-ui) + 6 infrastructure (TimescaleDB, Redis, <strong>redis-exporter</strong> v1.0.7ac, OTel Collector, Prometheus, Grafana) + test-backend (scaled, default 5 replicas) + traffic-simulator (Locust). All SmartLoad services share <code>services/shared/contracts.py</code> and <code>services/shared/queries.py</code> — these are the only cross-service imports allowed (principle 11).</p>
 
 <div class="card-grid">
 
@@ -2113,6 +2114,14 @@ flowchart TB
     <div class="role">Telemetry sidecar · Tasneem</div>
     <p class="small">Tails NGINX's JSON access log on the shared <code>nginx-logs</code> volume; emits one OTLP/HTTP-JSON gauge data point per request to the OTel Collector. Approach B over <code>nginx-otel</code> module — preserves per-request fidelity for AI engines' <code>STDDEV</code>/<code>MAX</code> queries (issue #9).</p>
     <div class="deeplink"><a href="#mod-lb-otel-shipper">→ Deep dive</a></div>
+  </article>
+
+  <article class="service-card">
+    <div class="badges"><span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span></div>
+    <h4>Resource Collector</h4>
+    <div class="role">Host-resource shipper · Tasneem</div>
+    <p class="small">Polls the Docker Engine stats API for every container and emits <code>cpu_percent</code>/<code>memory_used_bytes</code>/<code>memory_limit_bytes</code>/<code>memory_percent</code> gauges on the same OTLP → collector → <code>metrics</code> pipeline as the access-log shipper. Fills the per-backend/per-service CPU + memory gap NGINX can't see. Read-only Docker socket.</p>
+    <div class="deeplink"><a href="#mod-resource-collector">→ Deep dive</a></div>
   </article>
 
   <article class="service-card">
@@ -2496,6 +2505,47 @@ After applying changes, the sidecar regenerates <code>nginx.conf</code> and runs
     </div></div>
   </div>
 </div>
+</article>
+
+<!-- ====== 8.1.2 RESOURCE COLLECTOR ====== -->
+<article id="mod-resource-collector">
+<h2>8.1.2 Resource Collector <span class="badge badge-canonical">Canonical</span> <span class="badge badge-implemented">Wired</span></h2>
+<h4>Purpose</h4>
+<p>A small Python daemon — the host-resource analogue of the <a href="#mod-lb-otel-shipper">LB OTel Shipper (§8.1.1)</a> — whose only job is to poll the Docker Engine stats API for every SmartLoad container and convert each sample into OTLP/HTTP-JSON gauge data points (<code>cpu_percent</code>, <code>memory_used_bytes</code>, <code>memory_limit_bytes</code>, <code>memory_percent</code>) POSTed to the OTel Collector. Fills the per-backend / per-service CPU + memory gap that the NGINX access log structurally cannot see.</p>
+<h4>Why it exists (vs. extending the shipper or the autoscaler)</h4>
+<p>The access-log shipper only sees <em>request</em> signals; NGINX cannot report a backend's CPU or memory — those live in the Docker Engine's per-container cgroup accounting. The autoscaler already holds a Docker client, but its remit is scaling decisions; folding metric collection into it would entangle the control loop's cadence with a telemetry concern. A separate daemon keeps the same single-responsibility shape as the shipper. <strong>No new storage:</strong> because the telemetry parser accepts arbitrary metric names and the <code>metrics</code> hypertable is long-format <code>(time, service, instance, metric_name, value)</code>, the four resource gauges ride the existing OTLP → collector → Telemetry → <code>metrics</code> pipeline as new <code>metric_name</code> rows — no schema change, no migration.</p>
+<h4>Responsibilities</h4>
+<ul>
+  <li>List running containers in the Compose project (label <code>com.docker.compose.project=&lt;COMPOSE_PROJECT&gt;</code>) every <code>POLL_INTERVAL_S</code> (default 15 s); re-listed each cycle so autoscaler-provisioned backends appear automatically. Excludes its own container.</li>
+  <li>Read each container's stats with one <code>stats(stream=False)</code> call (carries both <code>cpu_stats</code> and <code>precpu_stats</code>, so a single read yields a CPU delta). Stats reads run on a small thread pool; one bad container never sinks the cycle.</li>
+  <li>Compute <code>cpu_percent</code> via the standard Docker delta formula normalised to online cores (100 = one full core); <code>memory_used_bytes</code> net of reclaimable page cache (cgroup v2 <code>inactive_file</code> / v1 <code>cache</code>) plus <code>memory_limit_bytes</code> and <code>memory_percent</code>.</li>
+  <li>Key the per-datapoint <code>instance</code> attribute to MATCH the shipper's canonical value so the UI can join CPU with rps/latency per backend: <code>test-backend</code> replicas → <code>&lt;name&gt;:8080</code>; every other service → bare container name. <code>service.name</code> carries the Compose service name.</li>
+  <li>POST OTLP/HTTP-JSON to <code>http://otel-collector:4318/v1/metrics</code> with a strict timeout. On any error (timeout, conn refused, 5xx, malformed stats, Docker socket hiccup), log + drop, never raise into the poll loop.</li>
+</ul>
+<h4>Inputs / Outputs</h4>
+<ul>
+  <li><strong>In:</strong> read-only mount of <code>/var/run/docker.sock</code> — the collector only <em>lists</em> containers and <em>reads</em> stats, never mutates state (contrast the autoscaler's read-write socket).</li>
+  <li><strong>Out:</strong> OTLP/HTTP-JSON metric batches to the OTel Collector; stdout observability counters (cycles, containers_polled, stats_errors, batches_sent, batches_dropped) every 60 s.</li>
+</ul>
+<h4>Read API (downstream)</h4>
+<p>Telemetry exposes <code>GET /api/v1/metrics/resources?window=N</code> (default 120 s, cap 3600) which pivots the long-format rows into one record per instance <code>{instance, service, cpu_percent, memory_used_bytes, memory_limit_bytes, memory_percent, time}</code> via <code>SELECT DISTINCT ON (instance, metric_name) … ORDER BY … time DESC</code>. The operator-UI BFF proxies it at <code>GET /api/ui/metrics/resources</code>. Both degrade to an empty instance list with HTTP 200 on failure — same rule as the rpm/latency/slo cards.</p>
+<h4>Fallback behavior</h4>
+<ul>
+  <li><strong>Collector / telemetry down</strong> → batches dropped for that interval; recovers on next cycle. No request-path impact (the collector is off the data plane entirely).</li>
+  <li><strong>Docker socket unavailable</strong> → cycle logged + skipped; loop stays alive and resumes when the socket returns.</li>
+  <li><strong>Container's first stats read</strong> (zeroed precpu baseline) → <code>cpu_percent</code> is suppressed for that one cycle to avoid an inflated spike; memory still ships.</li>
+</ul>
+<h4>Implementation readiness</h4>
+<table>
+  <thead><tr><th>Aspect</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Zero-schema-change design (resource gauges on the existing <code>metrics</code> pipeline)</td><td><span class="pill pill-done">DECIDED</span></td></tr>
+    <tr><td>Collector code (<code>services/resource-collector/</code>) + compose wiring (read-only socket)</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td>Telemetry <code>/api/v1/metrics/resources</code> + BFF <code>/api/ui/metrics/resources</code></td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td>Tests (18 pure-Python maths/envelope + 2 live-stack) — verified live: 4 metrics × 19 instances</td><td><span class="pill pill-done">DONE</span></td></tr>
+    <tr><td>Operator-UI surfaces CPU/memory on engine cards + service-health rows</td><td><span class="pill pill-done">DONE</span></td></tr>
+  </tbody>
+</table>
 </article>
 
 <!-- ====== 8.2 CLASSICAL ROUTING ====== -->
@@ -5656,6 +5706,43 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7bb — 2026-06-13 — Per-container CPU/memory telemetry: resource-collector daemon + resources endpoints</h3>
+<table>
+  <thead><tr><th>Unit</th><th>What changed</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Resource Collector daemon</strong></td>
+      <td>New <code>services/resource-collector/</code> (app.py + requirements + Dockerfile) — the host-resource analogue of the LB OTel shipper (§8.1.2). Polls the Docker Engine stats API for every Compose-project container every ~15 s and emits four OTLP gauges (<code>cpu_percent</code> normalised to online cores, <code>memory_used_bytes</code> net of reclaimable cache, <code>memory_limit_bytes</code>, <code>memory_percent</code>). <strong>Zero schema change</strong>: the four new metric names ride the existing OTLP → collector → Telemetry → <code>metrics</code> hypertable pipeline. Per-datapoint <code>instance</code> matches the shipper's canonical <code>&lt;name&gt;:8080</code> for backends so CPU joins with rps/latency. CPU suppressed on a container's zero-baseline first read; one bad container never sinks the cycle. Docker socket mounted <strong>read-only</strong>.</td>
+      <td>v1.0.7bb</td>
+    </tr>
+    <tr>
+      <td><strong>Telemetry + BFF read API</strong></td>
+      <td><code>telemetry/app.py</code> gains <code>GET /api/v1/metrics/resources?window=N</code> (default 120 s, cap 3600) — a <code>SELECT DISTINCT ON (instance, metric_name)</code> pivot into one record per instance <code>{instance, service, cpu_percent, memory_used_bytes, memory_limit_bytes, memory_percent, time}</code>, degrading to an empty list (HTTP 200) on DB error. <code>operator-ui/bff/app.py</code> proxies it at <code>GET /api/ui/metrics/resources</code>.</td>
+      <td>v1.0.7bb</td>
+    </tr>
+    <tr>
+      <td><strong>Compose wiring</strong></td>
+      <td><code>docker-compose.yml</code> adds the <code>resource-collector</code> service (build context <code>./services/resource-collector</code>, <code>/var/run/docker.sock:ro</code>, <code>depends_on otel-collector</code>, <code>COMPOSE_PROJECT</code>/<code>POLL_INTERVAL_S</code> env). The wired stack is now <strong>~17 SmartLoad/infra containers</strong>.</td>
+      <td>v1.0.7bb</td>
+    </tr>
+    <tr>
+      <td><strong>Operator UI surfacing</strong></td>
+      <td>The UI side of the data path: <code>web/src/api.ts</code> gains <code>ResourceSample</code>/<code>ResourcesResponse</code>/<code>ServiceResource</code> types, <code>api.getResources()</code>, and <code>resourcesByService()</code>/<code>formatBytes()</code> helpers; <strong>Live Engines</strong> cards render a CPU + memory line per engine (<code>ResourceLine</code>); the <strong>Home › Platform health</strong> service rows gain CPU + Memory columns (redis/tsdb moved to the meta line). Both pages poll <code>/api/ui/metrics/resources</code> on their existing cadence. Verified in-browser on the live stack (engine cards + service rows showing real per-container CPU/memory).</td>
+      <td>v1.0.7bb</td>
+    </tr>
+    <tr>
+      <td><strong>Tests + live verification</strong></td>
+      <td><code>tests/integration/test_resource_collector.py</code> — 20 tests: 18 pure-Python (CPU/memory maths incl. cgroup v1/v2, online-core scaling, zero-baseline + zero-system-delta guards, instance keying, OTLP envelope shape) + 2 live-stack (rows land in <code>metrics</code>; endpoint pivots per instance). Verified live on the running <code>smartload</code> stack: 4 metrics × 19 instances, real CPU%/memory, backend keyed <code>smartload-test-backend-1:8080</code>; 76 telemetry + operator-ui tests green (no regression).</td>
+      <td>v1.0.7bb</td>
+    </tr>
+    <tr>
+      <td><strong>Doc sync</strong></td>
+      <td>SOT §8.1.2 deep-dive + module card + §6 TOC entry + this §22 row + status badge; Walkthrough §3.2.1 (new <code>resource-collector</code> subsection) + §3.3 read-API note; PROJECT_STATE delta; README service table + tree. First slice of the operator-UI gap-closure — closes the CPU/memory Tier-1 gap from the UI mockups end-to-end (collector → telemetry → BFF → UI).</td>
+      <td>v1.0.7bb</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7ba — 2026-06-13 — Closed-loop test backends + open-loop Fortio probe</h3>
 <table>
