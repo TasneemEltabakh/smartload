@@ -56,16 +56,22 @@ class SmartLoadConfigError(ValueError):
 # docs/features/named-strategies.md; it lives here as the single definition so
 # the named-strategy endpoint can import it rather than restating it.
 #
+# operating_mode values are the canonical policy.yaml enum that policy-manager's
+# validator accepts (VALID_OPERATING_MODES = classical-only | hybrid | rl-only);
+# the strategy *names* are the industry-vocabulary aliases #150 documents. The
+# classical strategies map to "classical-only" (pure NGINX routing, no
+# decision-plane signal), not the loose "classical" shorthand in the issue table.
+#
 # rl_mode is None where the strategy does not engage the RL plane at all
-# (operating_mode=classical) — the bootstrap then leaves RL_MODE at its default
-# rather than pinning an irrelevant value.
+# (operating_mode=classical-only) — the bootstrap then leaves RL_MODE at its
+# default rather than pinning an irrelevant value.
 STRATEGY_PRIMITIVES: Dict[str, Dict[str, Any]] = {
-    "round-robin":       {"operating_mode": "classical", "safe_mode": False, "rl_mode": None},
-    "least-connections": {"operating_mode": "classical", "safe_mode": False, "rl_mode": None},
-    "latency-aware":     {"operating_mode": "hybrid",     "safe_mode": False, "rl_mode": "shadow"},
-    "forecast-aware":    {"operating_mode": "hybrid",     "safe_mode": False, "rl_mode": "shadow"},
-    "anomaly-aware":     {"operating_mode": "hybrid",     "safe_mode": False, "rl_mode": "shadow"},
-    "ai-hybrid":         {"operating_mode": "hybrid",     "safe_mode": False, "rl_mode": "active"},
+    "round-robin":       {"operating_mode": "classical-only", "safe_mode": False, "rl_mode": None},
+    "least-connections": {"operating_mode": "classical-only", "safe_mode": False, "rl_mode": None},
+    "latency-aware":     {"operating_mode": "hybrid",         "safe_mode": False, "rl_mode": "shadow"},
+    "forecast-aware":    {"operating_mode": "hybrid",         "safe_mode": False, "rl_mode": "shadow"},
+    "anomaly-aware":     {"operating_mode": "hybrid",         "safe_mode": False, "rl_mode": "shadow"},
+    "ai-hybrid":         {"operating_mode": "hybrid",         "safe_mode": False, "rl_mode": "active"},
 }
 
 _LB_TYPES = {"nginx", "haproxy", "envoy", "alb"}

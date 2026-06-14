@@ -45,8 +45,8 @@ slo:
 
 # The load-balancing strategy, in industry vocabulary. The name selects the
 # underlying operating mode + RL pin:
-#   round-robin       -> classical            (RL off)
-#   least-connections -> classical            (RL off)
+#   round-robin       -> classical-only       (RL off)
+#   least-connections -> classical-only       (RL off)
 #   latency-aware     -> hybrid, RL shadow
 #   forecast-aware    -> hybrid, RL shadow
 #   anomaly-aware     -> hybrid, RL shadow

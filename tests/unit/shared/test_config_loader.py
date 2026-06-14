@@ -139,8 +139,10 @@ def test_to_policy_maps_strategy_to_primitives():
 
 
 def test_to_policy_classical_strategy():
+    # The canonical policy.yaml enum is "classical-only", not the loose
+    # "classical" shorthand in the #150 table — see the validator regression test.
     p = to_policy({"strategy": {"name": "round-robin"}})
-    assert p["operating_mode"] == "classical"
+    assert p["operating_mode"] == "classical-only"
 
 
 def test_to_policy_maps_slo_and_cooldown():
@@ -232,3 +234,46 @@ def test_read_file_rejects_non_mapping_root(tmp_path):
     f.write_text("- just\n- a\n- list\n", encoding="utf-8")
     with pytest.raises(SmartLoadConfigError, match="<root>"):
         read_file(str(f))
+
+
+# ── cross-module contract: rendered policy must satisfy the canonical validator ──
+#
+# policy-manager is the sole writer + validator of policy.yaml, so anything the
+# bootstrap renders must pass validate_merged_policy. This is the test that
+# caught operating_mode "classical" (rejected) vs the canonical "classical-only".
+
+def _load_policy_validator():
+    import importlib.util
+
+    path = (Path(__file__).resolve().parents[3]
+            / "services" / "policy-manager" / "validation.py")
+    spec = importlib.util.spec_from_file_location("pm_validation", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # @dataclass resolves cls.__module__ via sys.modules
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("name", sorted(STRATEGY_PRIMITIVES))
+def test_rendered_policy_passes_policy_manager_validator(name):
+    pm = _load_policy_validator()
+    # Merge onto a realistic existing policy (the canonical fields) the way the
+    # bootstrap CLI does, then run the canonical gate.
+    existing = {
+        "policy_version": 35, "min_backends": 1, "max_backends": 10,
+        "operating_mode": "hybrid", "safe_mode": False, "slo_p95_latency_ms": 200,
+        "anomaly_response": "auto-isolate", "anomaly_recovery_window_seconds": 30,
+        "autoscaler_cooldown_seconds": 60, "per_instance_capacity_rps": 100,
+        "anomaly_latency_multiplier": 3, "rl_exploration_rate": 0,
+        "rl_confidence_threshold": 0.6,
+    }
+    merged = merge_policy(existing, _full() | {"strategy": {"name": name,
+                                                            "cooldownSeconds": 45}})
+    pm.validate_merged_policy(merged)  # raises PolicyValidationError on mismatch
+
+
+def test_rendered_operating_mode_is_in_validator_enum():
+    pm = _load_policy_validator()
+    rendered_modes = {p["operating_mode"] for p in
+                      (to_policy({"strategy": {"name": n}}) for n in STRATEGY_PRIMITIVES)}
+    assert rendered_modes <= set(pm.VALID_OPERATING_MODES)
