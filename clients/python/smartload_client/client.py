@@ -172,6 +172,11 @@ class SmartLoadClient:
     def set_policy(self, patch: dict, *, actor: str | None = None) -> dict:
         return self.policy.update(patch, actor=actor)
 
+    def set_strategy(self, name: str, *, actor: str | None = None) -> dict:
+        """Apply a named load-balancing strategy (#150). Convenience wrapper
+        around client.policy.set_strategy()."""
+        return self.policy.set_strategy(name, actor=actor)
+
     def audit_policy(self, limit: int = 50) -> list[dict]:
         return self.policy.audit(limit=limit)
 

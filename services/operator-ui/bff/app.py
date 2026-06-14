@@ -267,6 +267,26 @@ def ui_policy_post():
     return (r.text, r.status_code, {"Content-Type": "application/json"})
 
 
+@app.route("/api/ui/policy/strategy", methods=["POST"])
+def ui_policy_strategy():
+    """Proxy the named-strategy alias to policy-manager (#150).
+
+    Lets the operator-ui Policy page POST a strategy dropdown selection to one
+    origin. Mirrors ui_policy_post: forwards the body verbatim and stamps the
+    X-Actor header (operator-ui default when the page does not supply one)."""
+    upstream = SERVICE_URLS["policy-manager"]
+    body = request.get_data(as_text=True) or "{}"
+    headers = {"Content-Type": "application/json"}
+    headers["X-Actor"] = request.headers.get("X-Actor") or "operator-ui"
+    try:
+        r = _http.post(
+            f"{upstream}/api/v1/policy/strategy", content=body, headers=headers,
+        )
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
 @app.route("/api/ui/audit/policy", methods=["GET"])
 def ui_policy_audit():
     upstream = SERVICE_URLS["policy-manager"]

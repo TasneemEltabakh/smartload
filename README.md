@@ -75,10 +75,16 @@ from smartload_client import SmartLoadClient
 
 with SmartLoadClient(base_url="http://localhost:8086") as c:
     policy = c.get_policy()
-    print(policy["operating_mode"], policy["safe_mode"])
+    print(policy["operating_mode"], policy["safe_mode"], policy["strategy_name"])
     c.set_policy({"safe_mode": True}, actor="my-tool")
+    # ...or speak in industry vocabulary — named strategies translate to the
+    # same primitives + audit + envelope path:
+    r = c.set_strategy("ai-hybrid", actor="my-tool")
+    print(r["policy"]["operating_mode"], "recommended RL_MODE:", r["recommended_rl_mode"])
     c.subscribe_policy(lambda payload, meta: print("policy changed:", payload))
 ```
+
+Named strategies (`round-robin`, `least-connections`, `latency-aware`, `forecast-aware`, `anomaly-aware`, `ai-hybrid`, `safe-fallback`) are an alias layer over the primitives; see [docs/features/named-strategies.md](docs/features/named-strategies.md) for the full mapping table and the derived `strategy_name` reverse-map.
 
 Full SDK reference (every method, exception type, threading model): [SOT §27](docs/SOURCE_OF_TRUTH.html#sec-27-sdk). Working examples: [`clients/python/examples/`](clients/python/examples/).
 

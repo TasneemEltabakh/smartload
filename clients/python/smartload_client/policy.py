@@ -81,6 +81,36 @@ class PolicyClient:
         _raise_for_status(r)
         return r.json()
 
+    def set_strategy(self, name: str, *, actor: str | None = None) -> dict:
+        """Apply a named load-balancing strategy via POST /api/v1/policy/strategy.
+
+        Translates an industry-vocabulary strategy name (round-robin,
+        least-connections, latency-aware, forecast-aware, anomaly-aware,
+        ai-hybrid, safe-fallback) to the underlying policy primitives
+        (operating_mode + safe_mode) server-side, applying them through the same
+        audit + envelope path as `update()`.
+
+        Returns the policy-manager's response body:
+          {status, policy, changed_fields, policy_version, event_id,
+           strategy, recommended_rl_mode}
+
+        `recommended_rl_mode` is the deploy-time RL_MODE env pin that matches the
+        chosen strategy ("shadow" / "active" / null) — surfaced for the operator,
+        never set as a policy field.
+
+        An unknown strategy name raises ValidationError with field='name'.
+        """
+        body: dict[str, Any] = {"name": name}
+        headers: dict[str, str] = {"X-Actor": actor or self._parent.default_actor}
+        try:
+            r = self._parent._http.post(
+                "/api/v1/policy/strategy", json=body, headers=headers,
+            )
+        except httpx.RequestError as exc:
+            raise SmartLoadError(f"strategy POST failed: {exc}") from exc
+        _raise_for_status(r)
+        return r.json()
+
     def audit(self, limit: int = 50) -> list[dict]:
         """Return recent policy_changes rows, newest first."""
         try:

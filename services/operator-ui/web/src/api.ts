@@ -15,6 +15,9 @@ export interface Policy {
   anomaly_recovery_window_seconds?: number;
   rl_exploration_rate?: number;
   rl_confidence_threshold?: number;
+  // Derived on read (#150): representative named strategy for the live
+  // primitives, or "custom" when no documented strategy matches.
+  strategy_name?: string;
   [k: string]: unknown;
 }
 
@@ -24,6 +27,34 @@ export interface PolicyUpdateResponse {
   changed_fields: string[];
   policy_version: number;
   event_id: string | null;
+}
+
+// Named load-balancing strategies (#150) — the alias vocabulary over the
+// policy primitives. Keep in sync with services/policy-manager/strategies.py.
+export type StrategyName =
+  | "round-robin"
+  | "least-connections"
+  | "latency-aware"
+  | "forecast-aware"
+  | "anomaly-aware"
+  | "ai-hybrid"
+  | "safe-fallback";
+
+export const STRATEGY_NAMES: StrategyName[] = [
+  "round-robin",
+  "least-connections",
+  "latency-aware",
+  "forecast-aware",
+  "anomaly-aware",
+  "ai-hybrid",
+  "safe-fallback",
+];
+
+export interface StrategyResponse extends PolicyUpdateResponse {
+  strategy: StrategyName;
+  // Recommended deploy-time RL_MODE pin; surfaced for the operator, never a
+  // policy field. Null when the strategy does not engage the RL plane.
+  recommended_rl_mode: "shadow" | "active" | null;
 }
 
 export interface AuditRow {
@@ -399,6 +430,13 @@ export const api = {
       method: "POST",
       headers: actor ? { "X-Actor": actor } : undefined,
       body: JSON.stringify(patch),
+    }),
+
+  setStrategy: (name: StrategyName, actor?: string) =>
+    _fetchJson<StrategyResponse>("/api/ui/policy/strategy", {
+      method: "POST",
+      headers: actor ? { "X-Actor": actor } : undefined,
+      body: JSON.stringify({ name, ...(actor ? { actor } : {}) }),
     }),
 
   auditPolicy: (limit = 50) =>

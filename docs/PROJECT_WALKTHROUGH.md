@@ -2303,8 +2303,9 @@ The sole writer of `config/policy.yaml`, sole publisher on `smartload.policy`, a
 services/policy-manager/
 ├── README.md
 ├── Dockerfile
-├── app.py            (462 lines — HTTP + write + audit + publish)
+├── app.py            (HTTP + write + audit + publish; named-strategy alias route)
 ├── validation.py     (pure validation rules)
+├── strategies.py     (pure named-strategy ⇄ primitive translation, #150)
 └── requirements.txt  (flask, redis, pyyaml, psycopg2-binary)
 ```
 
@@ -2501,7 +2502,7 @@ def _publish_policy(redis_client, merged, changed_field_names):
 
 **Routes:**
 
-`GET /api/v1/policy` — returns current policy. 404 if file missing.
+`GET /api/v1/policy` — returns current policy. 404 if file missing. The response carries a derived `strategy_name` field (#150) that reverse-maps the live `operating_mode` + `safe_mode` to the representative named strategy (or `"custom"` when no documented strategy matches). Derived on read, never persisted.
 
 `POST /api/v1/policy` — the seven-step commit flow:
 
@@ -2556,6 +2557,8 @@ def update_policy():
 The order: validate → diff → no-op or write → audit → publish. The two best-effort wrappers around audit and publish mean **the YAML write is the source of truth** — if audit and Redis both fail, the operator's commit still landed on disk and subscribers will pick it up on their next poll.
 
 `X-Actor` header records who made the change for the audit log. Defaults to `"anonymous"`.
+
+`POST /api/v1/policy/strategy` — the named-strategy alias (#150). Accepts `{"name": "<strategy>", "actor": "..."}`, translates the name to its primitives (`operating_mode` + `safe_mode` **only**) via `strategies.py`, and applies them through the **same** `_apply_policy()` helper the primitive POST uses — same validation, same audit row, same `smartload.policy` publish. The commit flow above was refactored into that shared `_apply_policy()` so both routes are one code path. The strategy endpoint surfaces the recommended `RL_MODE` for the chosen strategy in the response (`recommended_rl_mode`) but never sets it as a policy field — `RL_MODE` is a deploy-time env pin. Unknown names return 400 with `field=name` and an `allowed_strategies` list. The audit row's actor is recorded as `strategy:<name>:<actor>` so the change is grep-able by intent (mirrors the manual-actions `manual:<actor>:` convention). The six non-fallback strategies come from `shared.config_loader.STRATEGY_PRIMITIVES` (imported, not restated); `safe-fallback` is layered on in `strategies.py` as the policy-manager kill switch. Full mapping table + reverse-map rules: `docs/features/named-strategies.md`.
 
 `GET /api/v1/audit/policy?limit=N` — recent audit rows, newest first.
 
