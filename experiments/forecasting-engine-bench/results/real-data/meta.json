@@ -1,0 +1,92 @@
+{
+  "tag": "real-data",
+  "generated_utc": "2026-06-14T04:13:58.394869+00:00",
+  "protocol": {
+    "method": "rolling-origin / walk-forward",
+    "horizon_steps": 1,
+    "cadence": "1min",
+    "holdout_frac": 0.15,
+    "max_origins": 1500,
+    "scored_origins": {
+      "azure-functions-2019": 1500,
+      "worldcup98": 1500,
+      "alibaba-2018": 1500
+    },
+    "ci": {
+      "kind": "contiguous time-folds of one real series (no seeds)",
+      "n_folds": 5,
+      "method": "Student-t 95% CI via bench_stats.mean_ci"
+    },
+    "no_leakage": "engines see only series[:t]; no training touches holdout",
+    "mape_gate_pct": 20.0,
+    "arima_serving_omitted": "5-min-trained ARIMA(2,0,2) artifact; out-of-cadence on 1-min real data and slow per call \u2014 omitted, see SUMMARY"
+  },
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4",
+    "pandas": "2.3.3",
+    "scipy": "1.15.3",
+    "statsmodels": "0.14.6"
+  },
+  "moving_average_window": 60,
+  "engines": [
+    "naive",
+    "moving_average",
+    "harmonic_residual"
+  ],
+  "datasets": [
+    {
+      "name": "azure-functions-2019",
+      "samples": 20160,
+      "is_proxy": false,
+      "provenance": {
+        "source": "Azure Functions Trace 2019 (AzureFunctionsDataset2019)",
+        "role": "PRIMARY",
+        "origin_url": "https://github.com/Azure/AzurePublicDataset/blob/master/AzureFunctionsDataset2019.md",
+        "download_url": "https://github.com/Azure/AzurePublicDataset/releases/download/dataset-functions-2019/azurefunctions_dataset2019_azurefunctions-dataset2019.tar.xz",
+        "license": "CC-BY Attribution (https://github.com/Azure/AzurePublicDataset/blob/master/LICENSE)",
+        "citation": "Shahrad et al., 'Serverless in the Wild', USENIX ATC 2020.",
+        "derivation": "requests_per_minute = sum of per-function invocation counts over all 46k+ functions for each of the 1440 minute buckets, concatenated across the 14 daily files (invocations_per_function_md.anon.d01..d14).",
+        "rows": 20160,
+        "cadence": "1 minute",
+        "timestamp_note": "Trace provides anonymized minute-of-day buckets over 14 consecutive days, not absolute wall-clock. Timestamps synthesized at 1-min cadence from relative origin 2019-07-15T00:00:00 (collection period was July 2019).",
+        "is_proxy": false
+      }
+    },
+    {
+      "name": "worldcup98",
+      "samples": 125300,
+      "is_proxy": false,
+      "provenance": {
+        "source": "1998 FIFA World Cup website access logs",
+        "role": "flash-crowd scenarios",
+        "origin_url": "ita.ee.lbl.gov WorldCup98 logs; Zenodo record 5145855",
+        "zenodo_url": "https://zenodo.org/records/5145855",
+        "rate_recovery_code": "https://github.com/nimamahmoudi/worldcup98-dataset (02-generate-request-count.py)",
+        "download_url": "https://raw.githubusercontent.com/nimamahmoudi/worldcup98-dataset/master/invocation_count.csv",
+        "license": "CC-BY-4.0 (Zenodo record 5145855); underlying logs from the Internet Traffic Archive.",
+        "derivation": "Per-minute request counts recovered from the ITA WorldCup98 binary access logs by the nimamahmoudi rate-recovery tool; columns renamed period->timestamp, count->requests_per_minute. Real wall-clock timestamps retained.",
+        "cadence": "1 minute",
+        "is_proxy": false
+      }
+    },
+    {
+      "name": "alibaba-2018",
+      "samples": 12765,
+      "is_proxy": true,
+      "provenance": {
+        "source": "Alibaba Cluster Trace 2018 (cluster-trace-v2018)",
+        "role": "per-minute demand PROXY",
+        "origin_url": "https://github.com/alibaba/clusterdata/blob/master/cluster-trace-v2018/trace_2018.md",
+        "download_url": "http://clusterdata2018pubcn.oss-cn-beijing.aliyuncs.com/batch_task.tar.gz",
+        "license": "Alibaba Cluster Trace terms (academic/research use; attribution required). See alibaba/clusterdata repository.",
+        "derivation": "PROXY: requests_per_minute = sum of batch_task.instance_num grouped by floor(start_time/60) over the 8-day batch workload. This is instances-launched-per-minute, used as a demand-shape proxy, NOT true HTTP requests.",
+        "rows": 12765,
+        "cadence": "1 minute",
+        "timestamp_note": "Trace start_time is seconds from an unpublished origin; timestamps synthesized at 1-min cadence from relative origin 2018-01-01T00:00:00.",
+        "is_proxy": true
+      }
+    }
+  ],
+  "runtime_seconds": 123.2
+}

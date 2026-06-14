@@ -47,4 +47,7 @@ def select_engine(name: str, **kwargs) -> ForecastEngine:
     if name == "arima":
         from engines.arima.engine import ArimaEngine
         return ArimaEngine(**kwargs)
+    if name == "harmonic_residual":
+        from engines.harmonic_residual.engine import HarmonicResidualEngine
+        return HarmonicResidualEngine(**kwargs)
     raise ValueError(f"Unknown forecast engine: {name!r}")
