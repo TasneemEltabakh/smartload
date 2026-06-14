@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -23,7 +24,7 @@ class MovingAverageEngine(ForecastEngine):
         self.window_samples = window_samples
 
     def forecast(self, history: HistoryWindow) -> Forecast:
-        rates = history.request_rates[-self.window_samples :]
+        rates = [r for r in history.request_rates[-self.window_samples :] if math.isfinite(r)]
         if not rates:
             return Forecast(self.horizon_minutes, 0.0, 0.0, 0.0)
 

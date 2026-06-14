@@ -156,7 +156,10 @@ class ArimaEngine(ForecastEngine):
         # Cap the appended window so a long-running service doesn't pay an
         # O(history) cost per cycle. The model has already seen the full
         # training distribution; recent samples nudge the state.
-        y_recent = np.asarray(rates[-_MAX_APPEND_SAMPLES:], dtype=float)
+        recent = [r for r in rates[-_MAX_APPEND_SAMPLES:] if np.isfinite(r)]
+        if not recent:
+            raise ValueError("no finite samples to append")
+        y_recent = np.asarray(recent, dtype=float)
         updated = self._result.append(y_recent, refit=False)
         fc = updated.get_forecast(steps=1)
 
@@ -164,6 +167,9 @@ class ArimaEngine(ForecastEngine):
         ci = np.asarray(fc.conf_int(alpha=0.05))
         lower = max(float(ci.flat[0]), 0.0)
         upper = max(float(ci.flat[1]), pred)
+
+        if not (np.isfinite(pred) and np.isfinite(lower) and np.isfinite(upper)):
+            raise ValueError("non-finite forecast produced by ARIMA model")
 
         return Forecast(
             horizon_minutes=self.horizon_minutes,
@@ -174,6 +180,9 @@ class ArimaEngine(ForecastEngine):
 
     def _fallback_forecast(self, rates: list[float]) -> Forecast:
         """Mean-of-history Forecast used when the artifact is unavailable."""
+        rates = [r for r in rates if np.isfinite(r)]
+        if not rates:
+            return Forecast(self.horizon_minutes, 0.0, 0.0, 0.0)
         mean = sum(rates) / len(rates)
         if len(rates) >= 2:
             var = sum((r - mean) ** 2 for r in rates) / (len(rates) - 1)

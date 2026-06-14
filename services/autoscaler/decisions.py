@@ -92,6 +92,15 @@ def decide(
     `now_text` is a label embedded in the `reason` field so audit log entries
     distinguish forecast-driven from reactive-fallback decisions.
     """
+    if policy.per_instance_capacity_rps <= 0:
+        return Decision(
+            ACTION_NOOP,
+            current_count,
+            f"{now_text} predicted {predicted_rps:.0f} rps, but "
+            f"per_instance_capacity_rps={policy.per_instance_capacity_rps:.3g} "
+            f"is non-positive — refusing to scale on an invalid capacity",
+        )
+
     capacity = current_count * policy.per_instance_capacity_rps
 
     if predicted_rps > capacity:

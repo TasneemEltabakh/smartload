@@ -105,6 +105,18 @@ def test_forecast_fallback_never_raises(tmp_path):
     assert isinstance(f, Forecast)
 
 
+def test_forecast_fallback_finite_on_nonfinite(tmp_path):
+    """A non-finite history must yield a finite Forecast — never NaN/Inf, which
+    would otherwise propagate into the forecasts table and the autoscaler."""
+    engine = ArimaEngine(model_path=str(tmp_path / "absent.pkl"))
+    for bad in ([float("inf")] * 3, [float("nan")] * 3, [1.0, float("inf"), 3.0]):
+        f = engine.forecast(_history(bad))
+        assert isinstance(f, Forecast)
+        for v in (f.predicted_rps, f.confidence_lower, f.confidence_upper):
+            assert v == v                    # not NaN (NaN != NaN)
+            assert abs(v) != float("inf")    # not +/-Inf
+
+
 # ── loaded path (runtime / CI only) ──────────────────────────────────────────
 
 

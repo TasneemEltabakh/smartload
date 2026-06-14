@@ -1,0 +1,132 @@
+{
+  "tag": "20260614T004702Z",
+  "runtime_seconds": 754.4,
+  "interpreter": "C:\\Users\\tasne\\AppData\\Local\\Temp\\np2env\\Scripts\\python.exe",
+  "python_version": "3.11.9",
+  "numpy_version": "2.4.6",
+  "stable_baselines3_version": "2.8.0",
+  "sb3_contrib_version": "2.8.0",
+  "n_backends": 5,
+  "episode_length": 128,
+  "episodes_per_band": 40,
+  "seed_bands": [
+    {
+      "lo": 30000,
+      "hi": 30039,
+      "count": 40
+    },
+    {
+      "lo": 31000,
+      "hi": 31039,
+      "count": 40
+    },
+    {
+      "lo": 32000,
+      "hi": 32039,
+      "count": 40
+    },
+    {
+      "lo": 33000,
+      "hi": 33039,
+      "count": 40
+    },
+    {
+      "lo": 34000,
+      "hi": 34039,
+      "count": 40
+    }
+  ],
+  "sla_threshold_ms": 200.0,
+  "ci_z": 1.96,
+  "ci_method": "normal approx: mean +/- 1.96*std/sqrt(n_bands), n_bands=5",
+  "scenarios": [
+    "homogeneous",
+    "heterogeneous",
+    "degrading",
+    "near-idle",
+    "held_out_dual_degrade"
+  ],
+  "held_out_family": {
+    "name": "held_out_dual_degrade",
+    "description": "service means in [50,90] ms (disjoint from training [12,45]); TWO backends degrade simultaneously over overlapping spans (training degraded only one)."
+  },
+  "sim": "services/rl-engine/training/closed_loop_sim.py (causal M/G/c, synthetic hetero demand); held-out via harness HeldOutSimulator subclass",
+  "reward_config_diagnostic": {
+    "latency_scale": 200.0,
+    "w_tail": 0.5,
+    "w_shed": 5.0,
+    "w_spread": 0.3,
+    "note": "reward reported for transparency only; never used to rank"
+  },
+  "contender_provenance": {
+    "policy_shipped": {
+      "kind": "discrete_argmax",
+      "norm_params": {
+        "latency_scale": 100.0,
+        "request_count_scale": 95.00999999999999
+      },
+      "policy_type": "ppo",
+      "sb3_version_at_train": "2.8.0",
+      "meta_path": "G:\\smartload-recover\\services\\rl-engine\\models\\artifact_meta.json",
+      "real_network": true
+    },
+    "candidate_v2": {
+      "kind": "continuous_weights",
+      "norm_params": {
+        "latency_scale": 200.0,
+        "request_count_scale": 100.0
+      },
+      "policy_type": "ppo",
+      "sb3_version_at_train": "2.8.0",
+      "meta_path": "G:\\smartload-recover\\services\\rl-engine\\models\\candidate_v2\\artifact_meta.json",
+      "real_network": true
+    },
+    "candidate_a2c": {
+      "kind": "continuous_weights",
+      "norm_params": {
+        "latency_scale": 200.0,
+        "request_count_scale": 100.0
+      },
+      "policy_type": "a2c",
+      "sb3_version_at_train": "2.8.0",
+      "meta_path": "G:\\smartload-recover\\services\\rl-engine\\models\\candidate_a2c\\artifact_meta.json",
+      "real_network": true
+    },
+    "candidate_sac": {
+      "kind": "continuous_weights",
+      "norm_params": {
+        "latency_scale": 200.0,
+        "request_count_scale": 100.0
+      },
+      "policy_type": "sac",
+      "sb3_version_at_train": "2.8.0",
+      "meta_path": "G:\\smartload-recover\\services\\rl-engine\\models\\candidate_sac\\artifact_meta.json",
+      "real_network": true
+    },
+    "candidate_dqn": {
+      "kind": "discrete_templates",
+      "norm_params": {
+        "latency_scale": 200.0,
+        "request_count_scale": 100.0
+      },
+      "policy_type": "dqn",
+      "sb3_version_at_train": "2.8.0",
+      "meta_path": "G:\\smartload-recover\\services\\rl-engine\\models\\candidate_dqn\\artifact_meta.json",
+      "real_network": true
+    },
+    "round_robin": {
+      "kind": "classical",
+      "real_network": false
+    },
+    "least_connections": {
+      "kind": "classical",
+      "real_network": false
+    },
+    "random_shadow": {
+      "kind": "classical",
+      "real_network": false
+    }
+  },
+  "served_latency_note": "the closed-loop sim emits one served-mean-latency per 1s window (load-weighted across backends); percentiles and SLA% are over the window distribution within a seed-band, not per-request.",
+  "training_note": "training was single-seed; this is multi-seed EVALUATION only."
+}

@@ -40,6 +40,34 @@ def _policy(min_b=1, max_b=5, cap=100.0, cooldown=60.0):
     )
 
 
+# ── invalid-capacity guard ────────────────────────────────────────────────────
+
+class TestInvalidCapacity:
+    """A non-positive per_instance_capacity_rps is a misconfiguration. Without a
+    guard, capacity collapses to 0 and every positive forecast scales out to
+    max_backends. decide() must refuse to act on an invalid capacity."""
+
+    def test_zero_capacity_returns_noop(self):
+        d = decisions.decide(
+            predicted_rps=500.0,
+            current_count=2,
+            policy=_policy(cap=0.0),
+            seconds_since_last_action=None,
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert d.target_count == 2
+
+    def test_negative_capacity_returns_noop(self):
+        d = decisions.decide(
+            predicted_rps=0.0,
+            current_count=3,
+            policy=_policy(cap=-5.0),
+            seconds_since_last_action=None,
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert d.target_count == 3
+
+
 # ── scale_out path ────────────────────────────────────────────────────────────
 
 class TestScaleOut:
