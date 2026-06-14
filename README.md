@@ -54,7 +54,7 @@ absent.
 | Surface | URL | Notes |
 |---|---|---|
 | Client traffic ingress | `http://localhost:8080` | NGINX load balancer |
-| Operator UI | `http://localhost:8090` | Home + Policy editor + Audit + Actions |
+| Operator UI | `http://localhost:8090` | Flightdeck, System, Pulse, Foresight, Verdicts, Traffic, Capacity, Helmsman, Controls, Ledger |
 | API docs (Swagger UI) | `http://localhost:8090/api/docs` | Live from `docs/openapi/smartload-v1.yaml` |
 | Event docs (AsyncAPI) | `http://localhost:8090/api/asyncapi-docs` | Live from `docs/asyncapi/smartload-v1.yaml` |
 | Locust traffic simulator | `http://localhost:8089` | Synthetic load |
@@ -122,13 +122,13 @@ Integration patterns matrix (read-only console, synchronous operator, Redis list
 
 ## Operator UI
 
-Web UI at `http://localhost:8090`:
+Web UI at `http://localhost:8090`, organised into three groups in the left nav:
 
-- **Home** — service-health grid (per-backend p95 / req-min + per-container CPU/memory), structured active alerts, and throughput, polled every 10 s
-- **Policy** — read / edit operating policy with diff preview and audit trail
-- **Audit** — unified view over policy changes + scaling events with kind / actor / action filters, old/new columns, and CSV export
-- **Actions** — operator overrides (scale to N backends, isolate a backend, force route weights) with confirmation modals
-- **Live Engines** — SSE stream of decision-plane envelopes (anomaly / forecast / routing / scale)
+- **Overview** — **Flightdeck** (the flagship closed-loop overview) and **System** (whole-system topology of all ~11 services plus the data-flow between them, including the observability pipeline).
+- **Operate** — **Pulse** (per-backend vitals plus CPU/memory), **Foresight** (load forecaster and scale-ahead), **Verdicts** (the anomaly-detector feed with evidence), **Traffic** (load balancer and lb-sidecar: request distribution, upstream weights, exclusions), and **Capacity** (autoscaler: pool-vs-target, scale-ahead, audit and heartbeat).
+- **Decide** — **Helmsman** (the RL routing engine: shadow evaluation, proposed-vs-applied share, deploy-time promotion readiness), **Controls** (policy editor, `safe_mode` kill switch, and manual scale / isolate / weight overrides), and **Ledger** (the immutable audit trail across policy, scaling, and isolation, with CSV export).
+
+The console is robust either way: it looks fully operational standalone on a representative dataset and switches to live data the moment a backend is reachable, with a calm Demonstration / Live indicator and per-panel loading, empty, and error states. The data stays honest: KPI deltas, sparklines, confidence, and the flagship forecast all come from real data rather than fabricated or frozen numbers, and RL routing is shadow-by-default with deploy-time promotion (there is no live "promote" control). The interface ships a complete light / dark theme with a persisted toggle, a responsive layout (collapsing sidebar plus mobile drawer), and accessibility throughout (focus-visible, focus traps, reduced-motion, WCAG contrast).
 
 The operator UI is a **transparency + override surface**, not an admin panel — programmatic integrators use the SDK / webhooks, not the UI. Full guide: [SOT §28](docs/SOURCE_OF_TRUTH.html#sec-28-operator-ui).
 
@@ -340,7 +340,7 @@ SmartLoad is currently a single-tenant self-hosted middleware. On deck:
 | **Production hardening** | Helm chart templates, DB migrations folder, end-to-end correlation IDs, AI-service Prometheus `/metrics`, strict structural lint |
 | **Load-balancer plugins** | HAProxy, Envoy, AWS ALB adapters behind the existing `LoadBalancerAdapter` ABC |
 | **Webhook delivery** | Outbound HMAC-signed HTTP events with at-least-once retries |
-| **Operator UI** | Embedded metrics dashboards (no Grafana context switch), service log viewer, named-strategy aliases |
+| **Operator UI** | Embedded metrics dashboards (no Grafana context switch), service log viewer |
 | **Multi-tenant SaaS** | Per-tenant API keys + RBAC, rate limiting, tenant-scoped Redis namespacing — opt-in; single-tenant remains the default shape |
 
 Detailed roadmap: [GitHub milestones](https://github.com/TasneemEltabakh/smartload/milestones) · current state: [`docs/PROJECT_STATE.md`](docs/PROJECT_STATE.md).
