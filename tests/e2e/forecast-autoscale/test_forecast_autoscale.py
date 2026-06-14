@@ -35,6 +35,7 @@ import threading
 import time
 
 import pytest
+import requests
 
 from smartload_client import SmartLoadError
 
@@ -90,6 +91,31 @@ def _publish_forecast(redis_client, predicted_rps: float, horizon_minutes: int =
     return publish_envelope(
         redis_client, FORECAST_CHANNEL, source="e2e-forecast-autoscale", payload=payload,
     )
+
+
+def _scale_out_cooldown_enforced(autoscaler_url: str) -> bool:
+    """True when the active autoscaler controller suppresses a second
+    scale-out inside a cooldown window — the precondition for the
+    back-to-back-suppression contract this leg asserts.
+
+    The legacy ``step`` controller applies one symmetric cooldown
+    (``autoscaler_cooldown_seconds``) to every action, so a scale-out arms a
+    window that suppresses the next one. The ``target`` controller (the
+    default since v1.0.7br ships it as the deployed model) runs an asymmetric
+    fast-out / slow-in policy with ``AUTOSCALER_SCALE_OUT_COOLDOWN_SECONDS=0``
+    by design — consecutive forecast-driven scale-outs toward an unmet target
+    are intended, not a cooldown violation — so there is nothing to suppress.
+
+    The live controller is read from the autoscaler ``/health`` surface rather
+    than assumed from a build-time default. If ``/health`` can't be reached the
+    controller is unknown, so the suppression assertion is treated as
+    non-applicable (the surrounding suite already skips when the stack can't
+    actuate)."""
+    try:
+        body = requests.get(f"{autoscaler_url}/health", timeout=3).json()
+    except (requests.RequestException, ValueError):
+        return False
+    return str(body.get("controller", "step")).lower() == "step"
 
 
 def _wait_for_scale_event(client, forecast_event_id: str, timeout: float) -> dict | None:
@@ -172,7 +198,7 @@ class TestForecastDrivenScaling:
         )
 
     def test_cooldown_suppresses_back_to_back_forecasts(
-        self, client, redis_publisher, baseline_count, reset_cooldown,
+        self, client, redis_publisher, baseline_count, reset_cooldown, autoscaler_url,
     ):
         """Two high forecasts in quick succession produce exactly one
         scaling action. The second is dropped by the cooldown timer.
@@ -180,7 +206,20 @@ class TestForecastDrivenScaling:
         reset_cooldown restarts the autoscaler so its in-memory cooldown
         timer starts clean — otherwise a prior test's scale leaves the
         cooldown running and the first publish here would be suppressed for
-        the wrong reason."""
+        the wrong reason.
+
+        Only applies to a controller that enforces a scale-out cooldown. The
+        default ``target`` controller runs scale-out cooldown=0 (fast-out /
+        slow-in by design), so back-to-back scale-outs toward an unmet target
+        are intended and there is nothing to suppress — the suite covers the
+        forecast→scale-out path itself in test_high_forecast_triggers_scale_out."""
+        if not _scale_out_cooldown_enforced(autoscaler_url):
+            pytest.skip(
+                "active autoscaler controller does not enforce a scale-out "
+                "cooldown (target controller runs fast-out/slow-in with "
+                "scale_out_cooldown=0) — back-to-back forecast scale-outs are "
+                "intended, so there is no cooldown-suppression contract to assert"
+            )
         _ensure_headroom(client, baseline_count)
         if not reset_cooldown():
             pytest.skip("could not reset autoscaler cooldown (no Docker socket)")
