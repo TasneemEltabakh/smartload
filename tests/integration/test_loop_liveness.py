@@ -41,6 +41,26 @@ _REPO = Path(__file__).resolve().parents[2]
 
 # ── shared helpers ────────────────────────────────────────────────────────────
 
+def _reset_prometheus_registry() -> None:
+    """Unregister every collector on prometheus_client's process-global default
+    registry.
+
+    Services instantiate their metrics (`<prefix>_up`, cycle/publish counters,
+    plus service-specific decision counters) at import time against this shared
+    default registry. Importing more than one service — or re-importing the same
+    service — in a single test process therefore raises
+    `ValueError: Duplicated timeseries in CollectorRegistry`. Clearing the
+    registry between in-process (re)imports keeps each import isolated.
+    """
+    from prometheus_client import REGISTRY
+
+    for collector in list(REGISTRY._collector_to_names):
+        try:
+            REGISTRY.unregister(collector)
+        except KeyError:
+            pass
+
+
 def _import_service(name: str):
     """Import a service's app module by inserting its dir on sys.path.
 
@@ -58,7 +78,7 @@ def _import_service(name: str):
     flavour.
     """
     sibling_shared = (
-        "app", "runloop",
+        "app", "runloop", "manual",
         "engine_base", "policy_base",
         "decisions", "cluster_client",
         # plugin-folder packages live under `engines.<plugin>` /
@@ -68,6 +88,13 @@ def _import_service(name: str):
     for mod_name in list(sys.modules):
         if mod_name in sibling_shared or mod_name.startswith(("engines.", "policies.")):
             sys.modules.pop(mod_name, None)
+
+    # Each service builds a ServiceMetrics(prefix) at import time, registering
+    # `<prefix>_up` (and friends) on prometheus_client's process-global default
+    # registry. Re-importing a second service in the same process would collide
+    # ("Duplicated timeseries in CollectorRegistry"), so clear the default
+    # registry alongside the sys.modules purge.
+    _reset_prometheus_registry()
 
     svc_dir = _REPO / "services" / name
     services_dir = _REPO / "services"

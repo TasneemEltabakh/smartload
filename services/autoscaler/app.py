@@ -375,7 +375,12 @@ def _control_policy(policy: Policy):
     )
 
 
-def _decide(predicted_rps: float, current_count: int, now_text: str) -> Decision:
+def _decide(
+    predicted_rps: float,
+    current_count: int,
+    now_text: str,
+    offered_rps: float | None = None,
+) -> Decision:
     """Dispatch to the configured controller and return its Decision.
 
     Reads the live policy and cooldown clocks under `_state_lock` in a single
@@ -383,6 +388,10 @@ def _decide(predicted_rps: float, current_count: int, now_text: str) -> Decision
     delegates the choice to the pure `select_decision` in controllers.py. The
     step controller uses the single action clock; the target controller uses
     the two per-direction clocks for its asymmetric cooldowns.
+
+    `offered_rps` (the forecast upper band) sizes the target controller's
+    scale-OUT direction only; left None on the reactive/observed path, where the
+    served observed rate is the only available signal.
     """
     with _state_lock:
         policy       = _policy
@@ -400,6 +409,7 @@ def _decide(predicted_rps: float, current_count: int, now_text: str) -> Decision
         seconds_since_scale_out=since_out,
         seconds_since_scale_in=since_in,
         now_text=now_text,
+        offered_rps=offered_rps,
     )
 
 
@@ -484,6 +494,18 @@ def _handle_forecast_message(raw, cluster, db_conn, redis_client) -> None:
         log.warning("forecast payload missing required fields: %s", payload)
         return
 
+    # Forecast upper band — the arrivals/offered estimate used to size scale-OUT
+    # only. In a closed loop the point predicted_rps tracks the *served* rate,
+    # which collapses while the pool sheds, so sizing growth on it alone drains
+    # the pool instead of growing it. confidence_upper biases scale-out toward
+    # provisioning headroom and breaks that shed-feedback trap; scale-in stays on
+    # predicted_rps. Optional: a missing/invalid band falls back to predicted_rps
+    # (i.e. the prior point-estimate behaviour).
+    try:
+        offered_rps = float(payload["confidence_upper"])
+    except (KeyError, TypeError, ValueError):
+        offered_rps = predicted_rps
+
     with _state_lock:
         global _last_forecast_monotonic, _last_forecast_horizon_min
         _last_forecast_monotonic    = time.monotonic()
@@ -491,7 +513,9 @@ def _handle_forecast_message(raw, cluster, db_conn, redis_client) -> None:
 
     current_count = cluster.get_backend_count()
     with METRICS.time_cycle() as _c:
-        decision = _decide(predicted_rps, current_count, now_text="forecast")
+        decision = _decide(
+            predicted_rps, current_count, now_text="forecast", offered_rps=offered_rps,
+        )
         apply_decision(
             decision, cluster, db_conn, redis_client,
             envelope_meta.get("event_id"), current_count,

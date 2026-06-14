@@ -58,7 +58,11 @@ class TestAuditScalingRead:
         for row in rows:
             for k in ("time", "action", "instance_count"):
                 assert k in row, f"scaling audit row missing field: {k}"
-            assert row["action"] in ("scale_out", "scale_in"), (
+            # A manual scale (POST /api/v1/scale) writes one scaling_events
+            # row per operator click; when no step actuates (target == current
+            # or the cluster rejected every step) the row's action is "noop"
+            # by design, so the audit stream can legitimately carry it.
+            assert row["action"] in ("scale_out", "scale_in", "noop"), (
                 f"unexpected action: {row['action']}"
             )
 

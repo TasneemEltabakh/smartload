@@ -63,12 +63,16 @@ class TestHappyPath:
         assert merged["min_backends"] == 1
         assert merged["operating_mode"] == "hybrid"
 
-    def test_unknown_fields_accepted(self):
-        # Forward-compat: operators can add fields we don't know about yet.
-        merged = validation.validate_updates(
-            {"experimental_flag": "on"}, BASELINE,
-        )
-        assert merged["experimental_flag"] == "on"
+    def test_unknown_fields_rejected(self):
+        # Strict schema gating: a key outside CANONICAL_POLICY_FIELDS /
+        # server-managed fields is rejected so junk can't leak into
+        # config/policy.yaml. The error pinpoints the offending key.
+        with pytest.raises(validation.PolicyValidationError) as exc:
+            validation.validate_updates(
+                {"experimental_flag": "on"}, BASELINE,
+            )
+        assert exc.value.field == "experimental_flag"
+        assert "experimental_flag" in str(exc.value)
 
 
 # ── enum validation ───────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ from runloop import (  # noqa: E402
     handle_policy,
     handle_routing,
     handle_scale,
+    normalize_backend_key,
     scores_to_weights,
 )
 
@@ -650,3 +651,80 @@ def test_handle_scale_missing_mechanism_yields_none():
         {"action": "scale_out"}, adapter, ["b:8080"],
     )
     assert outcome.mechanism is None
+
+
+def test_handle_scale_reconciles_stale_exclusions(tmp_path):
+    """N3: a scale event prunes exclusions for backends no longer in the live
+    pool so a stale `down;` cannot persist against a removed member."""
+    import socket as _socket
+    from unittest.mock import patch as _patch
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "services"))
+    from shared.lb_adapters.nginx import NginxAdapter  # noqa: E402
+
+    docker = MagicMock()
+    container = MagicMock()
+    container.exec_run.return_value = (0, b"")
+    docker.containers.get.return_value = container
+    conf = tmp_path / "upstream.conf"
+
+    with _patch.object(_socket, "gethostbyname", return_value="127.0.0.1"):
+        adapter = NginxAdapter(
+            conf_path=conf,
+            nginx_container="lb",
+            docker_client=docker,
+            all_backends=["b1:8080", "b2:8080"],
+            dns_preflight=False,
+        )
+        adapter.set_upstream_weights({"b1:8080": 1, "b2:8080": 1})
+        adapter.exclude_backend("b2:8080")
+        assert "b2:8080" in adapter.current_state().excluded_backends
+
+        # b2 leaves the live pool (scale_in). The handler must drop its stale
+        # exclusion so it doesn't gate the quorum guard against a ghost member.
+        outcome = handle_scale(
+            {"action": "scale_in", "mechanism": "stop"},
+            adapter,
+            ["b1:8080"],
+        )
+
+    assert outcome.applied is True
+    assert "b2:8080" not in adapter.current_state().excluded_backends
+    assert "b1:8080" not in adapter.current_state().excluded_backends
+
+
+# ── normalize_backend_key (L4) ────────────────────────────────────────────────
+
+def test_normalize_backend_key_adds_default_port():
+    """L4: a bare hostname is normalised to host:8080 so the exclusion key
+    matches the upstream weight keys (which always carry :port)."""
+    assert normalize_backend_key("smartload-test-backend-1") == \
+        "smartload-test-backend-1:8080"
+
+
+def test_normalize_backend_key_preserves_existing_port():
+    assert normalize_backend_key("backend-1:8080") == "backend-1:8080"
+    assert normalize_backend_key("172.18.0.5:8080") == "172.18.0.5:8080"
+
+
+def test_normalize_backend_key_empty_passthrough():
+    assert normalize_backend_key("") == ""
+
+
+def test_handle_anomaly_normalises_bare_name_to_port():
+    """L4: when the registry returns a bare hostname (id not in its IP map),
+    the exclusion is keyed host:8080 so it matches the weight keys and the
+    quorum guard / renderer can see it."""
+    adapter = _adapter_with_pool(
+        {"backend-1:8080": 1, "backend-2:8080": 1},
+    )
+    registry = MagicMock(spec=BackendRegistry)
+    # Registry passes a bare name through (the id wasn't an IP it could map).
+    registry.translate_one.return_value = "backend-1"
+    outcome = handle_anomaly(
+        {"backend_id": "backend-1", "status": "unhealthy", "score": 0.9},
+        registry, adapter,
+    )
+    assert outcome.applied is True
+    assert outcome.action == "exclude"
+    # Excluded under the :8080 key, not the bare name.
+    adapter.exclude_backend.assert_called_once_with("backend-1:8080")

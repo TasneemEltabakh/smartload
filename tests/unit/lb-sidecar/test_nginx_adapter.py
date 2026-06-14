@@ -21,6 +21,7 @@ Coverage:
 
 from __future__ import annotations
 
+import socket
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -236,6 +237,108 @@ def test_excluding_one_of_several_still_renders(tmp_path):
     content = (tmp_path / "upstream.conf").read_text()
     assert "b1:8080 down" in content
     assert "b2:8080 down" not in content
+
+
+def test_quorum_guard_rewrites_when_retained_server_unresolvable(tmp_path):
+    """N2: the quorum guard only keeps the last-known-good upstream when it is
+    actually serviceable. When the retained file's only active server no longer
+    resolves (e.g. a scale-in removed it), freezing would 502 forever — so the
+    adapter rewrites instead of keeping a known-bad upstream.
+    """
+    conf = tmp_path / "upstream.conf"
+    docker = _make_docker()
+    adapter = NginxAdapter(
+        conf_path=conf,
+        nginx_container="lb",
+        docker_client=docker,
+        all_backends=["b1:8080"],
+    )
+    adapter.set_upstream_weights({"b1:8080": 50})
+    # Simulate the frozen-at-a-dead-server state: the file on disk now names
+    # only a server whose host no longer resolves (the scale-in that fired the
+    # guard removed it). This is the "last-known-good" the guard would keep.
+    conf.write_text(
+        "upstream backend_pool {\n"
+        "    server gone-backend:8080 weight=1 max_fails=3 fail_timeout=10s;\n"
+        "}\n"
+    )
+
+    real = socket.gethostbyname
+
+    def _selective(host, *a, **k):
+        if host == "gone-backend":
+            raise OSError("NXDOMAIN")
+        return real(host, *a, **k)
+
+    with patch.object(socket, "gethostbyname", side_effect=_selective):
+        # Exclude the only live backend → every known backend excluded. The
+        # retained active server (gone-backend) is unresolvable, so the guard
+        # must NOT freeze; it rewrites to the (now all-excluded) render.
+        adapter.exclude_backend("b1:8080")
+    content = conf.read_text()
+    # The dead server is gone from the active set; b1 renders as down.
+    assert "gone-backend:8080 weight" not in content
+    assert "b1:8080 down" in content
+
+
+def test_stale_down_not_inherited_when_host_unresolvable(tmp_path):
+    """L5: a `down;` server whose host no longer resolves is NOT re-imported
+    as an exclusion on startup — it would otherwise carry a phantom across
+    restarts. A `down;` whose host still resolves is still inherited."""
+    conf = tmp_path / "upstream.conf"
+    conf.write_text(
+        "upstream backend_pool {\n"
+        "    server b1:8080 weight=1 max_fails=3 fail_timeout=10s;\n"
+        "    server gone-backend:8080 down;\n"
+        "    server b2:8080 down;\n"
+        "}\n"
+    )
+
+    real = socket.gethostbyname
+
+    def _selective(host, *a, **k):
+        if host == "gone-backend":
+            raise OSError("NXDOMAIN")
+        return real(host, *a, **k)
+
+    with patch.object(socket, "gethostbyname", side_effect=_selective):
+        adapter = NginxAdapter(
+            conf_path=conf,
+            nginx_container="lb",
+            docker_client=_make_docker(),
+        )
+    excluded = adapter.current_state().excluded_backends
+    assert "gone-backend:8080" not in excluded   # stale phantom dropped
+    assert "b2:8080" in excluded                  # resolvable down kept
+
+
+def test_unresolvable_active_host_omitted_not_deferred(tmp_path):
+    """L1: a single unresolvable active backend must NOT defer the whole
+    reload — it is omitted from the active server lines while the resolvable
+    backends are written and reloaded normally."""
+    conf = tmp_path / "upstream.conf"
+    docker = _make_docker()
+    adapter = NginxAdapter(
+        conf_path=conf,
+        nginx_container="lb",
+        docker_client=docker,
+        all_backends=["b1:8080", "phantom:8080"],
+    )
+
+    real = socket.gethostbyname
+
+    def _selective(host, *a, **k):
+        if host == "phantom":
+            raise OSError("NXDOMAIN")
+        return real(host, *a, **k)
+
+    with patch.object(socket, "gethostbyname", side_effect=_selective):
+        adapter.set_upstream_weights({"b1:8080": 50, "phantom:8080": 50})
+
+    content = conf.read_text()
+    assert "b1:8080 weight=50" in content        # resolvable backend written
+    assert "phantom:8080" not in content         # phantom omitted, not deferred
+    docker.containers.get("lb").exec_run.assert_called()  # reload happened
 
 
 # ── Docker exec failure ───────────────────────────────────────────────────────

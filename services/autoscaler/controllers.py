@@ -137,6 +137,7 @@ def decide_target(
     seconds_since_scale_out: float | None,
     seconds_since_scale_in: float | None,
     now_text: str = "forecast",
+    offered_rps: float | None = None,
 ) -> Decision:
     """Return the scaling action for a target-based controller.
 
@@ -147,6 +148,16 @@ def decide_target(
 
     Multi-step: a scale-out jumps straight to the sized target (capped by
     ``max_step_out`` if set); a scale-in moves at most ``max_step_in`` per action.
+
+    ``offered_rps`` is an upper-band / arrivals estimate used to size the
+    scale-OUT direction only. In a closed loop the point ``predicted_rps`` is
+    learned from the *served* request rate, which collapses while the pool is
+    shedding — so sizing scale-out on it alone lets the loop drain instead of
+    grow (the shed-feedback trap). When ``offered_rps`` is supplied the out
+    target is sized on ``max(predicted_rps, offered_rps)`` so a wide forecast
+    band biases toward provisioning headroom and breaks the trap. Scale-IN and
+    its deadband stay on ``predicted_rps`` so the conservative drain behaviour is
+    unchanged. ``None`` (the default) reproduces the point-estimate contract.
     """
     if policy.per_instance_capacity_rps <= 0:
         return Decision(
@@ -157,26 +168,30 @@ def decide_target(
             f"is non-positive — refusing to scale on an invalid capacity",
         )
 
+    # Scale-out sizes on the robust (offered/upper-band) signal so shedding can't
+    # starve the loop; scale-in keeps sizing on the served point estimate.
+    out_rps = predicted_rps if offered_rps is None else max(predicted_rps, offered_rps)
+    out_target = target_for_load(out_rps, policy)
     target = target_for_load(predicted_rps, policy)
     cap = policy.per_instance_capacity_rps
 
     # ── scale OUT ─────────────────────────────────────────────────────────────
-    if target > current_count:
+    if out_target > current_count:
         if (seconds_since_scale_out is not None
                 and seconds_since_scale_out < policy.scale_out_cooldown_s):
             return Decision(
                 ACTION_NOOP, current_count,
-                f"{now_text} predicted {predicted_rps:.0f} rps wants "
-                f"{target} backends, scale-out cooldown active "
+                f"{now_text} offered {out_rps:.0f} rps wants "
+                f"{out_target} backends, scale-out cooldown active "
                 f"({seconds_since_scale_out:.0f}s < {policy.scale_out_cooldown_s:.0f}s)",
             )
-        step = target - current_count
+        step = out_target - current_count
         if policy.max_step_out > 0:
             step = min(step, policy.max_step_out)
         new = _clip(current_count + step, policy.min_backends, policy.max_backends)
         return Decision(
             ACTION_SCALE_OUT, new,
-            f"{now_text} predicted {predicted_rps:.0f} rps needs {target} "
+            f"{now_text} offered {out_rps:.0f} rps needs {out_target} "
             f"backends (have {current_count}); scaling out +{new - current_count}",
         )
 
@@ -271,6 +286,7 @@ def select_decision(
     seconds_since_scale_out: float | None,
     seconds_since_scale_in: float | None,
     now_text: str = "forecast",
+    offered_rps: float | None = None,
 ) -> Decision:
     """Dispatch to the configured controller.
 
@@ -278,6 +294,10 @@ def select_decision(
     cooldown clocks; anything else uses the shipped ``decide`` with the single
     action clock. The caller passes both policies and all three clocks so this
     stays a pure function of its inputs.
+
+    ``offered_rps`` (the forecast upper-band / arrivals estimate) only sizes the
+    target controller's scale-OUT direction; the shipped ``step`` rule ignores
+    it and keeps its point-estimate contract.
     """
     if kind == "target":
         return decide_target(
@@ -287,6 +307,7 @@ def select_decision(
             seconds_since_scale_out=seconds_since_scale_out,
             seconds_since_scale_in=seconds_since_scale_in,
             now_text=now_text,
+            offered_rps=offered_rps,
         )
     return decide(
         predicted_rps=predicted_rps,

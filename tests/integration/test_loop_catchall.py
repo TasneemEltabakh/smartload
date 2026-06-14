@@ -35,10 +35,29 @@ import pytest
 _REPO = Path(__file__).resolve().parents[2]
 
 
+def _reset_prometheus_registry() -> None:
+    """Unregister every collector on prometheus_client's process-global default
+    registry.
+
+    The forecasting app builds its ServiceMetrics (`forecasting_up`, …) on this
+    shared default registry at import time. Re-importing the module for the
+    second test in the same process would otherwise raise
+    `ValueError: Duplicated timeseries in CollectorRegistry`.
+    """
+    from prometheus_client import REGISTRY
+
+    for collector in list(REGISTRY._collector_to_names):
+        try:
+            REGISTRY.unregister(collector)
+        except KeyError:
+            pass
+
+
 def _flush_service_modules():
     for mod_name in list(sys.modules):
         if mod_name in ("app", "runloop", "engine_base") or mod_name.startswith("engines."):
             sys.modules.pop(mod_name, None)
+    _reset_prometheus_registry()
 
 
 def _import_forecasting(monkeypatch):

@@ -59,6 +59,28 @@ _BACKEND_INDEX_RE      = re.compile(r"-(\d+)$")
 _DEFAULT_BACKEND_PORT  = 8080
 
 
+def normalize_backend_key(backend_id: str) -> str:
+    """Return a backend id in the canonical ``host:port`` form.
+
+    Upstream weight keys, exclusion keys and live-pool entries must all use
+    the same shape or the quorum guard and exclusion logic silently miss each
+    other (L4). ``registry.translate_one`` yields ``name:port`` for ids it can
+    map, but passes a bare hostname (no ``:port``) straight through when the id
+    isn't in its IP map — e.g. an anomaly verdict published as
+    ``smartload-test-backend-1``. That bare key never matches the ``:8080``
+    weight key, so the backend neither renders ``down;`` nor is cleared by a
+    later include. Normalising every key here keeps exclusions and weights on
+    the same namespace. An id that already carries a port (or is an
+    ``ip:port``) is returned unchanged.
+    """
+    backend_id = (backend_id or "").strip()
+    if not backend_id:
+        return backend_id
+    if ":" in backend_id:
+        return backend_id
+    return f"{backend_id}:{_DEFAULT_BACKEND_PORT}"
+
+
 def _backend_index(name: str) -> int:
     """Sort key for backend container names (`smartload-test-backend-3` → 3)."""
     match = _BACKEND_INDEX_RE.search(name)
@@ -473,7 +495,10 @@ def handle_anomaly(
     status = payload.get("status", "healthy")
 
     try:
-        backend_name = registry.translate_one(raw_backend_id)
+        # Normalise to host:port (L4) so the exclusion key matches the
+        # upstream weight keys — otherwise a bare-name verdict excludes under
+        # a key the renderer / quorum guard never sees.
+        backend_name = normalize_backend_key(registry.translate_one(raw_backend_id))
 
         if status == "unhealthy":
             if _excluding_would_empty_pool(adapter, backend_name):
@@ -546,6 +571,13 @@ def handle_scale(
         )
 
     try:
+        # N3 — reconcile exclusions against the live pool before rewriting so
+        # a stale `down;` (a backend the autoscaler already removed) cannot
+        # linger and skew the quorum guard. Best-effort: adapters that don't
+        # expose reconcile_excluded keep their prior behaviour.
+        reconcile = getattr(adapter, "reconcile_excluded", None)
+        if callable(reconcile):
+            reconcile(live_backends)
         weights = {b: 1 for b in live_backends}
         adapter.set_upstream_weights(weights)
         return ScaleOutcome(

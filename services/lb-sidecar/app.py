@@ -71,6 +71,7 @@ from runloop import (  # noqa: E402
     handle_routing,
     handle_scale,
     invalidate_backend_discovery_cache,
+    normalize_backend_key,
 )
 
 app = Flask(__name__)
@@ -162,18 +163,28 @@ _shutdown_event = threading.Event()
 
 
 def _build_adapter():
-    """Instantiate the configured LoadBalancerAdapter."""
+    """Instantiate the configured LoadBalancerAdapter.
+
+    The adapter is seeded with the live docker-discovered backend pool, not
+    the raw cold-boot `ALL_BACKENDS` list (L3). The seed list contains the
+    fixed 1..5 names, but only 1-3 ever exist as containers; seeding the
+    adapter with the phantom 4/5 would put names that never resolve into the
+    working set and let them gate every render. `discover_all_backends` falls
+    back to the seed list only when the docker query returns nothing (daemon
+    not yet reachable at cold boot), so the sidecar still starts cleanly.
+    """
     if LB_ADAPTER != "nginx":
         raise ValueError(f"Unknown LB_ADAPTER: {LB_ADAPTER!r}")
     import docker
     from shared.lb_adapters.nginx import NginxAdapter
 
     docker_client = docker.from_env()
+    seed_pool = discover_all_backends(docker_client, seed_backends=ALL_BACKENDS_SEED)
     adapter = NginxAdapter(
         conf_path=NGINX_CONF_PATH,
         nginx_container=NGINX_CONTAINER,
         docker_client=docker_client,
-        all_backends=ALL_BACKENDS,
+        all_backends=seed_pool,
     )
     return adapter, docker_client
 
@@ -217,7 +228,9 @@ def _hydrate_excluded_from_db(adapter, registry: BackendRegistry) -> int:
                 continue
             if status != "unhealthy":
                 continue
-            translated = registry.translate_one(backend_id)
+            # Normalise to host:port (L4) so the hydrated exclusion key matches
+            # the upstream weight keys the renderer + quorum guard use.
+            translated = normalize_backend_key(registry.translate_one(backend_id))
             adapter.exclude_backend(translated)
             excluded += 1
     except Exception as exc:  # noqa: BLE001

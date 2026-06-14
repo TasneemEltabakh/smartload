@@ -44,7 +44,7 @@ import requests
 
 from services.shared.contracts import parse_envelope
 
-from .conftest import REDIS_URL, SERVICE_URLS, TIMESCALEDB_DSN
+from tests.integration.conftest import REDIS_URL, SERVICE_URLS, TIMESCALEDB_DSN
 
 POLICY_CHANNEL  = "smartload.policy"
 POLICY_PATH     = Path(__file__).resolve().parents[2] / "config" / "policy.yaml"

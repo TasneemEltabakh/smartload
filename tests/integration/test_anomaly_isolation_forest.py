@@ -36,13 +36,13 @@ import psycopg2
 import pytest
 import requests
 
-from ._chaos import (
+from tests.integration._chaos import (
     ANOMALOUS_DELAY_MS,
     backend_container_names,
     backend_instance_id,
     set_backend_delay,
 )
-from .conftest import SERVICE_URLS, TIMESCALEDB_DSN
+from tests.integration.conftest import SERVICE_URLS, TIMESCALEDB_DSN
 
 ANOMALY_DETECTOR_URL = SERVICE_URLS["anomaly-detector"]
 

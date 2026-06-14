@@ -334,3 +334,82 @@ def test_non_positive_capacity_refuses_to_scale():
     )
     assert d.action == ACTION_NOOP
     assert d.target_count == 4
+
+
+# ── decide_target: offered-rate (upper band) scale-out sizing ────────────────
+#
+# A1 / shed-feedback trap: in a closed loop the point predicted_rps tracks the
+# *served* rate, which collapses while the pool sheds. Sizing scale-OUT on the
+# offered/upper-band signal lets the loop grow out of the trap; scale-IN must
+# stay on the served point estimate so the conservative drain is unchanged.
+
+
+def test_offered_rps_sizes_scale_out_when_served_is_depressed():
+    # Served (predicted) point estimate is depressed by shedding to 80 rps,
+    # which alone sizes to 1 backend (ceil(80*1.15/100)=1) and would NOT scale
+    # out from 2. The offered/upper band (800 rps) sizes to 10, so the
+    # controller scales out toward it.
+    policy = _headroom_policy()
+    d = decide_target(
+        predicted_rps=80.0,
+        current_count=2,
+        policy=policy,
+        seconds_since_scale_out=None,
+        seconds_since_scale_in=None,
+        offered_rps=800.0,
+    )
+    assert d.action == ACTION_SCALE_OUT
+    assert d.target_count == 10
+
+
+def test_offered_rps_none_reproduces_point_estimate_contract():
+    # No offered band -> sizes on predicted_rps exactly as before (target 10).
+    policy = _headroom_policy()
+    d = decide_target(
+        predicted_rps=800.0,
+        current_count=2,
+        policy=policy,
+        seconds_since_scale_out=None,
+        seconds_since_scale_in=None,
+        offered_rps=None,
+    )
+    assert d.action == ACTION_SCALE_OUT
+    assert d.target_count == 10
+
+
+def test_offered_rps_does_not_force_scale_in_smaller():
+    # Offered band sizing must never shrink the pool: max(predicted, offered)
+    # can only raise the out target. With a high band the out branch never
+    # triggers a scale-in, so a depressed served estimate cannot drain via the
+    # offered path. Here served=50 sizes scale-in to 1, but the offered band
+    # (900) keeps the out target at/above current, so scale-IN still proceeds on
+    # the served estimate only — offered_rps must not change the scale-in target.
+    policy = _headroom_policy(scale_in_cooldown_s=0.0, max_step_in=1)
+    with_band = decide_target(
+        predicted_rps=50.0,
+        current_count=10,
+        policy=policy,
+        seconds_since_scale_out=None,
+        seconds_since_scale_in=None,
+        offered_rps=50.0,
+    )
+    # Served estimate of 50 sizes to 1; from 10 the controller sheds one
+    # (deadband clear, no cooldown) regardless of the band.
+    assert with_band.action == ACTION_SCALE_IN
+    assert with_band.target_count == 9
+
+
+def test_offered_below_served_falls_back_to_served_for_scale_out():
+    # max(predicted, offered) means a band lower than the point estimate cannot
+    # suppress scale-out: served=800 still sizes to 10 even if offered=100.
+    policy = _headroom_policy()
+    d = decide_target(
+        predicted_rps=800.0,
+        current_count=2,
+        policy=policy,
+        seconds_since_scale_out=None,
+        seconds_since_scale_in=None,
+        offered_rps=100.0,
+    )
+    assert d.action == ACTION_SCALE_OUT
+    assert d.target_count == 10

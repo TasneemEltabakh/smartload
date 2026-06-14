@@ -315,12 +315,13 @@ services:
       # (headroom 0.15, scale_out_cooldown 0, scale_in_cooldown 120, max_step_in 1,
       # deadband 0.15); set AUTOSCALER_CONTROLLER=step to fall back to the ±1 rule.
       AUTOSCALER_CONTROLLER: ${AUTOSCALER_CONTROLLER:-target}
-      # Dynamic-pool provisioning (#155 adaptive bench). OFF by default —
-      # the legacy #148 routing bench harness uses the toggle-only path
-      # over the 5 compose-provisioned backends. The adaptive-bench
-      # orchestrator flips this ON via an env-file at preflight and OFF at
-      # teardown.
-      AUTOSCALER_PROVISIONING_ENABLED: ${AUTOSCALER_PROVISIONING_ENABLED:-false}
+      # Dynamic-pool provisioning (#155 adaptive bench). ON by default so the
+      # closed loop can grow a dynamic pool past the compose floor under
+      # sustained load; with it off, scale-out can only re-toggle the fixed
+      # compose backends and never provisions new ones. Set
+      # AUTOSCALER_PROVISIONING_ENABLED=false to fall back to the toggle-only
+      # path over the compose-provisioned backends.
+      AUTOSCALER_PROVISIONING_ENABLED: ${AUTOSCALER_PROVISIONING_ENABLED:-true}
       AUTOSCALER_PROVISIONING_IMAGE:   ${AUTOSCALER_PROVISIONING_IMAGE:-smartload-test-backend:latest}
       AUTOSCALER_PROVISIONING_NETWORK: ${AUTOSCALER_PROVISIONING_NETWORK:-smartload_smartload-net}
       AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS: ${AUTOSCALER_PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS:-30}
