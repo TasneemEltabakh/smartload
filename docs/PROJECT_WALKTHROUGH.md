@@ -4227,7 +4227,7 @@ policy:
   operating_mode: hybrid
   safe_mode: false
   min_backends: 1
-  max_backends: 5
+  max_backends: 3
   slo_p95_latency_ms: 200
   anomaly_latency_multiplier: 3.0
   per_instance_capacity_rps: 100
