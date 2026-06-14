@@ -12,6 +12,11 @@ COPY anomaly-detector/manual.py       /app/manual.py
 COPY anomaly-detector/runloop.py      /app/runloop.py
 COPY anomaly-detector/engine_base.py  /app/engine_base.py
 COPY anomaly-detector/engines         /app/engines
+# Per-backend temporal feature extraction shared by the trend_rule (default)
+# and trend_forest engines. Without this the trend engines can't import
+# features.trend, raise on construction, and the run loop silently falls back
+# to threshold — so this COPY is load-bearing for the default engine.
+COPY anomaly-detector/features        /app/features
 # Ship the trained Isolation Forest bundle so ANOMALY_ENGINE=isolation_forest
 # can actually load it in the container — without this the engine silently
 # falls back to threshold (the model was shipped-but-unused). See issue #165.

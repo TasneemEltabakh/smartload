@@ -9,6 +9,7 @@ if str(_SERVICE_ROOT) not in sys.path:
 
 from policy_base import BackendState  # noqa: E402
 from policies.monotone.policy import MonotonePolicy  # noqa: E402
+from runloop import EnginePolicy, bootstrap_policy  # noqa: E402
 
 
 def _b(backend_id, latency_ms, queue_depth=0, health="healthy"):
@@ -76,3 +77,44 @@ def test_weights_normalised_to_unit_interval():
     total = sum(r.score for r in action.rankings)
     assert abs(total - 1.0) < 1e-9
     assert all(0.0 < r.score <= 1.0 for r in action.rankings)
+
+
+def test_constructor_accepts_runloop_kwargs():
+    # The run loop builds policies via EnginePolicy.policy_kwargs(), which passes
+    # confidence_threshold + exploration_rate + operating_mode. The constructor
+    # must accept all three without raising (raising would silently demote the
+    # service to the random_shadow baseline).
+    p = MonotonePolicy(operating_mode="hybrid", confidence_threshold=0.6,
+                       exploration_rate=0.0,
+                       model_path=str(_SERVICE_ROOT / "models" / "_does_not_exist"))
+    assert p._operating_mode == "hybrid"
+
+
+def test_constructor_absorbs_unknown_kwargs():
+    # **kwargs hardening: a future operating-policy payload that grows a new
+    # field must not make construction raise.
+    p = MonotonePolicy(operating_mode="shadow", some_future_knob=123,
+                       model_path=str(_SERVICE_ROOT / "models" / "_does_not_exist"))
+    assert p._operating_mode == "shadow"
+
+
+def test_bootstrap_the_runloop_way_loads_monotone():
+    # Reproduce the service bootstrap exactly: bootstrap_policy("monotone", ...)
+    # must return the monotone policy ready=True — never fall back to the
+    # random_shadow baseline. operating_mode=hybrid matches the live policy.yaml.
+    boot = bootstrap_policy("monotone", EnginePolicy(operating_mode="hybrid"))
+    assert boot.ready is True
+    assert boot.name == "monotone"
+    assert boot.requested == "monotone"
+    assert boot.error is None
+    assert type(boot.policy).__name__ == "MonotonePolicy"
+
+
+def test_bootstrap_monotone_ranks_heterogeneous_latency():
+    # End-to-end through the bootstrap: the run-loop-constructed policy produces
+    # a latency-monotone ranking on a heterogeneous backend pool.
+    boot = bootstrap_policy("monotone", EnginePolicy(operating_mode="hybrid"))
+    action = boot.policy.act([_b("b0", 10.0), _b("b1", 40.0), _b("b2", 120.0)])
+    by_id = {r.backend_id: r.score for r in action.rankings}
+    assert by_id["b0"] >= by_id["b1"] >= by_id["b2"]
+    assert action.mode == "active"   # hybrid operating_mode emits active intent

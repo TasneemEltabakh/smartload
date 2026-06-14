@@ -1,6 +1,6 @@
 # Forecast + Autoscale
 
-> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **Trained ARIMA artifact landed v1.0.7i** (25.0% test MAPE; ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI). **Forecasts hypertable landed v1.0.7w** — the Forecast dashboard's predicted line is now dense across the bucket interval (#159, closes §35.8). **Closed-loop autoscaler ↔ lb-sidecar coordination landed v1.0.7z** — the lb-sidecar now subscribes to `smartload.scale` and rewrites `upstream.conf` to match the live Docker pool on every scaling event (#164). **E2E suite + runnable scenario landed v1.0.7bh** — `tests/e2e/forecast-autoscale/` (migrated from `tests/integration/test_autoscaler.py`, history preserved) and `examples/scenarios/forecast-autoscale/forecast_walk.py` complete the feature triad (#140). Remaining work: tighten ARIMA MAPE, webhook fan-out (#130).
+> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **`harmonic_residual` promoted as the default forecaster** — robust harmonic-regression + AR(1)-residual + conformal bands, 5.4% MAPE (clears the <20% SOT KPI) vs arima 8.9% / moving_average 10.5%, the only engine that yields a downstream autoscaler SLA win (+6.3 SLA pp); pure NumPy, no artifact (`experiments/forecasting-engine-bench/REPORT.md`). The trained ARIMA artifact (v1.0.7i, 25.0% test MAPE) stays selectable behind `FORECAST_ENGINE=arima`; `moving_average` stays as the never-fails fallback. **Forecasts hypertable landed v1.0.7w** — the Forecast dashboard's predicted line is now dense across the bucket interval (#159, closes §35.8). **Closed-loop autoscaler ↔ lb-sidecar coordination landed v1.0.7z** — the lb-sidecar now subscribes to `smartload.scale` and rewrites `upstream.conf` to match the live Docker pool on every scaling event (#164). **E2E suite + runnable scenario landed v1.0.7bh** — `tests/e2e/forecast-autoscale/` (migrated from `tests/integration/test_autoscaler.py`, history preserved) and `examples/scenarios/forecast-autoscale/forecast_walk.py` complete the feature triad (#140). Remaining work: webhook fan-out (#130).
 
 ## What this slice delivers
 
@@ -24,7 +24,8 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 ## Implementation pointers
 
 - Forecasting service: `services/forecasting/{app,runloop,engine_base}.py` + plugin folders under `engines/`
-- Baseline engine: `services/forecasting/engines/moving_average/engine.py` — wired against `FORECAST_QUERY` (1-minute buckets, last 60 minutes by default)
+- Default engine: `services/forecasting/engines/harmonic_residual/engine.py` — robust harmonic-regression + AR(1)-residual forecaster with split-conformal bands; pure NumPy, no artifact (promoted default; `experiments/forecasting-engine-bench/REPORT.md`)
+- Baseline / fallback engine: `services/forecasting/engines/moving_average/engine.py` — wired against `FORECAST_QUERY` (1-minute buckets, last 60 minutes by default); the never-fails engine the run loop reverts to
 - ARIMA engine: `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, 25.0% test MAPE — landed v1.0.7i, closes #102, supersedes stale PR #144). Training pipeline at `tools/forecasting-training/`.
 - Autoscaler: `services/autoscaler/{app,decisions,cluster_client}.py` — Forecast subscriber + Docker SDK + cooldown + reactive fallback when forecast stream goes stale. `cluster_client.py` exposes two lifecycle pairs: `start()`/`stop()` toggle compose-provisioned containers (the default, used by the #148 routing bench), and `provision()`/`decommission()` create/destroy dynamic containers via Docker SDK (gated by `AUTOSCALER_PROVISIONING_ENABLED=true`, used by the #155 adaptive bench). `scale_out()` and `scale_in()` return `(name, mechanism)` so the published `ScalingEvent.mechanism` field records which path actuated.
 - Envelopes: `services/shared/contracts.py::ForecastResult`, `::ScalingEvent`
@@ -38,7 +39,8 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 
 - [x] Forecasting service wired (Phase-1 run loop, #138 round 2)
 - [x] Forecasting run loop enabled by default in `docker-compose.yml` (v1.0.7g)
-- [x] Moving-average baseline engine ships
+- [x] Moving-average baseline engine ships (now the artifact-free fallback)
+- [x] `harmonic_residual` engine promoted as the default forecaster (clears the <20% MAPE SLO at 5.4%; pure NumPy, no artifact)
 - [x] Autoscaler T1.3 + T1.4 wired (forecast subscriber, Docker SDK actuation, cooldown, policy live reload)
 - [x] Envelope contracts (`ForecastResult`, `ScalingEvent`) defined in `shared/contracts.py`
 - [x] Redis channels `smartload.forecast` + `smartload.scale` registered in `docs/redis-channels.md`
