@@ -308,6 +308,12 @@ jobs:
       - name: Install test dependencies
         run: pip install -r tests/integration/requirements.txt
 
+      - name: Install SDK in editable mode (for the SDK-driven e2e suites)
+        # tests/e2e/*/conftest.py import smartload_client, which pulls httpx.
+        # The forecast-autoscale e2e suite (#140) runs in this job, so the SDK
+        # must be installed here as it already is in the unit-tests job.
+        run: pip install -e clients/python
+
       - name: Start docker-compose environment
         # --scale test-backend=5 matches the 5 enumerated `server`
         # entries in services/load-balancer/nginx/nginx.conf and
