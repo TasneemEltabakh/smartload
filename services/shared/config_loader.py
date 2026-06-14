@@ -35,7 +35,7 @@ CI-watched step, matching ``shared/config.py`` and ``shared/bootstrap.py``.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 
 # Default bootstrap-file location (host path; container path is /config/...).
 DEFAULT_SMARTLOAD_PATH = "config/smartload.yml"
