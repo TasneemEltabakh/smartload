@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY policy-manager/app.py        /app/app.py
 COPY policy-manager/validation.py /app/validation.py
+COPY policy-manager/strategies.py /app/strategies.py
 COPY shared                       /app/shared
 
 ENV PORT=8086

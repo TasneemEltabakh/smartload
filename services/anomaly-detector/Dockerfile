@@ -8,6 +8,7 @@ COPY anomaly-detector/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY anomaly-detector/app.py          /app/app.py
+COPY anomaly-detector/manual.py       /app/manual.py
 COPY anomaly-detector/runloop.py      /app/runloop.py
 COPY anomaly-detector/engine_base.py  /app/engine_base.py
 COPY anomaly-detector/engines         /app/engines
