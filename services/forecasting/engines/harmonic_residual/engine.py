@@ -105,6 +105,15 @@ class HarmonicResidualEngine(ForecastEngine):
             shrink over the lead. Smaller ρ removes a noise slope faster; it has
             no effect on a strongly significant slope (shrink ≈ 1 → full linear
             projection regardless). ρ = 1 disables the ramp.
+        robust_mode: how IRLS treats large residuals.
+            ``"symmetric"`` (default) downweights both directions — the
+            accuracy-optimal choice and what the fitness function uses.
+            ``"downward"`` downweights only points the fit sits *above* (noise
+            dips) and gives points it sits *below* (upward spikes) full weight,
+            so the baseline is not robustified away from a flash crowd. This is
+            an asymmetric-loss choice for the autoscaler path — it raises the
+            forecast under a spike (better SLA, more over-provision) at the cost
+            of symmetric point accuracy, so it is **not** the default.
     """
 
     def __init__(
@@ -116,6 +125,7 @@ class HarmonicResidualEngine(ForecastEngine):
         alpha: float = 0.05,
         min_history: int = 12,
         trend_damping: float = 0.8,
+        robust_mode: str = "symmetric",
         **engine_kwargs,
     ) -> None:
         # The run loop hands every engine a uniform kwargs set (e.g.
@@ -129,6 +139,11 @@ class HarmonicResidualEngine(ForecastEngine):
         self.alpha = float(alpha)
         self.min_history = max(int(min_history), 2)
         self.trend_damping = float(np.clip(trend_damping, 1e-3, 1.0))
+        if robust_mode not in ("symmetric", "downward"):
+            raise ValueError(
+                f"robust_mode must be 'symmetric' or 'downward', got {robust_mode!r}"
+            )
+        self.robust_mode = robust_mode
 
     # ── public contract ──────────────────────────────────────────────────────
     def forecast(self, history: HistoryWindow) -> Forecast:
@@ -177,11 +192,15 @@ class HarmonicResidualEngine(ForecastEngine):
         period = self._infer_period(history.timestamps, finite.size)
 
         # Fit on a trailing window so cost is bounded and the fit tracks drift.
-        # Widen it to cover ≥3 seasonal cycles when there is data for them, so
-        # the daily basis stays identifiable at any cadence (e.g. 1-min data
-        # needs ~3×1440 samples, not the 5-min default of 1152).
+        # Widen it to cover ≥3 seasonal cycles *only when the daily cycle is
+        # actually identifiable* (≥2 periods of data). When the period dwarfs the
+        # history — e.g. per-second demand, where one "day" is 86 400 samples and
+        # there will never be a cycle — widening to 3×period would silently pull
+        # in ALL history and fit one global line over the whole curve, which lags
+        # any local trend (and would override an explicitly short fit_window). In
+        # that regime keep the configured fit_window so the trend stays local.
         window = self.fit_window
-        if window is not None and period:
+        if window is not None and period and finite.size >= 2 * period:
             window = max(window, 3 * period)
         y = finite if window is None else finite[-window:]
         n = y.size
@@ -293,13 +312,20 @@ class HarmonicResidualEngine(ForecastEngine):
 
         The reweighting is what keeps flash-crowd spikes from pulling the
         structural baseline off the calm level — the key to beating persistence
-        on the spiky profile.
+        on the spiky profile. In ``downward`` mode only points the fit sits
+        above (dips) are downweighted; upward residuals keep full weight, so the
+        baseline tracks rather than ignores a rising flash crowd (autoscaler
+        path — see robust_mode).
         """
         coef, *_ = np.linalg.lstsq(X, y, rcond=None)
         for _ in range(self.irls_iters):
             r = y - X @ coef
             mad = np.median(np.abs(r - np.median(r))) * 1.4826 + 1e-6
             w = 1.0 / (1.0 + (np.abs(r) / (3.0 * mad)) ** 2)
+            if self.robust_mode == "downward":
+                # r > 0 means the actual is above the fit (an upward spike) —
+                # keep it at full weight; only downweight the dips (r < 0).
+                w = np.where(r > 0.0, 1.0, w)
             sw = np.sqrt(w)
             coef, *_ = np.linalg.lstsq(X * sw[:, None], y * sw, rcond=None)
         return coef

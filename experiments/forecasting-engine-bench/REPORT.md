@@ -201,6 +201,58 @@ variance — a short-window robust fit is inherently a touch noisier than a trai
 mean — which cannot be removed without altering the preserved 1-step forecast.
 That is the honest floor; steady SLA remains a statistical tie.
 
+### 6.2 Integration findings under the target-based controller (cross-team)
+
+The autoscaler track ran the engine through its own *target-based* controller
+(`autoscaler-strategy-bench/eval_harmonic.py`), which feeds the engine the **full
+trailing history** and sizes capacity to a target. Two findings, both folded in:
+
+**A real bug — seasonal widening defeated locality.** The fit window was widened
+to `max(fit_window, 3·period)` to guarantee ≥3 seasonal cycles. But at the
+controller's per-second cadence one "day" is 86 400 samples, so `3·period`
+silently pulled in *all* history and fit a single global line over the whole
+30-min curve — which lags any local trend, and (worse) overrode an explicitly
+short `fit_window`. The fix: widen **only when the daily cycle is identifiable**
+(`n ≥ 2·period`); otherwise keep the configured window local. This leaves the
+5-min/1-min paths — where the cycle *is* identifiable — byte-identical (the
+fitness function and real-data results are unchanged), and only affects the
+high-cadence regime. Measured under their controller (8 seeds × 6 profiles), with
+a local `fit_window=120`:
+
+| signal | diurnal | spike | burst | aggregate SLA |
+|---|---:|---:|---:|---:|
+| harmonic, local window — **before** fix | 90.1 | 90.9 | 94.2 | 95.5 |
+| harmonic, local window — **after** fix | **99.5** | **97.8** | **97.9** | **99.1** |
+| + asymmetric robustness (`robust_mode="downward"` / IRLS off) | 99.5 | 98.0 | 98.2 | **99.2** |
+| reference: Holt trend / oracle ceiling | 99.4 | 98.5 | 98.4 | 99.2 / 99.9 |
+
+After the fix the engine **matches the hand-tuned Holt baseline (99.2 %)** and sits
+just under the 99.9 % oracle ceiling.
+
+**Asymmetric robustness for the scaler (`robust_mode`).** Symmetric IRLS treats an
+upward flash crowd as an outlier and predicts the calm baseline — accuracy-optimal
+(it is *why* the engine wins the spiky MAPE gate) but the wrong call for a scaler,
+where under-provisioning during a spike is the expensive error. The new
+`robust_mode="downward"` keeps the dip robustness but gives upward jumps full
+weight, lifting spike/burst SLA a further ~0.2 pt. It is **opt-in**: the default
+stays `"symmetric"`, so the fitness function and the forecasting service's own
+accuracy SLOs are unchanged.
+
+**Integration contract.** For the autoscaler path, construct the engine **local and
+asymmetric** and project the warm-up lead with true timestamps:
+
+```python
+HarmonicResidualEngine(fit_window=120, robust_mode="downward")  # per-second demand
+    .forecast_ahead(history_with_timestamps, steps=warmup_lead)
+```
+
+The takeaway matches the autoscaler track's: the full harmonic model (long window,
+symmetric robustness, calibrated central forecast) is the right default for the
+**forecasting service's own accuracy/coverage SLOs and longer horizons**; the
+**scaler** wants the same engine in a *local, asymmetric, lead-projecting* mode.
+Both now come from one engine via configuration — no second model, no fitness
+regression.
+
 ---
 
 ## 7. Promotion recommendation
@@ -213,6 +265,11 @@ flag**, replacing moving_average as the autoscaler's forward signal.
   trending demand and never regresses SLA elsewhere.
 - Already wired into `engine_base.select_engine("harmonic_residual")`; no new
   dependencies (pure NumPy), no artifact to ship or version, fully deterministic.
+- For the autoscaler path, configure the **scaler-facing mode**
+  (`fit_window≈120, robust_mode="downward"`, project `forecast_ahead(steps=lead)`
+  with true timestamps) — it matches the Holt baseline (99.2 %) and the oracle
+  ceiling (99.9 %) under the target-based controller (§6.2). The accuracy-optimal
+  default stays for the forecasting service's own SLOs.
 - Suggested follow-ups before flipping the default in prod: (a) wire
   `forecast_ahead(steps=w)` into the live run loop so the service emits the
   lead-time projection the autoscaler consumes; (b) revisit a multi-horizon deep

@@ -145,6 +145,42 @@ def test_insignificant_trend_reduces_projection_churn():
     assert np.std(shrunk_sig) < np.std(full_sig)
 
 
+def test_local_fit_window_respected_at_high_cadence():
+    # At per-second cadence the daily period (86400) dwarfs the history, so the
+    # seasonal-widening must NOT fire and an explicit short fit_window must be
+    # honoured (the fix that lets the autoscaler get a local trend). A short
+    # window should react to a recent ramp faster than a long one.
+    n = 1500
+    rates = [50.0] * 1000 + [50.0 + 0.5 * i for i in range(n - 1000)]  # flat→ramp
+    hw = HistoryWindow(_iso(n, step_s=1), rates)
+    local = HarmonicResidualEngine(fit_window=120).forecast_ahead(hw, 20).predicted_rps
+    longw = HarmonicResidualEngine(fit_window=1200).forecast_ahead(hw, 20).predicted_rps
+    # The local window sits nearer the current (ramped-up) level than the long
+    # one, which is still averaging in the long flat prefix.
+    assert local > longw
+
+
+def test_downward_robust_mode_raises_spike_forecast():
+    # 'downward' robustness keeps upward spikes at full weight, so under a recent
+    # upward jump it forecasts higher than the (default) symmetric mode, which
+    # robustifies the jump away. Default behaviour is unchanged.
+    rng = np.random.default_rng(5)
+    n = 400
+    base = 40.0 + rng.normal(0, 2, n)
+    base[-30:] += 60.0  # a sustained recent upward jump (flash crowd)
+    rates = base.tolist()
+    hw = HistoryWindow(_iso(n, step_s=1), rates)
+    sym = HarmonicResidualEngine(robust_mode="symmetric").forecast_ahead(hw, 20).predicted_rps
+    down = HarmonicResidualEngine(robust_mode="downward").forecast_ahead(hw, 20).predicted_rps
+    assert down > sym
+
+
+def test_robust_mode_validation():
+    import pytest
+    with pytest.raises(ValueError):
+        HarmonicResidualEngine(robust_mode="upward")
+
+
 def test_infers_one_minute_cadence_period():
     # At 1-min cadence the inferred daily period is 1440; with <2 cycles of data
     # the engine still produces a sane, finite forecast (seasonal basis dropped).

@@ -45,6 +45,29 @@ flat demand is not projected over the lead (no spurious scale churn) while a rea
 trend projects fully. The first step keeps full weight, so the single-step
 `forecast()` and the fitness-function results are unchanged.
 
+### Scaler-facing mode
+
+The accuracy-optimal default (long window, symmetric robustness, calibrated
+central forecast) is right for the forecasting service's own SLOs. An autoscaler
+has a different, asymmetric loss (under-provisioning during a spike is the
+expensive error) and a high serving cadence, so for that path configure:
+
+```python
+HarmonicResidualEngine(fit_window=120, robust_mode="downward")  # per-second demand
+    .forecast_ahead(history_with_timestamps, steps=warmup_lead)
+```
+
+- `fit_window` short → a **local** trend (the seasonal-widening only fires when a
+  daily cycle is actually identifiable, `n ≥ 2·period`, so it never overrides a
+  short window at high cadence).
+- `robust_mode="downward"` → dips are still robustified but **upward flash crowds
+  keep full weight**, so the baseline tracks a spike instead of ignoring it.
+
+Under the autoscaler's target-based controller this matches the hand-tuned Holt
+baseline (99.2 % SLA) and approaches the oracle ceiling (99.9 %). Both
+`robust_mode` and the short window are **opt-in** — the default is unchanged, so
+the fitness function and accuracy SLOs are untouched. See REPORT.md §6.2.
+
 ## Headline numbers
 
 - **Synthetic fitness fn (overall MAPE):** harmonic_residual **5.4%** vs naive
