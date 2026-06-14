@@ -32,7 +32,7 @@ import numpy as np
 if TYPE_CHECKING:
     from policy_base import BackendState
 
-N_MAX_BACKENDS: int = 5  # must equal policy.yaml max_backends
+N_MAX_BACKENDS: int = 5  # fixed obs/action tensor width; must be >= policy.yaml max_backends (currently 3); smaller live counts are zero-padded
 
 _HEALTH_FLAG: dict[str, float] = {
     "healthy":   0.0,
