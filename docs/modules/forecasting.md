@@ -40,17 +40,21 @@ band. It beats naive on MAPE and sMAPE on every synthetic profile including the
 ramp case that ARIMA cannot handle, holds calibrated 95 percent coverage, runs in
 under a millisecond, and converts into a measured downstream autoscaler SLA gain.
 
-It is a candidate. It is pure NumPy with no trained artifact and no new
-dependencies, fully deterministic. It is selected with
-`FORECAST_ENGINE=harmonic_residual`. The default engine remains `moving_average`;
-nothing about the default path changes when the candidate is not selected.
+It is pure NumPy with no trained artifact and no new dependencies, fully
+deterministic. It is now the **promoted default** (`FORECAST_ENGINE=harmonic_residual`
+in compose + `.env`), having cleared the &lt;20% MAPE SLO at 5.4% with a +6.3 SLA-pp
+downstream autoscaler win. `moving_average` stays as the artifact-free never-fails
+fallback the run loop reverts to. The run loop also drives a config-gated
+scaler-facing look-ahead: `FORECAST_LEAD_STEPS` (deployed `5` = the 5-min horizon
+at 1-min buckets) calls `forecast_ahead(steps=N)`, with `FORECAST_FIT_WINDOW=120` +
+`FORECAST_ROBUST_MODE=downward` as the scaler preset.
 
 ```mermaid
 flowchart LR
   floor["naive persistence (floor)"]
-  ma["moving_average (smoother, default)"]
+  ma["moving_average (smoother, fallback)"]
   ar["arima 2,0,2 (d=0, trend-blind)"]
-  hr["harmonic_residual (candidate)"]
+  hr["harmonic_residual (default)"]
   floor -->|"beats both shipped engines on overall MAPE"| ma
   floor --> ar
   hr -->|"beats the floor on every load shape"| floor

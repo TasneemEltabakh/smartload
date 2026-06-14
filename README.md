@@ -160,10 +160,10 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | `resource-collector` | Python | daemon | Polls Docker stats API, ships per-container CPU/memory as OTLP gauges (socket `:ro`; `list()`/`stats()` only) |
 | `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
 | `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
-| `anomaly-detector` | Python | 8082 | Threshold baseline (default) + trained Isolation Forest + trend-aware `trend_rule` / `trend_forest` (per-backend temporal features close the gradual-degradation gap) |
-| `forecasting` | Python | 8083 | Moving-average baseline (default) + trained ARIMA(3,0,1) + `harmonic_residual` (robust dynamic-harmonic regression, pure NumPy, beats naive on every load shape) |
-| `rl-engine` | Python | 8084 | Random-shadow baseline + classical `round_robin` / `least_connections` + PPO + latency-monotone `monotone` router, with `shadow`/`active` mode pin |
-| `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback; selectable target-based controller (multi-step sizing) via `AUTOSCALER_CONTROLLER=target`, default off behind the live ±1 rule |
+| `anomaly-detector` | Python | 8082 | Trend-rule engine (default; interpretable stateful trend-aware detector, closes the gradual-degradation gap, no artifact) + threshold baseline/fallback + trained trend_forest / isolation_forest (opt-in via `ANOMALY_ENGINE=`) |
+| `forecasting` | Python | 8083 | Harmonic-residual forecaster (default; beats arima/moving_average on every load shape with calibrated bands, pure NumPy no artifact) + moving-average safety fallback + trained ARIMA(3,0,1) (opt-in via `FORECAST_ENGINE=arima`) |
+| `rl-engine` | Python | 8084 | Latency-monotone capacity-aware router (`monotone`, recommended) + random-shadow / round-robin / least-connections baselines + PPO policy (selectable); `shadow`/`active` mode pin |
+| `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback; target-based controller (multi-step headroom sizing, asymmetric cooldown) is the deployed default via `AUTOSCALER_CONTROLLER=target`; the ±1 `step` rule stays selectable |
 | `policy-manager` | Python | 8086 | Operating policy REST API + audit + Redis publish on change |
 | `operator-ui` | Flask + React | 8090 | BFF + web transparency / override surface |
 | `webhook-dispatcher` | — | — | Outbound HMAC-signed HTTP events (planned) |
@@ -177,9 +177,10 @@ All three AI services (`anomaly-detector`, `forecasting`, `rl-engine`) share the
 Same shape for load-balancer adapters: `services/shared/lb_adapters/<name>/` implements the `LoadBalancerAdapter` ABC. NGINX ships; HAProxy / Envoy / ALB are stubbed.
 
 Run-loop knobs:
-- `anomaly-detector` — `ANOMALY_RUNLOOP_ENABLED`, `ANOMALY_ENGINE` (`threshold` | `isolation_forest` | `trend_rule` | `trend_forest`)
-- `forecasting` — `FORECAST_RUNLOOP_ENABLED`, `FORECAST_ENGINE` (`moving_average` | `arima` | `harmonic_residual`)
-- `rl-engine` — `RL_RUNLOOP_ENABLED`, `RL_POLICY` (`random_shadow` | `round_robin` | `least_connections` | `ppo` | `monotone`), `RL_MODE` (`shadow` | `active`)
+- `anomaly-detector` — `ANOMALY_RUNLOOP_ENABLED`, `ANOMALY_ENGINE` (`trend_rule` | `threshold` | `trend_forest` | `isolation_forest`), `ANOMALY_FLIP_CONFIRMATION_CYCLES` (default 2)
+- `forecasting` — `FORECAST_RUNLOOP_ENABLED`, `FORECAST_ENGINE` (`harmonic_residual` | `moving_average` | `arima`), `FORECAST_LEAD_STEPS` / `FORECAST_FIT_WINDOW` / `FORECAST_ROBUST_MODE` (scaler-facing look-ahead)
+- `rl-engine` — `RL_RUNLOOP_ENABLED`, `RL_POLICY` (`monotone` recommended | `random_shadow` | `round_robin` | `least_connections` | `ppo`), `RL_MODE` (`shadow` | `active`)
+- `autoscaler` — `AUTOSCALER_CONTROLLER` (`target` deployed default | `step` ±1 rule), `AUTOSCALER_HEADROOM` / `AUTOSCALER_SCALE_IN_DEADBAND` and the per-direction cooldowns for the target controller
 
 ---
 

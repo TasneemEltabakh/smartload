@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 
 # Make engine_base + plugin folders importable when this file is loaded from
@@ -44,6 +44,15 @@ from engine_base import (  # noqa: E402
 DEFAULT_HORIZON_MINUTES = 5
 DEFAULT_WINDOW_SAMPLES = 60
 
+# Scaler-facing look-ahead defaults. The CODE defaults reproduce the
+# accuracy-optimal single-step behaviour exactly (lead_steps=1, symmetric
+# robustness, engine's own fit_window), so an unconfigured deployment is
+# byte-identical to the pre-look-ahead run loop. The deployment flips these on
+# for the autoscaler path (see services/forecasting/README.md + the bench
+# REPORT.md §6.1/§6.2/§7 scaler-facing contract).
+DEFAULT_LEAD_STEPS = 1
+DEFAULT_ROBUST_MODE = "symmetric"
+
 
 @dataclass
 class EnginePolicy:
@@ -58,17 +67,45 @@ class EnginePolicy:
     dataclass tracks safe_mode (to gate publishing) and policy_version
     (for stale-publish guards). Horizon and window-samples remain engine
     defaults until a future policy field is introduced.
+
+    The scaler-facing look-ahead fields (lead_steps, fit_window, robust_mode)
+    are sourced from deployment env at startup, not from the policy payload, so
+    a live policy reload preserves them (same treatment as horizon/window). They
+    only take effect on an engine that supports them — see run_engine_forecast()
+    and engine_base.select_engine().
     """
     horizon_minutes: int = DEFAULT_HORIZON_MINUTES
     window_samples: int = DEFAULT_WINDOW_SAMPLES
     safe_mode: bool = False
     policy_version: int = 0
+    # Scaler-facing look-ahead (defaults preserve single-step accuracy mode).
+    lead_steps: int = DEFAULT_LEAD_STEPS
+    fit_window: int | None = None
+    robust_mode: str = DEFAULT_ROBUST_MODE
 
     def engine_kwargs(self) -> dict:
-        return {
+        """Uniform kwargs set handed to every engine via select_engine().
+
+        select_engine() filters this down to the params each engine's __init__
+        actually accepts, so the scaler-facing fit_window / robust_mode only
+        reach engines (the harmonic forecaster) that declare them. fit_window is
+        omitted when None so the engine keeps its own default window.
+        """
+        kwargs = {
             "horizon_minutes": self.horizon_minutes,
             "window_samples":  self.window_samples,
+            "robust_mode":     self.robust_mode,
         }
+        if self.fit_window is not None:
+            kwargs["fit_window"] = self.fit_window
+        return kwargs
+
+    def lead_steps_normalized(self) -> int:
+        """lead_steps clamped to ≥1 (a step of <1 is a no-op single step)."""
+        try:
+            return max(int(self.lead_steps), 1)
+        except (TypeError, ValueError):
+            return DEFAULT_LEAD_STEPS
 
 
 def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
@@ -90,6 +127,12 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         window_samples=fallback.window_samples,
         safe_mode=bool(payload.get("safe_mode", fallback.safe_mode)),
         policy_version=_int("policy_version", fallback.policy_version),
+        # Scaler-facing look-ahead fields are env-sourced, not policy-driven:
+        # carry them through a reload unchanged so a policy publish never
+        # silently drops the autoscaler's lead-time configuration.
+        lead_steps=fallback.lead_steps,
+        fit_window=fallback.fit_window,
+        robust_mode=fallback.robust_mode,
     )
 
 
@@ -174,6 +217,50 @@ def should_publish(policy: EnginePolicy) -> bool:
                           tick rate, so the publish is non-optional)
     """
     return not policy.safe_mode
+
+
+def run_engine_forecast(
+    engine: ForecastEngine, history: HistoryWindow, policy: EnginePolicy
+) -> Forecast:
+    """Run one inference, dispatching to the look-ahead path when configured.
+
+    Default (lead_steps=1): calls engine.forecast(history) — byte-identical to
+    the pre-look-ahead run loop. When lead_steps>1 and the loaded engine exposes
+    forecast_ahead(), the run loop asks for a true multi-step lead-time
+    projection instead (the scaler-facing mode from the bench REPORT.md §6/§7):
+    the autoscaler consumes a forecast warmup_lead buckets ahead, not one bucket.
+
+    Engines without forecast_ahead (moving_average, arima) silently keep their
+    single-step forecast() regardless of lead_steps, so flipping the env knob on
+    never crashes the loop or forces a fallback to the baseline.
+
+    On the look-ahead path the emitted Forecast is relabelled to the actual lead
+    time so the published horizon_minutes stays coherent with how far ahead the
+    point estimate really projects: FORECAST_QUERY buckets at 1 minute, so a
+    `steps`-bucket lead is `steps` minutes ahead (see relabel_horizon()).
+    """
+    steps = policy.lead_steps_normalized()
+    if steps > 1 and hasattr(engine, "forecast_ahead"):
+        forecast = engine.forecast_ahead(history, steps=steps)
+        return relabel_horizon(forecast, steps)
+    return engine.forecast(history)
+
+
+# FORECAST_QUERY buckets the request-rate series at one-minute resolution
+# (time_bucket('1 minute', ...)), so one look-ahead bucket equals one minute of
+# horizon. The published horizon_minutes is derived from the lead in buckets via
+# this cadence rather than the engine's own (single-step) label.
+FORECAST_BUCKET_MINUTES = 1
+
+
+def relabel_horizon(forecast: Forecast, lead_steps: int) -> Forecast:
+    """Return a copy of `forecast` with horizon_minutes set to the true lead.
+
+    lead_steps buckets × FORECAST_BUCKET_MINUTES min/bucket = minutes ahead.
+    Keeps the published/persisted horizon coherent with the projected distance
+    when the run loop runs the engine in look-ahead mode.
+    """
+    return replace(forecast, horizon_minutes=lead_steps * FORECAST_BUCKET_MINUTES)
 
 
 def forecast_to_event_payload(forecast: Forecast, model_id: str) -> dict:

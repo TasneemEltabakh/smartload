@@ -43,7 +43,13 @@ _DEFAULTS = dict(degr_pow=1.0, alpha=0.4, cut=3.0, cap_floor_ms=5.0, idle_load=8
 
 class MonotonePolicy(RoutingPolicy):
     def __init__(self, operating_mode: str = "shadow", model_path: str | None = None,
-                 confidence_threshold: float = 0.6, exploration_rate: float = 0.0):
+                 confidence_threshold: float = 0.6, exploration_rate: float = 0.0,
+                 **kwargs):
+        # confidence_threshold / exploration_rate are accepted for API parity
+        # with the other serving plugins; the monotone router does not consume
+        # them. **kwargs absorbs any future policy-derived constructor params so
+        # an evolving operating-policy payload never makes select_policy raise
+        # (which would silently demote the service to the random_shadow baseline).
         self._operating_mode = "hybrid" if operating_mode in ("hybrid", "learning") else "shadow"
         if model_path is None:
             model_path = str(_HERE / "models" / "candidate_mono")

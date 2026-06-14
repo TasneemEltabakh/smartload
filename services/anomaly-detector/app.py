@@ -11,7 +11,11 @@ Phase-1 mode:            enabled by ANOMALY_RUNLOOP_ENABLED=true. The service
                          to smartload.policy for live parameter reload.
 
 Engine selection (ANOMALY_ENGINE env var):
-  - "threshold" (default)  — rule-based baseline; no model artifact needed.
+  - "trend_rule" (default) — interpretable, stateful trend-aware rule engine;
+                             no model artifact needed. Closes the gradual-
+                             degradation gap the stateless engines miss.
+  - "threshold"            — stateless rule-based baseline; no model artifact.
+  - "trend_forest"         — trained model over the enriched temporal vector.
   - "isolation_forest"     — trained model from issue #101. Falls back to
                              threshold if the .pkl is missing.
 
@@ -101,10 +105,17 @@ TIMESCALEDB_URL = config.timescaledb_url()
 REDIS_URL = config.redis_url()
 
 RUNLOOP_ENABLED         = config.env_bool("ANOMALY_RUNLOOP_ENABLED", False)
-ANOMALY_ENGINE          = config.env_str("ANOMALY_ENGINE", "threshold")
+ANOMALY_ENGINE          = config.env_str("ANOMALY_ENGINE", "trend_rule")
 POLL_INTERVAL_SECONDS   = config.env_float("POLL_INTERVAL_SECONDS", 10)
 WINDOW_SECONDS          = config.env_int("ANOMALY_WINDOW_SECONDS", 60)
 TELEMETRY_SERVICE       = config.env_str("ANOMALY_TELEMETRY_SERVICE", ANOMALY_DEFAULT_SERVICE)
+# Cycles a raw status change must persist before apply_stability_gate() confirms
+# it (B2 hysteresis). Seeds the startup EnginePolicy; a smartload.policy publish
+# can still override it live via anomaly_flip_confirmation_cycles. Default tracks
+# EnginePolicy.flip_confirmation_cycles so behaviour is unchanged when unset.
+FLIP_CONFIRMATION_CYCLES = config.env_int(
+    "ANOMALY_FLIP_CONFIRMATION_CYCLES", EnginePolicy().flip_confirmation_cycles
+)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
@@ -124,7 +135,7 @@ _engine_name: str = ANOMALY_ENGINE
 _engine_requested: str = ANOMALY_ENGINE
 _engine_ready: bool = False
 _engine_error: str | None = None
-_policy: EnginePolicy = EnginePolicy()
+_policy: EnginePolicy = EnginePolicy(flip_confirmation_cycles=FLIP_CONFIRMATION_CYCLES)
 _last_inference_monotonic: float | None = None
 # Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
 _ticks_total: int = 0
