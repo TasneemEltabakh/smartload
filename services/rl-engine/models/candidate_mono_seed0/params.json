@@ -1,0 +1,25 @@
+{
+  "policy_type": "monotone_router",
+  "policy_kind": "monotone_capacity_aware",
+  "training_date": "2026-06-14T04:24:55.170939+00:00",
+  "n_max_backends": 5,
+  "monotone_config": {
+    "degr_pow": 1.3622234323772309,
+    "alpha": 0.33708000178358233,
+    "cut": 3.607522314873232,
+    "cap_floor_ms": 5.0,
+    "idle_load": 15.082361917401634
+  },
+  "train_kinds": [
+    "homogeneous",
+    "heterogeneous",
+    "degrading",
+    "near-idle"
+  ],
+  "held_out_used_in_training": false,
+  "monotone_by_construction": true,
+  "sim": "closed_loop_sim (causal M/G/c, synthetic hetero demand)",
+  "training_seed": 0,
+  "train_loss": 0.5575173651520942,
+  "n_train_seeds": 24
+}
