@@ -33,12 +33,15 @@ from engine_base import Forecast, HistoryWindow  # noqa: E402
 from runloop import (                            # noqa: E402
     DEFAULT_HORIZON_MINUTES,
     DEFAULT_WINDOW_SAMPLES,
+    FORECAST_BUCKET_MINUTES,
     EnginePolicy,
     bootstrap_engine,
     build_forecast_row,
     build_history_from_rows,
     forecast_to_event_payload,
     policy_from_payload,
+    relabel_horizon,
+    run_engine_forecast,
     serialize_engine_state,
     should_publish,
 )
@@ -206,10 +209,26 @@ def test_payload_shape():
 
 def test_engine_kwargs_includes_constructor_params():
     p = EnginePolicy(horizon_minutes=10, window_samples=120)
+    # robust_mode rides on the uniform kwargs set (defaulting to "symmetric");
+    # select_engine() filters it back out for engines that don't declare it.
+    # fit_window is omitted when None so the engine keeps its own default window.
     assert p.engine_kwargs() == {
         "horizon_minutes": 10,
         "window_samples":  120,
+        "robust_mode":     "symmetric",
     }
+
+
+def test_engine_kwargs_includes_fit_window_when_set():
+    p = EnginePolicy(fit_window=120, robust_mode="downward")
+    kwargs = p.engine_kwargs()
+    assert kwargs["fit_window"] == 120
+    assert kwargs["robust_mode"] == "downward"
+
+
+def test_engine_kwargs_omits_fit_window_when_none():
+    p = EnginePolicy(fit_window=None)
+    assert "fit_window" not in p.engine_kwargs()
 
 
 def test_engine_policy_defaults():
@@ -369,3 +388,116 @@ def test_state_publishes_total_can_lag_ticks_total_under_safe_mode():
     assert body["stats"]["ticks_total"] == 50
     assert body["stats"]["publishes_total"] == 0
     assert body["stats"]["last_publish_at"] is None
+
+
+# ── scaler-facing look-ahead (run_engine_forecast / relabel_horizon) ──────────
+
+def _rising_history(n=600, slope=0.2, step_s=60):
+    """A clean rising ramp at 1-min cadence — a look-ahead projects beyond the
+    last observation, so forecast_ahead(steps>1) differs from forecast()."""
+    base = 50.0
+    ts = ["2026-05-21T00:00:00+00:00"] + [
+        f"2026-05-21T{(i // 60) % 24:02d}:{i % 60:02d}:00+00:00" for i in range(1, n)
+    ]
+    rates = [base + slope * i for i in range(n)]
+    return HistoryWindow(timestamps=ts, request_rates=rates)
+
+
+def test_lead_steps_default_is_single_step():
+    """Default policy (lead_steps=1) → run_engine_forecast is byte-identical to
+    a direct engine.forecast() call: the default deployment is unchanged."""
+    boot = bootstrap_engine("harmonic_residual", EnginePolicy())
+    hist = _rising_history()
+    via_loop = run_engine_forecast(boot.engine, hist, EnginePolicy())
+    direct = boot.engine.forecast(hist)
+    assert via_loop.predicted_rps == direct.predicted_rps
+    assert via_loop.horizon_minutes == direct.horizon_minutes
+
+
+def test_lead_steps_gt_one_uses_forecast_ahead_and_leads():
+    """lead_steps>1 on the harmonic engine projects a look-ahead value distinct
+    from (and, on a rising ramp, above) the 1-step forecast."""
+    engine = bootstrap_engine("harmonic_residual", EnginePolicy()).engine
+    hist = _rising_history()
+    one_step = run_engine_forecast(engine, hist, EnginePolicy(lead_steps=1))
+    ahead = run_engine_forecast(engine, hist, EnginePolicy(lead_steps=20))
+    direct_ahead = engine.forecast_ahead(hist, steps=20)
+    assert ahead.predicted_rps == direct_ahead.predicted_rps
+    assert ahead.predicted_rps != one_step.predicted_rps
+    assert ahead.predicted_rps > one_step.predicted_rps  # leads a rising ramp
+
+
+def test_lead_steps_relabels_horizon_to_lead_time():
+    """The look-ahead Forecast is relabelled to the true lead (steps × bucket
+    minutes), keeping the published horizon_minutes coherent."""
+    engine = bootstrap_engine("harmonic_residual", EnginePolicy()).engine
+    ahead = run_engine_forecast(engine, _rising_history(), EnginePolicy(lead_steps=20))
+    assert ahead.horizon_minutes == 20 * FORECAST_BUCKET_MINUTES
+
+
+def test_relabel_horizon_pure_helper():
+    f = Forecast(horizon_minutes=5, predicted_rps=10.0,
+                 confidence_lower=8.0, confidence_upper=12.0)
+    out = relabel_horizon(f, 20)
+    assert out.horizon_minutes == 20 * FORECAST_BUCKET_MINUTES
+    # Only the label changes; the point estimate and band are untouched.
+    assert out.predicted_rps == 10.0
+    assert out.confidence_lower == 8.0
+    assert out.confidence_upper == 12.0
+
+
+def test_lead_steps_ignored_by_unsupported_engine():
+    """moving_average has no forecast_ahead: lead_steps>1 must NOT crash and must
+    fall through to the single-step forecast (no relabel, engine's own horizon)."""
+    engine = bootstrap_engine("moving_average", EnginePolicy()).engine
+    hist = HistoryWindow(timestamps=["t1", "t2", "t3"],
+                         request_rates=[10.0, 20.0, 30.0])
+    ahead = run_engine_forecast(engine, hist, EnginePolicy(lead_steps=20))
+    direct = engine.forecast(hist)
+    assert ahead.predicted_rps == direct.predicted_rps
+    assert ahead.horizon_minutes == direct.horizon_minutes  # not relabelled
+
+
+def test_scaler_params_do_not_break_moving_average_bootstrap():
+    """fit_window / robust_mode on the policy must not crash the moving_average
+    baseline (it declares neither): select_engine filters them out, so the
+    engine constructs and is ready — never a silent fallback for these params."""
+    policy = EnginePolicy(lead_steps=20, fit_window=120, robust_mode="downward")
+    boot = bootstrap_engine("moving_average", policy)
+    assert boot.ready is True
+    assert boot.name == "moving_average"
+    # Still produces a forecast.
+    hist = HistoryWindow(timestamps=["t1", "t2"], request_rates=[10.0, 20.0])
+    assert boot.engine.forecast(hist).predicted_rps == 15.0
+
+
+def test_scaler_params_reach_harmonic_engine_without_fallback():
+    """The scaler-facing harmonic bootstrap (lead>1, downward, local window)
+    loads ready=True — i.e. the params reach the engine, not a fallback."""
+    policy = EnginePolicy(lead_steps=20, fit_window=120, robust_mode="downward")
+    boot = bootstrap_engine("harmonic_residual", policy)
+    assert boot.ready is True
+    assert boot.name == "harmonic_residual"
+    assert boot.engine.robust_mode == "downward"
+    assert boot.engine.fit_window == 120
+
+
+def test_policy_reload_preserves_scaler_fields():
+    """A smartload.policy publish has no scaler-facing fields, so a reload must
+    carry lead_steps / fit_window / robust_mode through from the live policy."""
+    live = EnginePolicy(lead_steps=20, fit_window=120, robust_mode="downward",
+                        policy_version=2)
+    reloaded = policy_from_payload({"policy_version": 3, "safe_mode": True},
+                                   fallback=live)
+    assert reloaded.lead_steps == 20
+    assert reloaded.fit_window == 120
+    assert reloaded.robust_mode == "downward"
+    # Policy-driven fields still update.
+    assert reloaded.policy_version == 3
+    assert reloaded.safe_mode is True
+
+
+def test_lead_steps_normalized_clamps_below_one():
+    assert EnginePolicy(lead_steps=0).lead_steps_normalized() == 1
+    assert EnginePolicy(lead_steps=-5).lead_steps_normalized() == 1
+    assert EnginePolicy(lead_steps=20).lead_steps_normalized() == 20

@@ -73,9 +73,11 @@ per-backend state across cycles and from the stream of point features derives
 six backend-relative temporal signals. Two engines consume them:
 
 - **`trend_rule`** is the interpretable engine: transparent rules over the
-  temporal signals, no model artifact. It is the classical-mode engine that can
-  run when a trained bundle is unavailable, and it is the **promotion candidate**
-  (the recommended default of the two).
+  temporal signals, no model artifact. It is now the **deployed compose default**
+  (`ANOMALY_ENGINE=trend_rule`, run at `flip_confirmation_cycles=2`): it closes the
+  gradual-degradation gap (F1 0.000 → 0.845) with 0.000 clean-control false
+  positives, and does not share the Isolation-Forest over-exclusion mode that
+  forced the v1.0.7an revert to `threshold`.
 - **`trend_forest`** is the trained counterpart: a scikit-learn IsolationForest
   scored over the enriched ten-dimensional vector. It confirms that the feature
   engineering carries over to a learned model.

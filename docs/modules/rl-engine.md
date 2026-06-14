@@ -44,11 +44,15 @@ apply weights.
 ### Where the new work sits
 
 The routing-policy plane was substantially extended by PR #172, which added the
-latency-monotone capacity-aware router (`candidate_mono`, the production
-recommendation), its non-monotone benchmark foil (`candidate_maxxer`), the
-classical baselines used for comparison, and the monotonicity probe that acts as an
-acceptance gate. The remainder of this document covers the whole plane, with depth
-on those additions.
+latency-monotone capacity-aware router (`candidate_mono`), its non-monotone
+benchmark foil (`candidate_maxxer`), the classical baselines used for comparison,
+and the monotonicity probe that acts as an acceptance gate. `candidate_mono` is now
+the **deployed recommended policy** — served by the `monotone` plugin
+(`RL_POLICY=monotone`, config from `models/candidate_mono/params.json`, no pickled
+artifact). It beats the PPO bandit + every classical baseline on the closed-loop sim
+and the real HTTP stack and passes the monotonicity probe; the trained PPO (audited
+as round-robin-equivalent) stays selectable for comparison. The remainder of this
+document covers the whole plane, with depth on those additions.
 
 ---
 

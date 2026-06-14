@@ -12,7 +12,12 @@ Phase-1 mode:            enabled by FORECAST_RUNLOOP_ENABLED=true. The
                          for live parameter reload.
 
 Engine selection (FORECAST_ENGINE env var):
-  - "moving_average" (default)  — rolling-mean baseline; no model artifact.
+  - "harmonic_residual" (default) — robust harmonic-regression + AR(1)-residual
+                                  forecaster with conformal bands; pure NumPy,
+                                  no artifact. Beats arima/moving_average on
+                                  every load shape (forecasting-engine-bench).
+  - "moving_average"            — rolling-mean baseline; no model artifact. The
+                                  never-fails fallback the run loop reverts to.
   - "arima"                     — trained model from issue #102. Falls back
                                   to moving_average if the .pkl is missing.
 
@@ -62,6 +67,7 @@ from runloop import (                                          # noqa: E402
     build_history_from_rows,
     forecast_to_event_payload,
     policy_from_payload,
+    run_engine_forecast,
     serialize_engine_state,
     should_publish,
 )
@@ -80,9 +86,27 @@ TIMESCALEDB_URL = config.timescaledb_url()
 REDIS_URL = config.redis_url()
 
 RUNLOOP_ENABLED       = config.env_bool("FORECAST_RUNLOOP_ENABLED", False)
-FORECAST_ENGINE       = config.env_str("FORECAST_ENGINE", "moving_average")
+# Promoted default forecaster (forecasting-engine-bench/REPORT.md). The run loop
+# still reverts to moving_average (BASELINE_ENGINE_NAME) if this fails to load.
+FORECAST_ENGINE       = config.env_str("FORECAST_ENGINE", "harmonic_residual")
 POLL_INTERVAL_SECONDS = config.env_float("POLL_INTERVAL_SECONDS", 60)
 WINDOW_MINUTES        = config.env_int("FORECAST_WINDOW_MINUTES", 60)
+
+# Scaler-facing look-ahead knobs (forecasting-engine-bench REPORT.md §6.1/§6.2/§7
+# "scaler-facing mode"). Defaults reproduce the accuracy-optimal single-step
+# behaviour exactly, so an unset deployment is byte-identical to before:
+#   FORECAST_LEAD_STEPS  — look-ahead in FORECAST_QUERY buckets (1-min each). 1 →
+#       single-step forecast(); >1 → forecast_ahead(steps=…) on engines that
+#       support it (harmonic_residual). Deployed value = forecast horizon /
+#       bucket cadence.
+#   FORECAST_FIT_WINDOW  — trailing samples the harmonic engine fits per call.
+#       Empty/0 → the engine keeps its own default (accuracy-optimal long window).
+#   FORECAST_ROBUST_MODE — "symmetric" (default, accuracy-optimal) | "downward"
+#       (asymmetric, scaler-facing — lifts the forecast under an upward spike).
+FORECAST_LEAD_STEPS   = config.env_int("FORECAST_LEAD_STEPS", 1)
+_fit_window_raw       = config.env_int("FORECAST_FIT_WINDOW", 0)
+FORECAST_FIT_WINDOW   = _fit_window_raw if _fit_window_raw > 0 else None
+FORECAST_ROBUST_MODE  = config.env_str("FORECAST_ROBUST_MODE", "symmetric")
 
 # Liveness threshold for /health (#163): if the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
@@ -105,7 +129,14 @@ _engine_name: str = FORECAST_ENGINE
 _engine_requested: str = FORECAST_ENGINE
 _engine_ready: bool = False
 _engine_error: str | None = None
-_policy: EnginePolicy = EnginePolicy()
+# Seed the live policy with the env-sourced scaler-facing look-ahead config. A
+# subsequent smartload.policy reload preserves these fields (they are not policy
+# payload-driven — see runloop.policy_from_payload).
+_policy: EnginePolicy = EnginePolicy(
+    lead_steps=FORECAST_LEAD_STEPS,
+    fit_window=FORECAST_FIT_WINDOW,
+    robust_mode=FORECAST_ROBUST_MODE,
+)
 _last_inference_monotonic: float | None = None
 # Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
 _ticks_total: int = 0
@@ -166,7 +197,7 @@ def _inference_cycle(db_conn, redis_client) -> int:
         return 0
 
     try:
-        forecast = engine.forecast(history)
+        forecast = run_engine_forecast(engine, history, policy)
     except Exception as exc:                            # noqa: BLE001
         print(f"[{SERVICE_NAME}] engine.forecast failed: {exc}", flush=True)
         return 0

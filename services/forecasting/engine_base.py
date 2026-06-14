@@ -9,6 +9,7 @@ with per-plugin `engines/<plugin>/engine.py`.
 
 from __future__ import annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -40,14 +41,37 @@ class ForecastEngine(ABC):
         """Optional hook called when policy changes."""
 
 
+def _accepted_kwargs(cls, kwargs: dict) -> dict:
+    """Filter `kwargs` down to the ones `cls.__init__` can accept.
+
+    The run loop hands every engine a single uniform kwargs set (horizon +
+    window-samples for the smoother, plus the scaler-facing fit_window /
+    robust_mode for the harmonic forecaster). Engines whose __init__ declares
+    ``**kwargs`` absorb the extras themselves, but the ones that don't
+    (moving_average) would raise TypeError on a param they never declared —
+    which, for the moving_average baseline, would defeat the fallback. So drop
+    any param the constructor neither names nor catches via **kwargs.
+    """
+    sig = inspect.signature(cls.__init__)
+    params = sig.parameters.values()
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return dict(kwargs)   # **kwargs present → engine absorbs anything
+    named = {
+        p.name for p in params
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                      inspect.Parameter.KEYWORD_ONLY)
+    }
+    return {k: v for k, v in kwargs.items() if k in named}
+
+
 def select_engine(name: str, **kwargs) -> ForecastEngine:
     if name == "moving_average":
         from engines.moving_average.engine import MovingAverageEngine
-        return MovingAverageEngine(**kwargs)
+        return MovingAverageEngine(**_accepted_kwargs(MovingAverageEngine, kwargs))
     if name == "arima":
         from engines.arima.engine import ArimaEngine
-        return ArimaEngine(**kwargs)
+        return ArimaEngine(**_accepted_kwargs(ArimaEngine, kwargs))
     if name == "harmonic_residual":
         from engines.harmonic_residual.engine import HarmonicResidualEngine
-        return HarmonicResidualEngine(**kwargs)
+        return HarmonicResidualEngine(**_accepted_kwargs(HarmonicResidualEngine, kwargs))
     raise ValueError(f"Unknown forecast engine: {name!r}")

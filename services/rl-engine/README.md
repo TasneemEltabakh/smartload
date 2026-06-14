@@ -2,21 +2,24 @@
 
 Routing decision engine. Publishes `RoutingRecommendation` to `smartload.routing`. Runs in shadow mode by default; can flip to active when policy `operating_mode=hybrid` and a trained policy is loaded.
 
-The trained `ppo` policy is a **contextual bandit** (state → chosen backend) optimised with MaskablePPO on logged Alibaba traces — not an MDP-trained RL agent. The offline simulator replays trace windows independently of the agent's action, so the model learns to predict which backend will have low latency in the next window, not the consequence of its routing on the system. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX `max_fails`, anomaly-detector exclusions, autoscaler reactivity). See `services/rl-engine/training/simulator.py` for the framing rationale.
+The recommended routing policy is `monotone` — a latency-**monotone**, capacity-aware router (`candidate_mono`). It is monotone by construction (it never routes more traffic to a slower backend), passes the mandatory latency-monotonicity probe (max weight-rise 0.0), Pareto-beats the previous-best PPO candidate on the homogeneous scenario, reduces SLA violations on 4/5 closed-loop scenarios, and beats every classical baseline (p2c / JSQ / LRT / WLC) on the adaptive scenarios. On the real-HTTP live-stack cross-check it beats the PPO candidate on per-request p95 and SLA on both scenarios while shedding 0%. It loads its parameters from a small `params.json` (`models/candidate_mono/`); it uses **no** pickled artifact. See `experiments/rl-routing-bench/REPORT.md`.
+
+The trained `ppo` policy remains selectable but is **not** the routing path. It is a **contextual bandit** (state → chosen backend) optimised with MaskablePPO on logged Alibaba traces — not an MDP-trained RL agent. The offline simulator replays trace windows independently of the agent's action, so the model learns to predict which backend will have low latency in the next window, not the consequence of its routing on the system. An audit found it round-robin-equivalent in practice; it is kept for comparison and reproducibility. The closed-loop "consequence" axis lives in the deterministic safety machinery (NGINX `max_fails`, anomaly-detector exclusions, autoscaler reactivity). See `services/rl-engine/training/simulator.py` for the framing rationale.
 
 ## Role
 - Polls TimescaleDB every `POLL_INTERVAL_SECONDS` for current per-backend state
-- Runs the configured policy (random / round-robin / least-connections baselines + ppo)
+- Runs the configured policy (`monotone` recommended; random / round-robin / least-connections baselines + ppo also selectable)
 - Publishes `RoutingRecommendation` with `mode=shadow` or `mode=active`
 
 ## Policies
 Pluggable — one folder per policy. See `policies/`.
+- `monotone/` — **recommended** latency-monotone capacity-aware router (`candidate_mono`); ranks by online capacity estimate / current slowness, with a hard-shed of far-slower backends and load-adaptive damping. Monotone by construction; config from `models/candidate_mono/params.json`.
 - `random_shadow/` — uniform-random backend ranking, mode always shadow (sanity baseline)
 - `round_robin/` — stable backend_id-pointer rotation across eligible backends
 - `least_connections/` — ranks by ascending `queue_depth` (= window request count) among eligibles
-- `ppo/` — contextual bandit trained with MaskablePPO; argmax-dominant weighting at serve time
+- `ppo/` — contextual bandit trained with MaskablePPO; argmax-dominant weighting at serve time (kept for comparison, not the recommended path)
 
-Selection: `RL_POLICY` env var.
+Selection: `RL_POLICY` env var (recommended value `monotone`).
 
 ## Backend eligibility (health gating)
 
@@ -36,7 +39,7 @@ The anomaly-detector's verdicts on `smartload.anomaly` take precedence over loca
 ## Env vars
 - `TIMESCALEDB_URL`, `REDIS_URL`
 - `RL_RUNLOOP_ENABLED` (default `true` since v1.0.7g; was `false` before) — set to `false` to revert to the Phase-0 stub (no run loop, `/health` only). The `RL_MODE=shadow` default below is the routing-safety pin: even with the run loop on, the LB sidecar ignores any envelope whose `mode != "active"`. See SOT §8.7 + issue #138.
-- `RL_POLICY` (default `random_shadow`) — `random_shadow` | `ppo`. If the requested policy fails to load (e.g. missing `policy.zip`), the service falls back to `random_shadow` and reports `policy_ready=false` on `/health`.
+- `RL_POLICY` (default `random_shadow`; **recommended `monotone`**) — `monotone` | `random_shadow` | `round_robin` | `least_connections` | `ppo`. `monotone` is the recommended routing policy (latency-monotone capacity-aware router, config from `models/candidate_mono/params.json`, no pickled artifact). If the requested policy fails to load (e.g. missing artifact), the service falls back to `random_shadow` and reports `policy_ready=false` on `/health`.
 - `RL_MODE` (default `shadow`) — `shadow` | `active`. **Operator pin on the published `mode` field.** Even if the loaded policy would emit `mode=active`, the run loop forces `shadow` unless `RL_MODE=active` AND the policy itself agrees AND `safe_mode=false` in the operating policy.
 - `POLL_INTERVAL_SECONDS` (default 5)
 - `RL_WINDOW_SECONDS` (default 30) — DB lookback window passed to `RL_STATE_QUERY`.
@@ -92,7 +95,7 @@ The trained PPO policy was optimised for `Discrete(N_MAX_BACKENDS)` — picks on
 ## Status
 
 - Phase 0 stub: `/health` only — **default**
-- Phase 1 run loop (this folder): wired behind `RL_RUNLOOP_ENABLED`. All four baseline policies + the trained PPO bandit ship today.
+- Phase 1 run loop (this folder): wired behind `RL_RUNLOOP_ENABLED`. The recommended `monotone` router + all four baseline policies + the trained PPO bandit ship today.
 
 ## Integrating a trained policy
 

@@ -37,19 +37,21 @@ oscillation. The benchmark shows this lifts SLA compliance from the shipped
 77.2 % to 98.3 % on the same input signal, and breaks the flash-crowd "spike
 ceiling" that pinned even the perfect-foresight oracle at 88.0 %.
 
-### 1.2 Implementation status: wired and selectable, off by default
+### 1.2 Implementation status: wired, and the deployed default
 
 The target-based controller is **implemented** (`controllers.py`),
 **unit-tested** (the controller decisions plus the app-level wiring), and
-**benchmarked** (synthetic, real-trace, and frontier results below). It is now
-**wired into the serving path** behind a controller selector that defaults to
-the shipped rule, so the production default is unchanged unless an operator opts
-in.
+**benchmarked** (synthetic, real-trace, and frontier results below). It is
+**wired into the serving path** behind a controller selector, and is now the
+**deployed default** (`AUTOSCALER_CONTROLLER=target` in compose + `.env`): 98.3% SLA
+with the moving-average signal and 99.2% with the forward forecast, vs the ±1
+rule's ~77%. The in-code default stays `step` so existing integration / e2e tests
+exercise the unchanged single-step path; the deployment opts into `target`.
 
 `app.py` reads `AUTOSCALER_CONTROLLER` at boot:
 
-- `step` (default) keeps `decisions.decide`, the plus-or-minus-one rule, at both
-  decision sites (the forecast-driven tick and the reactive fallback);
+- `step` (in-code default) keeps `decisions.decide`, the plus-or-minus-one rule, at
+  both decision sites (the forecast-driven tick and the reactive fallback);
 - `target` routes both sites through `controllers.decide_target`, tracking two
   independent scale-out / scale-in cooldown clocks and actuating multi-step
   jumps toward the sized target.
