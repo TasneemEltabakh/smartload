@@ -37,55 +37,53 @@ oscillation. The benchmark shows this lifts SLA compliance from the shipped
 77.2 % to 98.3 % on the same input signal, and breaks the flash-crowd "spike
 ceiling" that pinned even the perfect-foresight oracle at 88.0 %.
 
-### 1.2 Implementation status: implemented and benchmarked, NOT yet wired
-
-This distinction is load-bearing and is stated up front so the chapter does not
-overclaim.
+### 1.2 Implementation status: wired and selectable, off by default
 
 The target-based controller is **implemented** (`controllers.py`),
-**unit-tested** (`test_controllers.py`, 22 deterministic tests), and
-**benchmarked** (synthetic, real-trace, and frontier results below). It is **not
-yet wired into the serving path.** The live decision path is still
-`decisions.decide` (the plus-or-minus-one rule). Two facts confirm this:
+**unit-tested** (the controller decisions plus the app-level wiring), and
+**benchmarked** (synthetic, real-trace, and frontier results below). It is now
+**wired into the serving path** behind a controller selector that defaults to
+the shipped rule, so the production default is unchanged unless an operator opts
+in.
 
-1. `services/autoscaler/app.py` imports only from `decisions` and calls
-   `decide(...)` at its two decision sites (the forecast-driven tick and the
-   reactive fallback). It does not import `controllers` and never calls
-   `decide_target`.
-2. The Dockerfile copies `app.py`, `cluster_client.py`, `decisions.py`,
-   `manual.py`, and `shared/` into the image. It does **not** copy
-   `controllers.py`. The controller source is therefore absent from the running
-   container even if app.py were changed to import it.
+`app.py` reads `AUTOSCALER_CONTROLLER` at boot:
+
+- `step` (default) keeps `decisions.decide`, the plus-or-minus-one rule, at both
+  decision sites (the forecast-driven tick and the reactive fallback);
+- `target` routes both sites through `controllers.decide_target`, tracking two
+  independent scale-out / scale-in cooldown clocks and actuating multi-step
+  jumps toward the sized target.
+
+The selection is surfaced on `/health` as `"controller": "step" | "target"` and
+logged once at startup. The Dockerfile now copies `controllers.py` into the
+image, so the controller source ships in the running container regardless of the
+selected mode.
 
 ```mermaid
 flowchart LR
-  subgraph live["Live serving path (today)"]
-    APP["app.py"] -->|"calls"| DEC["decisions.decide (plus/minus 1)"]
-  end
-  subgraph bench["Implemented and benchmarked (not wired)"]
-    CTRL["controllers.decide_target (target-based)"]
-    TST["test_controllers.py (22 tests)"]
-    EXP["experiments/autoscaler-strategy-bench"]
-    CTRL --- TST
-    CTRL --- EXP
-  end
-  DOCK["Dockerfile COPY set"] -.->|"includes decisions.py, NOT controllers.py"| DEC
+  ENV["AUTOSCALER_CONTROLLER"] --> SEL{"controller kind"}
+  APP["app.py decision sites"] --> SEL
+  SEL -- "step (default)" --> DEC["decisions.decide (plus/minus 1)"]
+  SEL -- "target" --> CTRL["controllers.decide_target (target-based)"]
+  DEC --> ACT["controllers.actuate_to_target -> cluster_client"]
+  CTRL --> ACT
+  DOCK["Dockerfile COPY set"] -.->|"now includes controllers.py"| CTRL
 ```
 
-Two steps are required before the controller is live. They are the same class of
-gap that the #150/#146 fix closed for `strategies.py` and `manual.py` (source
-files that existed and were tested but were not copied into the image):
+The two-step gap that previously kept the controller dark (not imported by
+`app.py`, not copied into the image) is closed: `app.py` imports the wiring
+helpers from `controllers`, and the Dockerfile carries `controllers.py`. The
+target-based tuning is exposed as deploy-time environment variables
+(`AUTOSCALER_HEADROOM`, `AUTOSCALER_SIZING`, `AUTOSCALER_QOS_BETA`,
+`AUTOSCALER_SCALE_OUT_COOLDOWN_SECONDS`, `AUTOSCALER_SCALE_IN_COOLDOWN_SECONDS`,
+`AUTOSCALER_MAX_STEP_OUT`, `AUTOSCALER_MAX_STEP_IN`,
+`AUTOSCALER_SCALE_IN_DEADBAND`); `min_backends`, `max_backends`, and
+`per_instance_capacity_rps` still come from the live policy, so a runtime policy
+reload continues to move the bounds for both controllers.
 
-1. **Wire** `controllers.decide_target` into `app.py` in place of (or selectable
-   alongside) `decisions.decide`, including tracking the two independent cooldown
-   timers in place of the single cooldown clock and teaching the actuation path
-   to apply a multi-step target instead of plus-or-minus-one.
-2. **Copy** the source into the image: add `COPY autoscaler/controllers.py
-   /app/controllers.py` to the Dockerfile.
-
-Until both land, every benchmark number for the controller describes a validated
-candidate, not production behaviour. The shipped `decide()` rule remains the
-default and is left untouched by PR #169.
+The shipped `decide()` rule remains the default and is left behaviourally
+untouched: with `step` selected, the actuation path applies exactly one instance
+per action as before.
 
 ---
 
@@ -93,13 +91,14 @@ default and is left untouched by PR #169.
 
 | Path | Role | Status |
 |---|---|---|
-| `services/autoscaler/decisions.py` | Shipped plus-or-minus-one decision rule (`decide`, `Policy`, `policy_from_payload`, `Decision`, action constants) | **Live** (imported by app.py, copied into image) |
-| `services/autoscaler/app.py` | Service entrypoint; calls `decide()` at the forecast and reactive sites | **Live** |
+| `services/autoscaler/decisions.py` | Shipped plus-or-minus-one decision rule (`decide`, `Policy`, `policy_from_payload`, `Decision`, action constants) | **Live** (default controller; copied into image) |
+| `services/autoscaler/app.py` | Service entrypoint; selects the controller via `AUTOSCALER_CONTROLLER` and dispatches at the forecast and reactive sites | **Live** |
 | `services/autoscaler/manual.py` | Operator manual-override path | **Live** (copied into image) |
 | `services/autoscaler/cluster_client.py` | Actuation: applies a backend count | **Live** |
-| `services/autoscaler/controllers.py` | Target-based controller (`ControlPolicy`, `target_for_load`, `decide_target`) | **Benchmarked only** (NOT imported by app.py, NOT copied into image) |
-| `services/autoscaler/test_controllers.py` | 22 unit tests for the controller | Tests (CI) |
-| `services/autoscaler/Dockerfile` | Image build; copies decisions/manual/app, not controllers | Build |
+| `services/autoscaler/controllers.py` | Target-based controller (`ControlPolicy`, `target_for_load`, `decide_target`) plus the wiring helpers (`control_policy_from`, `select_decision`, `actuate_to_target`) | **Live** (imported by app.py, copied into image; selected by `AUTOSCALER_CONTROLLER=target`) |
+| `tests/unit/autoscaler/test_controllers.py` | Unit tests for the controller decisions | Tests (CI) |
+| `tests/unit/autoscaler/test_controller_wiring.py` | Unit tests for the controller selection + actuation glue | Tests (CI) |
+| `services/autoscaler/Dockerfile` | Image build; copies decisions/manual/controllers/app + shared | Build |
 | `experiments/autoscaler-strategy-bench/REPORT.md` | Full write-up (controllers, sizing laws, oracle, spike ceiling, forecaster integration) | Benchmark |
 | `experiments/autoscaler-strategy-bench/results/improved/SUMMARY.md` | Synthetic results (6 profiles x 8 seeds) | Benchmark |
 | `experiments/autoscaler-strategy-bench/results/improved_real/SUMMARY_REAL.md` | Real-trace results (3 sources x 8 windows) | Benchmark |
@@ -343,7 +342,7 @@ post-shed capacity `300 >= 195`, so it sheds one to 3.
 | Slew rate | capped at one instance per cooldown window | unbounded scale-out per action (unless `max_step_out` set) |
 | Forecast use | one input rate per tick | one input rate per tick; signal is interchangeable (oracle / MA / reactive / trend / harmonic) |
 | Safety margin | none beyond the integer boundary | tunable `headroom` (or `qos_beta`) tracing the Pareto frontier |
-| Status | live in the image and serving path | implemented, tested, benchmarked, not yet wired |
+| Status | default controller (`AUTOSCALER_CONTROLLER=step`) | wired and selectable (`AUTOSCALER_CONTROLLER=target`); off by default |
 
 ---
 
@@ -573,14 +572,15 @@ Conclusions for the integration:
 
 ## 8. Caveats and limitations
 
-- **Not yet wired (the primary caveat).** Everything in section 6 and 7
-  describes a benchmarked candidate, not production behaviour. The live serving
-  path is still `decisions.decide`. `controllers.py` is not imported by `app.py`
-  and is not copied into the Docker image. Activation requires the two steps in
-  section 1.2: wire `decide_target` into `app.py` (tracking two cooldown timers
-  and a multi-step actuation) and add the `COPY` line to the Dockerfile. The
-  report scopes PR #169 to the benchmark and explicitly defers wiring to a later
-  PR, keeping `decide()` the default until the live path is integration-tested.
+- **Off by default (the primary caveat).** The controller is wired and
+  selectable, but the production default is still `decisions.decide`: it only
+  takes the serving path when an operator sets `AUTOSCALER_CONTROLLER=target`.
+  Everything in section 6 and 7 was measured on the benchmark harness, not on
+  the live stack; the live behaviour of `target` mode has unit coverage for the
+  decision and actuation glue but has not yet been exercised end-to-end against
+  a running cluster, so a live integration test (forecast-driven multi-step
+  scale-out under provisioning) remains the recommended next step before making
+  `target` the default.
 - **Oracle gap.** C1 (controller + oracle) is an explicit upper-bound reference
   using true future demand, not a deployable controller. The realistic gap is
   C2/C4 (98.3 / 99.2 % synthetic, 96.3 / 97.9 % real) against the C1 ceiling

@@ -1927,11 +1927,12 @@ services/autoscaler/
 ├── Dockerfile
 ├── app.py              (462 lines — Redis + DB I/O + Flask /health)
 ├── cluster_client.py   (Docker SDK abstraction)
-├── decisions.py        (pure scale logic — the live ±1 path)
-├── controllers.py      (target-based sizing — benchmarked, not yet wired)
-├── test_controllers.py (22 unit tests for the controllers)
+├── decisions.py        (pure scale logic — the default ±1 path)
+├── controllers.py      (target-based sizing + wiring helpers — selectable)
 └── requirements.txt    (flask, psycopg2-binary, redis, docker, PyYAML)
 ```
+
+(Controller unit tests now live in `tests/unit/autoscaler/test_controllers.py` and `tests/unit/autoscaler/test_controller_wiring.py`, on the CI test path.)
 
 #### `Dockerfile`
 
@@ -1939,19 +1940,22 @@ services/autoscaler/
 COPY autoscaler/app.py            /app/app.py
 COPY autoscaler/cluster_client.py /app/cluster_client.py
 COPY autoscaler/decisions.py      /app/decisions.py
+COPY autoscaler/controllers.py    /app/controllers.py
+COPY autoscaler/manual.py         /app/manual.py
 COPY shared                       /app/shared
 ```
 
-Same `shared` pull-in pattern as telemetry. Three source files + `shared`.
+Same `shared` pull-in pattern as telemetry; `controllers.py` now ships in the image so the target controller is selectable at runtime.
 
-#### `controllers.py` — target-based sizing (v1.0.7bl, #169)
+#### `controllers.py` — target-based sizing (v1.0.7bl #169, wired v1.0.7bp)
 
-A second, richer sizing module that lands **alongside** `decisions.py` but is **not yet wired into `app.py`** — the live decision path is still `decisions.decide()` (the ±1 step described below). Everything in `controllers.py` is, like `decisions.py`, a pure function of its inputs (no clock, no I/O), so it is fully unit-tested (`test_controllers.py`, 22 tests) and benchmarked offline before being trusted with the lever.
+A second, richer sizing module that lands **alongside** `decisions.py` and is now **wired into `app.py` behind a selector** (`AUTOSCALER_CONTROLLER`, default `step` = the live `decisions.decide()` ±1 path; `target` = this controller). Everything in `controllers.py` is, like `decisions.py`, a pure function of its inputs (no clock, no I/O), so it is fully unit-tested and benchmarked offline before being trusted with the lever.
 
 - `target_for_load(load_rps, policy)` — sizes directly to a target instance count under one of two laws: **headroom** (size to keep utilisation under a target) and **square-root-staffing** (adds a √load safety term for burst absorption). Clamped to `[min_backends, max_backends]`; a non-positive capacity falls back to `min_backends` instead of dividing by zero.
 - `decide_target(...)` — wraps the sizing law with **asymmetric cooldowns** (scale-out fires fast, scale-in waits longer), a **scale-in deadband** (hysteresis so it does not oscillate around the boundary), and **multi-step** jumps (size straight to target instead of ±1 per cycle).
+- `control_policy_from(...)` / `select_decision(...)` / `actuate_to_target(...)` — the pure wiring helpers `app.py` delegates to: build the `ControlPolicy` from the live policy bounds + deploy-time tuning, pick `decide` vs `decide_target`, and drive `current → target` one instance at a time (recording the count actually reached).
 
-On `experiments/autoscaler-strategy-bench/` the controller lifts synthetic SLA from 77.2% to 98.3% on the same moving-average signal (past the old oracle's 95.5%), reaches 99.2% with a forward trend forecast (oracle ceiling 99.9%), and breaks the spike ceiling (88.0% → 96.4–98.5%); on real traces it reaches 97.9% vs the 90.9% baseline. **Before it can be activated:** wire `decide_target` into `app.py`'s loop in place of `decide`, and add `COPY autoscaler/controllers.py /app/controllers.py` to the Dockerfile (it is absent today — the same gap the #150/#146 fix closed for `strategies.py` / `manual.py`).
+On `experiments/autoscaler-strategy-bench/` the controller lifts synthetic SLA from 77.2% to 98.3% on the same moving-average signal (past the old oracle's 95.5%), reaches 99.2% with a forward trend forecast (oracle ceiling 99.9%), and breaks the spike ceiling (88.0% → 96.4–98.5%); on real traces it reaches 97.9% vs the 90.9% baseline. **Activation:** set `AUTOSCALER_CONTROLLER=target` (plus the optional `AUTOSCALER_HEADROOM` / `AUTOSCALER_SIZING` / cooldown / step / deadband knobs). The shipped ±1 rule stays the default; a live end-to-end test of `target` mode under provisioning is the remaining step before it becomes the default.
 
 #### `decisions.py` — pure logic, fully testable
 

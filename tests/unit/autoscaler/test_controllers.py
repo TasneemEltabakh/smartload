@@ -9,11 +9,15 @@ no clock, no randomness, no I/O.
 import sys
 from pathlib import Path
 
-# Put the autoscaler service dir on sys.path so the flat ``import controllers``
-# / ``import decisions`` (the same layout app.py uses) resolves standalone.
-_SERVICE_DIR = Path(__file__).resolve().parent
-if str(_SERVICE_DIR) not in sys.path:
-    sys.path.insert(0, str(_SERVICE_DIR))
+# Put the autoscaler service dir at the FRONT of sys.path so the flat
+# ``import controllers`` / ``import decisions`` (the same layout app.py uses)
+# resolves standalone. Purge any sibling-service modules of the same basename
+# that another service's unit test may have cached under pytest's prepend
+# import mode, so this suite stays independent within a single session.
+_SERVICE = Path(__file__).resolve().parents[2].parent / "services" / "autoscaler"
+for _name in ("controllers", "decisions", "app", "manual", "cluster_client"):
+    sys.modules.pop(_name, None)
+sys.path.insert(0, str(_SERVICE))
 
 from controllers import ControlPolicy, decide_target, target_for_load  # noqa: E402
 from decisions import (  # noqa: E402

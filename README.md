@@ -163,7 +163,7 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | `anomaly-detector` | Python | 8082 | Threshold baseline (default) + trained Isolation Forest + trend-aware `trend_rule` / `trend_forest` (per-backend temporal features close the gradual-degradation gap) |
 | `forecasting` | Python | 8083 | Moving-average baseline (default) + trained ARIMA(3,0,1) + `harmonic_residual` (robust dynamic-harmonic regression, pure NumPy, beats naive on every load shape) |
 | `rl-engine` | Python | 8084 | Random-shadow baseline + classical `round_robin` / `least_connections` + PPO + latency-monotone `monotone` router, with `shadow`/`active` mode pin |
-| `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback; benchmarked target-based controller (multi-step sizing) landing behind the live ±1 rule |
+| `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback; selectable target-based controller (multi-step sizing) via `AUTOSCALER_CONTROLLER=target`, default off behind the live ±1 rule |
 | `policy-manager` | Python | 8086 | Operating policy REST API + audit + Redis publish on change |
 | `operator-ui` | Flask + React | 8090 | BFF + web transparency / override surface |
 | `webhook-dispatcher` | — | — | Outbound HMAC-signed HTTP events (planned) |

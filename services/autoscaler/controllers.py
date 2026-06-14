@@ -58,6 +58,8 @@ from decisions import (  # type: ignore  # noqa: F401
     ACTION_SCALE_IN,
     ACTION_NOOP,
     Decision,
+    Policy,
+    decide,
 )
 
 
@@ -215,3 +217,119 @@ def decide_target(
         f"{now_text} predicted {predicted_rps:.0f} rps matches {current_count} "
         f"backends — holding",
     )
+
+
+# ── wiring helpers (app.py orchestration; pure, so unit-testable) ──────────────
+#
+# app.py owns the I/O (Redis, DB, Docker, Prometheus) and the live policy +
+# cooldown clocks. These three helpers carry the decision/actuation maths that
+# glue controllers.py into that loop, kept pure here so they are unit-testable
+# without importing the service module.
+
+
+def control_policy_from(
+    policy: Policy,
+    *,
+    headroom: float,
+    sizing: str,
+    qos_beta: float,
+    scale_out_cooldown_s: float,
+    scale_in_cooldown_s: float,
+    max_step_out: int,
+    max_step_in: int,
+    scale_in_deadband: float,
+) -> ControlPolicy:
+    """Project a live ``decisions.Policy`` onto a ``ControlPolicy``.
+
+    The min/max/capacity bounds come from the live policy (so a runtime policy
+    reload still moves them); the sizing law, asymmetric cooldowns, step caps
+    and deadband are the deploy-time tuning passed by the caller.
+    """
+    return ControlPolicy(
+        min_backends=policy.min_backends,
+        max_backends=policy.max_backends,
+        per_instance_capacity_rps=policy.per_instance_capacity_rps,
+        headroom=headroom,
+        sizing=sizing,
+        qos_beta=qos_beta,
+        scale_out_cooldown_s=scale_out_cooldown_s,
+        scale_in_cooldown_s=scale_in_cooldown_s,
+        max_step_out=max_step_out,
+        max_step_in=max_step_in,
+        scale_in_deadband=scale_in_deadband,
+    )
+
+
+def select_decision(
+    kind: str,
+    *,
+    predicted_rps: float,
+    current_count: int,
+    step_policy: Policy,
+    control_policy: ControlPolicy,
+    seconds_since_last_action: float | None,
+    seconds_since_scale_out: float | None,
+    seconds_since_scale_in: float | None,
+    now_text: str = "forecast",
+) -> Decision:
+    """Dispatch to the configured controller.
+
+    ``kind == "target"`` uses ``decide_target`` with the two per-direction
+    cooldown clocks; anything else uses the shipped ``decide`` with the single
+    action clock. The caller passes both policies and all three clocks so this
+    stays a pure function of its inputs.
+    """
+    if kind == "target":
+        return decide_target(
+            predicted_rps=predicted_rps,
+            current_count=current_count,
+            policy=control_policy,
+            seconds_since_scale_out=seconds_since_scale_out,
+            seconds_since_scale_in=seconds_since_scale_in,
+            now_text=now_text,
+        )
+    return decide(
+        predicted_rps=predicted_rps,
+        current_count=current_count,
+        policy=step_policy,
+        seconds_since_last_action=seconds_since_last_action,
+        now_text=now_text,
+    )
+
+
+def actuate_to_target(
+    action: str,
+    current_count: int,
+    target_count: int,
+    scale_fn,
+) -> tuple[int, int, str | None, str | None]:
+    """Drive ``current_count`` toward ``target_count`` one instance at a time.
+
+    ``scale_fn`` is the cluster method for the action's direction; it returns
+    ``(name, mechanism)`` on a successful actuation or ``None`` when the cluster
+    can no longer add/remove a backend. Stops at the target or at the first
+    ``None`` (an exhausted pool), so a multi-step jump that can only be partly
+    served records the count actually reached.
+
+    Returns ``(actuated, final_count, last_name, last_mechanism)``. For a NOOP
+    or an already-met target, ``actuated`` is 0 and ``final_count`` is
+    ``current_count``.
+    """
+    steps = abs(target_count - current_count)
+    actuated = 0
+    last_name: str | None = None
+    last_mechanism: str | None = None
+    for _ in range(steps):
+        result = scale_fn()
+        if result is None:
+            break
+        last_name, last_mechanism = result
+        actuated += 1
+
+    if action == ACTION_SCALE_OUT:
+        final_count = current_count + actuated
+    elif action == ACTION_SCALE_IN:
+        final_count = current_count - actuated
+    else:
+        final_count = current_count
+    return actuated, final_count, last_name, last_mechanism

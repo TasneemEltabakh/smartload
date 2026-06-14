@@ -64,13 +64,17 @@ from shared.queries import (  # noqa: E402
 )
 
 from cluster_client import DockerClusterClient  # noqa: E402
+from controllers import (  # noqa: E402
+    actuate_to_target,
+    control_policy_from,
+    select_decision,
+)
 from decisions import (  # noqa: E402
     ACTION_NOOP,
     ACTION_SCALE_IN,
     ACTION_SCALE_OUT,
     Decision,
     Policy,
-    decide,
     policy_from_payload,
 )
 from manual import ManualScaleError, plan_manual_scale  # noqa: E402
@@ -107,6 +111,28 @@ PROVISIONING_HEALTHCHECK_TIMEOUT_SECONDS = config.env_int(
 # reactive-fallback poll interval — when no forecast arrives within this
 # window, we check whether to fall back on observed RPS.
 LOOP_TICK_SECONDS = config.env_float("LOOP_TICK_SECONDS", 5.0)
+
+# Controller selection. "step" keeps the shipped bang-bang decide() — one
+# instance per action — as the production default. "target" activates the
+# target-based controllers (controllers.py): size-to-target with multi-step
+# jumps, asymmetric scale-out/scale-in cooldowns, and a scale-in deadband. An
+# unrecognised value falls back to "step" rather than crash-looping the
+# service. The CONTROL_* tuning knobs below only take effect under "target".
+CONTROLLER_KIND = config.env_str("AUTOSCALER_CONTROLLER", "step").strip().lower()
+if CONTROLLER_KIND not in ("step", "target"):
+    CONTROLLER_KIND = "step"
+
+# Target-based tuning (mirrors controllers.ControlPolicy defaults). min/max/
+# capacity are NOT here — they come from the live policy so a runtime policy
+# reload still moves the bounds; these knobs are deploy-time controls.
+CONTROL_HEADROOM             = config.env_float("AUTOSCALER_HEADROOM", 0.15)
+CONTROL_SIZING               = config.env_str("AUTOSCALER_SIZING", "headroom")
+CONTROL_QOS_BETA             = config.env_float("AUTOSCALER_QOS_BETA", 1.0)
+CONTROL_SCALE_OUT_COOLDOWN_S = config.env_float("AUTOSCALER_SCALE_OUT_COOLDOWN_SECONDS", 0.0)
+CONTROL_SCALE_IN_COOLDOWN_S  = config.env_float("AUTOSCALER_SCALE_IN_COOLDOWN_SECONDS", 120.0)
+CONTROL_MAX_STEP_OUT         = config.env_int("AUTOSCALER_MAX_STEP_OUT", 0)
+CONTROL_MAX_STEP_IN          = config.env_int("AUTOSCALER_MAX_STEP_IN", 1)
+CONTROL_SCALE_IN_DEADBAND    = config.env_float("AUTOSCALER_SCALE_IN_DEADBAND", 0.15)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
@@ -146,6 +172,12 @@ _state_lock              = threading.Lock()
 _policy: Policy          = Policy(1, 5, 100.0, 60.0)
 _policy_version: int     = 0
 _last_action_monotonic: float | None = None
+# Per-direction action clocks for the target controller's asymmetric cooldowns
+# ("fast out, slow in"). The step controller ignores these and uses the single
+# _last_action_monotonic clock; both are bumped on every actuated action so a
+# controller swap at runtime sees a consistent history.
+_last_scale_out_monotonic: float | None = None
+_last_scale_in_monotonic: float | None = None
 _last_forecast_monotonic: float | None = None
 _last_forecast_horizon_min: int        = 5
 # #163 liveness signal — updated at the top of every control-loop iteration
@@ -219,15 +251,28 @@ def apply_decision(
     db_conn,
     redis_client,
     forecast_event_id: str | None,
+    current_count: int,
 ) -> None:
-    """Execute the decision: scale, write scaling_events row, publish envelope.
+    """Execute the decision: actuate toward decision.target_count, write one
+    scaling_events row, publish one ScalingEvent envelope.
 
-    Order is strict for the #155 adaptive bench: cluster.scale_out() blocks
-    on the new container's healthcheck reaching `healthy` BEFORE returning
-    a non-None name. Only then does this function publish the
-    ScalingEvent envelope. This prevents the provision-then-announce race
-    where the lb-sidecar would rewrite upstream.conf with a hostname
-    Docker DNS hasn't propagated yet (Risk 1 in the #155 plan).
+    The decision carries the FINAL backend count it wants. The step controller
+    moves by exactly one per action (so this loops once); the target controller
+    may jump several instances in a single action (its per-action step caps are
+    already baked into target_count), so this loops cluster.scale_out()/
+    scale_in() until the target is reached OR the cluster stops actuating
+    (no spare container / provisioning capped). Exactly one audit row + one
+    envelope are written per decision, recording the count actually REACHED —
+    never the intended target if the cluster ran out mid-jump — mirroring the
+    manual-scale path.
+
+    Order is strict for the #155 adaptive bench: each cluster.scale_out()
+    blocks on the new container's healthcheck reaching `healthy` BEFORE
+    returning a non-None name. Only then, after the last step, does this
+    function publish the ScalingEvent envelope. This prevents the
+    provision-then-announce race where the lb-sidecar would rewrite
+    upstream.conf with a hostname Docker DNS hasn't propagated yet (Risk 1 in
+    the #155 plan).
 
     NOOP decisions do not touch Docker or the DB — they are logged only.
     """
@@ -236,16 +281,20 @@ def apply_decision(
         _bump_action(ACTION_NOOP)
         return
 
-    if decision.action == ACTION_SCALE_OUT:
-        result = cluster.scale_out()
-    else:
-        result = cluster.scale_in()
+    # Actuate one instance at a time until the target is reached or the cluster
+    # can no longer add/remove a backend. For the step controller this is a
+    # single step; the target controller may jump several. The loop maths live
+    # in controllers.actuate_to_target so they are unit-tested without Docker.
+    scale_fn = cluster.scale_out if decision.action == ACTION_SCALE_OUT else cluster.scale_in
+    actuated, final_count, last_name, last_mechanism = actuate_to_target(
+        decision.action, current_count, decision.target_count, scale_fn,
+    )
 
-    if result is None:
-        # Cluster could not actuate (no stopped container to start, provisioning
-        # disabled or capped, no running container to stop, no dynamic container
-        # to decommission). Log + skip the DB/publish writes — the state never
-        # materialised.
+    if actuated == 0:
+        # Cluster could not actuate a single step (no stopped container to
+        # start, provisioning disabled or capped, no running container to stop,
+        # no dynamic container to decommission). Log + skip the DB/publish
+        # writes — the state never materialised.
         log.warning(
             "%s requested but cluster could not actuate (target=%d, reason=%r)",
             decision.action, decision.target_count, decision.reason,
@@ -253,19 +302,18 @@ def apply_decision(
         _bump_action(ACTION_NOOP)
         return
 
-    name, mechanism = result
-
     log.info(
-        "%s mechanism=%s container=%s target_count=%d reason=%r",
-        decision.action, mechanism, name, decision.target_count, decision.reason,
+        "%s mechanism=%s container=%s actuated=%d target=%d final_count=%d reason=%r",
+        decision.action, last_mechanism, last_name, actuated, decision.target_count,
+        final_count, decision.reason,
     )
 
     # The DB schema's `action` column is unchanged ("scale_out" | "scale_in").
-    # The new mechanism is recorded textually in `reason` for searchable
-    # audit (e.g. "forecast predicted 450 rps > capacity 400 [provision]")
-    # AND structurally in the envelope's `mechanism` field for the
-    # adaptive-bench analysis pipeline.
-    reason_with_mechanism = f"{decision.reason} [{mechanism}]"
+    # The mechanism of the LAST actuated step is recorded textually in `reason`
+    # for searchable audit (e.g. "forecast predicted 450 rps > capacity 400
+    # [provision]") AND structurally in the envelope's `mechanism` field for
+    # the adaptive-bench analysis pipeline.
+    reason_with_mechanism = f"{decision.reason} [{last_mechanism}]"
 
     # scaling_events: autoscaler is the only writer (SOT §8.8).
     with db_conn.cursor() as cur:
@@ -274,7 +322,7 @@ def apply_decision(
             (
                 datetime.now(timezone.utc),
                 decision.action,
-                decision.target_count,
+                final_count,
                 reason_with_mechanism,
             ),
         )
@@ -283,19 +331,24 @@ def apply_decision(
     # smartload.scale: audit envelope.
     event = ScalingEvent(
         action=decision.action,
-        instance_count=decision.target_count,
+        instance_count=final_count,
         reason=reason_with_mechanism,
         forecast_event_id=forecast_event_id,
-        mechanism=mechanism,
+        mechanism=last_mechanism,
     )
     envelope = make_envelope(source=SERVICE_NAME, payload=event)
     with METRICS.time_publish(SCALE_CHANNEL):
         redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))
-    SCALE_TOTAL.labels(direction=decision.action, mechanism=mechanism or "none").inc()
+    SCALE_TOTAL.labels(direction=decision.action, mechanism=last_mechanism or "none").inc()
 
+    now = time.monotonic()
     with _state_lock:
-        global _last_action_monotonic
-        _last_action_monotonic = time.monotonic()
+        global _last_action_monotonic, _last_scale_out_monotonic, _last_scale_in_monotonic
+        _last_action_monotonic = now
+        if decision.action == ACTION_SCALE_OUT:
+            _last_scale_out_monotonic = now
+        else:
+            _last_scale_in_monotonic = now
     _bump_action(decision.action)
 
 
@@ -303,6 +356,51 @@ def apply_decision(
 
 def _seconds_since(monotonic_at: float | None) -> float | None:
     return None if monotonic_at is None else time.monotonic() - monotonic_at
+
+
+def _control_policy(policy: Policy):
+    """Build the target controller's ControlPolicy from the live Policy bounds
+    plus the deploy-time CONTROL_* tuning. Rebuilt on every decision so a
+    mid-flight policy swap to min/max/capacity is honoured on the next tick."""
+    return control_policy_from(
+        policy,
+        headroom=CONTROL_HEADROOM,
+        sizing=CONTROL_SIZING,
+        qos_beta=CONTROL_QOS_BETA,
+        scale_out_cooldown_s=CONTROL_SCALE_OUT_COOLDOWN_S,
+        scale_in_cooldown_s=CONTROL_SCALE_IN_COOLDOWN_S,
+        max_step_out=CONTROL_MAX_STEP_OUT,
+        max_step_in=CONTROL_MAX_STEP_IN,
+        scale_in_deadband=CONTROL_SCALE_IN_DEADBAND,
+    )
+
+
+def _decide(predicted_rps: float, current_count: int, now_text: str) -> Decision:
+    """Dispatch to the configured controller and return its Decision.
+
+    Reads the live policy and cooldown clocks under `_state_lock` in a single
+    acquisition so a concurrent policy reload is observed atomically, then
+    delegates the choice to the pure `select_decision` in controllers.py. The
+    step controller uses the single action clock; the target controller uses
+    the two per-direction clocks for its asymmetric cooldowns.
+    """
+    with _state_lock:
+        policy       = _policy
+        since_action = _seconds_since(_last_action_monotonic)
+        since_out    = _seconds_since(_last_scale_out_monotonic)
+        since_in     = _seconds_since(_last_scale_in_monotonic)
+
+    return select_decision(
+        CONTROLLER_KIND,
+        predicted_rps=predicted_rps,
+        current_count=current_count,
+        step_policy=policy,
+        control_policy=_control_policy(policy),
+        seconds_since_last_action=since_action,
+        seconds_since_scale_out=since_out,
+        seconds_since_scale_in=since_in,
+        now_text=now_text,
+    )
 
 
 def control_loop(stop_event: threading.Event | None = None) -> None:
@@ -390,19 +488,14 @@ def _handle_forecast_message(raw, cluster, db_conn, redis_client) -> None:
         global _last_forecast_monotonic, _last_forecast_horizon_min
         _last_forecast_monotonic    = time.monotonic()
         _last_forecast_horizon_min  = horizon_minutes
-        seconds_since_action        = _seconds_since(_last_action_monotonic)
-        policy                      = _policy
 
     current_count = cluster.get_backend_count()
     with METRICS.time_cycle() as _c:
-        decision = decide(
-            predicted_rps=predicted_rps,
-            current_count=current_count,
-            policy=policy,
-            seconds_since_last_action=seconds_since_action,
-            now_text="forecast",
+        decision = _decide(predicted_rps, current_count, now_text="forecast")
+        apply_decision(
+            decision, cluster, db_conn, redis_client,
+            envelope_meta.get("event_id"), current_count,
         )
-        apply_decision(decision, cluster, db_conn, redis_client, envelope_meta.get("event_id"))
         _c["outcome"] = decision.action
 
 
@@ -447,8 +540,6 @@ def _maybe_reactive_fallback(cluster, db_conn, redis_client) -> None:
     with _state_lock:
         last_fc          = _last_forecast_monotonic
         horizon_minutes  = _last_forecast_horizon_min
-        seconds_since_action = _seconds_since(_last_action_monotonic)
-        policy           = _policy
 
     if last_fc is None:
         # No forecast has arrived yet — wait, don't react. SOT §8.8: reactive
@@ -462,14 +553,11 @@ def _maybe_reactive_fallback(cluster, db_conn, redis_client) -> None:
 
     rps = observed_rps(db_conn)
     current_count = cluster.get_backend_count()
-    decision = decide(
-        predicted_rps=rps,
-        current_count=current_count,
-        policy=policy,
-        seconds_since_last_action=seconds_since_action,
-        now_text="reactive",
+    decision = _decide(rps, current_count, now_text="reactive")
+    apply_decision(
+        decision, cluster, db_conn, redis_client,
+        forecast_event_id=None, current_count=current_count,
     )
-    apply_decision(decision, cluster, db_conn, redis_client, forecast_event_id=None)
 
 
 # ── Flask /health (main thread) ───────────────────────────────────────────────
@@ -544,6 +632,7 @@ def health():
         "redis":                        redis_ok,
         "timescaledb":                  db_ok,
         "provisioning_enabled":         PROVISIONING_ENABLED,
+        "controller":                   CONTROLLER_KIND,
         "policy":                       policy_snapshot,
         "policy_version":               version_snapshot,
         "stats":                        _stats_snapshot(),
@@ -732,10 +821,18 @@ def post_manual_scale():
     envelope = make_envelope(source=SERVICE_NAME, payload=event)
     redis_client.publish(SCALE_CHANNEL, json.dumps(asdict(envelope)))
 
-    # Bump cooldown clock so the next forecast tick doesn't immediately undo.
+    # Bump cooldown clocks so the next forecast tick doesn't immediately undo.
+    # Set the per-direction clock too so the target controller's asymmetric
+    # cooldowns honour an operator override the same way the single-clock step
+    # controller does.
+    now = time.monotonic()
     with _state_lock:
-        global _last_action_monotonic
-        _last_action_monotonic = time.monotonic()
+        global _last_action_monotonic, _last_scale_out_monotonic, _last_scale_in_monotonic
+        _last_action_monotonic = now
+        if effective_action == ACTION_SCALE_OUT:
+            _last_scale_out_monotonic = now
+        elif effective_action == ACTION_SCALE_IN:
+            _last_scale_in_monotonic = now
     _bump_action(effective_action)
 
     return jsonify({
@@ -867,6 +964,17 @@ def main() -> None:
         "loaded policy from %s: %s (version=%d)",
         POLICY_PATH, _policy, _policy_version,
     )
+    if CONTROLLER_KIND == "target":
+        log.info(
+            "controller=target (sizing=%s, headroom=%.3g, qos_beta=%.3g, "
+            "out_cooldown=%.0fs, in_cooldown=%.0fs, max_step_out=%d, "
+            "max_step_in=%d, scale_in_deadband=%.3g)",
+            CONTROL_SIZING, CONTROL_HEADROOM, CONTROL_QOS_BETA,
+            CONTROL_SCALE_OUT_COOLDOWN_S, CONTROL_SCALE_IN_COOLDOWN_S,
+            CONTROL_MAX_STEP_OUT, CONTROL_MAX_STEP_IN, CONTROL_SCALE_IN_DEADBAND,
+        )
+    else:
+        log.info("controller=step (shipped bang-bang decide(); one instance per action)")
 
     t = threading.Thread(target=control_loop, name="autoscaler-control-loop", daemon=True)
     t.start()
