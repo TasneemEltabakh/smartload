@@ -1,13 +1,13 @@
 # SmartLoad
 
-> Intelligent middleware that puts a thinking layer between your clients and your backend pool: anomaly-aware routing, forecast-driven autoscaling, and reinforcement-learning load balancing — with deterministic safety fallbacks.
+> Intelligent middleware that puts a thinking layer between your clients and your backend pool: anomaly-aware routing, forecast-driven autoscaling, and a latency-monotone capacity-aware router (with a shadow-mode RL policy for comparison) — with deterministic safety fallbacks.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docker images](https://github.com/TasneemEltabakh/smartload/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/TasneemEltabakh/smartload/actions/workflows/docker-publish.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#roadmap)
 
-SmartLoad sits between client traffic and a pool of backend services. It combines a classical load balancer (NGINX today; HAProxy / Envoy / ALB plugins planned) with a decision plane that detects anomalies, forecasts demand, and learns routing policy from real traffic — all behind a `safe_mode` switch that pins every engine to its deterministic fallback when you need it to.
+SmartLoad sits between client traffic and a pool of backend services. It combines a classical load balancer (NGINX today; HAProxy / Envoy / ALB plugins planned) with a decision plane that detects anomalies, forecasts demand, and routes on a latency-monotone capacity-aware policy (with an optional shadow-mode learned policy) — all behind a `safe_mode` switch that pins every engine to its deterministic fallback when you need it to.
 
 ```
                  ┌────────────────────────────────────────────────┐
@@ -26,7 +26,7 @@ SmartLoad sits between client traffic and a pool of backend services. It combine
 
 - **Anomaly-aware routing.** A backend that starts misbehaving is excluded from the upstream pool before clients see the latency hit.
 - **Forecast-driven autoscaling.** The pool grows ahead of the spike, not in response to it.
-- **Reinforcement-learning routing.** Trained against real workload traces; switchable between `shadow` (observe-only) and `active` per policy.
+- **Capacity-aware routing.** The deployed router is a latency-monotone, capacity-aware policy. A trained RL policy ships alongside it, selectable in `shadow` (observe-only) mode for comparison.
 - **Operator-first overrides.** A `safe_mode` flag forces every engine to the deterministic fallback. Every change is audit-logged.
 - **Integrate with anything.** Redis pub/sub for sub-second decisions, HMAC-signed webhooks for cross-network HTTP delivery, Python SDK for everything else.
 - **Self-hostable.** Docker Compose today, Helm chart in progress. No vendor lock-in.
@@ -161,7 +161,7 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
 | `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
 | `anomaly-detector` | Python | 8082 | Trend-rule engine (default; interpretable stateful trend-aware detector, closes the gradual-degradation gap, no artifact) + threshold baseline/fallback + trained trend_forest / isolation_forest (opt-in via `ANOMALY_ENGINE=`) |
-| `forecasting` | Python | 8083 | Harmonic-residual forecaster (default; beats arima/moving_average on every load shape with calibrated bands, pure NumPy no artifact) + moving-average safety fallback + trained ARIMA(3,0,1) (opt-in via `FORECAST_ENGINE=arima`) |
+| `forecasting` | Python | 8083 | Harmonic-residual forecaster (default; beats arima/moving_average on every load shape with calibrated bands, pure NumPy no artifact) + moving-average safety fallback + trained ARIMA(2,0,2) (opt-in via `FORECAST_ENGINE=arima`) |
 | `rl-engine` | Python | 8084 | Latency-monotone capacity-aware router (`monotone`, recommended) + random-shadow / round-robin / least-connections baselines + PPO policy (selectable); `shadow`/`active` mode pin |
 | `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback; target-based controller (multi-step headroom sizing, asymmetric cooldown) is the deployed default via `AUTOSCALER_CONTROLLER=target`; the ±1 `step` rule stays selectable |
 | `policy-manager` | Python | 8086 | Operating policy REST API + audit + Redis publish on change |
@@ -302,14 +302,15 @@ python scripts/lint-asyncapi.py
 
 ## Datasets
 
-Public datasets the ML services train and evaluate against. `scripts/download-datasets.sh` fetches them.
+Datasets behind the shipped benchmarks and model training. The real traces are fetched by `scripts/download-datasets.sh`; the synthetic profiles are generated in-repo by the benchmark harnesses.
 
 | Dataset | Used by | License |
 |---|---|---|
-| Google Borg Cluster Traces | rl-engine, forecasting | CC-BY |
-| Alibaba Microservice Traces | rl-engine, forecasting, anomaly-detector | Open |
-| Numenta Anomaly Benchmark (NAB) | anomaly-detector | MIT |
-| Yahoo Server Machine Dataset (SMD) | anomaly-detector | Open |
+| Azure Functions Trace 2019 (primary demand) | forecasting, autoscaler (evaluation) | CC-BY |
+| FIFA World Cup 1998 access logs (flash crowds) | forecasting, autoscaler (evaluation) | CC-BY-4.0 |
+| Alibaba Cluster Trace 2018 (demand-shape proxy) | forecasting, autoscaler (evaluation) | Academic terms |
+| Server Machine Dataset (SMD / OmniAnomaly) | anomaly-detector (Isolation-Forest training) | MIT |
+| Synthetic load + anomaly profiles (in-repo generators) | forecasting, autoscaler, anomaly-detector, rl-engine (evaluation) | n/a |
 
 ---
 

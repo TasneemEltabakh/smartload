@@ -9,14 +9,14 @@ ARIMA(p,d,q) forecaster trained on preprocessed Alibaba industrial traces. Repla
 | Layer | Where |
 |---|---|
 | Inference engine | `services/forecasting/engines/arima/engine.py` |
-| Trained artifact | `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB) |
+| Trained artifact | `services/forecasting/models/arima_model.pkl` (ARIMA(2,0,2), 36.9 MB) |
 | Unit tests | `services/forecasting/engines/arima/test_engine.py` |
 | Training pipeline | `tools/forecasting-training/` (excluded from the runtime image) |
 | Training log | `tools/forecasting-training/training_log.json` |
 
 ## Model
 
-- **Order**: ARIMA(3,0,1)
+- **Order**: ARIMA(2,0,2)
 - **Trained on**: Alibaba industrial trace, 5-minute resampling, 70/15/15 train/val/test split
 - **Best test MAPE**: **25.0%** (the moving-average baseline scores 34.3% — **+22.77% relative improvement**)
 - **SOT KPI**: < 20% MAPE — **not yet met**. The engine ships but is **not** the default; an operator activates it via `FORECAST_ENGINE=arima` in `.env`. The moving-average baseline stays the canonical Phase-1 forecaster until a tuned model crosses the SLO.

@@ -14,7 +14,7 @@ client
               │   - anomaly exclusions
               │   - policy safe_mode (forces equal weights)
               │
-              └── lb-otel-shipper / future T2.1 sidecar
+              └── lb-otel-shipper / lb-sidecar (shipped)
 ```
 
 ## Components
@@ -23,7 +23,7 @@ client
 |---|---|
 | load-balancer (NGINX) | terminates client traffic, routes to upstream pool |
 | lb-otel-shipper | tails NGINX access logs, ships OTLP/HTTP-JSON metrics to the collector |
-| (future) T2.1 sidecar | subscribes to control-plane Redis channels, rewrites NGINX upstream config |
+| lb-sidecar (shipped, T2.1) | subscribes to control-plane Redis channels, rewrites NGINX upstream config |
 | test-backend | the backend pool being routed across; Node.js Express stubs |
 | otel-collector + telemetry + TimescaleDB | telemetry persistence pipeline feeding the control plane |
 
