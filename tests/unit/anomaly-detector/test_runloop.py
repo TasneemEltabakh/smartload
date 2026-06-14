@@ -372,6 +372,59 @@ def test_gate_confirmation_cycles_one_confirms_immediately():
     assert state.last_status == "unhealthy"
 
 
+def test_gate_low_sample_hold_is_unbounded_by_default():
+    """Without a TTL the B1 hold preserves a non-healthy status indefinitely
+    while the backend stays quiet (the original behaviour)."""
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    raw = AnomalyScore("b1", "healthy", 0.0)
+    for _ in range(50):
+        gated = apply_stability_gate(raw, low_sample=True, state=state, confirmation_cycles=2)
+        assert gated.status == "unhealthy"
+    assert state.low_sample_hold_count == 50
+
+
+def test_gate_low_sample_hold_ttl_releases_after_max_hold_cycles():
+    """B1 hold with a TTL: after max_hold_cycles consecutive held cycles the
+    hold is released and the (low-sample, healthy) raw reading is processed by
+    the normal confirmation path, so the status decays back toward healthy
+    instead of sticking non-healthy forever on a permanently quiet backend."""
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    raw = AnomalyScore("b1", "healthy", 0.0)
+
+    # Cycles 1..3: held (TTL not yet exceeded).
+    for i in range(1, 4):
+        gated = apply_stability_gate(raw, low_sample=True, state=state,
+                                     confirmation_cycles=2, max_hold_cycles=3)
+        assert gated.status == "unhealthy", f"cycle {i} should still hold"
+
+    # Cycle 4: TTL exceeded -> fall through; raw healthy starts the flip but
+    # needs confirmation, so still reported unhealthy this cycle.
+    gated4 = apply_stability_gate(raw, low_sample=True, state=state,
+                                  confirmation_cycles=2, max_hold_cycles=3)
+    assert gated4.status == "unhealthy"
+    assert state.pending_status == "healthy"
+
+    # Cycle 5: healthy confirmed -> hold released, backend reads healthy again.
+    gated5 = apply_stability_gate(raw, low_sample=True, state=state,
+                                  confirmation_cycles=2, max_hold_cycles=3)
+    assert gated5.status == "healthy"
+    assert state.last_status == "healthy"
+
+
+def test_gate_low_sample_hold_count_resets_when_samples_return():
+    """A populated cycle clears the hold counter, so a later quiet patch gets
+    the full TTL again rather than a stale count."""
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    raw_low = AnomalyScore("b1", "healthy", 0.0)
+    apply_stability_gate(raw_low, low_sample=True, state=state,
+                         confirmation_cycles=2, max_hold_cycles=3)
+    assert state.low_sample_hold_count == 1
+    # Samples return (still non-healthy raw, confirming the existing status).
+    apply_stability_gate(AnomalyScore("b1", "unhealthy", 0.9), low_sample=False,
+                         state=state, confirmation_cycles=2, max_hold_cycles=3)
+    assert state.low_sample_hold_count == 0
+
+
 # ── serialize_engine_state (Live Engines #121) ───────────────────────────────
 
 def _state_kwargs(**overrides):
