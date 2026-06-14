@@ -1,0 +1,24 @@
+{
+  "policy_type": "ppo",
+  "policy_kind": "continuous_weights",
+  "training_date": "2026-06-14T04:38:53.500349+00:00",
+  "n_max_backends": 5,
+  "norm_params": {
+    "latency_scale": 200.0,
+    "request_count_scale": 100.0
+  },
+  "action_bound": 10.0,
+  "reward_config": {
+    "w_tail": 0.5,
+    "w_shed": 1.5,
+    "w_sla": 3.0,
+    "sla_ms": 200.0,
+    "note": "SLA-targeted, concentration-permitting; NON-monotone by design"
+  },
+  "episode_length": 128,
+  "training_steps": 250000,
+  "training_seed": 2,
+  "sb3_version": "2.8.0",
+  "monotone_by_construction": false,
+  "sim": "closed_loop_sim (causal M/G/c, synthetic hetero demand)"
+}

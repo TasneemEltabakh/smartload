@@ -103,4 +103,7 @@ def select_policy(name: str, **kwargs) -> RoutingPolicy:
     if name == "ppo":
         from policies.ppo.policy import PPOPolicy
         return PPOPolicy(**kwargs)
+    if name == "monotone":
+        from policies.monotone.policy import MonotonePolicy
+        return MonotonePolicy(**kwargs)
     raise ValueError(f"Unknown RL policy: {name!r}")

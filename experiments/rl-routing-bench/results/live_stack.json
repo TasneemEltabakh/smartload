@@ -1,0 +1,78 @@
+{
+  "heterogeneous": [
+    {
+      "policy": "round_robin",
+      "window_p95": 222.1975692028466,
+      "window_sla_pct": 33.33333333333333,
+      "req_p95": 502.8852138901128,
+      "req_mean": 191.33820769906393,
+      "shed_pct": 0.0,
+      "n_req": 2340
+    },
+    {
+      "policy": "candidate_mono",
+      "window_p95": 191.9939543190412,
+      "window_sla_pct": 5.555555555555555,
+      "req_p95": 408.55136527679815,
+      "req_mean": 174.02212720495672,
+      "shed_pct": 0.0,
+      "n_req": 2340
+    },
+    {
+      "policy": "candidate_v2",
+      "window_p95": 231.1649171350738,
+      "window_sla_pct": 27.77777777777778,
+      "req_p95": 474.99091168865516,
+      "req_mean": 183.21309196265238,
+      "shed_pct": 0.0,
+      "n_req": 2340
+    },
+    {
+      "policy": "candidate_maxxer_seed1",
+      "window_p95": 261.1146812198253,
+      "window_sla_pct": 22.22222222222222,
+      "req_p95": 500.66737073939294,
+      "req_mean": 193.5796203628483,
+      "shed_pct": 1.4529914529914478,
+      "n_req": 2340
+    }
+  ],
+  "degrading": [
+    {
+      "policy": "round_robin",
+      "window_p95": 850.7373121853628,
+      "window_sla_pct": 44.44444444444444,
+      "req_p95": 1656.8343104328899,
+      "req_mean": 365.8126260930051,
+      "shed_pct": 0.0,
+      "n_req": 2340
+    },
+    {
+      "policy": "candidate_mono",
+      "window_p95": 386.3149713699767,
+      "window_sla_pct": 55.55555555555556,
+      "req_p95": 503.27428674790985,
+      "req_mean": 245.05448212994375,
+      "shed_pct": 0.0,
+      "n_req": 2340
+    },
+    {
+      "policy": "candidate_v2",
+      "window_p95": 425.15263882662606,
+      "window_sla_pct": 77.77777777777779,
+      "req_p95": 583.832919318229,
+      "req_mean": 265.7076139682674,
+      "shed_pct": 1.32478632478632,
+      "n_req": 2340
+    },
+    {
+      "policy": "candidate_maxxer_seed1",
+      "window_p95": 303.46328053175006,
+      "window_sla_pct": 83.33333333333334,
+      "req_p95": 607.7912701293826,
+      "req_mean": 237.46415632925573,
+      "shed_pct": 0.9401709401709368,
+      "n_req": 2340
+    }
+  ]
+}
