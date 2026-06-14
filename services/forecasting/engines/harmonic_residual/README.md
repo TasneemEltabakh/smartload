@@ -39,7 +39,11 @@ At each call, on the most-recent samples of the supplied history:
    one-step errors → a 95% band calibrated to the realized error distribution.
 
 `forecast_ahead(history, steps)` projects `steps` buckets ahead (used by the
-downstream autoscaler experiment to look the provisioning warm-up delay ahead).
+downstream autoscaler experiment to look the provisioning warm-up delay ahead),
+with the trend **damped by its statistical significance** so a noise slope on
+flat demand is not projected over the lead (no spurious scale churn) while a real
+trend projects fully. The first step keeps full weight, so the single-step
+`forecast()` and the fitness-function results are unchanged.
 
 ## Headline numbers
 
@@ -51,7 +55,7 @@ downstream autoscaler experiment to look the provisioning warm-up delay ahead).
   WorldCup98 (14.6% vs 16.5%); calibrated band where moving_average is badly
   under-covered.
 - **Downstream:** predictive scaling driven by this engine beats reactive by
-  **+6.4 SLA pp** (closing 34% of the reactive→oracle gap), where the
+  **+6.3 SLA pp** (closing 34% of the reactive→oracle gap), where the
   moving-average "predictive" path is byte-identical to reactive.
 
 ## Activation

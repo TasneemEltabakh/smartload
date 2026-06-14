@@ -80,6 +80,71 @@ def test_deterministic():
     assert a.confidence_upper == b.confidence_upper
 
 
+def test_trend_damping_leaves_single_step_unchanged():
+    # The damping must be a no-op at one step (offset(1)==1 for any φ), so the
+    # single-step fitness-function results are unaffected by the damping factor.
+    n = 600
+    rates = [50.0 + 0.2 * i for i in range(n)]
+    hw = HistoryWindow(_iso(n), rates)
+    a = HarmonicResidualEngine(trend_damping=0.9).forecast(hw)
+    b = HarmonicResidualEngine(trend_damping=1.0).forecast(hw)
+    assert a.predicted_rps == b.predicted_rps
+    # forecast_ahead(1) is also identical to forecast() and to the undamped one.
+    c = HarmonicResidualEngine(trend_damping=0.5).forecast_ahead(hw, 1)
+    assert abs(c.predicted_rps - b.predicted_rps) < 1e-9
+
+
+def test_significant_trend_projects_full_lead():
+    # A clean, strongly-significant ramp keeps shrink ≈ 1, so the multi-step
+    # projection leads the curve by ~steps·slope (the full linear projection).
+    n = 600
+    slope = 0.2
+    rates = [50.0 + slope * i for i in range(n)]
+    hw = HistoryWindow(_iso(n), rates)
+    f = HarmonicResidualEngine().forecast_ahead(hw, 20)
+    expected_full = rates[-1] + 20 * slope
+    assert abs(f.predicted_rps - expected_full) < 1.0  # full lead, not shrunk
+
+
+def test_significance_shrink_factor():
+    # The shrink helper: a strongly-significant slope → ~1; a slope buried in
+    # noise → well below 1 (so it is projected weakly over a multi-step lead).
+    eng = HarmonicResidualEngine()
+    n = 120
+    t = np.arange(n, dtype=float)
+    tcol = (t - t.mean()) / max(t.std(), 1.0)
+    # Clean steep ramp: huge SNR.
+    clean = 0.5 * t
+    coef_clean = np.polyfit(tcol, clean, 1)[0]
+    assert eng._trend_shrink(tcol, coef_clean, clean - np.polyval([coef_clean, clean.mean()], tcol)) > 0.95
+    # Flat + noise: slope is noise, low SNR.
+    rng = np.random.default_rng(3)
+    noisy = 100.0 + rng.normal(0, 5, n)
+    coef_noisy = np.polyfit(tcol, noisy, 1)[0]
+    resid = noisy - (coef_noisy * tcol + noisy.mean())
+    assert eng._trend_shrink(tcol, coef_noisy, resid) < 0.5
+
+
+def test_insignificant_trend_reduces_projection_churn():
+    # Walk a flat noisy series; the significance-shrunk multi-step projection
+    # must vary LESS across consecutive origins than the full-linear (ρ=1) one —
+    # i.e. it does not chase the noise slope over the lead, the property that
+    # removes downstream scale churn on flat demand.
+    rng = np.random.default_rng(11)
+    n = 400
+    rates = 100.0 + rng.normal(0, 5, n)
+    ts = _iso(n, step_s=1)  # per-second → no daily season, pure level+noise
+    shrunk_eng = HarmonicResidualEngine(trend_damping=0.8)
+    full_eng = HarmonicResidualEngine(trend_damping=1.0)
+    shrunk_sig, full_sig = [], []
+    for t in range(120, n):
+        lo = t - 60
+        hw = HistoryWindow(ts[lo:t], rates[lo:t].tolist())
+        shrunk_sig.append(shrunk_eng.forecast_ahead(hw, 20).predicted_rps)
+        full_sig.append(full_eng.forecast_ahead(hw, 20).predicted_rps)
+    assert np.std(shrunk_sig) < np.std(full_sig)
+
+
 def test_infers_one_minute_cadence_period():
     # At 1-min cadence the inferred daily period is 1440; with <2 cycles of data
     # the engine still produces a sane, finite forecast (seasonal basis dropped).

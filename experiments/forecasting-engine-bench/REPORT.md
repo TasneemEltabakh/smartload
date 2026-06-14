@@ -151,36 +151,55 @@ scalar signal fed to `decide()`. 8 seeds × 6 demand profiles, per-second demand
 vendored from the autoscaler strategy bench.
 
 The forecaster projects the warm-up lead window ahead via `forecast_ahead(history,
-steps=w)`.
+steps=w)`, with the trend **damped by its statistical significance** (§6.1).
 
 | Strategy | SLA% (all profiles) | Δ vs reactive |
 |---|---:|---:|
 | Oracle (perfect foresight — ceiling) | 95.67 | +18.58 |
-| **HR-predictive (harmonic_residual)** | **83.49** | **+6.40** |
+| **HR-predictive (harmonic_residual)** | **83.38** | **+6.30** |
 | MA-predictive (shipped moving-average) | 77.09 | +0.00 |
 | Reactive (trailing mean) | 77.09 | — |
 
-- **HR-predictive beats reactive by +6.40 SLA pp, closing 34% of the
+- **HR-predictive beats reactive by +6.30 SLA pp, closing 34% of the
   reactive→oracle gap.** The moving-average "predictive" path is **byte-identical**
   to reactive (a trailing mean has no forward projection) — confirming the premise.
 - Per-profile, the win lands exactly where forecasting *can* help — **trending /
   cyclic** demand — and ties (never meaningfully hurts) where the future is
   genuinely unsignalled:
 
-| profile | Δ SLA vs reactive |
-|---|---:|
-| sawtooth | **+29.12** |
-| diurnal | **+4.85** |
-| ramp | **+4.49** |
-| burst | +0.25 |
-| spike | +0.01 |
-| steady | −0.31 |
+| profile | Δ SLA vs reactive | HR scale-actions vs reactive |
+|---|---:|---:|
+| sawtooth | **+26.74** | 22.4 vs 22.0 |
+| diurnal | **+5.67** | 15.2 vs 13.8 |
+| ramp | **+5.10** | 11.9 vs 8.1 |
+| burst | +0.53 | 13.0 vs 12.8 |
+| spike | +0.01 | 9.0 vs 9.0 |
+| steady | −0.28 | 24.8 vs 20.9 |
 
-  The trending wins are CI-separated. On **steady** the forward projection chases
-  noise and adds a little scale-action churn (~26 vs ~20 actions) for no SLA gain —
-  the one honest cost; a small trend-damping term would remove it and is the
-  obvious next tweak. On **spike/burst** (unsignalled step changes) no causal
-  forecaster can lead the step, so HR ties reactive while still cutting unmet-RPS.
+  The trending wins are CI-separated. On **spike/burst** (unsignalled step changes)
+  no causal forecaster can lead the step, so HR ties reactive while still cutting
+  unmet-RPS. On **steady**, SLA is a tie (−0.28 is within the reactive ±2.6 CI).
+
+### 6.1 Significance-gated trend damping
+
+The forward projection extrapolates a slope fit on a short trailing window. On
+flat demand that slope is pure noise, and projecting it over the 20 s lead added
+scale-action churn (~26 vs ~20) for no SLA gain. The fix damps the trend in the
+**multi-step** projection by its signal-to-noise ratio: the projected trend is
+scaled by `shrink = t²/(t²+C)` with `t` the slope's t-statistic versus the
+residual noise — an insignificant slope (flat demand) is shrunk out over the
+lead, a significant one (a real ramp) projects fully. A horizon ramp keeps the
+**first step at full weight**, so the single-step `forecast()` — and hence the
+entire fitness function of §4 — is **byte-identical** (verified); only the
+downstream lead projection changes.
+
+The effect: steady churn drops (26.5 → 24.8 actions) and ramp churn too
+(14.4 → 11.9), the trending wins are preserved or slightly improved (ramp
++4.49 → +5.10, diurnal +4.85 → +5.67), and the strong sawtooth lead is retained
+(+26.7). The residual steady churn (24.8 vs 20.9) is the structural level-estimate
+variance — a short-window robust fit is inherently a touch noisier than a trailing
+mean — which cannot be removed without altering the preserved 1-step forecast.
+That is the honest floor; steady SLA remains a statistical tie.
 
 ---
 
@@ -194,11 +213,12 @@ flag**, replacing moving_average as the autoscaler's forward signal.
   trending demand and never regresses SLA elsewhere.
 - Already wired into `engine_base.select_engine("harmonic_residual")`; no new
   dependencies (pure NumPy), no artifact to ship or version, fully deterministic.
-- Suggested follow-ups before flipping the default in prod: (a) add light trend
-  damping to kill the steady-state churn; (b) wire `forecast_ahead(steps=w)` into
-  the live run loop so the service emits the lead-time projection the autoscaler
-  consumes; (c) revisit a multi-horizon deep model only if/when serving moves
-  beyond a single-step horizon.
+- Suggested follow-ups before flipping the default in prod: (a) wire
+  `forecast_ahead(steps=w)` into the live run loop so the service emits the
+  lead-time projection the autoscaler consumes; (b) revisit a multi-horizon deep
+  model only if/when serving moves beyond a single-step horizon.
+  (Significance-gated trend damping to remove the steady-state churn is already
+  implemented — §6.1.)
 
 ---
 

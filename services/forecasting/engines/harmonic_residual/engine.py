@@ -73,6 +73,14 @@ _log = logging.getLogger(__name__)
 _DEFAULT_PERIOD = 288
 _SECONDS_PER_DAY = 86_400
 
+# Significance gate for the multi-step trend projection. The forward trend offset
+# is scaled by shrink = t²/(t²+C), with t the slope's signal-to-noise ratio: a
+# slope that is not significant versus the residual noise (a noise slope on flat
+# demand) is shrunk toward zero so it is not projected over the lead window, while
+# a real, significant slope (ramp/sawtooth) survives. C≈4 means a slope needs
+# t≈2 to retain ~half its projected lead. Only affects leads of >1 step.
+_TREND_SNR_GATE = 4.0
+
 
 class HarmonicResidualEngine(ForecastEngine):
     """Robust harmonic-regression + AR(1)-residual single-step forecaster.
@@ -89,6 +97,14 @@ class HarmonicResidualEngine(ForecastEngine):
         irls_iters: robust IRLS reweighting passes (0 → ordinary least squares).
         alpha: miscoverage for the band (0.05 → a 95 % interval).
         min_history: below this many finite samples, fall back to mean-of-history.
+        trend_damping: horizon ramp ρ ∈ (0, 1] controlling how fast an
+            *insignificant* trend is shrunk out of a MULTI-step projection
+            (``forecast_ahead``). The projected trend weight ramps from 1 at the
+            first step (so the single-step ``forecast`` — and the whole fitness
+            function — is identical for any ρ) toward the slope's significance
+            shrink over the lead. Smaller ρ removes a noise slope faster; it has
+            no effect on a strongly significant slope (shrink ≈ 1 → full linear
+            projection regardless). ρ = 1 disables the ramp.
     """
 
     def __init__(
@@ -99,6 +115,7 @@ class HarmonicResidualEngine(ForecastEngine):
         irls_iters: int = 2,
         alpha: float = 0.05,
         min_history: int = 12,
+        trend_damping: float = 0.8,
         **engine_kwargs,
     ) -> None:
         # The run loop hands every engine a uniform kwargs set (e.g.
@@ -111,6 +128,7 @@ class HarmonicResidualEngine(ForecastEngine):
         self.irls_iters = max(int(irls_iters), 0)
         self.alpha = float(alpha)
         self.min_history = max(int(min_history), 2)
+        self.trend_damping = float(np.clip(trend_damping, 1e-3, 1.0))
 
     # ── public contract ──────────────────────────────────────────────────────
     def forecast(self, history: HistoryWindow) -> Forecast:
@@ -188,9 +206,29 @@ class HarmonicResidualEngine(ForecastEngine):
         phi = float(np.clip(phi, 0.0, 0.95))
 
         # Point forecast `steps` ahead: structural(t+steps) + φ^steps·e_last.
+        # The seasonal terms are evaluated at the true future index (they are
+        # periodic and bounded). The linear TREND is **damped by its statistical
+        # significance**: the whole trend contribution is scaled by an effective
+        # weight that ramps from 1 at the first step (so the single-step forecast
+        # — and the entire fitness function — is unchanged) toward the slope's
+        # SNR shrink over the lead. A slope indistinguishable from noise (flat
+        # demand) is therefore projected at full strength for one step but shrunk
+        # out over the warm-up lead, removing the spurious scale churn it would
+        # otherwise cause downstream; a strongly significant slope (a real ramp)
+        # keeps shrink ≈ 1, i.e. the full undamped linear projection.
         x_next = self._design(
             np.array([float(n + steps - 1)]), t_mean, t_std, period, nharm
         )
+        if x_next.shape[1] >= 2:  # a trend column exists (always, here)
+            shrink = self._trend_shrink(X[:, 1], coef[1], resid)
+            # Ramp from full weight at step 1 to `shrink` over the horizon; with
+            # ρ = trend_damping. At steps == 1 the weight is exactly 1 for any
+            # shrink, so forecast()/forecast_ahead(1) are identical and the
+            # fitness numbers are untouched.
+            rho = self.trend_damping
+            weight = shrink + (1.0 - shrink) * (rho ** (steps - 1))
+            full_trend = ((n - 1) - t_mean) / t_std + float(steps) / t_std
+            x_next[0, 1] = weight * full_trend
         point = float((x_next @ coef).item()) + (phi ** steps) * float(resid[-1])
         point = max(point, 0.0)
 
@@ -265,6 +303,29 @@ class HarmonicResidualEngine(ForecastEngine):
             sw = np.sqrt(w)
             coef, *_ = np.linalg.lstsq(X * sw[:, None], y * sw, rcond=None)
         return coef
+
+    @staticmethod
+    def _trend_shrink(trend_col: np.ndarray, slope_coef: float,
+                      resid: np.ndarray) -> float:
+        """Shrink factor in [0, 1] for the projected trend, from the slope's SNR.
+
+        Treats the linear-trend coefficient as a regression slope and forms an
+        approximate t-statistic t = |slope| / se, se = σ_resid / √Σ(trend_col²)
+        (the seasonal/intercept columns are near-orthogonal to the centred trend
+        over a window, so this is a close, cheap estimate). Returns
+        ``t² / (t² + C)``: ~0 when the slope is indistinguishable from noise
+        (flat demand → no spurious lead, no scale churn), ~1 when it is strongly
+        significant (a real ramp → full lead preserved).
+        """
+        sxx = float(trend_col @ trend_col)
+        if sxx <= 1e-12 or resid.size < 3:
+            return 0.0
+        sigma = float(np.std(resid))
+        if sigma <= 1e-12:
+            return 1.0  # a perfectly clean trend — keep the full lead
+        se = sigma / np.sqrt(sxx)
+        t2 = (float(slope_coef) / se) ** 2
+        return t2 / (t2 + _TREND_SNR_GATE)
 
     def _infer_period(self, timestamps: list[str], n: int) -> int:
         """Infer the daily seasonal period from the timestamp cadence.

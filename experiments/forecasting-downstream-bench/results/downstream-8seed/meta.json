@@ -1,6 +1,6 @@
 {
   "tag": "downstream-8seed",
-  "generated_utc": "2026-06-14T04:11:34.982393+00:00",
+  "generated_utc": "2026-06-14T04:34:59.352133+00:00",
   "params": {
     "per_instance_capacity_rps": 100.0,
     "cooldown_seconds": 60.0,
@@ -37,11 +37,11 @@
     "python": "3.11.15",
     "numpy": "1.26.4"
   },
-  "runtime_seconds": 25.82,
+  "runtime_seconds": 29.37,
   "headline": {
     "reactive_sla_pct": 77.08796296296296,
     "ma_predict_sla_pct": 77.08796296296296,
-    "hr_predict_sla_pct": 83.48842592592592,
+    "hr_predict_sla_pct": 83.38310185185186,
     "oracle_sla_pct": 95.66782407407409
   }
 }
