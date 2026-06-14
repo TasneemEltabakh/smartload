@@ -1,0 +1,50 @@
+{
+  "tag": "improved_real",
+  "generated_utc": "2026-06-14T04:09:02.722617+00:00",
+  "git_commit": "6619f7be73a6af1c1ab566bcd600ee9eb92ee5f4",
+  "runtime_seconds": 2.196,
+  "python": "3.11.15",
+  "numpy": "1.26.4",
+  "pandas": "2.3.3",
+  "seeds": [
+    1000,
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007
+  ],
+  "n_seeds": 8,
+  "real_sources": [
+    "azure",
+    "worldcup",
+    "alibaba"
+  ],
+  "strategies": [
+    "S1_oracle",
+    "S2_predictive",
+    "S3_reactive",
+    "S4_static_max",
+    "S4_static_matched",
+    "S5_naive",
+    "C1_ctrl_oracle",
+    "C2_ctrl_predictive",
+    "C3_ctrl_reactive",
+    "C4_ctrl_trend",
+    "C5_ctrl_noisy_oracle",
+    "C6_ctrl_sqrt_trend"
+  ],
+  "data_root": "/data/smartload-datasets",
+  "window_minutes": 30,
+  "params": {
+    "per_instance_capacity_rps": 100.0,
+    "cooldown_seconds": 60.0,
+    "warmup_steps": 20,
+    "run_steps": 1800,
+    "peak_demand_mult_of_capacity": 8.0
+  },
+  "decision_rule": "services/autoscaler/decisions.py::decide",
+  "controller": "services/autoscaler/controllers.py::decide_target"
+}

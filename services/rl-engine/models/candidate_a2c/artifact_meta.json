@@ -1,0 +1,31 @@
+{
+  "policy_type": "a2c",
+  "policy_kind": "continuous_weights",
+  "training_date": "2026-06-13T18:26:15.200058+00:00",
+  "n_max_backends": 5,
+  "norm_params": {
+    "latency_scale": 200.0,
+    "request_count_scale": 100.0
+  },
+  "reward_config": {
+    "latency_scale": 200.0,
+    "w_tail": 0.5,
+    "w_shed": 5.0
+  },
+  "episode_length": 128,
+  "gamma": 0.0,
+  "training_steps": 400000,
+  "sb3_version": "2.8.0",
+  "eval": {
+    "reward": {
+      "mean_reward": -2.467842555516134,
+      "mean_served_latency_ms": 172.79227489985405,
+      "mean_shed": 0.09079631982392077
+    },
+    "per_scenario_served_latency_ms": {
+      "homogeneous": 143.10267302517354,
+      "heterogeneous": 193.50392802879287,
+      "degrading": 279.62470397052596
+    }
+  }
+}

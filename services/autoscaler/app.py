@@ -543,6 +543,7 @@ def health():
         "service":                      SERVICE_NAME,
         "redis":                        redis_ok,
         "timescaledb":                  db_ok,
+        "provisioning_enabled":         PROVISIONING_ENABLED,
         "policy":                       policy_snapshot,
         "policy_version":               version_snapshot,
         "stats":                        _stats_snapshot(),

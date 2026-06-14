@@ -1,0 +1,59 @@
+{
+  "tag": "thesis-v1",
+  "generated_utc": "2026-06-14T00:44:24.984722+00:00",
+  "protocol": {
+    "method": "rolling-origin / walk-forward",
+    "horizon_steps": 1,
+    "bucket": "5min",
+    "holdout_frac": 0.15,
+    "mape_gate_pct": 20.0
+  },
+  "versions": {
+    "python": "3.11.9",
+    "numpy": "1.26.4",
+    "statsmodels": "0.14.6"
+  },
+  "arima_order": [
+    2,
+    0,
+    2
+  ],
+  "moving_average_window": 60,
+  "engines": [
+    "naive",
+    "moving_average",
+    "arima_serving"
+  ],
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "days": 3,
+  "profiles": [
+    "steady",
+    "diurnal",
+    "spiky",
+    "ramp"
+  ],
+  "generator_params": {
+    "n_buckets": 864,
+    "steady_level": 50.0,
+    "steady_noise_sd": 3.0,
+    "diurnal_base": 60.0,
+    "diurnal_amplitude": 40.0,
+    "diurnal_period": 288,
+    "diurnal_noise_sd": 4.0,
+    "spiky_base": 40.0,
+    "spiky_noise_sd": 3.0,
+    "spiky_burst_rate": 0.02,
+    "spiky_burst_mult": 4.0,
+    "spiky_burst_decay": 0.55,
+    "ramp_start": 30.0,
+    "ramp_slope_per_day": 60.0,
+    "ramp_noise_sd": 4.0
+  },
+  "runtime_seconds": 625.57
+}
