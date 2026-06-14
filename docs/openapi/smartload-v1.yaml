@@ -612,6 +612,96 @@ paths:
                   aggregate: { type: object, nullable: true, additionalProperties: true }
                   window_seconds: { type: integer }
 
+  /api/v1/forecasts:
+    get:
+      summary: Recent forecast history (operator-UI forecast view)
+      description: |
+        Served by the forecasting service (port 8083). Returns recent rows from
+        the `forecasts` hypertable (newest first) plus the distinct set of
+        model_names present in the window. Always returns 200 — a DB failure
+        collapses to an empty result so the history view degrades gracefully.
+      tags: [forecasting]
+      parameters:
+        - in: query
+          name: window
+          description: "How far back to read, in seconds (default 3600, cap 86400)."
+          schema: { type: integer, default: 3600, maximum: 86400 }
+        - in: query
+          name: limit
+          description: "Maximum rows to return, newest first (default 500, cap 5000)."
+          schema: { type: integer, default: 500, maximum: 5000 }
+      responses:
+        '200':
+          description: Forecast rows plus the distinct model_names in the window. Always 200 (empty result on DB failure).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forecasts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time:             { type: string, format: date-time }
+                        horizon_minutes:  { type: integer }
+                        predicted_rps:    { type: number }
+                        confidence_lower: { type: number, nullable: true }
+                        confidence_upper: { type: number, nullable: true }
+                        model_name:       { type: string }
+                        model_version:    { type: string, nullable: true }
+                  models:
+                    type: array
+                    items: { type: string }
+                  window_seconds: { type: integer }
+
+  /api/v1/anomaly/history:
+    get:
+      summary: Recent per-backend anomaly verdict history (operator-UI history view)
+      description: |
+        Served by the anomaly-detector (port 8082). Returns recent rows from the
+        `backend_health` hypertable (newest first), optionally filtered to a
+        single backend_id, plus the distinct set of backend_ids present in the
+        window. Always returns 200 — a DB failure collapses to an empty result
+        so the history view degrades gracefully.
+      tags: [anomaly-detector]
+      parameters:
+        - in: query
+          name: window
+          description: "How far back to read, in seconds (default 3600, cap 86400)."
+          schema: { type: integer, default: 3600, maximum: 86400 }
+        - in: query
+          name: backend
+          description: "Optional backend_id filter (e.g. \"backend_1\"); omit for all backends."
+          schema: { type: string }
+        - in: query
+          name: limit
+          description: "Maximum rows to return, newest first (default 500, cap 5000)."
+          schema: { type: integer, default: 500, maximum: 5000 }
+      responses:
+        '200':
+          description: Verdict rows plus the distinct backend_ids in the window. Always 200 (empty result on DB failure).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  history:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        time:       { type: string, format: date-time }
+                        backend_id: { type: string }
+                        status:
+                          type: string
+                          enum: [healthy, degraded, unhealthy]
+                        score:      { type: number }
+                  backends:
+                    type: array
+                    items: { type: string }
+                  window_seconds: { type: integer }
+
   /api/v1/engine/state:
     get:
       summary: Live per-engine state (policy bootstrap, runloop stats, last cycle)

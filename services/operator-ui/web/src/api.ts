@@ -304,6 +304,43 @@ export interface RelatedMetrics {
   rps_current: number | null;
 }
 
+// ── Forecast history (forecasting service) ────────────────────────────────────
+// Predicted-vs-actual series with confidence bounds + model provenance, served
+// by the forecasting upstream's GET /api/v1/forecasts behind the BFF.
+
+export interface ForecastHistoryRow {
+  time: string;
+  horizon_minutes: number;
+  predicted_rps: number;
+  confidence_lower: number | null;
+  confidence_upper: number | null;
+  model_name: string;
+  model_version: string | null;
+}
+
+export interface ForecastHistoryResponse {
+  forecasts: ForecastHistoryRow[];
+  models: string[];
+  window_seconds: number;
+}
+
+// ── Anomaly verdict history (anomaly-detector) ────────────────────────────────
+// Per-backend status/score rulings over time, served by the anomaly-detector
+// upstream's GET /api/v1/anomaly/history behind the BFF.
+
+export interface AnomalyHistoryRow {
+  time: string;
+  backend_id: string;
+  status: IsolateStatus;
+  score: number;
+}
+
+export interface AnomalyHistoryResponse {
+  history: AnomalyHistoryRow[];
+  backends: string[];
+  window_seconds: number;
+}
+
 // ── Per-container CPU / memory (resource-collector, v1.0.7bb) ─────────────────
 
 export interface ResourceSample {
@@ -525,6 +562,29 @@ export const api = {
     _fetchJson<AlertItem[]>(
       `/api/ui/alerts${windowSeconds ? `?window=${windowSeconds}` : ""}`,
     ),
+
+  // ── Forecast history + anomaly verdict history ────────────────────────────
+
+  getForecastHistory: (windowSeconds?: number, limit?: number) => {
+    const qs = new URLSearchParams();
+    if (windowSeconds != null) qs.set("window", String(windowSeconds));
+    if (limit != null) qs.set("limit", String(limit));
+    const q = qs.toString();
+    return _fetchJson<ForecastHistoryResponse>(
+      `/api/ui/metrics/forecast-history${q ? `?${q}` : ""}`,
+    );
+  },
+
+  getAnomalyHistory: (windowSeconds?: number, backend?: string, limit?: number) => {
+    const qs = new URLSearchParams();
+    if (windowSeconds != null) qs.set("window", String(windowSeconds));
+    if (backend != null) qs.set("backend", backend);
+    if (limit != null) qs.set("limit", String(limit));
+    const q = qs.toString();
+    return _fetchJson<AnomalyHistoryResponse>(
+      `/api/ui/anomaly/history${q ? `?${q}` : ""}`,
+    );
+  },
 };
 
 // SSE stream URL — opened by the LiveEngines page with new EventSource(...).

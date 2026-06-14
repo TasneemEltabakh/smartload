@@ -70,6 +70,29 @@ GROUP BY bucket
 ORDER BY bucket ASC;
 """
 
+# ── forecasting history read ───────────────────────────────────────────────────
+# Recent forecast rows over a parameterised window, newest first, for the
+# operator-facing GET /api/v1/forecasts read endpoint. Bounded by an integer
+# limit parameter capped at the route layer to avoid unbounded reads.
+#
+# Parameters (in order):
+#   $1 window — text interval, e.g. "3600 seconds"
+#   $2 limit  — int row cap
+FORECAST_HISTORY_QUERY = """
+SELECT
+    time,
+    horizon_minutes,
+    predicted_rps,
+    confidence_lower,
+    confidence_upper,
+    model_name,
+    model_version
+FROM forecasts
+WHERE time > NOW() - %s::interval
+ORDER BY time DESC
+LIMIT %s;
+"""
+
 # ── rl-engine ─────────────────────────────────────────────────────────────────
 # Fetches the current system state per backend over a parameterised window
 # (typical: "30 seconds"). Returns one row per backend instance — used to
@@ -113,6 +136,33 @@ SELECT DISTINCT ON (backend_id)
 FROM backend_health
 WHERE time > NOW() - %s::interval
 ORDER BY backend_id, time DESC;
+"""
+
+# ── anomaly verdict history read ───────────────────────────────────────────────
+# Recent per-backend health verdict rows over a parameterised window, newest
+# first, for the operator-facing GET /api/v1/anomaly/history read endpoint.
+# Optionally filtered to a single backend_id. Bounded by an integer limit
+# parameter capped at the route layer to avoid unbounded reads.
+#
+# The optional backend filter is applied with a NULL-guard: when $2 is NULL the
+# predicate degenerates to TRUE so the same statement text serves both the
+# all-backends and single-backend cases (a stable query plan, SOT §11).
+#
+# Parameters (in order):
+#   $1 window     — text interval, e.g. "3600 seconds"
+#   $2 backend_id — text or NULL; NULL means "all backends"
+#   $3 limit      — int row cap
+ANOMALY_HISTORY_QUERY = """
+SELECT
+    time,
+    backend_id,
+    status,
+    score
+FROM backend_health
+WHERE time > NOW() - %s::interval
+  AND (%s::text IS NULL OR backend_id = %s)
+ORDER BY time DESC
+LIMIT %s;
 """
 
 # ── telemetry write helpers ───────────────────────────────────────────────────

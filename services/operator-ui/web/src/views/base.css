@@ -1,0 +1,30 @@
+/* ============================================================================
+   Operator UI -- global base
+   ----------------------------------------------------------------------------
+   Minimal reset for the redesigned shell. All surface styling comes from the
+   design-system kit and its --sl-* tokens; this only sets the page canvas, the
+   default ink, and the body font so a bare render is sane.
+   ============================================================================ */
+
+html,
+body {
+  margin: 0;
+  background: var(--sl-bg);
+  color: var(--sl-text);
+  font-family: var(--sl-font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: var(--sl-mint-tint);
+  color: var(--sl-mint-deep);
+}

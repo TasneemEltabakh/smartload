@@ -1,0 +1,174 @@
+/* ============================================================================
+   SmartLoad design-system tokens
+   ----------------------------------------------------------------------------
+   Single source of design primitives for both web apps. Every custom property
+   is namespaced with --sl- so it never collides with each app's existing
+   styles.css. Defaults live under :root (light, so a no-attribute render is
+   sane); each theme then overrides the palette under its data-theme selector.
+
+   Themes
+     [data-theme="light"]  Daylight  -- product / marketing surface (Concept B)
+     [data-theme="dark"]   Mission Control -- cinematic operator console (Concept A)
+   ============================================================================ */
+
+:root {
+  /* ---- type families ---- */
+  --sl-font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --sl-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- type scale ---- */
+  --sl-text-xs: 10px;
+  --sl-text-sm: 11.5px;
+  --sl-text-base: 13.5px;
+  --sl-text-md: 15px;
+  --sl-text-lg: 17px;
+  --sl-text-xl: 21px;
+  --sl-text-2xl: 28px;
+  --sl-text-3xl: 38px;
+
+  /* ---- spacing (4px rhythm) ---- */
+  --sl-space-1: 4px;
+  --sl-space-2: 8px;
+  --sl-space-3: 12px;
+  --sl-space-4: 16px;
+  --sl-space-5: 20px;
+  --sl-space-6: 24px;
+  --sl-space-7: 32px;
+  --sl-space-8: 40px;
+
+  /* ---- radii ---- */
+  --sl-radius-sm: 8px;
+  --sl-radius-md: 12px;
+  --sl-radius-lg: 16px;
+  --sl-radius-xl: 22px;
+
+  /* ---- motion ---- */
+  --sl-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --sl-dur-fast: 0.14s;
+  --sl-dur-mid: 0.25s;
+  --sl-dur-draw: 1.1s;
+  --sl-dur-hero: 1.6s;
+  --sl-dur-pause: 0.8s;
+
+  /* =========================================================================
+     LIGHT / Daylight (default)  -- Concept B
+     ========================================================================= */
+  --sl-bg: #f7f8fa;
+  --sl-surface: #ffffff;
+  --sl-surface-sunk: #f1f3f6;
+  --sl-hairline: #e5e8ee;
+  --sl-hairline-soft: #eef1f5;
+
+  --sl-text: #0e1116;
+  --sl-text-mid: #3a4252;
+  --sl-text-low: #6a7384;
+  --sl-text-faint: #9aa3b2;
+
+  --sl-mint: #16a34a;
+  --sl-mint-deep: #15803d;
+  --sl-mint-tint: #e7f6ed;
+  --sl-mint-line: #bfe6cc;
+  --sl-on-mint-tint: #15803d;
+
+  --sl-graphite: #5b6472;
+  --sl-graphite-soft: #aeb6c4;
+
+  --sl-ok: #16a34a;
+  --sl-warn: #d97706;
+  --sl-crit: #dc2626;
+  --sl-ok-tint: #e7f6ed;
+  --sl-warn-tint: #fef3e2;
+  --sl-crit-tint: #fdecec;
+
+  --sl-shadow-1: 0 1px 2px rgba(14, 17, 22, 0.04), 0 1px 3px rgba(14, 17, 22, 0.06);
+  --sl-shadow-2: 0 4px 10px rgba(14, 17, 22, 0.05), 0 12px 28px rgba(14, 17, 22, 0.07);
+
+  /* control-tinted helpers (chart/SVG fills, selection wash) */
+  --sl-mint-soft: rgba(22, 163, 74, 0.12);
+  --sl-mint-band: rgba(22, 163, 74, 0.18);
+  --sl-graphite-area: rgba(91, 100, 114, 0.12);
+  --sl-grid: #eef1f5;
+  --sl-focus-ring: rgba(22, 163, 74, 0.35);
+}
+
+/* Explicit light theme mirrors :root so [data-theme="light"] is self-contained. */
+[data-theme="light"] {
+  --sl-bg: #f7f8fa;
+  --sl-surface: #ffffff;
+  --sl-surface-sunk: #f1f3f6;
+  --sl-hairline: #e5e8ee;
+  --sl-hairline-soft: #eef1f5;
+
+  --sl-text: #0e1116;
+  --sl-text-mid: #3a4252;
+  --sl-text-low: #6a7384;
+  --sl-text-faint: #9aa3b2;
+
+  --sl-mint: #16a34a;
+  --sl-mint-deep: #15803d;
+  --sl-mint-tint: #e7f6ed;
+  --sl-mint-line: #bfe6cc;
+  --sl-on-mint-tint: #15803d;
+
+  --sl-graphite: #5b6472;
+  --sl-graphite-soft: #aeb6c4;
+
+  --sl-ok: #16a34a;
+  --sl-warn: #d97706;
+  --sl-crit: #dc2626;
+  --sl-ok-tint: #e7f6ed;
+  --sl-warn-tint: #fef3e2;
+  --sl-crit-tint: #fdecec;
+
+  --sl-shadow-1: 0 1px 2px rgba(14, 17, 22, 0.04), 0 1px 3px rgba(14, 17, 22, 0.06);
+  --sl-shadow-2: 0 4px 10px rgba(14, 17, 22, 0.05), 0 12px 28px rgba(14, 17, 22, 0.07);
+
+  --sl-mint-soft: rgba(22, 163, 74, 0.12);
+  --sl-mint-band: rgba(22, 163, 74, 0.18);
+  --sl-graphite-area: rgba(91, 100, 114, 0.12);
+  --sl-grid: #eef1f5;
+  --sl-focus-ring: rgba(22, 163, 74, 0.35);
+}
+
+/* =========================================================================
+   DARK / Mission Control  -- Concept A
+   ========================================================================= */
+[data-theme="dark"] {
+  --sl-bg: #0a0d11;
+  --sl-surface: #171d25;
+  --sl-surface-sunk: #12171d;
+  --sl-hairline: #232c36;
+  --sl-hairline-soft: #1c242d;
+
+  --sl-text: #e8edf2;
+  --sl-text-mid: #98a2b0;
+  --sl-text-low: #697585;
+  --sl-text-faint: #5b6472;
+
+  --sl-mint: #4ade80;
+  --sl-mint-deep: #2bbf6a;
+  --sl-mint-tint: rgba(74, 222, 128, 0.1);
+  --sl-mint-line: rgba(74, 222, 128, 0.28);
+  --sl-on-mint-tint: #4ade80;
+
+  --sl-graphite: #5b6472;
+  --sl-graphite-soft: #5b6472;
+
+  --sl-ok: #4ade80;
+  --sl-warn: #f5b544;
+  --sl-crit: #f2555a;
+  --sl-ok-tint: rgba(74, 222, 128, 0.08);
+  --sl-warn-tint: rgba(245, 181, 68, 0.08);
+  --sl-crit-tint: rgba(242, 85, 90, 0.08);
+
+  --sl-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 10px 24px -18px rgba(0, 0, 0, 0.9);
+  --sl-shadow-2: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 18px 40px -24px rgba(0, 0, 0, 0.9);
+
+  --sl-mint-soft: rgba(74, 222, 128, 0.1);
+  --sl-mint-band: rgba(74, 222, 128, 0.16);
+  --sl-graphite-area: rgba(91, 100, 114, 0.22);
+  --sl-grid: #232c36;
+  --sl-focus-ring: rgba(74, 222, 128, 0.45);
+}
