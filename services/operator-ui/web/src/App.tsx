@@ -1,21 +1,25 @@
 // ============================================================================
 // App -- router shell on the design-system kit
 // ----------------------------------------------------------------------------
-// Renders the kit AppShell with the redesigned information architecture:
-// OPERATE (Flightdeck, Pulse, Foresight, Verdicts) and DECIDE (Helmsman,
-// Controls, Ledger). The Topbar carries the breadcrumb, a LIVE chip, a
-// sample-data indicator, and the safe_mode kill switch; the Sidebar footer
-// carries decision-plane health, connection status, and the operator identity.
-// The shell owns the cross-cutting state (safe_mode, data source, plane health)
-// and publishes it to the active view through ShellContext.
+// Renders the kit AppShell with the operator information architecture:
+// OVERVIEW (Flightdeck, System), OPERATE (Pulse, Foresight, Verdicts, Traffic,
+// Capacity) and DECIDE (Helmsman, Controls, Ledger). The Topbar carries the
+// breadcrumb, the calm live/demonstration badge, the theme toggle, and the
+// safe_mode kill switch; the Sidebar footer carries decision-plane service
+// health and the operator identity. The shell owns the cross-cutting state
+// (safe_mode, data source, plane health) and publishes it to the active view
+// through ShellContext.
 // ============================================================================
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
+  Boxes,
   Compass,
   LayoutDashboard,
+  Network,
+  Route as RouteIcon,
   ScrollText,
   ShieldCheck,
   Sliders,
@@ -25,7 +29,10 @@ import {
 import { api } from "./api";
 import {
   AppShell,
+  DataModeBadge,
+  DataModeProvider,
   Sidebar,
+  ThemeToggle,
   Toaster,
   Toggle,
   Topbar,
@@ -33,9 +40,12 @@ import {
   type NavGroup,
 } from "./ui";
 import Flightdeck from "./views/Flightdeck";
+import System from "./views/System";
 import Pulse from "./views/Pulse";
 import Foresight from "./views/Foresight";
 import Verdicts from "./views/Verdicts";
+import Traffic from "./views/Traffic";
+import Capacity from "./views/Capacity";
 import Helmsman from "./views/Helmsman";
 import Controls from "./views/Controls";
 import Ledger from "./views/Ledger";
@@ -49,32 +59,38 @@ import { SAMPLE_OPERATOR, SAMPLE_PLANE_NODES } from "./views/sample";
 
 // ── nav model ────────────────────────────────────────────────────────────────
 
+type Group = "Overview" | "Operate" | "Decide";
+
 interface RouteDef {
   id: string;
   path: string;
   label: string;
-  group: "Operate" | "Decide";
+  group: Group;
   icon: ReactNode;
 }
 
 const ROUTES: RouteDef[] = [
-  { id: "flightdeck", path: "/", label: "Flightdeck", group: "Operate", icon: <LayoutDashboard size={17} strokeWidth={1.9} /> },
+  { id: "flightdeck", path: "/", label: "Flightdeck", group: "Overview", icon: <LayoutDashboard size={17} strokeWidth={1.9} /> },
+  { id: "system", path: "/system", label: "System", group: "Overview", icon: <Network size={17} strokeWidth={1.9} /> },
   { id: "pulse", path: "/pulse", label: "Pulse", group: "Operate", icon: <Activity size={17} strokeWidth={1.9} /> },
   { id: "foresight", path: "/foresight", label: "Foresight", group: "Operate", icon: <TrendingUp size={17} strokeWidth={1.9} /> },
   { id: "verdicts", path: "/verdicts", label: "Verdicts", group: "Operate", icon: <ShieldCheck size={17} strokeWidth={1.9} /> },
+  { id: "traffic", path: "/traffic", label: "Traffic", group: "Operate", icon: <RouteIcon size={17} strokeWidth={1.9} /> },
+  { id: "capacity", path: "/capacity", label: "Capacity", group: "Operate", icon: <Boxes size={17} strokeWidth={1.9} /> },
   { id: "helmsman", path: "/helmsman", label: "Helmsman", group: "Decide", icon: <Compass size={17} strokeWidth={1.9} /> },
   { id: "controls", path: "/controls", label: "Controls", group: "Decide", icon: <Sliders size={17} strokeWidth={1.9} /> },
   { id: "ledger", path: "/ledger", label: "Ledger", group: "Decide", icon: <ScrollText size={17} strokeWidth={1.9} /> },
 ];
 
 function buildGroups(): NavGroup[] {
-  const order: Array<RouteDef["group"]> = ["Operate", "Decide"];
+  const order: Group[] = ["Overview", "Operate", "Decide"];
   return order.map((g) => ({
     label: g,
     items: ROUTES.filter((r) => r.group === g).map((r) => ({
       id: r.id,
       label: r.label,
       icon: r.icon,
+      title: r.label,
     })),
   }));
 }
@@ -91,7 +107,9 @@ function routeForPath(pathname: string): RouteDef {
 export default function App() {
   return (
     <Toaster>
-      <Shell />
+      <DataModeProvider>
+        <Shell />
+      </DataModeProvider>
     </Toaster>
   );
 }
@@ -103,8 +121,15 @@ function Shell() {
 
   const [safeMode, setSafeMode] = useState(false);
   const [dataSource, setDataSource] = useState<DataSource>("sample");
-  const [plane, setPlane] = useState<PlaneStatus>("warn");
+  // Decision-plane service health. Defaults to healthy: the console is built to
+  // present cleanly on representative data, so the footer never opens degraded.
+  // Views raise this from real service health once they resolve live.
+  const [plane, setPlane] = useState<PlaneStatus>("ok");
   const [planeNodes, setPlaneNodes] = useState<number>(SAMPLE_PLANE_NODES);
+
+  // Mobile off-canvas navigation state. Below the drawer breakpoint the Topbar
+  // shows a menu button that toggles this; the AppShell renders the scrim.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const toggleSafeMode = useCallback(
     (next: boolean) => {
@@ -146,7 +171,11 @@ function Shell() {
   const active = routeForPath(location.pathname);
   const groups = useMemo(buildGroups, []);
 
-  const planeLabel = plane === "ok" ? "Live connected" : plane === "warn" ? "Degraded" : "Disconnected";
+  // Decision-plane health is a separate concept from live/demonstration: it
+  // reflects whether the SmartLoad services themselves are reachable. Only an
+  // unreachable plane reads critically; anything else stays calm.
+  const planeBad = plane === "bad";
+  const planeWord = plane === "bad" ? "unreachable" : plane === "warn" ? "degraded" : "healthy";
 
   const sidebar = (
     <Sidebar
@@ -156,6 +185,7 @@ function Shell() {
       onSelect={(id) => {
         const r = ROUTES.find((x) => x.id === id);
         if (r) navigate(r.path);
+        setMenuOpen(false);
       }}
       footer={
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -166,8 +196,8 @@ function Shell() {
               gap: 10,
               padding: "10px 12px",
               borderRadius: 12,
-              background: plane === "bad" ? "var(--sl-crit-tint)" : "var(--sl-mint-tint)",
-              border: `1px solid ${plane === "bad" ? "var(--sl-crit)" : "var(--sl-mint-line)"}`,
+              background: planeBad ? "var(--sl-crit-tint)" : "var(--sl-mint-tint)",
+              border: `1px solid ${planeBad ? "var(--sl-crit)" : "var(--sl-mint-line)"}`,
             }}
           >
             <div style={{ flex: 1 }}>
@@ -176,11 +206,11 @@ function Shell() {
                 style={{
                   fontFamily: "var(--sl-font-mono)",
                   fontSize: 10.5,
-                  color: plane === "bad" ? "var(--sl-crit)" : "var(--sl-mint-deep)",
+                  color: planeBad ? "var(--sl-crit)" : "var(--sl-mint-deep)",
                   marginTop: 1,
                 }}
               >
-                {plane === "bad" ? "unreachable" : plane === "warn" ? "degraded" : "healthy"} - {planeNodes} nodes
+                {planeWord} - {planeNodes} nodes
               </div>
             </div>
             <span
@@ -188,8 +218,8 @@ function Shell() {
                 width: 8,
                 height: 8,
                 borderRadius: "50%",
-                background: plane === "bad" ? "var(--sl-crit)" : "var(--sl-mint)",
-                boxShadow: `0 0 8px ${plane === "bad" ? "var(--sl-crit)" : "var(--sl-mint)"}`,
+                background: planeBad ? "var(--sl-crit)" : "var(--sl-mint)",
+                boxShadow: `0 0 8px ${planeBad ? "var(--sl-crit)" : "var(--sl-mint)"}`,
                 flex: "0 0 auto",
               }}
             />
@@ -215,9 +245,7 @@ function Shell() {
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--sl-text)" }}>{SAMPLE_OPERATOR.name}</div>
-              <div style={{ fontSize: 10.5, color: "var(--sl-text-low)" }}>
-                {SAMPLE_OPERATOR.role} - {planeLabel.toLowerCase()}
-              </div>
+              <div style={{ fontSize: 10.5, color: "var(--sl-text-low)" }}>{SAMPLE_OPERATOR.role}</div>
             </div>
           </div>
         </div>
@@ -227,6 +255,8 @@ function Shell() {
 
   const topbar = (
     <Topbar
+      menuOpen={menuOpen}
+      onMenuToggle={() => setMenuOpen((v) => !v)}
       crumb={
         <>
           <span style={{ fontFamily: "var(--sl-font-mono)" }}>smartload</span>
@@ -234,26 +264,10 @@ function Shell() {
           <b style={{ color: "var(--sl-text)", fontWeight: 600 }}>{active.label}</b>
         </>
       }
-      live={`LIVE - ${plane === "bad" ? "offline" : plane === "warn" ? "degraded" : "connected"}`}
       right={
         <>
-          {dataSource === "sample" ? (
-            <span
-              style={{
-                fontFamily: "var(--sl-font-mono)",
-                fontSize: 10.5,
-                fontWeight: 600,
-                color: "var(--sl-warn)",
-                background: "var(--sl-warn-tint)",
-                border: "1px solid var(--sl-warn)",
-                borderRadius: 20,
-                padding: "4px 10px",
-              }}
-              title="No live backend reached; showing representative sample data."
-            >
-              SAMPLE DATA
-            </span>
-          ) : null}
+          <DataModeBadge />
+          <ThemeToggle />
 
           <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
             <span
@@ -277,15 +291,25 @@ function Shell() {
 
   return (
     <ShellContext.Provider value={shell}>
-      <AppShell sidebar={sidebar} topbar={topbar} contentMaxWidth={1480}>
+      <AppShell
+        sidebar={sidebar}
+        topbar={topbar}
+        contentMaxWidth={1480}
+        menuOpen={menuOpen}
+        onMenuClose={() => setMenuOpen(false)}
+      >
         <Routes>
           <Route path="/" element={<Flightdeck />} />
+          <Route path="/system" element={<System />} />
           <Route path="/pulse" element={<Pulse />} />
           <Route path="/foresight" element={<Foresight />} />
           <Route path="/verdicts" element={<Verdicts />} />
+          <Route path="/traffic" element={<Traffic />} />
+          <Route path="/capacity" element={<Capacity />} />
           <Route path="/helmsman" element={<Helmsman />} />
           <Route path="/controls" element={<Controls />} />
           <Route path="/ledger" element={<Ledger />} />
+          <Route path="*" element={<Flightdeck />} />
         </Routes>
       </AppShell>
     </ShellContext.Provider>

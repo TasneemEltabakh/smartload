@@ -13,7 +13,7 @@
 // renders them in a compact mono form.
 // ============================================================================
 
-import type { AuditCounts, AuditRow, ScalingAuditRow } from "../api";
+import type { AuditCounts, AuditRow, IsolationAuditRow, ScalingAuditRow } from "../api";
 
 // A small helper so the sample trail sits in a believable recent window. The
 // offsets (in minutes before "now") keep the time-range filter meaningful when
@@ -110,26 +110,33 @@ export const SAMPLE_AUDIT_SCALING: ScalingAuditRow[] = [
 ];
 
 // ── Anomaly / isolation audit ─────────────────────────────────────────────────
-// The isolate path is not yet exposed as a dedicated list endpoint, so these
-// rows live only in the sample set today. They merge into the unified trail as
-// "scaling"-kind operational events (action = isolate / restore) carrying the
-// evidence reason, keeping the offline view complete. When an endpoint lands,
-// swap this for a live load; the row shape already matches ScalingAuditRow.
+// Representative isolation / exclusion events shaped to the api.ts
+// IsolationAuditRow (what GET /api/ui/audit/isolation returns). The Ledger loads
+// the live endpoint for these and falls back to this set on error or timeout, so
+// the unified trail still carries the anomaly story when the page renders
+// standalone. Each row mirrors the Verdicts demonstration: api-04 excluded
+// unhealthy on a p95 breach, api-05 flagged degraded near its error threshold.
 
-export const SAMPLE_AUDIT_ISOLATION: ScalingAuditRow[] = [
+export const SAMPLE_AUDIT_ISOLATION: IsolationAuditRow[] = [
   {
     time: ago(6),
-    action: "scale_in",
-    instance_count: 5,
+    backend_id: "api-04",
+    status: "unhealthy",
+    score: 0.21,
+    severity: "critical",
+    actor: "anomaly-detector",
     reason:
-      "api-04 isolated by anomaly-detector: p95_latency_ms 842 vs threshold 300 (2.8x over); traffic redistributed in 1.2 s",
+      "p95_latency_ms 842 vs threshold 400 (2.1x over); excluded from rotation, traffic redistributed in 1.2 s",
   },
   {
     time: ago(38),
-    action: "scale_in",
-    instance_count: 6,
+    backend_id: "api-05",
+    status: "degraded",
+    score: 0.62,
+    severity: "warning",
+    actor: "anomaly-detector",
     reason:
-      "api-05 flagged degraded by anomaly-detector: error_rate_pct 0.44 approaching threshold 0.50; kept in rotation at reduced weight",
+      "error_rate_pct 0.44 approaching threshold 0.50; kept in rotation at reduced weight, under watch",
   },
 ];
 

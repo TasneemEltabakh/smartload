@@ -1489,6 +1489,761 @@ def ui_anomaly_history():
     return (r.text, r.status_code, {"Content-Type": "application/json"})
 
 
+# ── Trends / deltas (KPI sparklines + window-over-window deltas) ──────────────
+#
+# Powers the headline KPI tiles so they stop hardcoding a sample sparkline and
+# a "+12.6%" delta. Each KPI carries a compact recent series (for the
+# sparkline), a delta vs the prior comparable window, and a human label. All
+# numbers are real telemetry; any KPI whose source is unreachable degrades to a
+# null delta + empty series with a note — never a 500.
+
+# Number of trailing minute buckets used to build a sparkline / split into the
+# two comparison windows. 12 buckets ≈ a 12-minute view; the recent half is the
+# last 6 buckets, the prior half the 6 before it.
+TRENDS_BUCKET_COUNT = 12
+
+
+def _pct_delta(recent: float | None, prior: float | None) -> float | None:
+    """Percentage change from prior → recent, rounded to 1 dp. None when either
+    side is missing or the prior window is zero (no meaningful base)."""
+    if recent is None or prior is None or prior == 0:
+        return None
+    return round((recent - prior) / abs(prior) * 100.0, 1)
+
+
+def _split_mean(values: list[float]) -> tuple[float | None, float | None]:
+    """Split a series into prior half + recent half and return (recent_mean,
+    prior_mean). Either side is None when its half is empty."""
+    if not values:
+        return None, None
+    mid = len(values) // 2
+    prior = values[:mid]
+    recent = values[mid:]
+    prior_mean = round(sum(prior) / len(prior), 2) if prior else None
+    recent_mean = round(sum(recent) / len(recent), 2) if recent else None
+    return recent_mean, prior_mean
+
+
+@app.route("/api/ui/metrics/trends", methods=["GET"])
+def ui_metrics_trends():
+    """Headline-KPI trend bundle: recent series + window-over-window delta for
+    each tile (throughput rpm, p95 latency, SLO compliance %, error rate %,
+    active backends).
+
+    Sources, all real, each independent:
+      - throughput_rpm / error_rate_pct: telemetry per-minute series
+        (/api/v1/metrics/rpm buckets, /api/v1/metrics/backends aggregate).
+      - p95_latency_ms / slo_compliance_pct: telemetry latency + slo over the
+        recent vs the prior window.
+      - active_backends: the current cluster size from the scaling audit.
+
+    Each KPI returns {series, current, delta_pct, label, unit}. A KPI whose
+    upstream is down degrades to an empty series + null delta and a note, so the
+    tile shows a calm placeholder rather than an error."""
+    notes: list[str] = []
+    tele = SERVICE_URLS["telemetry"]
+
+    def _trend(series: list[float], unit: str, label: str,
+               current: float | None = None) -> dict:
+        recent_mean, prior_mean = _split_mean(series)
+        cur = current if current is not None else (
+            series[-1] if series else None
+        )
+        return {
+            "series":    series,
+            "current":   cur,
+            "delta_pct": _pct_delta(recent_mean, prior_mean),
+            "label":     label,
+            "unit":      unit,
+        }
+
+    # ── throughput rpm — per-minute buckets give us the series directly. ──────
+    rpm_series: list[float] = []
+    rpm_current: float | None = None
+    try:
+        r = _http.get(f"{tele}/api/v1/metrics/rpm", params={"window": TRENDS_BUCKET_COUNT})
+        if r.status_code == 200:
+            body = r.json() or {}
+            rpm_series = [
+                float(b.get("rpm", 0))
+                for b in (body.get("buckets") or [])
+                if isinstance(b.get("rpm"), (int, float))
+            ]
+            cv = body.get("current_rpm")
+            rpm_current = float(cv) if isinstance(cv, (int, float)) else None
+        else:
+            notes.append(f"throughput_rpm: telemetry returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("trends: rpm fetch failed: %s", exc)
+        notes.append(f"throughput_rpm: telemetry upstream failed: {exc}")
+
+    # ── error rate — single aggregate point per window; sample the recent and
+    # prior windows so the tile can still show a delta even without a series. ─
+    err_recent: float | None = None
+    err_prior: float | None = None
+    half_window_s = TRENDS_BUCKET_COUNT * 60 // 2
+    try:
+        r = _http.get(f"{tele}/api/v1/metrics/backends", params={"window": half_window_s})
+        if r.status_code == 200:
+            agg = (r.json() or {}).get("aggregate") or {}
+            v = agg.get("error_rate_pct")
+            err_recent = round(float(v), 2) if isinstance(v, (int, float)) else None
+        else:
+            notes.append(f"error_rate_pct: telemetry returned {r.status_code}")
+        r2 = _http.get(f"{tele}/api/v1/metrics/backends",
+                       params={"window": TRENDS_BUCKET_COUNT * 60})
+        if r2.status_code == 200:
+            agg2 = (r2.json() or {}).get("aggregate") or {}
+            v2 = agg2.get("error_rate_pct")
+            err_prior = round(float(v2), 2) if isinstance(v2, (int, float)) else None
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("trends: backends fetch failed: %s", exc)
+        notes.append(f"error_rate_pct: telemetry upstream failed: {exc}")
+
+    # ── p95 latency — recent vs prior window. Two latency reads. ──────────────
+    p95_recent: float | None = None
+    p95_prior: float | None = None
+    try:
+        r = _http.get(f"{tele}/api/v1/metrics/latency", params={"window": half_window_s})
+        if r.status_code == 200:
+            v = (r.json() or {}).get("p95_ms")
+            p95_recent = float(v) if isinstance(v, (int, float)) else None
+        r2 = _http.get(f"{tele}/api/v1/metrics/latency",
+                       params={"window": TRENDS_BUCKET_COUNT * 60})
+        if r2.status_code == 200:
+            v2 = (r2.json() or {}).get("p95_ms")
+            p95_prior = float(v2) if isinstance(v2, (int, float)) else None
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("trends: latency fetch failed: %s", exc)
+        notes.append(f"p95_latency_ms: telemetry upstream failed: {exc}")
+
+    # ── SLO compliance — recent vs prior window. ──────────────────────────────
+    slo_recent: float | None = None
+    slo_prior: float | None = None
+    try:
+        r = _http.get(f"{tele}/api/v1/metrics/slo", params={"window": half_window_s})
+        if r.status_code == 200:
+            v = (r.json() or {}).get("compliant_pct")
+            slo_recent = float(v) if isinstance(v, (int, float)) else None
+        r2 = _http.get(f"{tele}/api/v1/metrics/slo",
+                       params={"window": TRENDS_BUCKET_COUNT * 60})
+        if r2.status_code == 200:
+            v2 = (r2.json() or {}).get("compliant_pct")
+            slo_prior = float(v2) if isinstance(v2, (int, float)) else None
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("trends: slo fetch failed: %s", exc)
+        notes.append(f"slo_compliance_pct: telemetry upstream failed: {exc}")
+
+    # ── active backends — current cluster size from the scaling audit. We
+    # synthesise a flat 2-point series (prior, current) so the tile can render
+    # a sparkline and a step delta from the two most recent distinct counts. ──
+    active_series: list[float] = []
+    active_current: float | None = None
+    try:
+        r = _http.get(f"{SERVICE_URLS['autoscaler']}/api/v1/audit/scaling",
+                      params={"limit": 50})
+        if r.status_code == 200:
+            counts = [
+                int(row["instance_count"])
+                for row in (r.json() or [])
+                if isinstance(row.get("instance_count"), int)
+            ]
+            if counts:
+                active_current = float(counts[0])    # newest-first
+                # Oldest→newest for the sparkline; cap to the bucket count.
+                active_series = [float(c) for c in reversed(counts[:TRENDS_BUCKET_COUNT])]
+        else:
+            notes.append(f"active_backends: autoscaler returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("trends: scaling audit fetch failed: %s", exc)
+        notes.append(f"active_backends: autoscaler upstream failed: {exc}")
+
+    label = f"vs prior {TRENDS_BUCKET_COUNT // 2}m"
+    return jsonify({
+        "throughput_rpm":     _trend(rpm_series, "rpm", label, current=rpm_current),
+        "p95_latency_ms": {
+            "series":    [],
+            "current":   p95_recent,
+            "delta_pct": _pct_delta(p95_recent, p95_prior),
+            "label":     label,
+            "unit":      "ms",
+        },
+        "slo_compliance_pct": {
+            "series":    [],
+            "current":   slo_recent,
+            "delta_pct": _pct_delta(slo_recent, slo_prior),
+            "label":     label,
+            "unit":      "%",
+        },
+        "error_rate_pct": {
+            "series":    [],
+            "current":   err_recent,
+            "delta_pct": _pct_delta(err_recent, err_prior),
+            "label":     label,
+            "unit":      "%",
+        },
+        "active_backends":    _trend(active_series, "count", label, current=active_current),
+        "window_minutes":     TRENDS_BUCKET_COUNT,
+        "last_refreshed":     datetime.now(timezone.utc).isoformat(),
+        "notes":              notes,
+    })
+
+
+# ── Forecast summary (flagship hero chart) ────────────────────────────────────
+#
+# Composes the REAL forecast for the hero chart: aligned actual-vs-forecast
+# series, the forecast confidence band, and the scale-ahead decision marker.
+# Sources: forecasting /api/v1/forecasts (predicted_rps + confidence bounds),
+# telemetry rpm (the actual line, normalised to rps), and the autoscaler
+# scaling audit (the most recent forecast-driven actuation = scale-ahead
+# marker). Each source degrades independently to empty/null.
+
+# A scaling audit reason produced by the forecast-driven controller path
+# carries one of these markers (autoscaler annotates reasons, e.g.
+# "forecast predicted 450 rps ... [provision]"). We surface the latest such
+# actuation as the scale-ahead decision marker on the hero chart.
+_FORECAST_DECISION_HINTS = ("forecast", "predict", "provision")
+
+
+@app.route("/api/ui/metrics/forecast-summary", methods=["GET"])
+def ui_metrics_forecast_summary():
+    """Forecast hero-chart bundle: actual rps, forecast rps with confidence
+    band, and the scale-ahead decision marker.
+
+    ?window=N seconds (default 3600) bounds both the actual series and the
+    forecast lookback. Composed from three independent upstreams; any failure
+    degrades that part to empty/null with a note rather than erroring the
+    flagship chart."""
+    notes: list[str] = []
+    try:
+        window = int(request.args.get("window", 3600))
+    except (TypeError, ValueError):
+        window = 3600
+    if window <= 0:
+        window = 3600
+
+    # ── actual throughput, normalised to rps (telemetry rpm buckets / 60). ────
+    actual: list[dict] = []
+    try:
+        buckets = max(1, window // 60)
+        r = _http.get(f"{SERVICE_URLS['telemetry']}/api/v1/metrics/rpm",
+                      params={"window": buckets})
+        if r.status_code == 200:
+            for b in (r.json() or {}).get("buckets") or []:
+                rpm = b.get("rpm")
+                if isinstance(rpm, (int, float)):
+                    actual.append({
+                        "time": b.get("time"),
+                        "rps":  round(rpm / 60.0, 2),
+                    })
+        else:
+            notes.append(f"actual: telemetry returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("forecast-summary: actual fetch failed: %s", exc)
+        notes.append(f"actual: telemetry upstream failed: {exc}")
+
+    # ── forecast series + confidence band from the forecasting service. ───────
+    forecast: list[dict] = []
+    model_name: str | None = None
+    model_version: str | None = None
+    horizon_minutes: int | None = None
+    try:
+        r = _http.get(f"{SERVICE_URLS['forecasting']}/api/v1/forecasts",
+                      params={"window": window})
+        if r.status_code == 200:
+            body = r.json() or {}
+            rows = body.get("forecasts") or []
+            # Oldest→newest so the chart's forecast tail reads left→right.
+            for row in reversed(rows):
+                pr = row.get("predicted_rps")
+                if not isinstance(pr, (int, float)):
+                    continue
+                forecast.append({
+                    "time":             row.get("time"),
+                    "predicted_rps":    round(float(pr), 2),
+                    "confidence_lower": row.get("confidence_lower"),
+                    "confidence_upper": row.get("confidence_upper"),
+                    "horizon_minutes":  row.get("horizon_minutes"),
+                })
+                if model_name is None:
+                    model_name = row.get("model_name")
+                    model_version = row.get("model_version")
+                    hm = row.get("horizon_minutes")
+                    horizon_minutes = hm if isinstance(hm, int) else horizon_minutes
+        else:
+            notes.append(f"forecast: forecasting returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("forecast-summary: forecast fetch failed: %s", exc)
+        notes.append(f"forecast: forecasting upstream failed: {exc}")
+
+    # ── scale-ahead decision marker: the most recent forecast-driven scaling
+    # actuation. We scan the scaling audit for a scale_* row whose reason looks
+    # forecast-driven. None when no such actuation exists yet. ────────────────
+    scale_ahead: dict | None = None
+    try:
+        r = _http.get(f"{SERVICE_URLS['autoscaler']}/api/v1/audit/scaling",
+                      params={"limit": 50})
+        if r.status_code == 200:
+            for row in r.json() or []:
+                action = (row.get("action") or "")
+                reason = (row.get("reason") or "").lower()
+                if action.startswith("scale") and any(
+                    h in reason for h in _FORECAST_DECISION_HINTS
+                ):
+                    scale_ahead = {
+                        "time":           row.get("time"),
+                        "action":         row.get("action"),
+                        "instance_count": row.get("instance_count"),
+                        "reason":         row.get("reason"),
+                    }
+                    break
+        else:
+            notes.append(f"scale_ahead: autoscaler returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("forecast-summary: scaling audit fetch failed: %s", exc)
+        notes.append(f"scale_ahead: autoscaler upstream failed: {exc}")
+
+    return jsonify({
+        "actual":          actual,
+        "forecast":        forecast,
+        "scale_ahead":     scale_ahead,
+        "model_name":      model_name,
+        "model_version":   model_version,
+        "horizon_minutes": horizon_minutes,
+        "window_seconds":  window,
+        "notes":           notes,
+    })
+
+
+# ── RL mode (read-only; promotion is deploy-time gated — see notes) ───────────
+#
+# CASE B: there is NO safe runtime write path to promote RL from shadow to
+# active. The mode is pinned at deploy time by the rl-engine's RL_MODE env var;
+# `rl_mode` is deliberately NOT a policy field (the policy-manager rejects it).
+# The published routing mode is composed from three gates (rl-engine
+# runloop.effective_mode): RL_MODE env, policy.safe_mode, policy.operating_mode.
+#
+# So we expose the TRUE current mode + the recommended mode + whether promotion
+# is operator-actionable (it is not, at runtime), letting the frontend present
+# an HONEST control instead of a fake "Promote to active" success. The two
+# policy gates that ARE operator-writable (safe_mode, operating_mode) are
+# surfaced so the UI can explain what would still need to change.
+
+# Strategy → recommended deploy-time RL_MODE pin. Mirrors
+# services/shared/config_loader.py STRATEGY_PRIMITIVES (advisory only — never a
+# policy field). Used to derive the recommended mode from the live strategy.
+_STRATEGY_RECOMMENDED_RL_MODE: dict[str, str | None] = {
+    "round-robin":       None,
+    "least-connections": None,
+    "latency-aware":     "shadow",
+    "forecast-aware":    "shadow",
+    "anomaly-aware":     "shadow",
+    "ai-hybrid":         "active",
+    "safe-fallback":     None,
+}
+
+
+@app.route("/api/ui/engines/rl/mode", methods=["GET"])
+def ui_engines_rl_mode():
+    """Current + recommended RL routing mode, and whether promotion is operator
+    actionable.
+
+    CASE B (documented in app.py + README): RL mode is a deploy-time env pin
+    (RL_MODE on the rl-engine), not a runtime-writable policy field, so
+    `actionable` is always false and there is no POST counterpart. The frontend
+    must present the Helmsman "Promote to active" control honestly — as a
+    deploy-time recommendation, not a live toggle.
+
+    Reads:
+      - rl-engine /api/v1/engine/state for the env-pinned `rl_mode_env`
+        (falls back to /health `rl_mode`),
+      - policy-manager /api/v1/policy for the operator-writable gates
+        (safe_mode, operating_mode) and the derived strategy_name.
+
+    Degrades to current=null with a note when rl-engine is unreachable —
+    never a 500."""
+    notes: list[str] = []
+    current_mode: str | None = None
+    runloop_enabled: bool | None = None
+
+    rl_url = SERVICE_URLS["rl-engine"]
+    try:
+        r = _http.get(f"{rl_url}/api/v1/engine/state")
+        if r.status_code == 200:
+            body = r.json() or {}
+            current_mode = body.get("rl_mode_env")
+            runloop_enabled = body.get("runloop_enabled")
+        else:
+            notes.append(f"current_mode: rl-engine state returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("rl mode: engine state fetch failed: %s", exc)
+        notes.append(f"current_mode: rl-engine upstream failed: {exc}")
+
+    # Fall back to /health rl_mode if engine/state didn't carry the env pin.
+    if current_mode is None:
+        try:
+            r = _http.get(f"{rl_url}/health")
+            if r.status_code in (200, 503):
+                current_mode = (r.json() or {}).get("rl_mode")
+        except Exception as exc:                            # noqa: BLE001
+            log.warning("rl mode: health fallback failed: %s", exc)
+
+    # Operator-writable policy gates + live strategy → recommended mode.
+    safe_mode: bool | None = None
+    operating_mode: str | None = None
+    strategy_name: str | None = None
+    recommended_mode: str | None = None
+    try:
+        r = _http.get(f"{SERVICE_URLS['policy-manager']}/api/v1/policy")
+        if r.status_code == 200:
+            pol = r.json() or {}
+            safe_mode = pol.get("safe_mode")
+            operating_mode = pol.get("operating_mode")
+            strategy_name = pol.get("strategy_name")
+            recommended_mode = _STRATEGY_RECOMMENDED_RL_MODE.get(strategy_name)
+        else:
+            notes.append(f"recommended_mode: policy-manager returned {r.status_code}")
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("rl mode: policy fetch failed: %s", exc)
+        notes.append(f"recommended_mode: policy-manager upstream failed: {exc}")
+
+    return jsonify({
+        # CASE B: deploy-time pin, no runtime write path.
+        "current_mode":     current_mode,           # "shadow" | "active" | null
+        "recommended_mode": recommended_mode,        # advisory, from live strategy
+        "actionable":       False,                   # promotion is NOT a live toggle
+        "write_path":       "deploy-time",           # RL_MODE env on rl-engine
+        "runloop_enabled":  runloop_enabled,
+        # The operator-writable gates that still shape the EFFECTIVE routing
+        # mode even when RL_MODE=active (rl-engine runloop.effective_mode).
+        "policy_gates": {
+            "safe_mode":      safe_mode,
+            "operating_mode": operating_mode,
+            "strategy_name":  strategy_name,
+        },
+        "explanation": (
+            "RL routing mode is pinned at deploy time by the rl-engine RL_MODE "
+            "environment variable and is not a runtime-writable policy field. "
+            "Promotion to active is an operational/deploy change, not a live "
+            "control. The effective published mode is also gated by the policy "
+            "safe_mode and operating_mode, which are operator-writable."
+        ),
+        "notes": notes,
+    })
+
+
+# ── Isolation audit (Ledger isolation rows) ───────────────────────────────────
+#
+# Real isolation / exclusion events for the Ledger, derived from the
+# anomaly-detector's verdict history (backend_health) cross-referenced with the
+# live smartload.anomaly ring buffer (which carries severity + the
+# metric/observed/threshold evidence + the publishing source = actor). A
+# verdict of status != "healthy" is an isolation/exclusion event. The
+# backend_health table has no actor/reason column, so we default actor to the
+# anomaly-detector engine and derive a human reason from the evidence; manual
+# isolations surface through the ring-buffer source.
+
+# How far back the isolation audit reads by default, in seconds.
+ISOLATION_AUDIT_WINDOW_SECONDS = 86400
+
+
+def _isolation_reason(metric, observed, threshold, status) -> str:
+    """Human reason for an isolation row from whatever evidence is present."""
+    if metric is not None and observed is not None:
+        obs = (f"{observed:.2f}".rstrip("0").rstrip(".")
+               if isinstance(observed, (int, float)) else observed)
+        if threshold is not None and isinstance(threshold, (int, float)):
+            thr = f"{threshold:.2f}".rstrip("0").rstrip(".")
+            return f"{metric} {obs} crossed threshold {thr}"
+        return f"{metric} {obs}"
+    return f"health verdict: {status}"
+
+
+@app.route("/api/ui/audit/isolation", methods=["GET"])
+def ui_audit_isolation():
+    """Isolation / exclusion event list for the Ledger.
+
+    A row is emitted for each backend_health verdict with status != "healthy"
+    inside ?window=N seconds (default 1 day). Shape per row: time, backend_id,
+    status, score, actor, reason. Evidence (severity / metric / observed /
+    threshold / actor) is enriched from the live smartload.anomaly ring buffer
+    keyed by (backend_id, time); manual isolations carry their actor through the
+    envelope source.
+
+    ?limit=N caps the rows (newest first). Degrades to an empty list with HTTP
+    200 if the anomaly-detector is unreachable — the Ledger renders calmly."""
+    _start_engines_subscriber()
+
+    try:
+        window = int(request.args.get("window", ISOLATION_AUDIT_WINDOW_SECONDS))
+    except (TypeError, ValueError):
+        window = ISOLATION_AUDIT_WINDOW_SECONDS
+    if window <= 0:
+        window = ISOLATION_AUDIT_WINDOW_SECONDS
+    try:
+        limit = int(request.args.get("limit", 100))
+    except (TypeError, ValueError):
+        limit = 100
+    if limit <= 0:
+        limit = 100
+    limit = min(limit, 1000)
+
+    # Build an evidence index from the ring buffer keyed by (backend_id, time)
+    # so we can attach severity / metric evidence / actor to a verdict row. The
+    # AnomalyEvent carries the source (publishing service) on its envelope, used
+    # as the actor when present.
+    evidence: dict[tuple, dict] = {}
+    try:
+        for entry in _engines_buf.recent():
+            if entry.get("channel") != "smartload.anomaly":
+                continue
+            payload = entry.get("payload", {}) or {}
+            env = entry.get("envelope", {}) or {}
+            bid = payload.get("backend_id")
+            ts = env.get("timestamp")
+            if bid is None or ts is None:
+                continue
+            evidence[(bid, ts)] = {
+                "severity":       payload.get("severity"),
+                "metric":         payload.get("metric"),
+                "observed_value": payload.get("observed_value"),
+                "threshold":      payload.get("threshold"),
+                "actor":          env.get("source"),
+            }
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("isolation audit: ring buffer read failed: %s", exc)
+
+    rows: list[dict] = []
+    try:
+        r = _http.get(
+            f"{SERVICE_URLS['anomaly-detector']}/api/v1/anomaly/history",
+            params={"window": window, "limit": limit * 5},
+        )
+        if r.status_code != 200:
+            log.warning("isolation audit: anomaly history returned %s", r.status_code)
+            return jsonify([])
+        history = (r.json() or {}).get("history") or []
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("isolation audit: anomaly history fetch failed: %s", exc)
+        return jsonify([])
+
+    for h in history:
+        status = h.get("status")
+        if not status or status == "healthy":
+            continue   # only isolation/exclusion events
+        bid = h.get("backend_id")
+        ts = h.get("time")
+        ev = evidence.get((bid, ts), {})
+        severity = ev.get("severity") or (
+            "critical" if status == "unhealthy" else "warning"
+        )
+        rows.append({
+            "time":       ts,
+            "backend_id": bid,
+            "status":     status,
+            "score":      h.get("score"),
+            "severity":   severity,
+            "actor":      ev.get("actor") or "anomaly-detector",
+            "reason":     _isolation_reason(
+                ev.get("metric"), ev.get("observed_value"),
+                ev.get("threshold"), status,
+            ),
+        })
+        if len(rows) >= limit:
+            break
+
+    # History is already newest-first from the upstream; keep that ordering.
+    return jsonify(rows)
+
+
+# ── System topology (powers the System view — every service, live) ────────────
+#
+# One payload that guarantees the System view can show the WHOLE architecture
+# live: every SmartLoad service as a node (id, display name, role, health,
+# last-activity, one key live metric) plus the data-flow edges between them.
+# Built from the existing health fan-out + SERVICE_URLS + the engines ring
+# buffer (for channel activity). The two headless shippers (resource-collector,
+# lb-otel-shipper) have no HTTP surface, so they appear as nodes with a
+# "headless" status and no health probe — never omitted.
+
+# Static node catalogue. (id, display_name, role, http) — http=False for the
+# headless OTLP shippers, which have no /health to probe. Order is roughly the
+# data-flow order so a layout pass reads top-to-bottom.
+_TOPOLOGY_NODES: tuple[tuple[str, str, str, bool], ...] = (
+    ("load-balancer",     "Load Balancer",      "NGINX upstream proxy routing client traffic to backends", True),
+    ("lb-sidecar",        "LB Sidecar",         "Applies routing weights and backend exclusions to the load balancer", True),
+    ("lb-otel-shipper",   "LB OTel Shipper",    "Ships load-balancer access logs to the telemetry pipeline", False),
+    ("resource-collector", "Resource Collector", "Ships per-container CPU and memory stats to the telemetry pipeline", False),
+    ("telemetry",         "Telemetry",          "Receives metrics and persists the time-series store", True),
+    ("forecasting",       "Forecasting",        "Predicts near-term demand to drive scale-ahead decisions", True),
+    ("anomaly-detector",  "Anomaly Detector",   "Scores backend health and isolates unhealthy backends", True),
+    ("rl-engine",         "RL Engine",          "Recommends routing weights from a learned policy (shadow by default)", True),
+    ("autoscaler",        "Autoscaler",         "Scales the backend pool from forecast and capacity signals", True),
+    ("policy-manager",    "Policy Manager",     "Owns the operating policy and named strategies", True),
+    ("operator-ui",       "Operator UI",        "This console — reads every service and presents the system", True),
+)
+
+# Data-flow edges (source → target, label). Mirrors the SmartLoad event +
+# request topology: client traffic through the LB, metrics into telemetry, the
+# AI plane reasoning off telemetry and acting through the sidecar/autoscaler,
+# and the policy plane configuring everyone.
+_TOPOLOGY_EDGES: tuple[tuple[str, str, str], ...] = (
+    ("load-balancer",      "lb-otel-shipper",   "access logs"),
+    ("lb-otel-shipper",    "telemetry",         "request metrics"),
+    ("resource-collector", "telemetry",         "cpu / memory"),
+    ("telemetry",          "forecasting",       "demand history"),
+    ("telemetry",          "anomaly-detector",  "backend signals"),
+    ("telemetry",          "rl-engine",         "routing state"),
+    ("telemetry",          "autoscaler",        "capacity signals"),
+    ("forecasting",        "autoscaler",        "forecast"),
+    ("anomaly-detector",   "lb-sidecar",        "health verdicts"),
+    ("rl-engine",          "lb-sidecar",        "routing recommendation"),
+    ("lb-sidecar",         "load-balancer",     "weights / exclusions"),
+    ("autoscaler",         "load-balancer",     "backend pool size"),
+    ("policy-manager",     "forecasting",       "policy"),
+    ("policy-manager",     "anomaly-detector",  "policy"),
+    ("policy-manager",     "rl-engine",         "policy"),
+    ("policy-manager",     "autoscaler",        "policy"),
+    ("policy-manager",     "lb-sidecar",        "policy"),
+)
+
+# Per-service Redis channel → used to surface the last-activity timestamp from
+# the ring buffer for the AI plane nodes.
+_TOPOLOGY_NODE_CHANNEL: dict[str, str] = {
+    "anomaly-detector": "smartload.anomaly",
+    "forecasting":      "smartload.forecast",
+    "rl-engine":        "smartload.routing",
+    "autoscaler":       "smartload.scale",
+}
+
+
+def _topology_key_metric(node_id: str, health: dict) -> dict | None:
+    """Pick one human key metric per node from its /health body. Returns
+    {label, value} or None when nothing meaningful is available."""
+    extra = health.get("extra") or {}
+    status = health.get("status")
+    if node_id == "load-balancer":
+        uc = extra.get("upstream_count")
+        if uc is not None:
+            return {"label": "upstreams", "value": uc}
+    if node_id == "autoscaler":
+        stats = extra.get("stats") or {}
+        if isinstance(stats, dict) and "actions_total" in stats:
+            return {"label": "decisions", "value": stats.get("actions_total")}
+        tc = extra.get("active_target_count")
+        if tc is not None:
+            return {"label": "target backends", "value": tc}
+    if node_id == "policy-manager":
+        pv = extra.get("policy_version")
+        if pv is not None:
+            return {"label": "policy version", "value": pv}
+    if node_id == "rl-engine":
+        rm = extra.get("rl_mode")
+        if rm is not None:
+            return {"label": "rl mode", "value": rm}
+    if node_id in ("forecasting", "anomaly-detector"):
+        age = extra.get("last_inference_age_seconds")
+        if age is not None:
+            return {"label": "last inference", "value": f"{age}s ago"}
+    if node_id == "lb-sidecar":
+        ex = extra.get("excluded_backends")
+        if isinstance(ex, list):
+            return {"label": "excluded backends", "value": len(ex)}
+    # Generic fallback: surface the health status itself as the key metric.
+    if status is not None:
+        return {"label": "status", "value": status}
+    return None
+
+
+@app.route("/api/ui/system/topology", methods=["GET"])
+def ui_system_topology():
+    """Whole-system live topology for the System view: every SmartLoad service
+    as a node + the data-flow edges between them.
+
+    Per node: id, display name, one-line role, health status, last-activity
+    timestamp (where knowable, from the engines ring buffer), and one key live
+    metric pulled from the service's /health. The two headless OTLP shippers
+    have no HTTP surface, so they appear with status "headless" and no probe —
+    they are never omitted, so the operator sees the complete architecture.
+
+    Always 200. Each health probe is independent; an unreachable service shows
+    status "unreachable" rather than dropping out of the graph."""
+    _start_engines_subscriber()
+
+    # Probe health for every HTTP node in parallel (reuse _fetch_health).
+    http_nodes = [n for n in _TOPOLOGY_NODES if n[3]]
+    health_by_id: dict[str, dict] = {}
+    probe_targets = [
+        (node_id, SERVICE_URLS[node_id])
+        for (node_id, _disp, _role, _http_ok) in http_nodes
+        if node_id in SERVICE_URLS
+    ]
+    # operator-ui is this process — synthesise its own health rather than
+    # calling back into ourselves.
+    health_by_id["operator-ui"] = {
+        "status": "ok", "status_code": 200, "extra": {},
+    }
+    if probe_targets:
+        try:
+            with ThreadPoolExecutor(max_workers=len(probe_targets)) as pool:
+                for name, h in pool.map(lambda kv: _fetch_health(*kv), probe_targets):
+                    health_by_id[name] = h
+        except Exception as exc:                            # noqa: BLE001
+            log.warning("topology: health fan-out failed: %s", exc)
+
+    # Last-activity per AI-plane node from the ring buffer (latest envelope
+    # timestamp on that node's channel).
+    last_activity: dict[str, str] = {}
+    try:
+        latest_on_channel: dict[str, str] = {}
+        for entry in _engines_buf.recent():
+            ch = entry.get("channel")
+            ts = entry.get("envelope", {}).get("timestamp")
+            if ch and ts and (ch not in latest_on_channel or ts > latest_on_channel[ch]):
+                latest_on_channel[ch] = ts
+        for node_id, ch in _TOPOLOGY_NODE_CHANNEL.items():
+            if ch in latest_on_channel:
+                last_activity[node_id] = latest_on_channel[ch]
+    except Exception as exc:                                # noqa: BLE001
+        log.warning("topology: ring buffer read failed: %s", exc)
+
+    nodes: list[dict] = []
+    for node_id, display_name, role, http_ok in _TOPOLOGY_NODES:
+        if not http_ok:
+            # Headless shipper — no /health to probe.
+            nodes.append({
+                "id":            node_id,
+                "display_name":  display_name,
+                "role":          role,
+                "status":        "headless",
+                "http":          False,
+                "last_activity": None,
+                "key_metric":    None,
+            })
+            continue
+        health = health_by_id.get(node_id, {"status": "unreachable", "extra": {}})
+        nodes.append({
+            "id":            node_id,
+            "display_name":  display_name,
+            "role":          role,
+            "status":        health.get("status", "unreachable"),
+            "http":          True,
+            "last_activity": last_activity.get(node_id),
+            "key_metric":    _topology_key_metric(node_id, health),
+        })
+
+    edges = [
+        {"source": s, "target": t, "label": label}
+        for (s, t, label) in _TOPOLOGY_EDGES
+    ]
+
+    return jsonify({
+        "nodes":          nodes,
+        "edges":          edges,
+        "generated_at":   datetime.now(timezone.utc).isoformat(),
+    })
+
+
 # ── BFF own health ────────────────────────────────────────────────────────────
 
 @app.route("/health")

@@ -65,6 +65,21 @@ export function Heartbeat({
     const halo = haloRef.current;
     if (!actual || !fore || !point || !halo) return;
 
+    // Honour prefers-reduced-motion: skip the draw and show the resting state.
+    const reduceMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      actual.style.transition = "none";
+      fore.style.transition = "none";
+      actual.style.strokeDashoffset = "0";
+      fore.style.strokeDashoffset = "0";
+      point.style.opacity = "1";
+      halo.style.opacity = "0";
+      return;
+    }
+
     let cancelled = false;
     const timers: number[] = [];
     const aLen = actual.getTotalLength();

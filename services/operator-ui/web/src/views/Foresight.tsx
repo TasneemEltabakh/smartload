@@ -2,23 +2,23 @@
 // Foresight -- the load forecaster + scale-ahead story
 // ----------------------------------------------------------------------------
 // The forecaster up close: actual throughput leading into a short forward
-// forecast tail with a 90% confidence band and a scale-ahead decision marker,
-// the recent scaling-ahead timeline (forecast -> scale action), and a forecast
-// vs actual accuracy callout. Every panel tries the live API and falls back to
-// sample data on error or timeout, so the page renders complete with no backend
-// running, and publishes its data source up to the app shell like the Flightdeck.
+// forecast tail with a confidence band and a scale-ahead decision marker, the
+// recent scaling-ahead timeline (forecast -> scale action), and a forecast vs
+// actual accuracy callout. Every panel resolves through useLiveOrDemo: it shows
+// representative data immediately and upgrades to live when a backend is
+// reachable, registering its source with the shell's global Demonstration/Live
+// badge through a unique panelId.
 //
-// The forward forecast tail and confidence band are driven by the forecast-
-// history endpoint (predicted_rps + confidence bounds, served behind the BFF at
-// /api/ui/metrics/forecast-history), aligned to the live actual throughput. The
-// accuracy callout backtests past forecasts against the actual that followed to
-// compute a real MAPE and in-band share. When the forecaster has not published
-// yet (empty/unreachable) the page falls back to a throughput-derived tail and
-// a sample accuracy callout, with the source indicator reading "sample". The
-// actual series and scaling timeline are live (metrics/throughput, audit/scaling).
+// The main chart is driven by the forecast-summary endpoint (aligned actual +
+// forecast + confidence band + the scale-ahead marker, served behind the BFF at
+// /api/ui/metrics/forecast-summary). The accuracy callout backtests past
+// forecasts from the forecast-history endpoint against the actual throughput
+// that followed to compute a real MAPE and in-band share. Forecast confidence is
+// derived from the live band width; the demonstration path supplies a
+// representative value through the demo fallback, never a literal in render.
 // ============================================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Activity,
   ArrowDownRight,
@@ -33,6 +33,7 @@ import {
 import {
   api,
   type ForecastHistoryResponse,
+  type ForecastSummary,
   type RoutingMetrics,
   type ScalingAuditRow,
   type ThroughputResponse,
@@ -40,36 +41,37 @@ import {
 import {
   Badge,
   Card,
+  EmptyState,
+  ErrorState,
   ForecastChart,
   KpiStat,
+  LoadState,
   Sparkline,
   StatusPill,
+  useLiveOrDemo,
   type Status,
 } from "../ui";
-import { loadWithFallback, type DataSource } from "./loader";
 import { useShell } from "./shell-context";
 import {
   SAMPLE_FORESIGHT_ACCURACY,
+  SAMPLE_FORESIGHT_CONFIDENCE_PCT,
   SAMPLE_FORESIGHT_FORECAST_HISTORY,
   SAMPLE_FORESIGHT_ROUTING,
   SAMPLE_FORESIGHT_SCALING,
+  SAMPLE_FORESIGHT_SUMMARY,
   SAMPLE_FORESIGHT_THROUGHPUT,
+  SAMPLE_FORESIGHT_TRENDS,
   type ForecastAccuracy,
 } from "./_sampleForesight";
-
-const REFRESH_MS = 20_000;
 
 // ── small formatting helpers ─────────────────────────────────────────────────
 
 const fmtRpm = (n: number) =>
   n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-// ── forecast derivation ──────────────────────────────────────────────────────
-// Derive a short forward forecast tail and a 90% confidence band from the
-// actual throughput trend. Uses the slope of the recent window so the mint
-// forecast leads the graphite actual; the band widens with the horizon to read
-// as genuine uncertainty. Replaced wholesale once the forecast-history endpoint
-// exists. All series are in k-rpm for the chart's y-axis.
+// rps -> k-rpm for the chart axis (per-second rate scaled to thousands/min).
+const RPS_TO_KRPM = 60 / 1000;
+const fk = (rps: number) => Number((rps * RPS_TO_KRPM).toFixed(2));
 
 interface ChartData {
   actual: number[];
@@ -77,124 +79,69 @@ interface ChartData {
   confLow: number[];
   confHigh: number[];
   xLabels: string[];
-  scaleIndex: number;
+  scaleIndex: number | undefined;
+  scaleLabel: string;
 }
 
-function deriveChart(throughput: ThroughputResponse): ChartData {
-  // Take the last 13 buckets so the x-axis stays readable, in k-rpm.
-  const krpm = throughput.buckets
-    .slice(-13)
-    .map((b) => Number((b.rpm / 1000).toFixed(2)));
-  const actual = krpm.length >= 2 ? krpm : [18.4, 18.4];
+// ── chart from the forecast-summary endpoint ─────────────────────────────────
+// Build the hero chart from the aligned actual + forecast series the summary
+// publishes. actual.rps and forecast.predicted_rps are per-second rates; the
+// chart axis is k-rpm, so convert both (and the confidence bounds). The summary
+// pins the first forecast point to the hand-off so the lines join cleanly; the
+// scale-ahead marker lands on the first forward step when one has fired.
 
-  const last = actual[actual.length - 1];
-  const prev = actual[actual.length - 2];
-  // Smooth the slope over the trailing window so a single noisy bucket does not
-  // swing the forecast; fall back to the last step delta for short series.
-  const win = actual.slice(-4);
-  const trendSlope =
-    win.length >= 2 ? (win[win.length - 1] - win[0]) / (win.length - 1) : last - prev;
+function buildChartFromSummary(summary: ForecastSummary): ChartData {
+  // Keep the last 13 actual buckets so the x-axis stays readable.
+  const actualPts = summary.actual.slice(-13);
+  const actual = actualPts.map((p) => fk(p.rps));
 
-  const f1 = Number((last + trendSlope * 1.4).toFixed(2));
-  const f2 = Number((last + trendSlope * 3.0).toFixed(2));
-  const forecast = [last, f1, f2];
-
-  // 90% confidence band: tight at the hand-off, widening with the horizon.
-  const confLow = [
-    last,
-    Number((f1 * 0.96).toFixed(2)),
-    Number((f2 * 0.91).toFixed(2)),
-  ];
-  const confHigh = [
-    last,
-    Number((f1 * 1.04).toFixed(2)),
-    Number((f2 * 1.1).toFixed(2)),
-  ];
-
-  // x labels: trailing actual steps (minutes ago) then the forecast horizon.
-  const actualLabels = actual.map((_, i) => {
-    const stepsAgo = (actual.length - 1 - i) * 5;
-    return stepsAgo === 0 ? "now" : `-${stepsAgo}`;
-  });
-  const xLabels = [...actualLabels.slice(0, -1), "now", "+5", "+10"];
-
-  return {
-    actual,
-    forecast,
-    confLow,
-    confHigh,
-    xLabels,
-    // Scale-ahead decision fires at the first forward step, where the forecast
-    // crosses the headroom margin ahead of the actual.
-    scaleIndex: 1,
-  };
-}
-
-// ── real forecast-history chart ──────────────────────────────────────────────
-// Build the chart from the forecast-history endpoint when it's live, aligning
-// the predicted series to the actual throughput trace. predicted_rps is a
-// per-second rate; the actual axis is k-rpm, so convert predicted (and the
-// confidence bounds) via rps * 60 / 1000. The forward tail is the forecast rows
-// whose target time is at or after "now"; the hand-off point pins the forecast
-// to the last actual so the lines join cleanly.
-
-const RPS_TO_KRPM = 60 / 1000;
-
-function buildChartFromForecasts(
-  throughput: ThroughputResponse,
-  history: ForecastHistoryResponse,
-): ChartData {
-  const krpm = throughput.buckets
-    .slice(-13)
-    .map((b) => Number((b.rpm / 1000).toFixed(2)));
-  const actual = krpm.length >= 2 ? krpm : [18.4, 18.4];
-  const last = actual[actual.length - 1];
-
-  // Sort forecasts oldest-first and keep the forward tail: rows whose issue
-  // time is the newest few. Take up to two horizon steps so the chart reads
-  // "now → +5 → +10" like the derived path. Use the most recent issue time as
-  // the anchor and pick the next two distinct horizons.
-  const rows = [...history.forecasts].sort(
-    (a, b) => Date.parse(a.time) - Date.parse(b.time),
+  const forecast = summary.forecast.map((f) => fk(f.predicted_rps));
+  const confLow = summary.forecast.map((f) =>
+    f.confidence_lower != null ? fk(f.confidence_lower) : fk(f.predicted_rps),
   );
-  const forward = rows.slice(-2);
+  const confHigh = summary.forecast.map((f) =>
+    f.confidence_upper != null ? fk(f.confidence_upper) : fk(f.predicted_rps),
+  );
 
-  const fk = (rps: number) => Number((rps * RPS_TO_KRPM).toFixed(2));
-
-  const forecast = [last, ...forward.map((r) => fk(r.predicted_rps))];
-  const confLow = [
-    last,
-    ...forward.map((r) =>
-      r.confidence_lower != null
-        ? fk(r.confidence_lower)
-        : Number((fk(r.predicted_rps) * 0.95).toFixed(2)),
-    ),
-  ];
-  const confHigh = [
-    last,
-    ...forward.map((r) =>
-      r.confidence_upper != null
-        ? fk(r.confidence_upper)
-        : Number((fk(r.predicted_rps) * 1.05).toFixed(2)),
-    ),
-  ];
-
+  // x labels: trailing actual steps (minutes ago), then the forward horizons.
+  // The first forecast point is the hand-off ("now"); subsequent points use
+  // their horizon_minutes for the "+5 / +10" labels.
   const actualLabels = actual.map((_, i) => {
     const stepsAgo = (actual.length - 1 - i) * 5;
     return stepsAgo === 0 ? "now" : `-${stepsAgo}`;
   });
-  const horizonLabels = forward.map((r) => `+${r.horizon_minutes}`);
+  const horizonLabels = summary.forecast
+    .slice(1)
+    .map((f) => `+${f.horizon_minutes ?? ""}`);
   const xLabels = [...actualLabels.slice(0, -1), "now", ...horizonLabels];
 
-  return {
-    actual,
-    forecast,
-    confLow,
-    confHigh,
-    xLabels,
-    // Scale-ahead decision fires at the first forward step.
-    scaleIndex: 1,
-  };
+  // Scale-ahead fires at the first forward step when the summary carries a
+  // marker; otherwise leave the marker off rather than implying a decision.
+  const hasForward = forecast.length > 1;
+  const scaleIndex = summary.scale_ahead != null && hasForward ? 1 : undefined;
+  const scaleLabel =
+    summary.scale_ahead?.instance_count != null
+      ? `scale to ${summary.scale_ahead.instance_count}`
+      : "scale-ahead";
+
+  return { actual, forecast, confLow, confHigh, xLabels, scaleIndex, scaleLabel };
+}
+
+// ── forecast confidence from the band ────────────────────────────────────────
+// Derive an in-band confidence from the band width at the forward step: a
+// tighter band reads as higher confidence. Returns null when there's no forward
+// band to measure, so the caller can fall back to the representative value.
+
+function confidenceFromChart(chart: ChartData): number | null {
+  if (chart.forecast.length < 2) return null;
+  const mid = chart.forecast[chart.forecast.length - 1];
+  const lo = chart.confLow[chart.confLow.length - 1];
+  const hi = chart.confHigh[chart.confHigh.length - 1];
+  if (mid > 0 && hi > lo) {
+    const halfWidthPct = ((hi - lo) / 2 / mid) * 100;
+    return Math.max(50, Math.min(99, Math.round(100 - halfWidthPct)));
+  }
+  return null;
 }
 
 // ── real forecast-vs-actual accuracy ─────────────────────────────────────────
@@ -203,7 +150,7 @@ function buildChartFromForecasts(
 // time (issue time + horizon) and compare. Yields a real MAPE, an in-band share
 // (actuals that landed inside the confidence interval), and the recent pairs the
 // callout lists. Returns null when there's no overlap to score, so the caller
-// falls back to the sample callout.
+// falls back to the representative callout.
 
 const ACTUAL_MATCH_TOLERANCE_MS = 150_000; // 2.5 min — half a 5-min bucket
 
@@ -290,105 +237,70 @@ function computeAccuracy(
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function Foresight() {
-  const shell = useShell();
-  const { setDataSource, setPlane, setPlaneNodes } = shell;
+  const { setPlane, setPlaneNodes } = useShell();
 
-  const [throughput, setThroughput] = useState<ThroughputResponse>(
+  // Each panel resolves live-or-demo independently and registers its source
+  // with the global Demonstration/Live badge through a unique panelId.
+  const summaryQ = useLiveOrDemo(
+    () => api.getForecastSummary(3600),
+    SAMPLE_FORESIGHT_SUMMARY,
+    { panelId: "foresight-summary" },
+  );
+  const throughputQ = useLiveOrDemo(
+    () => api.getThroughput(13),
     SAMPLE_FORESIGHT_THROUGHPUT,
+    { panelId: "foresight-throughput" },
   );
-  const [routing, setRouting] = useState<RoutingMetrics>(
+  const historyQ = useLiveOrDemo(
+    () => api.getForecastHistory(3600, 200),
+    SAMPLE_FORESIGHT_FORECAST_HISTORY,
+    { panelId: "foresight-forecast-history" },
+  );
+  const routingQ = useLiveOrDemo(
+    () => api.getRoutingMetrics(),
     SAMPLE_FORESIGHT_ROUTING,
+    { panelId: "foresight-routing" },
   );
-  const [scaling, setScaling] = useState<ScalingAuditRow[]>(
+  const scalingQ = useLiveOrDemo(
+    () => api.auditScaling(8),
     SAMPLE_FORESIGHT_SCALING,
+    { panelId: "foresight-scaling" },
   );
-  // Forecast history drives the real forward tail + accuracy callout when live.
-  const [forecastHistory, setForecastHistory] =
-    useState<ForecastHistoryResponse>(SAMPLE_FORESIGHT_FORECAST_HISTORY);
-  const [forecastLive, setForecastLive] = useState<boolean>(false);
+  const trendsQ = useLiveOrDemo(() => api.getTrends(), SAMPLE_FORESIGHT_TRENDS, {
+    panelId: "foresight-trends",
+  });
 
-  const [throughputLive, setThroughputLive] = useState<boolean>(false);
+  const summary = summaryQ.value;
+  const throughput = throughputQ.value;
+  const history = historyQ.value;
+  const routing = routingQ.value;
+  const trends = trendsQ.value;
+  // A quiet cluster can return an empty scaling list; keep the representative
+  // timeline in that case so the panel never reads as broken.
+  const scaling =
+    scalingQ.value.length > 0 ? scalingQ.value : SAMPLE_FORESIGHT_SCALING;
 
-  // ── data load (live, with sample fallback) ─────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-
-    async function tick() {
-      const results = await Promise.all([
-        loadWithFallback(() => api.getThroughput(13), SAMPLE_FORESIGHT_THROUGHPUT),
-        loadWithFallback(() => api.getRoutingMetrics(), SAMPLE_FORESIGHT_ROUTING),
-        loadWithFallback(() => api.auditScaling(8), SAMPLE_FORESIGHT_SCALING),
-        loadWithFallback(
-          () => api.getForecastHistory(3600, 200),
-          SAMPLE_FORESIGHT_FORECAST_HISTORY,
-        ),
-      ]);
-
-      if (cancelled) return;
-
-      const [thrR, rouR, scR, fcR] = results;
-
-      setThroughput(thrR.value);
-      setThroughputLive(thrR.source === "live");
-      setRouting(rouR.value);
-      // The scaling endpoint can return an empty list on a quiet cluster; keep
-      // the sample timeline in that case so the panel never reads as broken.
-      setScaling(scR.value.length > 0 ? scR.value : SAMPLE_FORESIGHT_SCALING);
-
-      // The forecast endpoint can return an empty list when the forecaster has
-      // not published yet; treat that as sample so the chart/callout never read
-      // as a flat/empty forecast.
-      const fcHasData = fcR.source === "live" && fcR.value.forecasts.length > 0;
-      setForecastHistory(fcHasData ? fcR.value : SAMPLE_FORESIGHT_FORECAST_HISTORY);
-      setForecastLive(fcHasData);
-
-      // The forecast source feeds the shell indicator too, but a quiet
-      // forecaster (empty list) is treated as sample for the source rollup.
-      const sources: DataSource[] = [
-        thrR.source,
-        rouR.source,
-        scR.source,
-        fcHasData ? "live" : "sample",
-      ];
-      const anySample = sources.some((s) => s === "sample");
-      const allSample = sources.every((s) => s === "sample");
-      setDataSource(anySample ? "sample" : "live");
-      setPlane(allSample ? "bad" : anySample ? "warn" : "ok");
-      setPlaneNodes(rouR.value.cluster_size_current ?? 0);
-    }
-
-    tick();
-    const id = window.setInterval(tick, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [setDataSource, setPlane, setPlaneNodes]);
+  const summaryLive = summaryQ.source === "live";
+  const throughputLive = throughputQ.source === "live";
 
   // ── derived readings ───────────────────────────────────────────────────────
 
-  // When forecast history is live + non-empty, build the chart from the real
-  // predicted series aligned to actual throughput; otherwise derive the forward
-  // tail from the throughput trend as before.
-  const chart = useMemo(
-    () =>
-      forecastLive
-        ? buildChartFromForecasts(throughput, forecastHistory)
-        : deriveChart(throughput),
-    [throughput, forecastHistory, forecastLive],
-  );
+  const chart = useMemo(() => buildChartFromSummary(summary), [summary]);
 
-  // Real forecast-vs-actual accuracy when live and there's overlap to score;
-  // otherwise the sample callout. Compute once and reuse for the live flag.
+  // Real forecast-vs-actual accuracy when the history is live and there's
+  // overlap to score; otherwise the representative callout. Compute once.
   const computedAccuracy = useMemo(
-    () => (forecastLive ? computeAccuracy(throughput, forecastHistory) : null),
-    [throughput, forecastHistory, forecastLive],
+    () =>
+      historyQ.source === "live"
+        ? computeAccuracy(throughput, history)
+        : null,
+    [throughput, history, historyQ.source],
   );
   const accuracy: ForecastAccuracy = computedAccuracy ?? SAMPLE_FORESIGHT_ACCURACY;
   const accuracyLive = computedAccuracy != null;
 
-  const actualNowKrpm = chart.actual[chart.actual.length - 1];
-  const forecastNextKrpm = chart.forecast[chart.forecast.length - 1];
+  const actualNowKrpm = chart.actual[chart.actual.length - 1] ?? 0;
+  const forecastNextKrpm = chart.forecast[chart.forecast.length - 1] ?? actualNowKrpm;
   const actualNowRpm = throughput.current_rpm || Math.round(actualNowKrpm * 1000);
   const forecastNextRpm = Math.round(forecastNextKrpm * 1000);
 
@@ -400,31 +312,37 @@ export default function Foresight() {
     0,
     Math.round((1 - actualNowKrpm / (forecastNextKrpm * 1.45)) * 100),
   );
-  // Confidence: derive a real in-band confidence from the live band width at the
-  // forward step (tighter band → higher confidence). Falls back to the sample
-  // 92% reading when the forecast isn't live.
-  const confidencePct = useMemo(() => {
-    if (!forecastLive) return 92;
-    const mid = chart.forecast[chart.forecast.length - 1];
-    const lo = chart.confLow[chart.confLow.length - 1];
-    const hi = chart.confHigh[chart.confHigh.length - 1];
-    if (mid > 0 && hi > lo) {
-      // Band half-width as a share of the central forecast → confidence.
-      const halfWidthPct = ((hi - lo) / 2 / mid) * 100;
-      return Math.max(50, Math.min(99, Math.round(100 - halfWidthPct)));
-    }
-    return 90;
-  }, [chart, forecastLive]);
 
-  // Sparkline trails for the KPI rail (most-recent last), in k-rpm.
+  // Confidence: derived from the live band width at the forward step when the
+  // summary is live and a band exists. On the demonstration path (or when no
+  // forward band can be measured) fall back to the representative value, so the
+  // render never carries a hardcoded confidence literal.
+  const confidencePct = useMemo(() => {
+    const fromBand = summaryLive ? confidenceFromChart(chart) : null;
+    return fromBand ?? SAMPLE_FORESIGHT_CONFIDENCE_PCT;
+  }, [chart, summaryLive]);
+
+  // KPI-rail sparkline trails sourced from the real series rather than fake
+  // prepended arrays: the actual-RPS trail is the chart's actual k-rpm series;
+  // the forecast trail joins the recent actual into the forward forecast. The
+  // pool-size trail comes from the active-backends trend when it carries one.
   const actualSpark = chart.actual;
   const forecastSpark = [...chart.actual.slice(-4), ...chart.forecast.slice(1)];
+  const poolSpark = trends.active_backends.series;
+
+  // Publish plane health to the shell footer. The console presents cleanly on
+  // representative data, so demonstration never reads as degraded: plane health
+  // stays healthy and only the count tracks the routed pool.
+  useEffect(() => {
+    setPlane("ok");
+    setPlaneNodes(poolSize);
+  }, [setPlane, setPlaneNodes, poolSize]);
 
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <PageHead live={throughputLive} forecastLive={forecastLive} />
+    <div className="sl-stack">
+      <PageHead live={throughputLive} forecastLive={summaryLive} />
 
       <KpiRail
         actualRpm={actualNowRpm}
@@ -434,27 +352,25 @@ export default function Foresight() {
         poolSize={poolSize}
         actualSpark={actualSpark}
         forecastSpark={forecastSpark}
+        poolSpark={poolSpark}
       />
 
       <SectionHead
         title="Load forecast and scale-ahead"
-        sub="Mint forecast runs ahead of graphite actual; the band is the 90% confidence interval. The dashed marker is the scale-ahead decision, where the pool steps up before the predicted demand lands."
+        sub="Mint forecast runs ahead of graphite actual; the band is the confidence interval. The dashed marker is the scale-ahead decision, where the pool steps up before the predicted demand lands."
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.6fr) minmax(0, 1fr)",
-          gap: 18,
-          alignItems: "start",
-        }}
-      >
+      <div className="sl-grid-2-1">
         <ForecastCard
           chart={chart}
           actualRpm={actualNowRpm}
           forecastRpm={forecastNextRpm}
           confidencePct={confidencePct}
           headroomPct={headroomPct}
+          modelName={summary.model_name}
+          state={summaryQ.state}
+          degraded={summaryQ.degraded}
+          onRetry={summaryQ.reload}
         />
         <AccuracyCard accuracy={accuracy} live={accuracyLive} />
       </div>
@@ -464,7 +380,13 @@ export default function Foresight() {
         sub="Recent scaling actions, newest first. Each step ties a forecast signal to a concrete pool change, so you can read forecast then action down the list."
       />
 
-      <ScalingTimeline scaling={scaling} routing={routing} />
+      <ScalingTimeline
+        scaling={scaling}
+        routing={routing}
+        state={scalingQ.state}
+        degraded={scalingQ.degraded}
+        onRetry={scalingQ.reload}
+      />
     </div>
   );
 }
@@ -480,7 +402,7 @@ function PageHead({
 }) {
   // The pill reports the data source: fully live when both the actual
   // throughput and the forecast series are live, forecast-only or
-  // throughput-only when one is present, sample when neither is.
+  // throughput-only when one is present, demonstration when neither is.
   const label =
     live && forecastLive
       ? "LIVE FORECAST + THROUGHPUT"
@@ -488,7 +410,7 @@ function PageHead({
         ? "LIVE FORECAST"
         : live
           ? "LIVE THROUGHPUT"
-          : "SAMPLE DATA";
+          : "DEMONSTRATION";
   const status: Status = live || forecastLive ? "ok" : "neutral";
   return (
     <section
@@ -595,6 +517,10 @@ function SectionHead({ title, sub }: { title: string; sub: string }) {
 }
 
 // ── KPI rail ─────────────────────────────────────────────────────────────────
+// Sparklines are sourced from the real series, not fabricated prepended arrays:
+// the actual / forecast trails come from the chart series, the pool trail from
+// the active-backends trend. A tile renders cleanly without a sparkline when no
+// real series is available rather than inventing one.
 
 function KpiRail({
   actualRpm,
@@ -604,6 +530,7 @@ function KpiRail({
   poolSize,
   actualSpark,
   forecastSpark,
+  poolSpark,
 }: {
   actualRpm: number;
   forecastRpm: number;
@@ -612,13 +539,14 @@ function KpiRail({
   poolSize: number;
   actualSpark: number[];
   forecastSpark: number[];
+  poolSpark: number[];
 }) {
   const deltaPct =
     actualRpm > 0
       ? Math.round(((forecastRpm - actualRpm) / actualRpm) * 100)
       : 0;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16 }}>
+    <div className="sl-grid-kpi">
       <KpiStat
         label={
           <>
@@ -630,7 +558,7 @@ function KpiRail({
         deltaDir="flat"
         delta="measured"
         footnote="last bucket"
-        spark={actualSpark}
+        spark={actualSpark.length > 1 ? actualSpark : undefined}
         sparkTone="graphite"
       />
       <KpiStat
@@ -644,7 +572,7 @@ function KpiRail({
         deltaDir={deltaPct >= 0 ? "up" : "down"}
         delta={`${deltaPct >= 0 ? "+" : ""}${deltaPct}%`}
         footnote="vs actual now"
-        spark={forecastSpark}
+        spark={forecastSpark.length > 1 ? forecastSpark : undefined}
         sparkTone="mint"
       />
       <KpiStat
@@ -655,11 +583,9 @@ function KpiRail({
         }
         value={confidencePct.toFixed(0)}
         unit="%"
-        deltaDir="up"
-        delta="90% band"
+        deltaDir="flat"
+        delta="band-derived"
         footnote="5-min horizon"
-        spark={[88, 89, 90, 91, 90, 92, 91, 92, 93, confidencePct]}
-        sparkTone="mint"
       />
       <KpiStat
         label={
@@ -672,8 +598,6 @@ function KpiRail({
         deltaDir={headroomPct > 20 ? "up" : headroomPct > 10 ? "flat" : "down"}
         delta={headroomPct > 20 ? "comfortable" : headroomPct > 10 ? "tightening" : "tight"}
         footnote="pool capacity"
-        spark={[42, 40, 38, 36, 35, 34, 33, 33, 32, headroomPct]}
-        sparkTone="graphite"
       />
       <KpiStat
         label={
@@ -683,10 +607,10 @@ function KpiRail({
         }
         value={poolSize > 0 ? `${poolSize}` : "—"}
         unit="nodes"
-        deltaDir="up"
-        delta="scaled ahead"
-        footnote="active instances"
-        spark={[4, 4, 5, 5, 5, 5, 6, 6, 6, Math.max(poolSize, 1)]}
+        deltaDir="flat"
+        delta="active"
+        footnote="instances"
+        spark={poolSpark.length > 1 ? poolSpark : undefined}
         sparkTone="mint"
       />
     </div>
@@ -701,13 +625,22 @@ function ForecastCard({
   forecastRpm,
   confidencePct,
   headroomPct,
+  modelName,
+  state,
+  degraded,
+  onRetry,
 }: {
   chart: ChartData;
   actualRpm: number;
   forecastRpm: number;
   confidencePct: number;
   headroomPct: number;
+  modelName: string | null;
+  state: "loading" | "ready" | "error";
+  degraded: boolean;
+  onRetry: () => void;
 }) {
+  const hasSeries = chart.actual.length >= 2 && chart.forecast.length >= 1;
   return (
     <Card
       title="Forecast vs actual throughput"
@@ -715,60 +648,88 @@ function ForecastCard({
       actions={<Badge tone="mint">SCALE-AHEAD</Badge>}
       flush
     >
-      <div style={{ padding: "0 18px 10px", fontSize: 11.5, color: "var(--sl-text-low)" }}>
-        Graphite is measured throughput; mint is the forward forecast leading it.
-        The shaded band is the 90% confidence interval and widens with the
-        horizon. The dashed marker is where the scale-ahead decision fired.
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          gap: 26,
-          padding: "2px 18px 14px",
-          flexWrap: "wrap",
-        }}
-      >
-        <FcStat label="Actual now" value={fmtRpm(actualRpm)} unit="rpm" />
-        <FcStat
-          label="Forecast +5 min"
-          value={fmtRpm(forecastRpm)}
-          unit="rpm"
-          tone="mint"
+      {state === "loading" && !hasSeries ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={6} label="Loading the forecast…" />
+        </div>
+      ) : degraded && !hasSeries ? (
+        <div style={{ padding: 18 }}>
+          <ErrorState
+            title="Couldn't load the forecast"
+            hint="Showing a representative forecast until the forecast feed is reachable."
+            onRetry={onRetry}
+          />
+        </div>
+      ) : !hasSeries ? (
+        <EmptyState
+          icon={<TrendingUp size={22} strokeWidth={1.8} />}
+          title="No forecast published yet"
+          hint="The forecaster hasn't issued predictions for this window. The chart fills in as forecasts land."
         />
-        <FcStat label="Confidence" value={`${confidencePct}`} unit="%" />
-        <FcStat label="Headroom" value={`${headroomPct}`} unit="%" />
-      </div>
+      ) : (
+        <>
+          <div style={{ padding: "0 18px 10px", fontSize: 11.5, color: "var(--sl-text-low)" }}>
+            Graphite is measured throughput; mint is the forward forecast leading it.
+            The shaded band is the confidence interval and widens with the horizon.
+            The dashed marker is where the scale-ahead decision fired.
+          </div>
 
-      <div style={{ padding: "0 14px" }}>
-        <ForecastChart
-          actual={chart.actual}
-          forecast={chart.forecast}
-          confLow={chart.confLow}
-          confHigh={chart.confHigh}
-          xLabels={chart.xLabels}
-          scaleIndex={chart.scaleIndex}
-          scaleLabel="scale-ahead"
-          unit="k rpm"
-          height={300}
-        />
-      </div>
+          <div
+            style={{
+              display: "flex",
+              gap: 26,
+              padding: "2px 18px 14px",
+              flexWrap: "wrap",
+            }}
+          >
+            <FcStat label="Actual now" value={fmtRpm(actualRpm)} unit="rpm" />
+            <FcStat
+              label="Forecast +5 min"
+              value={fmtRpm(forecastRpm)}
+              unit="rpm"
+              tone="mint"
+            />
+            <FcStat label="Confidence" value={`${confidencePct}`} unit="%" />
+            <FcStat label="Headroom" value={`${headroomPct}`} unit="%" />
+          </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 18,
-          padding: "8px 18px 18px",
-          flexWrap: "wrap",
-          fontFamily: "var(--sl-font-mono)",
-          fontSize: 11,
-        }}
-      >
-        <LegendItem swatch="var(--sl-graphite)" label="Actual throughput" />
-        <LegendItem swatch="var(--sl-mint)" label="Forecast" />
-        <LegendItem swatch="var(--sl-mint)" label="90% confidence band" band />
-        <LegendItem swatch="var(--sl-text-faint)" label="Scale-ahead decision" dashed />
-      </div>
+          <div style={{ padding: "0 14px" }}>
+            <ForecastChart
+              actual={chart.actual}
+              forecast={chart.forecast}
+              confLow={chart.confLow}
+              confHigh={chart.confHigh}
+              xLabels={chart.xLabels}
+              scaleIndex={chart.scaleIndex}
+              scaleLabel={chart.scaleLabel}
+              unit="k rpm"
+              height={300}
+            />
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 18,
+              padding: "8px 18px 18px",
+              flexWrap: "wrap",
+              fontFamily: "var(--sl-font-mono)",
+              fontSize: 11,
+              alignItems: "center",
+            }}
+          >
+            <LegendItem swatch="var(--sl-graphite)" label="Actual throughput" />
+            <LegendItem swatch="var(--sl-mint)" label="Forecast" />
+            <LegendItem swatch="var(--sl-mint)" label="confidence band" band />
+            <LegendItem swatch="var(--sl-text-faint)" label="Scale-ahead decision" dashed />
+            {modelName ? (
+              <span style={{ marginLeft: "auto", color: "var(--sl-text-faint)" }}>
+                model {modelName}
+              </span>
+            ) : null}
+          </div>
+        </>
+      )}
     </Card>
   );
 }
@@ -850,7 +811,7 @@ function AccuracyCard({
     <Card
       title="Forecast vs actual"
       eyebrow="// accuracy"
-      actions={<Badge tone={live ? "mint" : "neutral"}>{live ? "LIVE" : "SAMPLE"}</Badge>}
+      actions={<Badge tone={live ? "mint" : "neutral"}>{live ? "LIVE" : "DEMONSTRATION"}</Badge>}
     >
       <div style={{ display: "flex", gap: 26, flexWrap: "wrap", marginBottom: 4 }}>
         <FcStat label="Accuracy" value={accuracyPct.toFixed(1)} unit="%" tone="mint" />
@@ -861,7 +822,7 @@ function AccuracyCard({
       <div style={{ fontSize: 11.5, color: "var(--sl-text-low)", margin: "8px 0 12px" }}>
         {live
           ? `Backtested ${accuracy.samples} forecast horizons against the actual throughput that followed: mean absolute percentage error and the share of actuals that landed inside the confidence band.`
-          : `Last ${accuracy.samples} predictions backtested against the actual that followed. Showing sample until the forecast-history endpoint returns predictions.`}
+          : `Representative backtest of ${accuracy.samples} predictions against the actual that followed. Upgrades to live once the forecast-history feed returns predictions.`}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column" }}>
@@ -947,9 +908,15 @@ function scalingStatus(action: ScalingAuditRow["action"]): Status {
 function ScalingTimeline({
   scaling,
   routing,
+  state,
+  degraded,
+  onRetry,
 }: {
   scaling: ScalingAuditRow[];
   routing: RoutingMetrics;
+  state: "loading" | "ready" | "error";
+  degraded: boolean;
+  onRetry: () => void;
 }) {
   return (
     <Card
@@ -962,11 +929,24 @@ function ScalingTimeline({
       }
       flush
     >
-      {scaling.length === 0 ? (
-        <div style={{ padding: 18, fontSize: 13, color: "var(--sl-text-low)" }}>
-          No scaling actions in the window. The pool is holding steady against the
-          forecast.
+      {state === "loading" && scaling.length === 0 ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={4} label="Loading scale-ahead decisions…" />
         </div>
+      ) : degraded && scaling.length === 0 ? (
+        <div style={{ padding: 18 }}>
+          <ErrorState
+            title="Couldn't load scale-ahead decisions"
+            hint="Showing recent representative actions until the scaling audit is reachable."
+            onRetry={onRetry}
+          />
+        </div>
+      ) : scaling.length === 0 ? (
+        <EmptyState
+          icon={<Boxes size={22} strokeWidth={1.8} />}
+          title="No scaling actions in the window"
+          hint="The pool is holding steady against the forecast."
+        />
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
           {scaling.map((ev, i) => {

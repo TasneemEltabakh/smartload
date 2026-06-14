@@ -1,9 +1,19 @@
 /* ============================================================================
-   AppShell -- sidebar + topbar + content outlet
+   AppShell -- sidebar + topbar + content outlet (responsive)
    ----------------------------------------------------------------------------
-   The page frame. A fixed-width rail on the left, a sticky topbar, and the
-   scrolling content area. Sidebar and topbar are passed in so the host app
-   keeps control of nav and chrome.
+   The page frame. A rail on the left, a sticky topbar, and the scrolling
+   content area. Sidebar and topbar are passed in so the host app keeps control
+   of nav and chrome.
+
+   Responsive behaviour (driven by the .sl-shell* classes in styles.css):
+     >= 1024px  full rail (var(--sl-rail-width)), grid two-column.
+     768-1023px collapsed icon-rail (var(--sl-rail-width-collapsed)). The host
+                may pass `collapsed` to its Sidebar to hide labels.
+     < 768px    rail leaves the flow; it becomes an off-canvas drawer toggled by
+                the Topbar's menu button (host wires onMenuToggle -> menuOpen).
+
+   The grid template lives in CSS (media queries), so railWidth is exposed as
+   the --sl-rail-width custom property rather than an inline column width.
    ============================================================================ */
 import type { CSSProperties, ReactNode } from "react";
 
@@ -11,10 +21,18 @@ export interface AppShellProps {
   sidebar: ReactNode;
   topbar?: ReactNode;
   children?: ReactNode;
-  /** Sidebar column width in px. */
+  /** Sidebar column width in px (full rail). */
   railWidth?: number;
   /** Optional max content width; centers the content when set. */
   contentMaxWidth?: number;
+  /**
+   * Mobile off-canvas state. When the viewport is below the drawer breakpoint
+   * the rail is hidden until `menuOpen` is true; a scrim is shown over the
+   * content. The host toggles this from the Topbar menu button.
+   */
+  menuOpen?: boolean;
+  /** Called when the mobile scrim is clicked (host should close the menu). */
+  onMenuClose?: () => void;
   className?: string;
   style?: CSSProperties;
 }
@@ -23,38 +41,40 @@ export function AppShell({
   sidebar,
   topbar,
   children,
-  railWidth = 248,
+  railWidth,
   contentMaxWidth,
+  menuOpen = false,
+  onMenuClose,
   className,
   style,
 }: AppShellProps) {
+  const shellStyle: CSSProperties = {
+    ...(railWidth ? ({ ["--sl-rail-width" as string]: `${railWidth}px` } as CSSProperties) : null),
+    ...style,
+  };
+
   return (
     <div
-      className={className}
-      style={{
-        display: "grid",
-        gridTemplateColumns: `${railWidth}px 1fr`,
-        minHeight: "100vh",
-        background: "var(--sl-bg)",
-        color: "var(--sl-text)",
-        fontFamily: "var(--sl-font-sans)",
-        fontSize: 14,
-        lineHeight: 1.5,
-        ...style,
-      }}
+      className={`sl-shell${menuOpen ? " sl-shell-menu-open" : ""}${className ? ` ${className}` : ""}`}
+      style={shellStyle}
     >
-      {sidebar}
-      <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <div className="sl-shell-rail">{sidebar}</div>
+
+      {/* Scrim shown only on the mobile drawer breakpoint while the menu is open. */}
+      <div
+        className="sl-shell-scrim"
+        role="presentation"
+        aria-hidden={!menuOpen}
+        onClick={onMenuClose}
+      />
+
+      <div className="sl-shell-main">
         {topbar}
         <main
+          className="sl-shell-content"
           style={{
-            padding: "24px 28px 56px",
-            width: "100%",
             maxWidth: contentMaxWidth,
             margin: contentMaxWidth ? "0 auto" : undefined,
-            display: "flex",
-            flexDirection: "column",
-            gap: 22,
           }}
         >
           {children}

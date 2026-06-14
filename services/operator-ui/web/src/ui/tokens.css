@@ -9,6 +9,11 @@
    Themes
      [data-theme="light"]  Daylight  -- product / marketing surface (Concept B)
      [data-theme="dark"]   Mission Control -- cinematic operator console (Concept A)
+
+   Single source of truth: the LIGHT palette lives once under
+   :root, [data-theme="light"]. The DARK palette overrides it. The legacy
+   styles.css names (--bg, --panel, --text ...) are aliased to --sl-* tokens at
+   the bottom of this file so one data-theme switch drives every surface.
    ============================================================================ */
 
 :root {
@@ -42,6 +47,11 @@
   --sl-radius-lg: 16px;
   --sl-radius-xl: 22px;
 
+  /* ---- layout rhythm ---- */
+  --sl-rail-width: 248px;
+  --sl-rail-width-collapsed: 76px;
+  --sl-topbar-height: 60px;
+
   /* ---- motion ---- */
   --sl-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --sl-dur-fast: 0.14s;
@@ -49,49 +59,14 @@
   --sl-dur-draw: 1.1s;
   --sl-dur-hero: 1.6s;
   --sl-dur-pause: 0.8s;
-
-  /* =========================================================================
-     LIGHT / Daylight (default)  -- Concept B
-     ========================================================================= */
-  --sl-bg: #f7f8fa;
-  --sl-surface: #ffffff;
-  --sl-surface-sunk: #f1f3f6;
-  --sl-hairline: #e5e8ee;
-  --sl-hairline-soft: #eef1f5;
-
-  --sl-text: #0e1116;
-  --sl-text-mid: #3a4252;
-  --sl-text-low: #6a7384;
-  --sl-text-faint: #9aa3b2;
-
-  --sl-mint: #16a34a;
-  --sl-mint-deep: #15803d;
-  --sl-mint-tint: #e7f6ed;
-  --sl-mint-line: #bfe6cc;
-  --sl-on-mint-tint: #15803d;
-
-  --sl-graphite: #5b6472;
-  --sl-graphite-soft: #aeb6c4;
-
-  --sl-ok: #16a34a;
-  --sl-warn: #d97706;
-  --sl-crit: #dc2626;
-  --sl-ok-tint: #e7f6ed;
-  --sl-warn-tint: #fef3e2;
-  --sl-crit-tint: #fdecec;
-
-  --sl-shadow-1: 0 1px 2px rgba(14, 17, 22, 0.04), 0 1px 3px rgba(14, 17, 22, 0.06);
-  --sl-shadow-2: 0 4px 10px rgba(14, 17, 22, 0.05), 0 12px 28px rgba(14, 17, 22, 0.07);
-
-  /* control-tinted helpers (chart/SVG fills, selection wash) */
-  --sl-mint-soft: rgba(22, 163, 74, 0.12);
-  --sl-mint-band: rgba(22, 163, 74, 0.18);
-  --sl-graphite-area: rgba(91, 100, 114, 0.12);
-  --sl-grid: #eef1f5;
-  --sl-focus-ring: rgba(22, 163, 74, 0.35);
 }
 
-/* Explicit light theme mirrors :root so [data-theme="light"] is self-contained. */
+/* =========================================================================
+   LIGHT / Daylight (default)  -- Concept B
+   Defined once for both :root and [data-theme="light"] so the no-attribute
+   render and the explicit light selector stay identical without duplication.
+   ========================================================================= */
+:root,
 [data-theme="light"] {
   --sl-bg: #f7f8fa;
   --sl-surface: #ffffff;
@@ -101,8 +76,8 @@
 
   --sl-text: #0e1116;
   --sl-text-mid: #3a4252;
-  --sl-text-low: #6a7384;
-  --sl-text-faint: #9aa3b2;
+  --sl-text-low: #5c6473;       /* bumped from #6a7384 for >=4.5:1 secondary text */
+  --sl-text-faint: #818b9b;     /* bumped from #9aa3b2 for >=3:1 large/secondary */
 
   --sl-mint: #16a34a;
   --sl-mint-deep: #15803d;
@@ -113,21 +88,57 @@
   --sl-graphite: #5b6472;
   --sl-graphite-soft: #aeb6c4;
 
+  /* Text/glyph color that sits ON a saturated accent fill (mint button, avatar). */
+  --sl-on-accent: #ffffff;
+  /* Movable knob surface (toggles, switches). */
+  --sl-knob: #ffffff;
+
   --sl-ok: #16a34a;
-  --sl-warn: #d97706;
+  --sl-warn: #b45309;           /* darkened from #d97706 for >=4.5:1 on tint */
   --sl-crit: #dc2626;
   --sl-ok-tint: #e7f6ed;
   --sl-warn-tint: #fef3e2;
   --sl-crit-tint: #fdecec;
 
+  /* Calm informational tone -- the "demonstration / standalone" indicator.
+     Reads as intentional and neutral, never as a warning. */
+  --sl-info: #2563eb;
+  --sl-info-strong: #1d4ed8;
+  --sl-info-tint: #eaf1fe;
+  --sl-info-line: #c5d8fb;
+  --sl-on-info-tint: #1d4ed8;
+
   --sl-shadow-1: 0 1px 2px rgba(14, 17, 22, 0.04), 0 1px 3px rgba(14, 17, 22, 0.06);
   --sl-shadow-2: 0 4px 10px rgba(14, 17, 22, 0.05), 0 12px 28px rgba(14, 17, 22, 0.07);
 
+  /* control-tinted helpers (chart/SVG fills, selection wash) */
   --sl-mint-soft: rgba(22, 163, 74, 0.12);
   --sl-mint-band: rgba(22, 163, 74, 0.18);
   --sl-graphite-area: rgba(91, 100, 114, 0.12);
   --sl-grid: #eef1f5;
-  --sl-focus-ring: rgba(22, 163, 74, 0.35);
+  --sl-focus-ring: rgba(22, 163, 74, 0.55);
+
+  /* hover / pressed washes -- replace ad-hoc rgba(255,255,255,...) in styles.css */
+  --sl-hover-wash: rgba(14, 17, 22, 0.04);
+  --sl-raise-wash: rgba(14, 17, 22, 0.02);
+  --sl-scrim: rgba(14, 17, 22, 0.45);
+
+  /* brand wordmark gradient (sidebar title) */
+  --sl-brand-grad: linear-gradient(90deg, #0e1116, #3a4252);
+  /* operator-avatar gradient */
+  --sl-avatar-grad: linear-gradient(135deg, var(--sl-mint), var(--sl-mint-deep));
+  /* sidebar surface gradient */
+  --sl-rail-grad: linear-gradient(180deg, #ffffff 0%, #f7f8fa 100%);
+  /* capacity-bar fills */
+  --sl-capacity-fill: linear-gradient(90deg, var(--sl-mint), var(--sl-mint-deep));
+  --sl-capacity-fill-warn: linear-gradient(90deg, #f59e0b, var(--sl-warn));
+  --sl-capacity-fill-bad: linear-gradient(90deg, var(--sl-crit), #ff7b72);
+
+  /* live-engines channel accents */
+  --sl-ch-anomaly: var(--sl-crit);
+  --sl-ch-forecast: var(--sl-info);
+  --sl-ch-routing: #7c3aed;
+  --sl-ch-scale: var(--sl-mint);
 }
 
 /* =========================================================================
@@ -141,9 +152,9 @@
   --sl-hairline-soft: #1c242d;
 
   --sl-text: #e8edf2;
-  --sl-text-mid: #98a2b0;
-  --sl-text-low: #697585;
-  --sl-text-faint: #5b6472;
+  --sl-text-mid: #aab4c2;       /* bumped from #98a2b0 for >=4.5:1 body on dark */
+  --sl-text-low: #8a95a4;       /* bumped from #697585 for >=4.5:1 secondary */
+  --sl-text-faint: #717c8b;     /* bumped from #5b6472 for >=3:1 large/faint */
 
   --sl-mint: #4ade80;
   --sl-mint-deep: #2bbf6a;
@@ -151,8 +162,11 @@
   --sl-mint-line: rgba(74, 222, 128, 0.28);
   --sl-on-mint-tint: #4ade80;
 
-  --sl-graphite: #5b6472;
+  --sl-graphite: #8a95a4;       /* lifted so the graphite "actual" line is visible on dark */
   --sl-graphite-soft: #5b6472;
+
+  --sl-on-accent: #06210f;      /* dark ink reads on the bright dark-theme mint */
+  --sl-knob: #f2f6fa;
 
   --sl-ok: #4ade80;
   --sl-warn: #f5b544;
@@ -160,6 +174,12 @@
   --sl-ok-tint: rgba(74, 222, 128, 0.08);
   --sl-warn-tint: rgba(245, 181, 68, 0.08);
   --sl-crit-tint: rgba(242, 85, 90, 0.08);
+
+  --sl-info: #60a5fa;
+  --sl-info-strong: #93c5fd;
+  --sl-info-tint: rgba(96, 165, 250, 0.12);
+  --sl-info-line: rgba(96, 165, 250, 0.3);
+  --sl-on-info-tint: #93c5fd;
 
   --sl-shadow-1: 0 1px 0 rgba(255, 255, 255, 0.02) inset,
     0 10px 24px -18px rgba(0, 0, 0, 0.9);
@@ -170,5 +190,64 @@
   --sl-mint-band: rgba(74, 222, 128, 0.16);
   --sl-graphite-area: rgba(91, 100, 114, 0.22);
   --sl-grid: #232c36;
-  --sl-focus-ring: rgba(74, 222, 128, 0.45);
+  --sl-focus-ring: rgba(74, 222, 128, 0.6);
+
+  --sl-hover-wash: rgba(255, 255, 255, 0.05);
+  --sl-raise-wash: rgba(255, 255, 255, 0.02);
+  --sl-scrim: rgba(5, 7, 10, 0.55);
+
+  --sl-brand-grad: linear-gradient(90deg, #e8edf2, #aab4c2);
+  --sl-avatar-grad: linear-gradient(135deg, var(--sl-mint), var(--sl-mint-deep));
+  --sl-rail-grad: linear-gradient(180deg, #141a22 0%, #0e1219 100%);
+  --sl-capacity-fill: linear-gradient(90deg, var(--sl-mint), #22d3ee);
+  --sl-capacity-fill-warn: linear-gradient(90deg, #f59e0b, var(--sl-warn));
+  --sl-capacity-fill-bad: linear-gradient(90deg, var(--sl-crit), #ff7b72);
+
+  --sl-ch-anomaly: var(--sl-crit);
+  --sl-ch-forecast: var(--sl-info);
+  --sl-ch-routing: #c084fc;
+  --sl-ch-scale: var(--sl-mint);
+}
+
+/* =========================================================================
+   Legacy alias layer
+   ----------------------------------------------------------------------------
+   styles.css predates the kit and uses its own --* names. Rather than touch
+   every rule, the legacy names are mapped onto the themed --sl-* tokens here,
+   so flipping data-theme drives both systems from one source of truth.
+   ========================================================================= */
+:root,
+[data-theme="light"],
+[data-theme="dark"] {
+  --bg: var(--sl-bg);
+  --bg-soft: var(--sl-surface-sunk);
+  --bg-sunk: var(--sl-surface-sunk);
+  --panel: var(--sl-surface);
+  --panel-2: var(--sl-surface);
+  --panel-3: var(--sl-surface-sunk);
+  --border: var(--sl-hairline);
+  --border-soft: var(--sl-hairline-soft);
+  --text: var(--sl-text);
+  --fg: var(--sl-text);
+  --muted: var(--sl-text-low);
+  --muted-2: var(--sl-text-faint);
+  --accent: var(--sl-info);
+  --accent-2: var(--sl-mint);
+  --ok: var(--sl-ok);
+  --warn: var(--sl-warn);
+  --bad: var(--sl-crit);
+  --link: var(--sl-info);
+  --teal: var(--sl-mint);
+  --cyan: var(--sl-mint);
+  --violet: var(--sl-ch-routing);
+  --pink: var(--sl-ch-routing);
+  --amber: var(--sl-warn);
+  --emerald: var(--sl-mint);
+  --mono: var(--sl-font-mono);
+
+  /* live-engines channel accents (legacy names used in styles.css) */
+  --ch-anomaly: var(--sl-ch-anomaly);
+  --ch-forecast: var(--sl-ch-forecast);
+  --ch-routing: var(--sl-ch-routing);
+  --ch-scale: var(--sl-ch-scale);
 }

@@ -4,6 +4,10 @@
    The console rail. Nav items are grouped under mono section labels; the active
    item carries a mint edge + tint. Navigation is delegated: each item declares
    an onSelect, so the host app can wire it to its own router.
+
+   Responsive: pass `collapsed` to render an icon-only rail (labels, tags and
+   group headers hide; item titles become tooltips). The AppShell drives the
+   width; this component only adapts its contents.
    ============================================================================ */
 import type { ReactNode } from "react";
 import { Wordmark } from "../brand/Wordmark";
@@ -15,6 +19,8 @@ export interface NavItem {
   icon?: ReactNode;
   /** Trailing mono tag (e.g. "LIVE", a shortcut key). */
   tag?: ReactNode;
+  /** Plain-text title used as the tooltip when the rail is collapsed. */
+  title?: string;
 }
 
 export interface NavGroup {
@@ -31,6 +37,8 @@ export interface SidebarProps {
   brandSub?: string;
   /** Footer content (operator card, plane-health chip). */
   footer?: ReactNode;
+  /** Icon-only rail: hide labels, tags and group headers. */
+  collapsed?: boolean;
   className?: string;
 }
 
@@ -40,69 +48,79 @@ export function Sidebar({
   onSelect,
   brandSub,
   footer,
+  collapsed = false,
   className,
 }: SidebarProps) {
   return (
     <aside
-      className={className}
+      className={`sl-sidebar${collapsed ? " sl-sidebar-collapsed" : ""}${className ? ` ${className}` : ""}`}
       style={{
         position: "sticky",
         top: 0,
         alignSelf: "start",
         height: "100vh",
-        background: "var(--sl-surface)",
+        background: "var(--sl-rail-grad)",
         borderRight: "1px solid var(--sl-hairline)",
         display: "flex",
         flexDirection: "column",
-        padding: "22px 16px",
+        padding: collapsed ? "22px 12px" : "22px 16px",
         gap: 4,
         zIndex: 20,
+        overflowY: "auto",
       }}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
+          justifyContent: collapsed ? "center" : "flex-start",
           gap: 11,
-          padding: "4px 8px 18px",
+          padding: collapsed ? "4px 0 18px" : "4px 8px 18px",
           borderBottom: "1px solid var(--sl-hairline-soft)",
           marginBottom: 6,
         }}
       >
         <Logomark size={34} animated />
-        <Wordmark size={19} sub={brandSub} />
+        {collapsed ? null : <Wordmark size={19} sub={brandSub} />}
       </div>
 
       {groups.map((group) => (
         <div key={group.label}>
-          <div
-            style={{
-              fontFamily: "var(--sl-font-mono)",
-              fontSize: 10,
-              fontWeight: 600,
-              letterSpacing: "1.8px",
-              color: "var(--sl-text-low)",
-              textTransform: "uppercase",
-              padding: "14px 10px 6px",
-            }}
-          >
-            {group.label}
-          </div>
-          <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {collapsed ? (
+            <div style={{ height: 14 }} aria-hidden />
+          ) : (
+            <div
+              style={{
+                fontFamily: "var(--sl-font-mono)",
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: "1.8px",
+                color: "var(--sl-text-low)",
+                textTransform: "uppercase",
+                padding: "14px 10px 6px",
+              }}
+            >
+              {group.label}
+            </div>
+          )}
+          <nav style={{ display: "flex", flexDirection: "column", gap: 2 }} aria-label={group.label}>
             {group.items.map((item) => {
               const active = item.id === activeId;
               return (
                 <button
                   key={item.id}
                   type="button"
+                  className="sl-nav-item"
                   aria-current={active ? "page" : undefined}
+                  title={collapsed ? item.title ?? undefined : undefined}
                   onClick={() => onSelect?.(item.id)}
                   style={{
                     position: "relative",
                     display: "flex",
                     alignItems: "center",
+                    justifyContent: collapsed ? "center" : "flex-start",
                     gap: 12,
-                    padding: "9px 11px",
+                    padding: collapsed ? "10px 0" : "9px 11px",
                     borderRadius: "var(--sl-radius-sm)",
                     color: active ? "var(--sl-on-mint-tint)" : "var(--sl-text-mid)",
                     background: active ? "var(--sl-mint-tint)" : "transparent",
@@ -117,7 +135,7 @@ export function Sidebar({
                     transition: "background var(--sl-dur-fast), color var(--sl-dur-fast)",
                   }}
                 >
-                  {active ? (
+                  {active && !collapsed ? (
                     <span
                       aria-hidden
                       style={{
@@ -136,8 +154,8 @@ export function Sidebar({
                       {item.icon}
                     </span>
                   ) : null}
-                  {item.label}
-                  {item.tag != null ? (
+                  {collapsed ? null : item.label}
+                  {!collapsed && item.tag != null ? (
                     <span
                       style={{
                         marginLeft: "auto",
@@ -160,7 +178,7 @@ export function Sidebar({
         </div>
       ))}
 
-      {footer != null ? (
+      {footer != null && !collapsed ? (
         <div
           style={{
             marginTop: "auto",

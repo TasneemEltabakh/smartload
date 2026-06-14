@@ -43,6 +43,16 @@ export function Logomark({ size = 34, animated = false, className }: LogomarkPro
     const fore = foreRef.current;
     const point = pointRef.current;
     if (!fore || !point) return;
+    // Honour prefers-reduced-motion: hold the resting state, no looping draw.
+    if (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      fore.style.strokeDashoffset = "0";
+      point.style.opacity = "1";
+      return;
+    }
     let cancelled = false;
     const timers: number[] = [];
     const len = fore.getTotalLength();

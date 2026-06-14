@@ -436,6 +436,144 @@ export function formatBytes(n: number | null | undefined): string {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 
+// ── KPI trends / deltas (sparklines + window-over-window deltas) ──────────────
+// Powers the headline KPI tiles so they no longer hardcode a sample sparkline
+// or a "+12.6%" delta. Served by the BFF's GET /api/ui/metrics/trends, composed
+// from telemetry time-series + the scaling audit.
+
+export interface TrendKpi {
+  series: number[];          // compact recent series for the sparkline (may be [])
+  current: number | null;    // latest value for the tile headline
+  delta_pct: number | null;  // % change vs the prior comparable window; null when unknown
+  label: string;             // human window label, e.g. "vs prior 6m"
+  unit: string;              // "rpm" | "ms" | "%" | "count"
+}
+
+export interface TrendsResponse {
+  throughput_rpm: TrendKpi;
+  p95_latency_ms: TrendKpi;
+  slo_compliance_pct: TrendKpi;
+  error_rate_pct: TrendKpi;
+  active_backends: TrendKpi;
+  window_minutes: number;
+  last_refreshed: string;
+  notes: string[];
+}
+
+// ── Forecast summary (flagship hero chart) ────────────────────────────────────
+// Aligned actual-vs-forecast series + confidence band + the scale-ahead
+// decision marker. Served by GET /api/ui/metrics/forecast-summary, composed
+// from forecasting + telemetry + the autoscaler scaling audit.
+
+export interface ForecastActualPoint {
+  time: string | null;
+  rps: number;              // actual throughput normalised to requests/sec
+}
+
+export interface ForecastPoint {
+  time: string | null;
+  predicted_rps: number;
+  confidence_lower: number | null;
+  confidence_upper: number | null;
+  horizon_minutes: number | null;
+}
+
+export interface ScaleAheadMarker {
+  time: string | null;
+  action: string | null;       // "scale_out" | "scale_in"
+  instance_count: number | null;
+  reason: string | null;
+}
+
+export interface ForecastSummary {
+  actual: ForecastActualPoint[];
+  forecast: ForecastPoint[];
+  scale_ahead: ScaleAheadMarker | null;   // null until a forecast-driven scale fires
+  model_name: string | null;
+  model_version: string | null;
+  horizon_minutes: number | null;
+  window_seconds: number;
+  notes: string[];
+}
+
+// ── RL routing mode (read-only — CASE B: deploy-time pin) ─────────────────────
+// There is NO safe runtime write path to promote RL from shadow to active: the
+// mode is pinned by the rl-engine's RL_MODE env var, not a policy field. So the
+// frontend must present the Helmsman "Promote to active" control HONESTLY as a
+// deploy-time recommendation. `actionable` is always false; there is no POST.
+
+export type RlMode = "shadow" | "active";
+
+export interface RlModePolicyGates {
+  safe_mode: boolean | null;       // operator-writable; true forces shadow
+  operating_mode: string | null;   // operator-writable; gates whether RL can go active
+  strategy_name: string | null;    // live named strategy
+}
+
+export interface RlModeStatus {
+  current_mode: RlMode | null;          // live env-pinned mode (null if rl-engine down)
+  recommended_mode: RlMode | null;      // advisory, derived from the live strategy
+  actionable: false;                    // promotion is NOT a live toggle (CASE B)
+  write_path: "deploy-time";            // RL_MODE env on the rl-engine
+  runloop_enabled: boolean | null;
+  policy_gates: RlModePolicyGates;
+  explanation: string;                  // human copy the UI can show verbatim
+  notes: string[];
+}
+
+// ── Isolation audit (Ledger isolation rows) ───────────────────────────────────
+// Real isolation/exclusion events derived from the anomaly-detector verdict
+// history enriched with the live smartload.anomaly evidence. Served by
+// GET /api/ui/audit/isolation.
+
+export interface IsolationAuditRow {
+  time: string | null;
+  backend_id: string | null;
+  status: IsolateStatus;          // "degraded" | "unhealthy" (healthy is excluded)
+  score: number | null;
+  severity: AlertSeverity;        // "critical" | "warning"
+  actor: string;                  // publishing source, or "anomaly-detector"
+  reason: string;                 // derived from the metric/observed/threshold evidence
+}
+
+// ── System topology (powers the System view — every service, live) ────────────
+// One payload describing every SmartLoad service as a node + the data-flow
+// edges between them. Served by GET /api/ui/system/topology.
+
+export type TopologyNodeStatus =
+  | "ok"
+  | "degraded"
+  | "unreachable"
+  | "headless"        // resource-collector / lb-otel-shipper have no HTTP surface
+  | string;
+
+export interface TopologyKeyMetric {
+  label: string;
+  value: unknown;     // string | number — varies per node
+}
+
+export interface TopologyNode {
+  id: string;
+  display_name: string;
+  role: string;                          // one-line purpose
+  status: TopologyNodeStatus;
+  http: boolean;                         // false for the headless shippers
+  last_activity: string | null;         // latest channel envelope timestamp, where knowable
+  key_metric: TopologyKeyMetric | null; // one live metric from the service's /health
+}
+
+export interface TopologyEdge {
+  source: string;     // node id
+  target: string;     // node id
+  label: string;      // data-flow label, e.g. "forecast"
+}
+
+export interface SystemTopology {
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+  generated_at: string;
+}
+
 async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const r = await fetch(input, {
     ...init,
@@ -443,15 +581,28 @@ async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   });
   const text = await r.text();
   let body: any = {};
-  try {
-    body = text ? JSON.parse(text) : {};
-  } catch {
-    body = { error: text };
+  let parsedOk = true;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      parsedOk = false;
+      body = { error: text };
+    }
   }
   if (!r.ok) {
     const err = new Error(body?.error || `HTTP ${r.status}`);
     (err as any).status = r.status;
     (err as any).field = body?.field;
+    throw err;
+  }
+  // A 2xx whose body isn't JSON is not valid API data -- most often an SPA
+  // index.html fallback served when no BFF is mounted (the standalone
+  // demonstration case). Treat it as a failure so callers fall back to their
+  // representative dataset instead of rendering a non-conforming object.
+  if (!parsedOk) {
+    const err = new Error(`non-JSON response from ${input}`);
+    (err as any).status = r.status;
     throw err;
   }
   return body as T;
@@ -585,6 +736,38 @@ export const api = {
       `/api/ui/anomaly/history${q ? `?${q}` : ""}`,
     );
   },
+
+  // ── KPI trends, forecast summary, RL mode, isolation audit, topology ──────
+
+  // Headline-KPI sparklines + window-over-window deltas (real telemetry).
+  getTrends: () => _fetchJson<TrendsResponse>("/api/ui/metrics/trends"),
+
+  // Flagship hero chart: aligned actual-vs-forecast + confidence band +
+  // scale-ahead marker. windowSeconds defaults to 1h upstream when omitted.
+  getForecastSummary: (windowSeconds?: number) =>
+    _fetchJson<ForecastSummary>(
+      `/api/ui/metrics/forecast-summary${windowSeconds ? `?window=${windowSeconds}` : ""}`,
+    ),
+
+  // Current + recommended RL routing mode. CASE B: read-only — promotion is a
+  // deploy-time pin (RL_MODE env), so `actionable` is always false and there is
+  // no setter. Present the Helmsman control honestly from this.
+  getRlMode: () => _fetchJson<RlModeStatus>("/api/ui/engines/rl/mode"),
+
+  // Real isolation/exclusion events for the Ledger.
+  getIsolationAudit: (windowSeconds?: number, limit?: number) => {
+    const qs = new URLSearchParams();
+    if (windowSeconds != null) qs.set("window", String(windowSeconds));
+    if (limit != null) qs.set("limit", String(limit));
+    const q = qs.toString();
+    return _fetchJson<IsolationAuditRow[]>(
+      `/api/ui/audit/isolation${q ? `?${q}` : ""}`,
+    );
+  },
+
+  // Whole-system live topology for the System view (every service + edges).
+  getSystemTopology: () =>
+    _fetchJson<SystemTopology>("/api/ui/system/topology"),
 };
 
 // SSE stream URL — opened by the LiveEngines page with new EventSource(...).

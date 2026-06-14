@@ -12,8 +12,12 @@
 //     that backend's status/score verdict history (a score sparkline and a
 //     status-change timeline), sourced from the anomaly-history endpoint behind
 //     the BFF (/api/ui/anomaly/history) and loaded on demand when it opens.
-// Each panel tries the live API and falls back to inline sample data on error
-// or timeout, so the page renders complete with no backend running.
+// Each panel resolves its own data through useLiveOrDemo with a distinct
+// panelId: the health board and the verdict feed report live vs demonstration
+// independently, so the global DataModeBadge reflects reality even when one is
+// live and the other has fallen back. The detail Drawer loads the selected
+// backend's history the same way, on demand. Every panel renders representative
+// data immediately, then upgrades to live when a backend is reachable.
 // ============================================================================
 
 import { useEffect, useMemo, useState } from "react";
@@ -28,6 +32,7 @@ import {
   api,
   type ActivityItem,
   type AlertItem,
+  type AnomalyHistoryResponse,
   type AnomalyHistoryRow,
   type BackendMetrics,
   type LbState,
@@ -37,30 +42,31 @@ import {
 import {
   Badge,
   Card,
+  DataModeBadge,
   DataTable,
   Drawer,
+  EmptyState,
+  ErrorState,
   EvidenceLine,
   KpiStat,
+  LoadState,
   Sparkline,
   StatusPill,
+  useLiveOrDemo,
   type Column,
   type Status,
 } from "../ui";
-import { loadWithFallback, type DataSource } from "./loader";
 import { useShell } from "./shell-context";
 import {
   SAMPLE_VERDICT_ACTIVITY,
   SAMPLE_VERDICT_ALERTS,
   SAMPLE_VERDICT_BACKENDS,
   SAMPLE_VERDICT_ERROR_THRESHOLD_PCT,
-  SAMPLE_VERDICT_LATENCY_THRESHOLD_MS,
   SAMPLE_VERDICT_SCAN_AGE_SECONDS,
   sampleAnomalyHistory,
   type VerdictBackend,
   type VerdictMetric,
 } from "./_sampleVerdicts";
-
-const REFRESH_MS = 20_000;
 
 // ── status / formatting helpers ──────────────────────────────────────────────
 
@@ -198,115 +204,99 @@ function liveBoard(
   });
 }
 
+// ── panel loaders ─────────────────────────────────────────────────────────────
+// The board is a single panel synthesized from three live reads (metrics + lb
+// state + policy); the loader rejects unless all three resolve, so the panel
+// reports "demo" honestly whenever the synthesis can't be trusted, rather than
+// half-live. The feed is a single panel composed of alerts + anomaly activity.
+
+async function loadBoard(): Promise<VerdictBackend[]> {
+  const [metrics, lb, policy] = await Promise.all([
+    api.getBackendMetrics(),
+    api.getLbState(),
+    api.getPolicy(),
+  ]);
+  return liveBoard(metrics, lb, policy);
+}
+
+interface FeedSources {
+  alerts: AlertItem[];
+  activity: ActivityItem[];
+}
+
+async function loadFeed(): Promise<FeedSources> {
+  const [alerts, activity] = await Promise.all([
+    api.getAlerts(),
+    api.getActivity(40),
+  ]);
+  return { alerts, activity };
+}
+
+const SAMPLE_FEED: FeedSources = {
+  alerts: SAMPLE_VERDICT_ALERTS,
+  activity: SAMPLE_VERDICT_ACTIVITY,
+};
+
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function Verdicts() {
   const { setDataSource, setPlane } = useShell();
 
-  const [board, setBoard] = useState<VerdictBackend[]>(SAMPLE_VERDICT_BACKENDS);
-  const [alerts, setAlerts] = useState<AlertItem[]>(SAMPLE_VERDICT_ALERTS);
-  const [activity, setActivity] = useState<ActivityItem[]>(SAMPLE_VERDICT_ACTIVITY);
-  const [scanAgeSeconds, setScanAgeSeconds] = useState<number>(SAMPLE_VERDICT_SCAN_AGE_SECONDS);
   const [selected, setSelected] = useState<VerdictBackend | null>(null);
 
-  // Per-backend verdict history for the detail Drawer (score sparkline +
-  // status-change timeline). Loaded on demand when a backend is selected; the
-  // sample is keyed to the selected backend so the Drawer renders even offline.
-  const [history, setHistory] = useState<AnomalyHistoryRow[]>([]);
-  const [historyLive, setHistoryLive] = useState<boolean>(false);
+  // The health board and the verdict feed are independent panels with their own
+  // panelIds, so the global DataModeBadge tells the truth even when one is live
+  // and the other has fallen back (no more "the page says live while the board
+  // is sample" with no signal).
+  const boardLoad = useLiveOrDemo<VerdictBackend[]>(loadBoard, SAMPLE_VERDICT_BACKENDS, {
+    panelId: "verdicts.board",
+  });
+  const feedLoad = useLiveOrDemo<FeedSources>(loadFeed, SAMPLE_FEED, {
+    panelId: "verdicts.feed",
+  });
 
-  // ── data load (live, with sample fallback) ─────────────────────────────────
+  const board = boardLoad.value;
+  const { alerts, activity } = feedLoad.value;
+
+  // Publish a shell data source / plane health for the chrome footer, derived
+  // from the resolved panel sources (the global live/demonstration badge is
+  // driven separately by the provider via the panelIds above).
+  const anyLive = boardLoad.source === "live" || feedLoad.source === "live";
+  const allDemo = boardLoad.source === "demo" && feedLoad.source === "demo";
   useEffect(() => {
-    let cancelled = false;
+    setDataSource(anyLive ? "live" : "sample");
+    setPlane(allDemo ? "warn" : "ok");
+  }, [anyLive, allDemo, setDataSource, setPlane]);
 
-    async function tick() {
-      const [bkR, lbR, poR, alR, acR] = await Promise.all([
-        loadWithFallback(() => api.getBackendMetrics(), null as BackendMetrics | null),
-        loadWithFallback(() => api.getLbState(), null as LbState | null),
-        loadWithFallback(() => api.getPolicy(), null as Policy | null),
-        loadWithFallback(() => api.getAlerts(), SAMPLE_VERDICT_ALERTS),
-        loadWithFallback(() => api.getActivity(40), SAMPLE_VERDICT_ACTIVITY),
-      ]);
-
-      if (cancelled) return;
-
-      const sources: DataSource[] = [bkR.source, lbR.source, poR.source, alR.source, acR.source];
-
-      // Build the health board from live metrics + lb state + policy when all
-      // three are live; otherwise keep the rich inline sample board. The locals
-      // narrow the nullable loader values so liveBoard gets non-null inputs.
-      const bk = bkR.value;
-      const lb = lbR.value;
-      const po = poR.value;
-      const boardLive = bkR.source === "live" && bk != null && lb != null && po != null;
-      if (boardLive) {
-        setBoard(liveBoard(bk, lb, po));
-      } else {
-        setBoard(SAMPLE_VERDICT_BACKENDS);
-      }
-
-      setAlerts(alR.value);
-      setActivity(acR.value);
-
-      // Last-scan age from the freshest verdict timestamp we can find. Live
-      // timestamps are wall-clock strings; sample times are HH:MM:SS, so we keep
-      // the sample constant when offline rather than mis-parsing.
-      if (boardLive) {
-        const freshest = freshestTimestamp(alR.value, acR.value);
-        setScanAgeSeconds(freshest != null ? freshest : SAMPLE_VERDICT_SCAN_AGE_SECONDS);
-      } else {
-        setScanAgeSeconds(SAMPLE_VERDICT_SCAN_AGE_SECONDS);
-      }
-
-      const anySample = sources.some((s) => s === "sample");
-      const allSample = sources.every((s) => s === "sample");
-      setDataSource(anySample ? "sample" : "live");
-      setPlane(allSample ? "bad" : anySample ? "warn" : "ok");
-    }
-
-    tick();
-    const id = window.setInterval(tick, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [setDataSource, setPlane]);
+  // Last-scan age: when the board is live, derive it from the freshest verdict
+  // timestamp; otherwise hold the representative sample age. Sample times are
+  // HH:MM:SS clocks that wouldn't parse to a sensible "ago", so we don't try.
+  const scanAgeSeconds = useMemo(() => {
+    if (boardLoad.source !== "live") return SAMPLE_VERDICT_SCAN_AGE_SECONDS;
+    const freshest = freshestTimestamp(alerts, activity);
+    return freshest != null ? freshest : SAMPLE_VERDICT_SCAN_AGE_SECONDS;
+  }, [boardLoad.source, alerts, activity]);
 
   // ── per-backend verdict history (loaded when the Drawer opens) ──────────────
-  // Fetch the selected backend's status/score history via loadWithFallback so
-  // the Drawer shows a real trail over time, falling back to a sample shaped to
-  // that backend when the endpoint is empty or unreachable.
-  useEffect(() => {
-    if (selected == null) {
-      setHistory([]);
-      setHistoryLive(false);
-      return;
-    }
-    let cancelled = false;
-    const backendId = selected.instance;
-    const sample = sampleAnomalyHistory(backendId);
-
-    async function load() {
-      const res = await loadWithFallback(
-        () => api.getAnomalyHistory(3600, backendId, 100),
-        null as { history: AnomalyHistoryRow[] } | null,
-      );
-      if (cancelled) return;
-      const rows = res.source === "live" ? res.value?.history ?? [] : [];
-      if (res.source === "live" && rows.length > 0) {
-        setHistory(rows);
-        setHistoryLive(true);
-      } else {
-        setHistory(sample);
-        setHistoryLive(false);
-      }
-    }
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
+  // The selected backend's status/score history drives the Drawer's score
+  // sparkline + status-change timeline. It resolves through useLiveOrDemo with
+  // its own panelId, re-running whenever the selection changes; the sample is
+  // shaped to the selected backend so the Drawer reads complete standalone. The
+  // demo set is intentionally non-empty so the Drawer never opens blank -- the
+  // badge already communicates the demonstration posture.
+  const backendId = selected?.instance ?? "";
+  const historyLoad = useLiveOrDemo<AnomalyHistoryResponse>(
+    () =>
+      backendId
+        ? api.getAnomalyHistory(3600, backendId, 100)
+        : Promise.reject(new Error("no backend selected")),
+    { history: sampleAnomalyHistory(backendId), backends: [backendId], window_seconds: 3600 },
+    // Only register the history panel with the global badge while the Drawer is
+    // open; a closed Drawer must not report a phantom source or fire a request.
+    { panelId: backendId ? "verdicts.history" : undefined, deps: [backendId] },
+  );
+  const historyLive = historyLoad.source === "live";
+  const history = historyLoad.value.history;
 
   // ── derived KPIs ───────────────────────────────────────────────────────────
 
@@ -371,11 +361,16 @@ export default function Verdicts() {
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <SectionHead
-        title="Verdicts"
-        sub="The anomaly detector feed. Every health ruling carries its evidence (the metric, the observed value against the threshold it crossed) and the auto-action the decision plane took."
-      />
+    <div className="sl-stack" style={{ gap: 22 }}>
+      <div className="sl-cluster" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <SectionHead
+          title="Verdicts"
+          sub="The anomaly detector feed. Every health ruling carries its evidence (the metric, the observed value against the threshold it crossed) and the auto-action the decision plane took."
+        />
+        <div style={{ flex: "0 0 auto", paddingTop: 8 }}>
+          <DataModeBadge />
+        </div>
+      </div>
 
       <KpiRail
         openVerdicts={openVerdicts}
@@ -393,19 +388,33 @@ export default function Verdicts() {
         }`}
       />
 
-      <HealthBoard board={board} onSelect={setSelected} />
+      <HealthBoard
+        board={board}
+        onSelect={setSelected}
+        live={boardLoad.source === "live"}
+        loading={boardLoad.state === "loading"}
+        errored={boardLoad.degraded}
+        onRetry={boardLoad.reload}
+      />
 
       <SectionHead
         title="Verdict feed"
         sub="Chronological rulings, newest first. Each entry pins the backend, severity, evidence, and the action taken."
       />
 
-      <VerdictFeed feed={feed} />
+      <VerdictFeed
+        feed={feed}
+        live={feedLoad.source === "live"}
+        loading={feedLoad.state === "loading"}
+        errored={feedLoad.degraded}
+        onRetry={feedLoad.reload}
+      />
 
       <VerdictDrawer
         verdict={selected}
         history={history}
         historyLive={historyLive}
+        historyLoading={historyLoad.state === "loading"}
         onClose={() => setSelected(null)}
       />
     </div>
@@ -439,7 +448,7 @@ function KpiRail({
   age: { value: string; unit: string };
 }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+    <div className="sl-grid-kpi">
       <KpiStat
         label={<><ShieldAlert size={12} strokeWidth={2} /> Open verdicts</>}
         value={String(openVerdicts)}
@@ -481,9 +490,17 @@ function KpiRail({
 function HealthBoard({
   board,
   onSelect,
+  live,
+  loading,
+  errored,
+  onRetry,
 }: {
   board: VerdictBackend[];
   onSelect: (v: VerdictBackend) => void;
+  live: boolean;
+  loading: boolean;
+  errored: boolean;
+  onRetry: () => void;
 }) {
   const columns: Column<VerdictBackend>[] = [
     {
@@ -558,8 +575,38 @@ function HealthBoard({
     },
   ];
 
-  return (
-    <Card flush>
+  // Representative rows always render so the demonstration reads as a healthy,
+  // intentional board. The load/empty/error states fire only when they are the
+  // honest signal: a first live load that hasn't settled yet (no rows), a live
+  // sweep that returned no nodes, or a live failure that left nothing to show.
+  const empty = board.length === 0;
+  let body: React.ReactNode;
+  if (loading && empty) {
+    body = (
+      <div style={{ padding: "16px 18px" }}>
+        <LoadState lines={6} label="Scanning backend health…" />
+      </div>
+    );
+  } else if (errored && empty) {
+    body = (
+      <div style={{ padding: 18 }}>
+        <ErrorState
+          title="Couldn't reach the health board"
+          hint="The detector's per-backend reads are unreachable right now. The board will refresh on the next sweep."
+          onRetry={onRetry}
+        />
+      </div>
+    );
+  } else if (empty) {
+    body = (
+      <EmptyState
+        icon={<ShieldCheck size={22} strokeWidth={1.8} />}
+        title="No backends under watch"
+        hint={live ? "The detector is connected but reports no backends in rotation yet." : undefined}
+      />
+    );
+  } else {
+    body = (
       <ClickableTable
         columns={columns}
         rows={board}
@@ -567,8 +614,10 @@ function HealthBoard({
         rowMuted={(b) => b.excluded}
         onRowClick={onSelect}
       />
-    </Card>
-  );
+    );
+  }
+
+  return <Card flush>{body}</Card>;
 }
 
 // The kit DataTable has no row-click prop, so wrap it. We render the kit table
@@ -605,13 +654,54 @@ function ClickableTable<Row extends { instance: string }>({
 
 // ── verdict feed ─────────────────────────────────────────────────────────────
 
-function VerdictFeed({ feed }: { feed: FeedVerdict[] }) {
+function VerdictFeed({
+  feed,
+  live,
+  loading,
+  errored,
+  onRetry,
+}: {
+  feed: FeedVerdict[];
+  live: boolean;
+  loading: boolean;
+  errored: boolean;
+  onRetry: () => void;
+}) {
+  // Representative rulings always render so the demonstration reads as a healthy,
+  // intentional feed. Load / empty / error states fire only when honest: a first
+  // live load with nothing yet, a live failure that left no rulings, or a genuine
+  // live "fleet is clear" empty.
+  const empty = feed.length === 0;
+  if (loading && empty) {
+    return (
+      <Card title="Anomaly rulings" eyebrow="// evidence-carrying" flush>
+        <div style={{ padding: "16px 18px" }}>
+          <LoadState lines={5} label="Loading the verdict feed…" />
+        </div>
+      </Card>
+    );
+  }
+  if (errored && empty) {
+    return (
+      <Card title="Anomaly rulings" eyebrow="// evidence-carrying" flush>
+        <div style={{ padding: 18 }}>
+          <ErrorState
+            title="Couldn't reach the verdict feed"
+            hint="The alerts and activity streams are unreachable right now. The feed will refresh on the next sweep."
+            onRetry={onRetry}
+          />
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card title="Anomaly rulings" eyebrow="// evidence-carrying" flush>
-      {feed.length === 0 ? (
-        <div style={{ padding: 18, fontSize: 13, color: "var(--sl-text-low)" }}>
-          No verdicts on record. The fleet is clear.
-        </div>
+      {empty ? (
+        <EmptyState
+          icon={<ShieldCheck size={22} strokeWidth={1.8} />}
+          title="No verdicts on record"
+          hint={live ? "The detector is connected and the fleet is clear." : "The fleet is clear."}
+        />
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
           {feed.map((v, i) => (
@@ -687,11 +777,13 @@ function VerdictDrawer({
   verdict,
   history,
   historyLive,
+  historyLoading,
   onClose,
 }: {
   verdict: VerdictBackend | null;
   history: AnomalyHistoryRow[];
   historyLive: boolean;
+  historyLoading: boolean;
   onClose: () => void;
 }) {
   const s = verdict ? statusOfVerdict(verdict) : "neutral";
@@ -764,7 +856,11 @@ function VerdictDrawer({
           </div>
 
           {/* verdict history: score sparkline + status-change timeline */}
-          <VerdictHistory history={history} live={historyLive} />
+          <VerdictHistory
+            history={history}
+            live={historyLive}
+            loading={historyLoading}
+          />
         </div>
       ) : null}
     </Drawer>
@@ -785,9 +881,11 @@ function statusOfRuling(status: AnomalyHistoryRow["status"]): Status {
 function VerdictHistory({
   history,
   live,
+  loading,
 }: {
   history: AnomalyHistoryRow[];
   live: boolean;
+  loading: boolean;
 }) {
   // Order oldest → newest for the sparkline and timeline reading direction.
   const ordered = useMemo(
@@ -841,13 +939,22 @@ function VerdictHistory({
         <div style={{ fontSize: 12, fontWeight: 700, color: "var(--sl-text)" }}>
           Verdict history
         </div>
-        <Badge tone={live ? "mint" : "neutral"}>{live ? "LIVE" : "SAMPLE"}</Badge>
+        <Badge tone={live ? "mint" : "neutral"}>{live ? "LIVE" : "DEMONSTRATION"}</Badge>
       </div>
 
-      {ordered.length === 0 ? (
-        <div style={{ fontSize: 11.5, color: "var(--sl-text-low)" }}>
-          No verdict history on record for this backend in the window.
-        </div>
+      {loading ? (
+        // While the live read is in flight, show a skeleton rather than briefly
+        // flashing the representative history as if it were live.
+        <LoadState lines={4} label="Loading verdict history…" />
+      ) : ordered.length === 0 ? (
+        // An empty trail is only reachable on the live path -- the demonstration
+        // fallback always supplies a representative history -- so this reads as a
+        // genuine "nothing recorded yet", not a degraded demonstration.
+        <EmptyState
+          icon={<Clock size={20} strokeWidth={1.8} />}
+          title="No verdict history yet"
+          hint="No status or score rulings recorded for this backend in the window."
+        />
       ) : (
         <>
           {/* score trail */}

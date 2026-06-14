@@ -221,6 +221,10 @@ __marimo__/
 # Re-include it: the Python-template `lib/` rule above otherwise swallows it.
 !test-backends/lib/
 
+# operator-ui web src/lib/ is hand-written TS source (data-mode + hooks), not a
+# Python build dir. Re-include it: the `lib/` rule above otherwise swallows it.
+!services/operator-ui/web/src/lib/
+
 node_modules/
 npm-debug.log*
 yarn-debug.log*

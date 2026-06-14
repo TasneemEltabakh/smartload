@@ -4,34 +4,22 @@
 // Realistic, hardcoded data shaped to the api.ts response types so the Pulse
 // view renders fully with no backend running. Six backends api-01..06; api-04
 // is excluded on a p95 breach (842 > 300) and api-05 is degraded near its
-// error threshold. Each backend carries a short latency sparkline series, and a
-// per-container resource list drives the CPU / memory panel. The numbers mirror
-// the approved Daylight prototype.
+// error threshold. A per-container resource list drives the CPU / memory panel,
+// and a representative KPI-trends payload drives the headline rail (recent
+// series + measured deltas). The numbers mirror the approved Daylight prototype.
 // ============================================================================
 
 import type {
   BackendMetrics,
   BackendStat,
   ResourcesResponse,
+  TrendsResponse,
 } from "../api";
 
 // SLO target (p95) the offline view assumes; mirrors SAMPLE_POLICY.
 export const PULSE_SLO_P95_MS = 200;
 // Exclusion threshold used by the anomaly plane in the prototype.
 export const PULSE_EXCLUSION_P95_MS = 300;
-
-// ── Per-backend latency sparkline series (most-recent last) ───────────────────
-// Twelve 5-second samples of p95 latency per node; the excluded node spikes,
-// the degraded node drifts up. Keyed by instance so the table can look up a
-// node's trend without threading another array through the merge.
-export const PULSE_SPARK_LATENCY: Record<string, number[]> = {
-  "api-01": [121, 116, 119, 114, 122, 118, 115, 120, 117, 119, 116, 118],
-  "api-02": [128, 133, 130, 135, 129, 132, 134, 130, 131, 129, 133, 131],
-  "api-03": [142, 147, 151, 145, 149, 153, 148, 150, 146, 151, 147, 149],
-  "api-04": [188, 214, 297, 421, 566, 690, 742, 803, 829, 818, 836, 842],
-  "api-05": [151, 156, 149, 158, 162, 159, 165, 161, 167, 160, 164, 163],
-  "api-06": [124, 129, 126, 131, 125, 128, 130, 127, 129, 126, 128, 127],
-};
 
 // Per-backend request stats in the api.ts BackendStat shape. api-04 is bleeding
 // requests (mostly errored, low rpm because traffic is being held off it) and
@@ -78,4 +66,52 @@ export const PULSE_SAMPLE_RESOURCES: ResourcesResponse = {
   ],
   window_seconds: 60,
   count: 12,
+};
+
+// ── KPI trends (sparklines + window-over-window deltas) ───────────────────────
+// Representative TrendsResponse so the headline KPI tiles draw a real recent
+// series and a measured delta on the demonstration path, exactly as they would
+// from /api/ui/metrics/trends when a backend is reachable. The series end on
+// the same readings the rolled-up vitals produce (~15.4k rpm, worst p95 ~149 ms
+// across the routed pool, ~0.5 % request-weighted error, 5 healthy backends),
+// so the rail and the table tell one consistent, healthy story.
+export const PULSE_SAMPLE_TRENDS: TrendsResponse = {
+  throughput_rpm: {
+    series: [14_180, 14_420, 14_760, 14_980, 15_120, 15_040, 15_260, 15_420],
+    current: 15_420,
+    delta_pct: 4.2,
+    label: "vs prior 6m",
+    unit: "rpm",
+  },
+  p95_latency_ms: {
+    series: [156, 152, 150, 153, 149, 151, 148, 149],
+    current: 149,
+    delta_pct: -2.6,
+    label: "vs prior 6m",
+    unit: "ms",
+  },
+  slo_compliance_pct: {
+    series: [99.4, 99.5, 99.5, 99.6, 99.6, 99.7, 99.7, 99.7],
+    current: 99.7,
+    delta_pct: 0.1,
+    label: "vs prior 6m",
+    unit: "%",
+  },
+  error_rate_pct: {
+    series: [0.62, 0.58, 0.55, 0.53, 0.51, 0.5, 0.49, 0.5],
+    current: 0.5,
+    delta_pct: -1.4,
+    label: "vs prior 6m",
+    unit: "%",
+  },
+  active_backends: {
+    series: [5, 5, 5, 5, 5, 5, 5, 5],
+    current: 5,
+    delta_pct: 0,
+    label: "in rotation",
+    unit: "count",
+  },
+  window_minutes: 6,
+  last_refreshed: new Date().toISOString(),
+  notes: [],
 };

@@ -1,11 +1,16 @@
 // ============================================================================
 // Shell context -- bridge between a route view and the app chrome
 // ----------------------------------------------------------------------------
-// The Topbar (kill switch, LIVE chip, sample-data indicator) and the Sidebar
-// footer (decision-plane health, connection, operator) live in App, but their
-// state is owned by the active view (the Flightdeck reads safe_mode and learns
-// whether it is on live or sample data). This context lets a view publish that
-// state up to the chrome without prop-drilling through the router.
+// The Topbar (kill switch, safe_mode) and the Sidebar footer (decision-plane
+// service health, operator identity) live in App, but their state is owned by
+// the active view: a view reads safe_mode and reports the real service health
+// and data source it resolved to. This context lets a view publish that state
+// up to the chrome without prop-drilling through the router.
+//
+// Note: the calm live / demonstration indicator in the Topbar is driven
+// independently by the DataModeProvider, not by this context. `plane` here is a
+// separate concept -- the reachability of the SmartLoad services themselves --
+// and it defaults to healthy so the chrome never opens in a degraded state.
 // ============================================================================
 
 import { createContext, useContext } from "react";
@@ -26,7 +31,11 @@ export interface ShellState {
   /** Whether the view is rendering live API data or the sample fallback. */
   dataSource: DataSource;
   setDataSource: (next: DataSource) => void;
-  /** Decision-plane / connection health for the footer + LIVE chip. */
+  /**
+   * Real decision-plane service health for the Sidebar footer. Defaults to
+   * "ok"; a view raises it only from genuine service health when live. This is
+   * intentionally distinct from the live/demonstration data mode.
+   */
   plane: PlaneStatus;
   setPlane: (next: PlaneStatus) => void;
   /** Decision-plane node count for the footer chip. */
