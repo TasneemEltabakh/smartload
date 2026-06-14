@@ -365,6 +365,14 @@ jobs:
         # against an adaptive-bench-configured stack with `-m slow`.
         run: pytest tests/integration/test_t23_control_loop.py -v -m "not slow"
 
+      - name: Run forecast-autoscale e2e suite against live stack (#140)
+        # Feature-level forecast → scale slice via the SDK: a high forecast
+        # on smartload.forecast drives an autoscaler scale_out (observed on
+        # smartload.scale through the BFF SSE stream) plus the operator
+        # override. Forecast legs skip gracefully if the cluster can't
+        # actuate (no spare compose container / a competing live forecast).
+        run: pytest tests/e2e/forecast-autoscale/ -v
+
       - name: Dump service logs on failure
         if: failure()
         run: |
