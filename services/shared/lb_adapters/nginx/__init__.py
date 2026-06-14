@@ -16,7 +16,15 @@ _log = logging.getLogger("lb_adapter.nginx")
 
 _CONF_HEADER = "upstream backend_pool {\n"
 _CONF_FOOTER = "}\n"
-_SERVER_FMT = "    server {addr} weight={w} max_fails=3 fail_timeout=10s;\n"
+# Passive ejection is disabled (max_fails=0). The lb-sidecar actively manages
+# pool membership — it removes stopped/excluded backends from this file — so
+# NGINX's max_fails is redundant here and actively harmful under load: a backend
+# at capacity sheds 503 as graceful backpressure, max_fails would count each 503
+# as a "failure", eject every server in turn, and then serve "no live upstreams"
+# (502) for the whole overload window. With max_fails=0 a momentarily-shedding
+# backend stays in rotation and its 503 is passed back to the client as honest
+# backpressure instead of cascading into a total 502 outage.
+_SERVER_FMT = "    server {addr} weight={w} max_fails=0;\n"
 _SERVER_DOWN_FMT = "    server {addr} down;\n"
 
 # Upper bound on a single DNS lookup during the reload pre-flight. A name that
