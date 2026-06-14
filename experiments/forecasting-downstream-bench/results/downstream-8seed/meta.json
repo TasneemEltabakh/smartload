@@ -1,0 +1,47 @@
+{
+  "tag": "downstream-8seed",
+  "generated_utc": "2026-06-14T04:34:59.352133+00:00",
+  "params": {
+    "per_instance_capacity_rps": 100.0,
+    "cooldown_seconds": 60.0,
+    "run_steps": 1800,
+    "warmup_steps": 20,
+    "forecast_window_samples": 60,
+    "peak_mult": 8.0
+  },
+  "strategies": [
+    "oracle",
+    "reactive",
+    "ma_predict",
+    "hr_predict"
+  ],
+  "profiles": [
+    "steady",
+    "diurnal",
+    "ramp",
+    "spike",
+    "sawtooth",
+    "burst"
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "versions": {
+    "python": "3.11.15",
+    "numpy": "1.26.4"
+  },
+  "runtime_seconds": 29.37,
+  "headline": {
+    "reactive_sla_pct": 77.08796296296296,
+    "ma_predict_sla_pct": 77.08796296296296,
+    "hr_predict_sla_pct": 83.38310185185186,
+    "oracle_sla_pct": 95.66782407407409
+  }
+}

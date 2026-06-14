@@ -89,6 +89,7 @@ for _p in (
     str(_FORECAST_SVC),
     str(_FORECAST_SVC / "engines" / "moving_average"),
     str(_FORECAST_SVC / "engines" / "arima"),
+    str(_FORECAST_SVC / "engines" / "harmonic_residual"),
 ):
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -111,8 +112,9 @@ BUCKET = "5min"
 HORIZON_STEPS = 1
 MAPE_GATE = 20.0                 # SOT KPI: MAPE < 20%
 
-# Engine names in stable table order. arima_serving last (it's the headline).
-ENGINE_ORDER = ("naive", "moving_average", "arima_serving")
+# Engine names in stable table order. The candidate (harmonic_residual) is last
+# — it is the headline contender measured against the naive floor.
+ENGINE_ORDER = ("naive", "moving_average", "arima_serving", "harmonic_residual")
 
 # Metric columns in stable order for the CSV and the per-seed records.
 METRIC_KEYS = ("mape", "smape", "rmse", "mae", "ci_coverage", "latency_ms")
@@ -174,6 +176,10 @@ def _build_engines(selected: tuple[str, ...]) -> dict[str, object]:
                 "— the arima_serving contender cannot run without it."
             )
         built["arima_serving"] = eng
+    if "harmonic_residual" in selected:
+        hr_path = _FORECAST_SVC / "engines" / "harmonic_residual" / "engine.py"
+        hr_mod = _load_module_by_path("_harmonic_residual_engine", hr_path)
+        built["harmonic_residual"] = hr_mod.HarmonicResidualEngine(horizon_minutes=5)
     return built
 
 
@@ -342,6 +348,7 @@ def _engine_label(eng: str) -> str:
         "naive": "naive",
         "moving_average": "moving_average",
         "arima_serving": "arima_serving",
+        "harmonic_residual": "harmonic_residual",
     }.get(eng, eng)
 
 
@@ -378,10 +385,12 @@ def _write_summary(out_dir: Path, agg, profiles, engines, *, seeds, days,
         f"Generated `{out_dir.name}` (UTC). Rolling-origin / walk-forward, "
         f"{HORIZON_STEPS}-step horizon, {BUCKET} buckets.",
         "",
-        "Three single-step forecasters compared on synthetic RPS series: "
+        "Single-step forecasters compared on synthetic RPS series: "
         "**naive** (persistence floor, local — not shipped), **moving_average** "
-        f"(window={MA_WINDOW}, shipped), and **arima_serving** "
-        f"(ARIMA{ARIMA_ORDER} production serving path, shipped). Every contender "
+        f"(window={MA_WINDOW}, shipped), **arima_serving** "
+        f"(ARIMA{ARIMA_ORDER} production serving path, shipped), and "
+        "**harmonic_residual** (robust dynamic-harmonic-regression + AR(1) "
+        "residual with split-conformal bands — the candidate). Every contender "
         "is handed the identical history window at each origin.",
         "",
         f"{len(seeds)} seeds × {len(profiles)} profiles. ~{n_origins_typical} "
