@@ -16,9 +16,10 @@ Both actions write into the existing audit streams; the Audit page (slice #2) sh
 | Surface | Detail |
 |---|---|
 | HTTP | `POST /api/v1/scale` on autoscaler (port 8085) + `POST /api/v1/isolate` on anomaly-detector (port 8082). Both accept `actor` + `reason` in the body or via `X-Actor` header. |
-| SDK | `client.actions.scale(target_count, actor, reason)`, `client.actions.isolate(backend_id, status, actor, reason)`, plus top-level `client.scale(...)` / `client.isolate(...)` convenience. |
-| BFF (operator UI) | `POST /api/ui/scale` + `POST /api/ui/isolate` proxy to the respective upstreams. UI hits one origin. |
-| UI | Manual Actions page with two forms (scale + isolate) plus a confirmation modal per action (pending UI sub-pass). |
+| HTTP (dry-run) | `POST /api/v1/actions/simulate` on BOTH services — same body as the real action, same validation, zero side effects. The autoscaler returns the scale plan + live policy bounds; the anomaly-detector returns the synthetic `AnomalyEvent` envelope that would publish. |
+| SDK | `client.actions.scale(target_count, actor, reason)`, `client.actions.isolate(backend_id, status, actor, reason)`, plus `simulate_scale(...)` / `simulate_isolate(...)` and the top-level `client.scale(...)` / `client.isolate(...)` / `client.simulate_scale(...)` / `client.simulate_isolate(...)` convenience. |
+| BFF (operator UI) | `POST /api/ui/scale` + `POST /api/ui/isolate` proxy to the respective upstreams; `POST /api/ui/actions/simulate/scale` + `POST /api/ui/actions/simulate/isolate` proxy the dry-run path. UI hits one origin. |
+| UI | Manual Actions page with two forms (scale + isolate) plus a confirmation modal per action (pending UI sub-pass). Simulate powers a preview-before-apply step in the modal. |
 
 ## Implementation pointers
 
@@ -32,25 +33,50 @@ Both actions write into the existing audit streams; the Audit page (slice #2) sh
 - Audit storage: existing `scaling_events` + `backend_health` hypertables (no schema change)
 - UI: `services/operator-ui/web/src/pages/Actions.tsx` — two forms (scale + isolate) plus a disabled-placeholder "Force route weights" form (depends on T2.1); confirmation modal per action with state-change preview; results feed of the last 10 actions; live policy bounds shown in the header
 
+## Dry-run / simulate (#146)
+
+Before committing a manual override during incident response, operators (and
+integration tests) can preview it. `POST /api/v1/actions/simulate` lives on
+**both** the autoscaler and the anomaly-detector, accepts the **same request
+body** as its real counterpart, and runs the **same validation path** —
+guaranteeing that a failed simulate implies a failed real action with the same
+`400` + `field`. It actuates nothing: no cluster change, no `scaling_events` /
+`backend_health` row, no envelope publish, and the autoscaler cooldown clock is
+left untouched.
+
+- **Autoscaler** reuses `manual.plan_manual_scale` and returns
+  `{would_execute, current_count, target_count, action, cooldown_remaining_s,
+  would_audit_reason, policy_bounds:{min_backends, max_backends}}`.
+- **Anomaly-detector** reuses `manual.plan_manual_isolate` and returns the full
+  synthetic `AnomalyEvent` envelope that would publish
+  (`{would_publish, channel, envelope:{event_id, source, version, timestamp,
+  payload}, backend_id, status, severity, reason}`) without publishing it.
+
+The "apply this simulation" handle is intentionally out of scope — callers
+simply POST the same body to `/scale` or `/isolate` to commit.
+
 ## Status
 
 - [x] `POST /api/v1/scale` on autoscaler with validation against min/max
 - [x] `POST /api/v1/isolate` on anomaly-detector with status validation
-- [x] OpenAPI fragments + 4 new schemas
-- [x] BFF proxies (`/api/ui/scale`, `/api/ui/isolate`)
-- [x] SDK methods + unit tests
+- [x] `POST /api/v1/actions/simulate` (dry-run) on autoscaler + anomaly-detector — same body, same validation, zero side effects (#146)
+- [x] OpenAPI fragments + schemas (`ManualScale*`, `ManualIsolate*`, `SimulateScaleResponse`, `SimulateIsolateResponse`)
+- [x] BFF proxies (`/api/ui/scale`, `/api/ui/isolate`, `/api/ui/actions/simulate/scale`, `/api/ui/actions/simulate/isolate`)
+- [x] SDK methods + unit tests (`scale`, `isolate`, `simulate_scale`, `simulate_isolate`)
 - [x] `SmartLoadClient.anomaly_detector_url` parameter + env-var override
-- [x] 15 unit tests for `plan_manual_scale` (validation, direction, reason composition)
-- [x] 11 unit tests for the SDK actions surface
+- [x] Unit tests for `plan_manual_scale` + `plan_manual_isolate` (validation, direction, reason composition)
+- [x] Unit tests for the autoscaler + anomaly-detector simulate routes (dry-run shape, side-effect freedom, validation parity)
+- [x] Unit tests for the SDK actions surface (scale / isolate / simulate)
 - [x] UI page `services/operator-ui/web/src/pages/Actions.tsx` — scale + isolate forms with confirmation modals, results feed, live policy bounds; "Force route weights" placeholder form disabled with T2.1 tooltip
-- [x] Scenario script `examples/scenarios/manual-actions/manual_actions_walk.py` — 8-step walk: read policy bounds → pick in-band target → scale → confirm audit row → reject out-of-band → isolate → reject bad status → restore baseline
-- [x] E2E test suite `tests/e2e/manual-actions/test_manual_actions.py` (11 tests) — scale bounds + noop + audit round-trip, isolate happy/bad-status/empty-backend-id, BFF proxy parity for both endpoints
+- [x] Scenario script `examples/scenarios/manual-actions/manual_actions_walk.py` — read policy bounds → simulate scale (assert no audit row) → reject out-of-band simulate → scale → confirm audit row → reject out-of-band → simulate isolate → isolate → reject bad status → restore baseline
+- [x] E2E test suite `tests/e2e/manual-actions/test_manual_actions.py` — scale bounds + noop + audit round-trip, isolate happy/bad-status/empty-backend-id, simulate dry-run shapes + validation parity + no-write assertions, BFF proxy parity for all four endpoints
 - [x] §25.9 slice-catalog row flipped to *Shipped*
 
 Open follow-ups (out of scope for this slice):
 - "Force route weights" form — depends on T2.1 sidecar (#82)
 - Bulk manual actions / scripted operator macros
 - Manual-override cooldown window so the auto-loop doesn't immediately undo
+- "Apply this simulation" handle (re-validates + materialises the previewed action)
 
 ## How to verify
 
@@ -76,6 +102,16 @@ curl -X POST 'http://localhost:8085/api/v1/scale' \
   -d '{"target_count": 5, "reason": "back to baseline"}'
 
 curl -X POST 'http://localhost:8082/api/v1/isolate' \
+  -H 'Content-Type: application/json' -H 'X-Actor: ops' \
+  -d '{"backend_id": "test-backend-2", "status": "degraded"}'
+
+# 3b. Dry-run first (#146) — preview without actuating. Same body, same
+#     validation, zero side effects.
+curl -X POST 'http://localhost:8085/api/v1/actions/simulate' \
+  -H 'Content-Type: application/json' -H 'X-Actor: ops' \
+  -d '{"target_count": 5, "reason": "capacity drill"}'
+
+curl -X POST 'http://localhost:8082/api/v1/actions/simulate' \
   -H 'Content-Type: application/json' -H 'X-Actor: ops' \
   -d '{"backend_id": "test-backend-2", "status": "degraded"}'
 

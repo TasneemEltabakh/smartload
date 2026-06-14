@@ -388,6 +388,91 @@ class TestActionsIsolate:
         assert captured["json"]["status"] == "unhealthy"
 
 
+class TestActionsSimulate:
+    """Dry-run SDK surface (#146). Same wiring as scale()/isolate() but
+    targeting /api/v1/actions/simulate on the respective upstream."""
+
+    def test_simulate_scale_targets_autoscaler_url(self, monkeypatch):
+        client = MagicMock()
+        client.autoscaler_url = "http://my-autoscaler:8085"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _fake_response(200, json_body={"would_execute": True})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        result = ac.simulate_scale(3, actor="alice", reason="drill")
+        assert result == {"would_execute": True}
+        assert captured["url"] == "http://my-autoscaler:8085/api/v1/actions/simulate"
+        assert captured["json"] == {
+            "target_count": 3,
+            "actor": "alice",
+            "reason": "drill",
+        }
+
+    def test_simulate_scale_400_raises_validation_error(self, monkeypatch):
+        client = MagicMock()
+        client.autoscaler_url = "http://x:8085"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+
+        def fake_post(url, json=None, timeout=None):
+            return _fake_response(
+                400,
+                json_body={"error": "out of bounds", "field": "target_count"},
+            )
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        with pytest.raises(ValidationError) as exc:
+            ac.simulate_scale(99)
+        assert exc.value.field == "target_count"
+
+    def test_simulate_isolate_targets_anomaly_detector_url(self, monkeypatch):
+        client = MagicMock()
+        client.anomaly_detector_url = "http://my-anomaly:8082"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _fake_response(200, json_body={"would_publish": True})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        result = ac.simulate_isolate("backend_1", "degraded", actor="bob")
+        assert result == {"would_publish": True}
+        assert captured["url"] == "http://my-anomaly:8082/api/v1/actions/simulate"
+        assert captured["json"] == {
+            "backend_id": "backend_1",
+            "status": "degraded",
+            "actor": "bob",
+        }
+
+    def test_simulate_isolate_default_status_is_unhealthy(self, monkeypatch):
+        client = MagicMock()
+        client.anomaly_detector_url = "http://x:8082"
+        client.timeout = 5.0
+        client.default_actor = "smartload-client"
+        captured = {}
+
+        def fake_post(url, json=None, timeout=None):
+            captured["json"] = json
+            return _fake_response(200, json_body={"would_publish": True})
+
+        monkeypatch.setattr("smartload_client.actions.httpx.post", fake_post)
+        ac = ActionsClient(client)
+        ac.simulate_isolate("backend_1")
+        assert captured["json"]["status"] == "unhealthy"
+
+
 class TestSmartLoadClientActionsWiring:
 
     def test_actions_subclient_is_attached(self):
@@ -437,6 +522,32 @@ class TestSmartLoadClientActionsWiring:
 
         monkeypatch.setattr(c.actions, "isolate", fake_isolate)
         c.isolate("backend_2", "degraded", actor="bob")
+        assert captured["call"] == ("backend_2", "degraded", "bob", None)
+        c.close()
+
+    def test_top_level_simulate_scale_delegates(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        captured = {}
+
+        def fake_sim(target_count, *, actor=None, reason=None):
+            captured["call"] = (target_count, actor, reason)
+            return {"would_execute": True}
+
+        monkeypatch.setattr(c.actions, "simulate_scale", fake_sim)
+        c.simulate_scale(4, actor="alice", reason="drill")
+        assert captured["call"] == (4, "alice", "drill")
+        c.close()
+
+    def test_top_level_simulate_isolate_delegates(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        captured = {}
+
+        def fake_sim(backend_id, status, *, actor=None, reason=None):
+            captured["call"] = (backend_id, status, actor, reason)
+            return {"would_publish": True}
+
+        monkeypatch.setattr(c.actions, "simulate_isolate", fake_sim)
+        c.simulate_isolate("backend_2", "degraded", actor="bob")
         assert captured["call"] == ("backend_2", "degraded", "bob", None)
         c.close()
 

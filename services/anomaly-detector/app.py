@@ -31,6 +31,7 @@ import os
 import sys
 import threading
 import time
+from dataclasses import asdict
 
 import psycopg2
 import redis as redis_lib
@@ -46,7 +47,11 @@ for _cand in (_HERE, os.path.dirname(_HERE)):
     if os.path.isdir(os.path.join(_cand, "shared")):
         sys.path.insert(0, _cand)
         break
-from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
+from shared.contracts import (                                # noqa: E402
+    make_envelope,
+    parse_envelope,
+    publish_envelope,
+)
 from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
 from shared import bootstrap, config                            # noqa: E402
 from shared.logging_setup import install_correlation_middleware # noqa: E402
@@ -67,6 +72,10 @@ from runloop import (                                          # noqa: E402
     score_to_event_payload,
     serialize_engine_state,
     should_publish,
+)
+from manual import (                                          # noqa: E402
+    ManualIsolateError,
+    plan_manual_isolate,
 )
 
 app = Flask(__name__)
@@ -411,8 +420,6 @@ def index():
 
 # ── manual actions: POST /api/v1/isolate (slice #3, #123) ─────────────────────
 
-_VALID_ISOLATE_STATUSES = ("healthy", "degraded", "unhealthy")
-
 
 @app.route("/api/v1/isolate", methods=["POST"])
 def post_manual_isolate():
@@ -434,40 +441,25 @@ def post_manual_isolate():
         of backend_health per SOT §8.5 design contract).
 
     Bypasses the engine's run loop and the publish gate entirely — the
-    operator's intent is the signal. score is fixed at 1.0 for unhealthy /
-    degraded and 0.0 for healthy.
+    operator's intent is the signal. Validation + payload composition live in
+    manual.plan_manual_isolate so the dry-run sibling
+    (POST /api/v1/actions/simulate) shares the exact same path.
     """
     raw = request.get_json(force=True, silent=True)
     if not isinstance(raw, dict):
         return jsonify({"error": "request body must be a JSON object"}), 400
 
-    backend_id = raw.get("backend_id")
-    if not isinstance(backend_id, str) or not backend_id.strip():
-        return jsonify({
-            "error": "backend_id must be a non-empty string",
-            "field": "backend_id",
-        }), 400
-    backend_id = backend_id.strip()
-
-    status = raw.get("status")
-    if status not in _VALID_ISOLATE_STATUSES:
-        return jsonify({
-            "error": f"status must be one of {list(_VALID_ISOLATE_STATUSES)}",
-            "field": "status",
-        }), 400
-
     actor = (raw.get("actor") or request.headers.get("X-Actor") or "operator")
-    user_reason = (raw.get("reason") or "manual").strip() or "manual"
-    audited_reason = f"manual:{actor}: {user_reason}"
-    score = 0.0 if status == "healthy" else 1.0
 
-    payload = {
-        "backend_id":    backend_id,
-        "status":        status,
-        "score":         score,
-        "model_version": f"manual:{actor}",
-        "features":      {"reason": audited_reason},
-    }
+    try:
+        plan = plan_manual_isolate(
+            backend_id=raw.get("backend_id"),
+            status=raw.get("status"),
+            actor=actor,
+            user_reason=raw.get("reason"),
+        )
+    except ManualIsolateError as exc:
+        return jsonify({"error": exc.message, "field": exc.field}), 400
 
     redis_client = redis_lib.from_url(REDIS_URL)
     try:
@@ -475,7 +467,7 @@ def post_manual_isolate():
             redis_client,
             channel=ANOMALY_CHANNEL,
             source=SERVICE_NAME,
-            payload=payload,
+            payload=plan.payload,
         )
     except Exception as exc:                            # noqa: BLE001
         return jsonify({"error": f"envelope publish failed: {exc}"}), 503
@@ -488,23 +480,105 @@ def post_manual_isolate():
         with db_conn.cursor() as cur:
             cur.execute(
                 BACKEND_HEALTH_INSERT,
-                (datetime.now(timezone.utc), backend_id, status, score),
+                (datetime.now(timezone.utc), plan.backend_id, plan.status, plan.score),
             )
         db_conn.commit()
     finally:
         db_conn.close()
 
-    print(f"[{SERVICE_NAME}] manual isolate actor={actor} backend_id={backend_id} "
-          f"status={status} reason={user_reason!r}", flush=True)
+    print(f"[{SERVICE_NAME}] manual isolate actor={plan.actor} "
+          f"backend_id={plan.backend_id} status={plan.status} "
+          f"reason={plan.reason!r}", flush=True)
 
     return jsonify({
         "status":     "applied",
-        "backend_id": backend_id,
-        "anomaly_status": status,
-        "score":      score,
-        "actor":      actor,
-        "reason":     audited_reason,
+        "backend_id": plan.backend_id,
+        "anomaly_status": plan.status,
+        "score":      plan.score,
+        "actor":      plan.actor,
+        "reason":     plan.reason,
         "event_id":   event_id,
+    })
+
+
+# ── manual actions: POST /api/v1/actions/simulate (dry-run, #146) ─────────────
+
+
+@app.route("/api/v1/actions/simulate", methods=["POST"])
+def post_simulate():
+    """Dry-run a manual isolate: return the synthetic AnomalyEvent envelope
+    that POST /api/v1/isolate WOULD publish — WITHOUT publishing and WITHOUT
+    writing a backend_health row.
+
+    Accepts the SAME request body as POST /api/v1/isolate and runs the SAME
+    validation path (`plan_manual_isolate` — backend_id non-empty, status
+    enum). A failed simulate implies a failed real isolate: both return 400
+    with the same `field`.
+
+    The envelope is built with make_envelope (the same wrapper publish_envelope
+    uses), so the returned shape is byte-identical to what would land on
+    smartload.anomaly — full envelope (event_id, source, version, timestamp)
+    plus the AnomalyEvent payload (backend_id, status, score, severity, …).
+    Nothing is published; the cluster + DB are untouched.
+
+    Body (identical to /isolate):
+      {
+        "backend_id": "<host:port or instance label>",
+        "status":     "healthy" | "degraded" | "unhealthy",
+        "actor":      <string, default "operator">,
+        "reason":     <string, default "manual">
+      }
+
+    Returns:
+      {
+        "would_publish": true,
+        "channel":       "smartload.anomaly",
+        "envelope": {
+          "event_id":  <uuid>,
+          "source":    "anomaly-detector",
+          "version":   <int>,
+          "timestamp": <rfc3339>,
+          "payload": {
+            "backend_id": <str>, "status": <str>, "score": <float>,
+            "severity": <str>, "model_version": <str>, "features": {...}
+          }
+        },
+        "backend_id": <str>,
+        "status":     <str>,
+        "severity":   <str>,
+        "reason":     "manual:<actor>: <reason>"
+      }
+    """
+    raw = request.get_json(force=True, silent=True)
+    if not isinstance(raw, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+
+    actor = (raw.get("actor") or request.headers.get("X-Actor") or "operator")
+
+    # SAME validation + payload-composition path as POST /api/v1/isolate.
+    try:
+        plan = plan_manual_isolate(
+            backend_id=raw.get("backend_id"),
+            status=raw.get("status"),
+            actor=actor,
+            user_reason=raw.get("reason"),
+        )
+    except ManualIsolateError as exc:
+        return jsonify({"error": exc.message, "field": exc.field}), 400
+
+    # Build the envelope WITHOUT publishing it — make_envelope is the exact
+    # wrapper publish_envelope uses, so the synthetic envelope mirrors the
+    # real one (modulo event_id/timestamp which are minted per-call).
+    envelope = make_envelope(source=SERVICE_NAME, payload=plan.payload)
+
+    return jsonify({
+        "would_publish": True,
+        "channel":       ANOMALY_CHANNEL,
+        "envelope":      asdict(envelope),
+        "backend_id":    plan.backend_id,
+        "status":        plan.status,
+        "severity":      plan.severity,
+        "reason":        plan.reason,
     })
 
 
