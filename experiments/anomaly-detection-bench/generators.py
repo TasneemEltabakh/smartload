@@ -87,6 +87,22 @@ class GenParams:
     gradual_peak_mult: float = 4.0          # final latency = mult * baseline
     gradual_ramp_s: int = 90                # linear ramp length (seconds)
 
+    # partial-failure (HELD-OUT generalization profile — see _emit). A ramping
+    # fraction of requests turn slow (a long latency tail) and some of those
+    # error: a correlated/partial backend failure. Its bimodal within-window
+    # latency is a shape NONE of the training profiles produce.
+    partial_frac_start: float = 0.10        # fraction of requests failing at onset
+    partial_frac_end: float = 0.60          # fraction failing at the end of the ramp
+    partial_slow_mult_lo: float = 5.0       # slow-tail latency multiple (low)
+    partial_slow_mult_hi: float = 12.0      # slow-tail latency multiple (high)
+    partial_fail_error_prob: float = 0.30   # P(a failed request also errors)
+
+    # flappy-clean (gate-quantification profile — see _emit). Healthy traffic
+    # with a high per-request jitter, so the window MAX bounces across a
+    # detector's threshold on isolated windows: realistic noisy telemetry whose
+    # transient flips the stability gate is meant to absorb. label 0 throughout.
+    flappy_jitter: float = 0.55             # per-request lognormal sigma (vs 0.20 healthy)
+
     def as_dict(self) -> dict:
         return asdict(self)
 
@@ -131,8 +147,27 @@ def _window_features(
     )
 
 
+# Profiles that inject NO anomaly: their windows are healthy throughout and
+# must carry label 0 for the whole trace (a pure specificity control). Listing
+# them here keeps the labeller profile-aware.
+NON_INJECTING_PROFILES = ("clean-control", "flappy-clean")
+
+
 def _active(t_s: int, p: GenParams) -> bool:
     return p.inject_start_s <= t_s < p.inject_start_s + p.duration_s
+
+
+def _anomalous(t_s: int, profile: str, p: GenParams) -> bool:
+    """Ground truth: is the window whose trailing edge is second `t_s` actually
+    anomalous? A window is anomalous iff the injection is active at its trailing
+    edge AND this profile injects something. clean-control injects nothing, so
+    it is healthy throughout — fixing a prior labeller that stamped its
+    injection-time window anomalous (contradicting the docstring's 'label-0
+    throughout' and letting a detector that fired on clean traffic bank those
+    as true positives instead of false positives)."""
+    if profile in NON_INJECTING_PROFILES:
+        return False
+    return _active(t_s, p)
 
 
 def _emit(profile: str, seed: int, p: GenParams) -> list[FeatureStep]:
@@ -153,7 +188,10 @@ def _emit(profile: str, seed: int, p: GenParams) -> list[FeatureStep]:
 
     for sec in range(p.total_seconds):
         lo, hi = sec * rps, (sec + 1) * rps
-        base = _healthy_latencies(rng, rps, p.base_latency_ms, p.base_latency_jitter)
+        # flappy-clean draws its healthy traffic with a wider per-request jitter
+        # so the window MAX is noisy; every other profile uses the calm jitter.
+        jitter = p.flappy_jitter if profile == "flappy-clean" else p.base_latency_jitter
+        base = _healthy_latencies(rng, rps, p.base_latency_ms, jitter)
         err = (rng.random(rps) < p.base_error_rate).astype("float64")
 
         if profile == "latency-spike" and _active(sec, p):
@@ -172,7 +210,24 @@ def _emit(profile: str, seed: int, p: GenParams) -> list[FeatureStep]:
             frac = min(1.0, elapsed / max(1, p.gradual_ramp_s))
             mult = 1.0 + frac * (p.gradual_peak_mult - 1.0)
             base = base * mult
-        # clean-control: no injection branch — stays healthy.
+        elif profile == "partial-failure" and _active(sec, p):
+            # HELD-OUT generalization shape: a ramping fraction of this second's
+            # requests turn into a slow tail (5-12x baseline) and some of those
+            # also error — a correlated/partial backend failure. The window then
+            # holds a bimodal latency distribution (most fast, a growing minority
+            # very slow), which lifts MAX and STD hard but the mean only
+            # partially — a shape none of the training profiles produce.
+            elapsed = sec - p.inject_start_s
+            ramp = min(1.0, elapsed / max(1, p.duration_s))
+            frac = p.partial_frac_start + ramp * (p.partial_frac_end - p.partial_frac_start)
+            fail = rng.random(rps) < frac
+            n_fail = int(fail.sum())
+            if n_fail:
+                base[fail] = base[fail] * rng.uniform(
+                    p.partial_slow_mult_lo, p.partial_slow_mult_hi, n_fail)
+                err[fail] = (rng.random(n_fail) < p.partial_fail_error_prob).astype("float64")
+        # clean-control / flappy-clean: no injection branch — stay healthy
+        # (flappy-clean's only difference is the wider jitter drawn above).
 
         latencies[lo:hi] = base
         errors[lo:hi] = err
@@ -184,8 +239,9 @@ def _emit(profile: str, seed: int, p: GenParams) -> list[FeatureStep]:
         start = max(0, end - window_n)
         mx, mean, erate, std, count = _window_features(latencies[start:end], errors[start:end])
         # Label the emission anomalous iff the injection is active at the
-        # window's trailing edge (the most recent second the window covers).
-        label = int(_active(t_s - 1, p))
+        # window's trailing edge (the most recent second the window covers) AND
+        # this profile actually injects an anomaly (clean-control never does).
+        label = int(_anomalous(t_s - 1, profile, p))
         steps.append(FeatureStep(
             t_s=t_s, latency_ms=mx, latency_rolling_mean_ms=mean, error_rate=erate,
             latency_rolling_std_ms=std, sample_count=count, label=label,
@@ -193,7 +249,17 @@ def _emit(profile: str, seed: int, p: GenParams) -> list[FeatureStep]:
     return steps
 
 
-PROFILES = ("latency-spike", "error-burst", "gradual-degradation", "clean-control")
+# The four original profiles a detector may be calibrated / trained on.
+TRAIN_PROFILES = ("latency-spike", "error-burst", "gradual-degradation", "clean-control")
+
+# Held-out profiles: NO detector trains or calibrates on these. They are the
+# generalization (`partial-failure`, a novel anomaly shape) and gate-behaviour
+# (`flappy-clean`, noisy healthy traffic) controls. Keeping them out of
+# TRAIN_PROFILES is what makes the benchmark's generalization claim honest.
+HELDOUT_PROFILES = ("partial-failure", "flappy-clean")
+
+# Everything the benchmark scores.
+PROFILES = TRAIN_PROFILES + HELDOUT_PROFILES
 
 
 def generate(profile: str, seed: int, params: GenParams) -> list[FeatureStep]:

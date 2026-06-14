@@ -212,6 +212,10 @@ class BackendState:
     last_score: float = 0.0
     pending_status: str | None = None
     pending_count: int = 0
+    # Consecutive cycles the low-sample hold (B1) has frozen a non-healthy
+    # status. Used by the optional max_hold_cycles TTL so a backend that goes
+    # permanently quiet can't be pinned non-healthy forever.
+    low_sample_hold_count: int = 0
 
 
 def apply_stability_gate(
@@ -219,6 +223,7 @@ def apply_stability_gate(
     low_sample: bool,
     state: BackendState,
     confirmation_cycles: int,
+    max_hold_cycles: int | None = None,
 ) -> AnomalyScore:
     """Wrap an engine's raw AnomalyScore with per-backend memory.
 
@@ -238,13 +243,27 @@ def apply_stability_gate(
       confirmed, the previous stable status/score is returned, so a single
       noisy sample can't flip a backend's published status.
 
+    `max_hold_cycles` (TTL) bounds the B1 hold: without it, a backend that
+    goes permanently quiet (low_sample forever) after a non-healthy reading
+    would be pinned non-healthy until process restart. When the hold has run
+    for more than `max_hold_cycles` consecutive cycles, the hold is released
+    and the raw (low-sample) reading is processed normally — so the status
+    decays back toward healthy through the usual confirmation path instead of
+    sticking forever. `None` (default) preserves the original unbounded hold.
+
     Mutates `state` in place and returns the gated AnomalyScore. Evidence
     fields (metric / observed_value / threshold) are carried from `raw` only
     when the raw verdict is the one returned; a held/pending verdict reuses
     the last confirmed status with no stale evidence attached.
     """
     if low_sample and state.last_status != "healthy":
-        return AnomalyScore(raw.backend_id, state.last_status, state.last_score)
+        state.low_sample_hold_count += 1
+        if max_hold_cycles is None or state.low_sample_hold_count <= max_hold_cycles:
+            return AnomalyScore(raw.backend_id, state.last_status, state.last_score)
+        # TTL exceeded: fall through and let the raw reading be processed by the
+        # normal confirmation logic below, so the held status can decay.
+    else:
+        state.low_sample_hold_count = 0
 
     if raw.status == state.last_status:
         state.last_score = raw.score

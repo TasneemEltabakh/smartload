@@ -81,6 +81,16 @@ class AnomalyEngine(ABC):
         Default no-op.
         """
 
+    def reset(self) -> None:
+        """Optional hook to drop any per-backend temporal state.
+
+        Stateless engines (threshold, isolation_forest, z-score) keep no
+        cross-cycle memory and need do nothing. Stateful engines (the
+        trend-aware engines, which carry a per-backend baseline / CUSUM across
+        cycles) override this to start fresh — e.g. when an independent
+        evaluation trace begins, or a backend is decommissioned. Default no-op.
+        """
+
 
 def select_engine(name: str, **kwargs) -> AnomalyEngine:
     """Factory. Returns the engine matching name."""
@@ -90,4 +100,10 @@ def select_engine(name: str, **kwargs) -> AnomalyEngine:
     if name == "isolation_forest":
         from engines.isolation_forest.engine import IsolationForestEngine
         return IsolationForestEngine(**kwargs)
+    if name == "trend_rule":
+        from engines.trend_rule.engine import TrendRuleEngine
+        return TrendRuleEngine(**kwargs)
+    if name == "trend_forest":
+        from engines.trend_forest.engine import TrendForestEngine
+        return TrendForestEngine(**kwargs)
     raise ValueError(f"Unknown anomaly engine: {name!r}")

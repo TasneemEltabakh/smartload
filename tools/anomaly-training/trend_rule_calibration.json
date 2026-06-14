@@ -1,0 +1,28 @@
+{
+  "calibration_seeds": [
+    300,
+    332
+  ],
+  "profiles": [
+    "latency-spike",
+    "error-burst",
+    "gradual-degradation",
+    "clean-control"
+  ],
+  "fp_budget": 0.05,
+  "error_rate_threshold": 0.05,
+  "degraded_entry": {
+    "cusum_degraded": 2.0,
+    "max_dev_degraded": 0.5,
+    "mean_dev_degraded": 0.12,
+    "recovery_slope": 0.02
+  },
+  "unhealthy": {
+    "cusum_unhealthy": 25.0,
+    "max_dev_unhealthy": 0.863,
+    "mean_dev_unhealthy": 0.72
+  },
+  "calibration_mean_f1": 0.9016,
+  "calibration_pooled_clean_fp": 0.0186,
+  "note": "Thresholds for engines/trend_rule. Calibrated on seeds disjoint from the benchmark eval seeds (1..8) and the trend_forest fit seeds (700..839). Primary binary metrics depend only on the degraded-entry gates + recovery_slope; unhealthy gates set the tiering/severity only."
+}

@@ -4,7 +4,7 @@ experiments/anomaly-detection-bench/run.py
 Anomaly-DETECTION benchmark (distinct from anomaly-engine-bench, which only
 measures engine-vs-engine agreement on a static grid).
 
-This harness drives four contenders over identical synthetic feature streams
+This harness drives six contenders over identical synthetic feature streams
 that carry ground-truth labels, and scores real detection quality: Precision,
 Recall, F1, false-positive rate, detection latency and recovery latency, plus
 PR-AUC for the score-producing engines and a 3-tier confusion matrix per
@@ -20,13 +20,22 @@ Contenders (all scored on the SAME feature streams):
   isolation_forest_retrained the quantile-calibrated artifact from
                              tools/anomaly-training/retrain_calibrated.py
   zscore                     a 3-sigma latency-z-score baseline (this experiment)
+  trend_rule                 stateful trend-aware rule engine (CUSUM + baseline
+                             deviation) — closes the gradual-degradation gap
+  trend_forest               IsolationForest on the enriched temporal features
+                             (tools/anomaly-training/train_trend.py)
+
+The trend_* engines are STATEFUL (per-backend memory across cycles): they are
+reset per trace and scored sequentially, exposing last_anomaly_value() for
+PR-AUC. Profiles include two HELD-OUT controls no engine trains/calibrates on:
+`partial-failure` (generalization) and `flappy-clean` (gate behaviour on noisy
+telemetry). See generators.TRAIN_PROFILES vs HELDOUT_PROFILES.
 
 Primary metrics binarise the 3-tier status as (status != "healthy"), matching
-evaluate_live.py. PR-AUC is reported only for the score-producing engines (the
-two Isolation Forests and z-score).
+evaluate_live.py. PR-AUC is reported for the score-producing engines.
 
-Usage:
-    /tmp/sk132env/Scripts/python.exe experiments/anomaly-detection-bench/run.py
+Usage (scikit-learn 1.3.2 / numpy<2 interpreter — loads the shipped .pkl artifacts):
+    .venv/bin/python experiments/anomaly-detection-bench/run.py
     python experiments/anomaly-detection-bench/run.py --seeds 8 --tag myrun
 """
 
@@ -75,8 +84,18 @@ RETRAINED_MODEL = _SVC / "models" / "isolation_forest_retrained.pkl"
 # unbounded. Capping the hold at a fixed number of cycles bounds it.
 LOW_SAMPLE_HOLD_CAP_CYCLES = 5
 
+TREND_FOREST_MODEL = _SVC / "models" / "trend_forest.pkl"
+
 GATE_VARIANTS = ("raw", "gate-1", "gate-2", "gate-3")
-SCORE_ENGINES = ("isolation_forest_shipped", "isolation_forest_retrained", "zscore")
+SCORE_ENGINES = ("isolation_forest_shipped", "isolation_forest_retrained", "zscore",
+                 "trend_rule", "trend_forest")
+# Stateful engines carry per-backend memory across cycles and must be reset
+# between independent traces; they are scored sequentially (not batched) and
+# expose last_anomaly_value() for PR-AUC.
+STATEFUL_ENGINES = ("trend_rule", "trend_forest")
+# Display / iteration order for the per-engine tables.
+ENGINE_ORDER = ("threshold", "isolation_forest_shipped", "isolation_forest_retrained",
+                "zscore", "trend_rule", "trend_forest")
 TIER_ORDER = ("healthy", "degraded", "unhealthy")
 
 
@@ -87,17 +106,23 @@ def _load_contenders():
     score-producing ones also expose a continuous anomaly value for PR-AUC."""
     from engines.threshold.engine import ThresholdEngine
     from engines.isolation_forest.engine import IsolationForestEngine
+    from engines.trend_rule.engine import TrendRuleEngine
+    from engines.trend_forest.engine import TrendForestEngine
 
     threshold = ThresholdEngine(latency_multiplier=3.0, error_rate_threshold=0.05, min_sample_count=10)
     iso_shipped = IsolationForestEngine(model_path=SHIPPED_MODEL, min_sample_count=10)
     iso_retrained = IsolationForestEngine(model_path=RETRAINED_MODEL, min_sample_count=10)
     zscore = ZScoreEngine(error_rate_threshold=0.05, min_sample_count=10)
+    trend_rule = TrendRuleEngine(error_rate_threshold=0.05, min_sample_count=10)
+    trend_forest = TrendForestEngine(model_path=TREND_FOREST_MODEL, min_sample_count=10)
 
     return {
         "threshold": threshold,
         "isolation_forest_shipped": iso_shipped,
         "isolation_forest_retrained": iso_retrained,
         "zscore": zscore,
+        "trend_rule": trend_rule,
+        "trend_forest": trend_forest,
     }
 
 
@@ -163,6 +188,20 @@ def _raw_scores(engine, name: str, steps) -> tuple[list, list[float | None]]:
     (engine, trace) rather than once per (engine, trace, gate-variant)."""
     if name in ("isolation_forest_shipped", "isolation_forest_retrained"):
         return _iso_raw_batch(engine, steps)
+    if name in STATEFUL_ENGINES:
+        # Stateful engines carry per-backend memory across cycles, so they must
+        # be reset before each independent trace and scored strictly in time
+        # order (no batching). score() is the single state-advancing call per
+        # cycle; the continuous PR-AUC value is read straight after it via
+        # last_anomaly_value() rather than recomputed (which would double-advance
+        # the state). reset() mirrors a backend coming online fresh.
+        engine.reset()
+        raws: list = []
+        values: list[float | None] = []
+        for s in steps:
+            raws.append(engine.score(_to_features(s)))
+            values.append(engine.last_anomaly_value())
+        return raws, values
     raws = [engine.score(_to_features(s)) for s in steps]
     if name == "zscore":
         values = [engine.anomaly_value(_to_features(s)) for s in steps]
@@ -183,16 +222,12 @@ def _apply_gate(raws, min_sample_count: int, steps, gate_variant: str) -> list[s
         return [r.status for r in raws]
     cycles = {"gate-1": 1, "gate-2": 2, "gate-3": 3}[gate_variant]
     state = BackendState()
-    hold = 0
     verdicts: list[str] = []
     for raw, step in zip(raws, steps):
-        if step.sample_count < min_sample_count:
-            hold += 1
-            effective_low = hold <= LOW_SAMPLE_HOLD_CAP_CYCLES
-        else:
-            hold = 0
-            effective_low = False
-        verdicts.append(apply_stability_gate(raw, effective_low, state, cycles).status)
+        low_sample = step.sample_count < min_sample_count
+        verdicts.append(apply_stability_gate(
+            raw, low_sample, state, cycles,
+            max_hold_cycles=LOW_SAMPLE_HOLD_CAP_CYCLES).status)
     return verdicts
 
 
@@ -379,7 +414,7 @@ def _engine_table(df) -> list[str]:
         "| Engine | Precision | Recall | F1 | FP-rate | Detect-latency_s | Recover-latency_s |",
         "|---|---|---|---|---|---|---|",
     ]
-    for engine in ("threshold", "isolation_forest_shipped", "isolation_forest_retrained", "zscore"):
+    for engine in ENGINE_ORDER:
         if engine not in set(df["engine"]):
             continue
         lines.append(
@@ -465,7 +500,7 @@ def _build_summary(grid_rows, prauc_rows, confusion_acc, params: GenParams, seed
               "Isolation Forest** (its band collapsed, so that tier is "
               "unreachable) and **nonzero for the retrained one**.",
               ""]
-    for engine in ("threshold", "isolation_forest_shipped", "isolation_forest_retrained", "zscore"):
+    for engine in ENGINE_ORDER:
         acc = confusion_acc.get((engine, "raw"))
         if acc is None:
             continue
@@ -489,7 +524,7 @@ def _build_summary(grid_rows, prauc_rows, confusion_acc, params: GenParams, seed
               "`gate-1` equals `raw` (one cycle confirms immediately).", "",
               "| Engine | Gate | F1 | FP-rate | Detect-latency_s | Recover-latency_s |",
               "|---|---|---|---|---|---|"]
-    for engine in ("threshold", "isolation_forest_shipped", "isolation_forest_retrained", "zscore"):
+    for engine in ENGINE_ORDER:
         for gate_variant in GATE_VARIANTS:
             sub = df[(df["engine"] == engine) & (df["gate_variant"] == gate_variant)]
             if sub.empty:
