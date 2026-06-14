@@ -1,7 +1,7 @@
 # LB Sidecar — Dynamic Upstream Rewriting
 
 > **T2.1 — shipped 2026-05-23. SOT-alignment refresh — v1.0.7b (2026-05-29).** Closes
-> the PPO routing loop: rl-engine publishes `RoutingRecommendation` envelopes on
+> the rl-engine routing loop: rl-engine publishes `RoutingRecommendation` envelopes on
 > `smartload.routing`; the lb-sidecar subscribes, translates IP-based backend IDs to
 > container hostnames, and atomically rewrites NGINX's upstream config, enabling
 > weighted routing and automatic backend exclusion.
@@ -25,7 +25,7 @@ routing and health signals but nothing consumed them for traffic shaping.
 
 T2.1 closes the loop:
 
-- **PPO-driven weighted routing** — when `RL_MODE=active` and `LB_SIDECAR_RUNLOOP_ENABLED=true`,
+- **rl-engine-driven weighted routing** (the deployed routing policy is `monotone`; PPO is shadow-only) — when `RL_MODE=active` and `LB_SIDECAR_RUNLOOP_ENABLED=true`,
   active `RoutingRecommendation` envelopes from the rl-engine are translated into NGINX
   `weight=N` directives and applied within one poll cycle (~5s).
 - **Anomaly-driven exclusion** — `AnomalyEvent` with `status=unhealthy` adds

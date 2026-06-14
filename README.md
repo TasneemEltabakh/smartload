@@ -161,7 +161,7 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | `lb-sidecar` | Python | 8087 | Subscribes to Redis decisions across `smartload.routing`, `.anomaly`, `.policy`, `.scale`; atomically rewrites `upstream.conf`; triggers `nginx -s reload` |
 | `telemetry` | Python | 8081 | OTLP ingest + read API over TimescaleDB |
 | `anomaly-detector` | Python | 8082 | Trend-rule engine (default; interpretable stateful trend-aware detector, closes the gradual-degradation gap, no artifact) + threshold baseline/fallback + trained trend_forest / isolation_forest (opt-in via `ANOMALY_ENGINE=`) |
-| `forecasting` | Python | 8083 | Harmonic-residual forecaster (default; beats arima/moving_average on every load shape with calibrated bands, pure NumPy no artifact) + moving-average safety fallback + trained ARIMA(3,0,1) (opt-in via `FORECAST_ENGINE=arima`) |
+| `forecasting` | Python | 8083 | Harmonic-residual forecaster (default; beats arima/moving_average on every load shape with calibrated bands, pure NumPy no artifact) + moving-average safety fallback + trained ARIMA(2,0,2) (opt-in via `FORECAST_ENGINE=arima`) |
 | `rl-engine` | Python | 8084 | Latency-monotone capacity-aware router (`monotone`, recommended) + random-shadow / round-robin / least-connections baselines + PPO policy (selectable); `shadow`/`active` mode pin |
 | `autoscaler` | Python | 8085 | Forecast-driven scale + cooldown + reactive fallback; target-based controller (multi-step headroom sizing, asymmetric cooldown) is the deployed default via `AUTOSCALER_CONTROLLER=target`; the ±1 `step` rule stays selectable |
 | `policy-manager` | Python | 8086 | Operating policy REST API + audit + Redis publish on change |

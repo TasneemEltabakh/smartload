@@ -11,7 +11,7 @@ Produces short-horizon RPS forecasts for the autoscaler. Publishes `ForecastResu
 Pluggable — one folder per engine. See `engines/`.
 - `harmonic_residual/` — **default.** Robust dynamic-harmonic-regression forecaster with an AR(1) residual correction and split-conformal confidence bands. Beats naive / arima / moving_average on MAPE+sMAPE on every load shape with calibrated bands, and is the only engine that converts into a downstream autoscaler SLA win. Pure NumPy, deterministic, no model artifact. See `experiments/forecasting-engine-bench/REPORT.md`.
 - `moving_average/` — artifact-free baseline; rolling mean over last hour. Stays as the never-fails fallback the run loop reverts to if a requested engine cannot construct.
-- `arima/` — trained ARIMA(3,0,1) artifact (issue #102). Selectable, but below the < 20% MAPE SLO and trend-blind (`d=0`); superseded as the default by `harmonic_residual`.
+- `arima/` — trained ARIMA(2,0,2) artifact (issue #102). Selectable, but below the < 20% MAPE SLO and trend-blind (`d=0`); superseded as the default by `harmonic_residual`.
 
 Selection: `FORECAST_ENGINE` env var.
 
