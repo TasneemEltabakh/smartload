@@ -81,6 +81,8 @@ interface FieldSpec {
   unit?: string;
   step?: number;
   min?: number;
+  max?: number;
+  options?: string[];
   hint: string;
 }
 
@@ -91,9 +93,13 @@ const POLICY_FIELDS: FieldSpec[] = [
   { key: "anomaly_latency_multiplier", label: "Anomaly latency x", step: 0.1, min: 1, hint: "Multiple of SLO that trips an anomaly verdict." },
   { key: "per_instance_capacity_rps", label: "Per-instance capacity", unit: "rps", step: 10, min: 1, hint: "Rated throughput per backend; sizes scale-out." },
   { key: "autoscaler_cooldown_seconds", label: "Autoscaler cooldown", unit: "s", step: 10, min: 0, hint: "Quiet window between consecutive scale actions." },
+  { key: "anomaly_recovery_window_seconds", label: "Anomaly recovery window", unit: "s", step: 5, min: 1, hint: "Stable seconds before a recovered backend rejoins rotation." },
+  { key: "rl_exploration_rate", label: "RL exploration rate", step: 0.05, min: 0, max: 1, hint: "Share of routing decisions the RL policy explores (0-1)." },
+  { key: "rl_confidence_threshold", label: "RL confidence threshold", step: 0.05, min: 0, max: 1, hint: "Minimum confidence before an RL ranking is acted on (0-1)." },
+  { key: "anomaly_response", label: "Anomaly response", options: ["auto-isolate", "advisory"], hint: "Auto-isolate a sick backend, or advisory-only." },
 ];
 
-const OPERATING_MODES = ["adaptive", "conservative", "aggressive", "manual"];
+const OPERATING_MODES = ["classical-only", "hybrid", "rl-only"];
 
 // ── small formatting helpers ─────────────────────────────────────────────────
 
@@ -152,7 +158,7 @@ export default function Controls() {
       setLb(lbR.value);
       setLive(poR.source === "live" && lbR.source === "live");
       seedDraft(poR.value);
-      setMode(poR.value.operating_mode ?? "adaptive");
+      setMode(poR.value.operating_mode ?? "hybrid");
       // Only a live policy reading drives the shared kill switch, so the read
       // can't stomp the operator's manual choice while offline.
       if (poR.source === "live") shell.setSafeMode(Boolean(poR.value.safe_mode));
@@ -187,6 +193,11 @@ export default function Controls() {
     for (const f of POLICY_FIELDS) {
       const raw = draft[f.key as string];
       if (raw == null || raw === "") continue;
+      if (f.options) {
+        // Enum field: compare and store the raw string, never coerce to number.
+        if (raw !== String(policy[f.key] ?? "")) (out as Record<string, unknown>)[f.key as string] = raw;
+        continue;
+      }
       const n = coerce(f, raw);
       if (Number.isNaN(n)) continue;
       if (n !== policy[f.key]) (out as Record<string, unknown>)[f.key as string] = n;
@@ -255,7 +266,7 @@ export default function Controls() {
 
   function resetDraft() {
     seedDraft(policy);
-    setMode(policy.operating_mode ?? "adaptive");
+    setMode(policy.operating_mode ?? "hybrid");
   }
 
   // ── named-strategy quick-apply ─────────────────────────────────────────────
@@ -572,19 +583,37 @@ function PolicyEditor({
 
         {POLICY_FIELDS.map((f) => {
           const raw = draft[f.key as string] ?? "";
-          const dirty = raw !== "" && Number(raw) !== policy[f.key];
+          const dirty = f.options
+            ? raw !== "" && raw !== String(policy[f.key] ?? "")
+            : raw !== "" && Number(raw) !== policy[f.key];
           return (
             <Field key={f.key as string} label={f.label} unit={f.unit} hint={f.hint} dirty={dirty}>
-              <input
-                type="number"
-                inputMode="decimal"
-                value={raw}
-                step={f.step}
-                min={f.min}
-                onChange={(e) => onField(f.key as string, e.target.value)}
-                style={{ ...inputStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
-                aria-label={f.label}
-              />
+              {f.options ? (
+                <select
+                  value={raw}
+                  onChange={(e) => onField(f.key as string, e.target.value)}
+                  style={{ ...selectStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
+                  aria-label={f.label}
+                >
+                  {(f.options.includes(raw) || raw === "" ? f.options : [raw, ...f.options]).map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={raw}
+                  step={f.step}
+                  min={f.min}
+                  max={f.max}
+                  onChange={(e) => onField(f.key as string, e.target.value)}
+                  style={{ ...inputStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
+                  aria-label={f.label}
+                />
+              )}
             </Field>
           );
         })}
