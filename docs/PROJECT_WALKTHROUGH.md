@@ -1640,6 +1640,13 @@ Trained `scikit-learn IsolationForest` — replaces the Phase-1 threshold baseli
 
 - **`experiments/anomaly-engine-bench/run.py`** — comparison harness, sweeps a synthetic `(latency_ms × error_rate)` grid and scores each cell with both engines. **First run (12×12 sweep, results checked into `experiments/anomaly-engine-bench/results/`):** agreement rate = **25%** (36 / 144 cells); the trained model said `healthy` on **107 of 108 cells** where the threshold rule said `unhealthy`. This quantifies the domain-adaptation caveat the model's own README documents: the `production_scaler` (fit on MST-2021 features as a proxy for live telemetry) maps real-millisecond latency into a region where the SMD-trained outlier boundary doesn't trigger. At the time of this first run the model passed its training-distribution gate (F1=0.8012 on SMD holdout) but **under-reacted at production scales**. Root cause (the #165 issue body): the model was trained in SMD-standardised coordinates while inputs at inference arrived in MST-standardised coordinates, and the two mean-0/std-1 spaces don't align, so standardisation pulled every production input toward the origin and the model classed it `healthy` regardless of severity. **Resolved — #165 closed (v1.0.7ah):** re-training in production-shape space (`train_production.py`) put the scaler and model in one real-ms coordinate system and lifted agreement to **91.4%** (234/256) with zero under-reactions (rerun the harness to regenerate the post-fix grid). `ANOMALY_ENGINE=threshold` is still the compose default (opt in with `isolation_forest`) for the over-exclusion reason in §4.1, not the calibration. SOT §35.6 retained the LSTM-AE architectural alternative as the fallback path; with #165 closed at 91.4% it stays a deferral, not a requirement.
 
+#### `engines/trend_rule/` + `engines/trend_forest/` (v1.0.7bn, #171)
+
+Two **stateful, trend-aware** engines that close the gradual-degradation gap every stateless engine (`threshold`, `isolation_forest`, `zscore`) misses: a backend whose latency drifts slowly upward looks identical window-by-window to one that is steadily slow, because the four point features the run loop emits (MAX / AVG / STDDEV latency + error_rate) carry no history. Both engines add the missing axis through `services/anomaly-detector/features/trend.py`, which owns a `TrendExtractor` (keyed by `backend_id`) that derives per-backend temporal signals — a contamination-guarded EWMA baseline, relative mean/max deviation, one-sided CUSUM drift, OLS slope, and within-window shape ratios. `score()` advances the extractor exactly once per cycle; `reset()` drops per-backend state; during warmup the history-dependent signals are suppressed so a cold start never raises an alert.
+
+- **`trend_rule`** — the interpretable, classical-mode engine and the promotion candidate. Three channels (worst wins), each with a degraded and an unhealthy gate: **error** (`error_rate > threshold`), **spike** (window MAX/mean far above the backend's own baseline), and **drift** (CUSUM of standardised mean deviation accumulates a slow ramp until it trips). A **recovery suppressor** holds back latency alarms while the trend is steeply falling, clearing the post-anomaly tail instead of paging on it. Defaults come from `tools/anomaly-training/calibrate_trend.py` (calibration seeds disjoint from the eval seeds), recorded in `trend_rule_calibration.json`. 8-seed benchmark: gradual-degradation **F1 0.845 / recall 0.791 / FP 0.025** (vs the retrained IF's 0.000 recall), latency-spike 0.959 F1, held-out partial-failure 0.921 F1, clean-control 0.000 FP.
+- **`trend_forest`** — the trained counterpart: a `scikit-learn IsolationForest` scored over an enriched vector (the four point features + the six temporal signals). Thresholds are placed by quantiles of `decision_function` over a held-out calibration set, tuned over a small grid to maximise F1 subject to a clean-control FP constraint, and stored in the `.pkl` bundle (`feature_order` validated on load → falls back to the rule engine on mismatch). Trained by `tools/anomaly-training/train_trend.py`. More trigger-happy than `trend_rule` (higher FP on injection profiles), so `trend_rule` is the recommended default of the two.
+
 ### 4.2 `forecasting` (plugin-per-engine)
 
 > **Framing (v1.0.7i amendment, 2026-05-29):** The ARIMA engine is now shipped. `services/forecasting/engines/arima/engine.py` + `services/forecasting/models/arima_model.pkl` (ARIMA(3,0,1), 36.9 MB, test MAPE 25.0% on the Alibaba trace — +22.77% over the moving-average baseline) land via the PR #144 kernel extract documented in SOT §22 v1.0.7i. The training pipeline relocated to `tools/forecasting-training/` (out of the runtime image). The SOT KPI is <20% MAPE — **not yet met** — so the engine ships but is NOT the default; operators activate it via `FORECAST_ENGINE=arima` in `.env`. `moving_average` remains the canonical Phase-1 forecaster until a tuned model crosses the SLO. Verified live: `engine.loaded=arima, ready=true, predicted=30.84 rps, CI=[16.11, 45.57]` (statsmodels `conf_int(alpha=0.05)` produces wider bands than the baseline's stddev band — that's actual model uncertainty). Two Dockerfile / kwargs bugs caught + fixed during the integration check (see SOT v1.0.7i changelog row).
@@ -1766,6 +1773,12 @@ Three properties worth knowing:
 3. **Insert failures are logged and swallowed.** The publish remains the primary path; the cycle does not bail because the DB hiccupped.
 
 The pure helper `runloop.build_forecast_row(forecast, model_id, now, model_version)` returns the bind tuple for `shared.queries.FORECASTS_INSERT`, which makes the construction step unit-testable without a DB connection (tests at `tests/unit/forecasting/test_runloop.py::test_build_forecast_row_*`). The end-to-end behaviour is covered by `tests/integration/test_forecasts_insert.py` — including the safe-mode-still-persists and insert-failure-does-not-block-publish cases.
+
+#### `engines/harmonic_residual/` (v1.0.7bm, #170)
+
+A genuinely forward-projecting single-step forecaster that beats the naive persistence floor on every autoscaling load shape — steady, diurnal, spiky, and the **ramp** case the differencing-free ARIMA artifact cannot handle. Pure NumPy, no trained artifact, no new dependencies, fully deterministic; activate with `FORECAST_ENGINE=harmonic_residual`. Per call, on the recent history: (1) a least-squares **structural fit** of `level + linear trend + Σ daily sin/cos harmonics`, with the daily period **inferred from timestamp cadence** (288 at 5-min buckets, 1440 at 1-min) so the same engine works at any cadence; (2) **robust IRLS** reweighting that downweights flash-crowd spikes so they don't drag the baseline off the calm level; (3) an **AR(1) residual correction** (`structural(t+1) + φ·e_last`, `φ` clamped to `[0, 0.95]`); (4) a **split-conformal** band from the model's own in-sample one-step errors. `forecast_ahead(history, steps)` projects multiple buckets ahead with the trend damped by its statistical significance (no spurious scale churn on flat demand).
+
+A **scaler-facing mode** (`fit_window=120, robust_mode="downward"`) trades the accuracy-optimal default for the autoscaler's asymmetric loss — a local trend at high cadence and upward flash crowds kept at full weight — and under the target-based controller matches the hand-tuned Holt baseline (99.2% SLA) approaching the oracle ceiling (99.9%). Both knobs are opt-in; the default is unchanged, so the forecasting service's own accuracy SLOs are untouched. Headline numbers: synthetic overall MAPE **5.4%** vs naive 7.5% / ARIMA 8.9% / moving_average 10.5% (CI-coverage 0.954, latency 0.7 ms); real data Azure 2.9% vs 3.0% and WorldCup98 14.6% vs 16.5%; downstream **+6.3 SLA pp** over reactive (closing 34% of the reactive→oracle gap), where the moving-average "predictive" path is byte-identical to reactive. Full write-up: `experiments/forecasting-engine-bench/REPORT.md`.
 
 ### 4.3 `rl-engine` (plugin-per-policy)
 
@@ -1894,6 +1907,12 @@ Operator activation sequence (since v1.0.7g `RL_RUNLOOP_ENABLED=true` is the def
 
 When the policy is loaded and `operating_mode=hybrid`, the policy reports `mode=active` instead of `mode=shadow` — the LB sidecar (T2.1) starts honouring the rankings. That mode flip is the v1 → v2 contract.
 
+#### `policies/monotone/` (v1.0.7bo, #172)
+
+`candidate_mono` — a stateful, capacity-aware router that is **monotone by construction**: holding history fixed, a backend's routing weight never increases with its current latency. Each call (1) filters to eligible backends via `is_eligible()`, (2) maintains a per-backend capacity estimate as the running minimum observed latency (floored at `cap_floor_ms`, depending on PAST latencies only), (3) scores each backend `cap / (lat / base) ** degr_pow` and hard-sheds any backend whose latency exceeds `cut × min_latency`, then (4) damps toward the new target weights (full step below `idle_load`, else blended at rate `alpha`) and renormalises to sum 1. Config (`degr_pow`, `alpha`, `cut`, `cap_floor_ms`, `idle_load`) loads from a `params.json` artifact written by `training/train_monotone.py`, defaulting to built-ins if absent. The serving math is kept byte-equivalent to `training/monotone_router.MonotoneRouter` and imports only `obs_builder` + `policy_base` (no training code in the runtime image).
+
+It passes the latency-monotonicity probe on all 5 training seeds (max weight-rise 0.0) and is SLA-dominant on 4/5 routing scenarios including the **held-out** dual-degrade family (27.7% vs candidate_v2's 42.8% violation, −35% relative), also beating the classical baselines (p2c / JSQ / LRT / WLC) on adaptive scenarios. Shipped alongside it is `candidate_maxxer` (`training/train_maxxer.py`) — a non-monotone, SLA-targeted continuous-PPO router that chases the benchmark's served-p95 directly; it posts the strongest single-seed p95 but **fails** the monotonicity probe on every seed and is seed-brittle, so it ships as the benchmark foil rather than a production recommendation. Full write-up: `experiments/rl-routing-bench/REPORT.md`.
+
 ### 4.4 `autoscaler`
 
 #### What it is
@@ -1908,7 +1927,9 @@ services/autoscaler/
 ├── Dockerfile
 ├── app.py              (462 lines — Redis + DB I/O + Flask /health)
 ├── cluster_client.py   (Docker SDK abstraction)
-├── decisions.py        (pure scale logic)
+├── decisions.py        (pure scale logic — the live ±1 path)
+├── controllers.py      (target-based sizing — benchmarked, not yet wired)
+├── test_controllers.py (22 unit tests for the controllers)
 └── requirements.txt    (flask, psycopg2-binary, redis, docker, PyYAML)
 ```
 
@@ -1922,6 +1943,15 @@ COPY shared                       /app/shared
 ```
 
 Same `shared` pull-in pattern as telemetry. Three source files + `shared`.
+
+#### `controllers.py` — target-based sizing (v1.0.7bl, #169)
+
+A second, richer sizing module that lands **alongside** `decisions.py` but is **not yet wired into `app.py`** — the live decision path is still `decisions.decide()` (the ±1 step described below). Everything in `controllers.py` is, like `decisions.py`, a pure function of its inputs (no clock, no I/O), so it is fully unit-tested (`test_controllers.py`, 22 tests) and benchmarked offline before being trusted with the lever.
+
+- `target_for_load(load_rps, policy)` — sizes directly to a target instance count under one of two laws: **headroom** (size to keep utilisation under a target) and **square-root-staffing** (adds a √load safety term for burst absorption). Clamped to `[min_backends, max_backends]`; a non-positive capacity falls back to `min_backends` instead of dividing by zero.
+- `decide_target(...)` — wraps the sizing law with **asymmetric cooldowns** (scale-out fires fast, scale-in waits longer), a **scale-in deadband** (hysteresis so it does not oscillate around the boundary), and **multi-step** jumps (size straight to target instead of ±1 per cycle).
+
+On `experiments/autoscaler-strategy-bench/` the controller lifts synthetic SLA from 77.2% to 98.3% on the same moving-average signal (past the old oracle's 95.5%), reaches 99.2% with a forward trend forecast (oracle ceiling 99.9%), and breaks the spike ceiling (88.0% → 96.4–98.5%); on real traces it reaches 97.9% vs the 90.9% baseline. **Before it can be activated:** wire `decide_target` into `app.py`'s loop in place of `decide`, and add `COPY autoscaler/controllers.py /app/controllers.py` to the Dockerfile (it is absent today — the same gap the #150/#146 fix closed for `strategies.py` / `manual.py`).
 
 #### `decisions.py` — pure logic, fully testable
 
