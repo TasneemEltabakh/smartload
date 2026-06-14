@@ -36,7 +36,7 @@ import time
 import psycopg2
 import redis as redis_lib
 from datetime import datetime, timezone
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 
 # Resolve shared/ across container layout (/app/shared) and dev layout
 # (services/shared/ relative to this file). Same pattern as anomaly-detector.
@@ -49,7 +49,11 @@ from shared.contracts import publish_envelope, parse_envelope  # noqa: E402
 from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
 from shared import bootstrap, config                            # noqa: E402
 from shared.logging_setup import install_correlation_middleware # noqa: E402
-from shared.queries import FORECAST_QUERY, FORECASTS_INSERT    # noqa: E402
+from shared.queries import (                                  # noqa: E402
+    FORECAST_HISTORY_QUERY,
+    FORECAST_QUERY,
+    FORECASTS_INSERT,
+)
 
 from runloop import (                                          # noqa: E402
     EnginePolicy,
@@ -370,6 +374,75 @@ def get_engine_state():
             last_output=_last_output_payload,
         )
     return jsonify(body)
+
+
+@app.route("/api/v1/forecasts", methods=["GET"])
+def get_forecast_history():
+    """Recent forecast rows for the operator-UI forecast history view.
+
+    Query params:
+      ?window=N — how far back to read, in seconds (default 3600, cap 86400).
+      ?limit=N  — maximum rows to return, newest first (default 500, cap 5000).
+
+    Returns the forecast rows plus the distinct set of model_names present in
+    the window (so the UI can build a model filter without a second call). Any
+    DB failure collapses to an empty result with HTTP 200 — operator-UI must
+    degrade gracefully rather than render an error state for a history view."""
+    try:
+        window = int(request.args.get("window", 3600))
+    except (TypeError, ValueError):
+        window = 3600
+    if window <= 0:
+        window = 3600
+    window = min(window, 86400)
+
+    try:
+        limit = int(request.args.get("limit", 500))
+    except (TypeError, ValueError):
+        limit = 500
+    if limit <= 0:
+        limit = 500
+    limit = min(limit, 5000)
+
+    interval = f"{window} seconds"
+    empty = {"forecasts": [], "models": [], "window_seconds": window}
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(FORECAST_HISTORY_QUERY, (interval, limit))
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] forecast history query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    forecasts = [
+        {
+            "time":             r[0].isoformat() if r[0] else None,
+            "horizon_minutes":  r[1],
+            "predicted_rps":    r[2],
+            "confidence_lower": r[3],
+            "confidence_upper": r[4],
+            "model_name":       r[5],
+            "model_version":    r[6],
+        }
+        for r in rows
+    ]
+    # Distinct model_names in the window, stable-ordered by first appearance.
+    models: list[str] = []
+    for f in forecasts:
+        name = f["model_name"]
+        if name is not None and name not in models:
+            models.append(name)
+
+    return jsonify({
+        "forecasts":      forecasts,
+        "models":         models,
+        "window_seconds": window,
+    }), 200
 
 
 @app.route("/")

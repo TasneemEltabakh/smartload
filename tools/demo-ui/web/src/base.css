@@ -1,0 +1,27 @@
+/* ============================================================================
+   demo-ui global base
+   ----------------------------------------------------------------------------
+   Minimal reset for the Dev Console. All visual styling comes from the shared
+   kit (tokens.css + components); this file only sets the document canvas,
+   default type, and link colour off the --sl-* tokens.
+   ============================================================================ */
+
+html,
+body {
+  margin: 0;
+  background: var(--sl-bg);
+  color: var(--sl-text);
+  font-family: var(--sl-font-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}

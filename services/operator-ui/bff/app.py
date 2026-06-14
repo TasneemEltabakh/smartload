@@ -1433,6 +1433,62 @@ def ui_metrics_backends():
         return jsonify(empty), 200
 
 
+# ── Forecast history + anomaly verdict history (pass-through proxies) ──────────
+
+@app.route("/api/ui/metrics/forecast-history", methods=["GET"])
+def ui_metrics_forecast_history():
+    """Proxy to the forecasting service's GET /api/v1/forecasts.
+
+    Surfaces the predicted-vs-actual forecast series (predicted_rps with
+    confidence bounds, model name/version) for the Foresight page so the
+    forward forecast tail and accuracy callout can be driven from real
+    predictions rather than the throughput-derived stand-in. `?window=N`
+    seconds and `?limit=N` are forwarded verbatim; only set params are sent so
+    the upstream applies its own defaults. Same 502-on-unreachable contract as
+    the other /api/ui pass-through proxies (ui_policy_audit / ui_scaling_audit)."""
+    upstream = SERVICE_URLS["forecasting"]
+    params = {}
+    window = request.args.get("window")
+    if window is not None:
+        params["window"] = window
+    limit = request.args.get("limit")
+    if limit is not None:
+        params["limit"] = limit
+    try:
+        r = _http.get(f"{upstream}/api/v1/forecasts", params=params)
+    except Exception as exc:                                # noqa: BLE001
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+@app.route("/api/ui/anomaly/history", methods=["GET"])
+def ui_anomaly_history():
+    """Proxy to the anomaly-detector's GET /api/v1/anomaly/history.
+
+    Surfaces the per-backend status/score verdict history over time for the
+    Verdicts page detail Drawer (a score sparkline + status-change timeline)
+    rather than only the latest ruling. `?window=N` seconds, optional
+    `?backend=<id>`, and `?limit=N` are forwarded verbatim; only set params
+    are sent so the upstream applies its own defaults. Same 502-on-unreachable
+    contract as the other /api/ui pass-through proxies."""
+    upstream = SERVICE_URLS["anomaly-detector"]
+    params = {}
+    window = request.args.get("window")
+    if window is not None:
+        params["window"] = window
+    backend = request.args.get("backend")
+    if backend is not None:
+        params["backend"] = backend
+    limit = request.args.get("limit")
+    if limit is not None:
+        params["limit"] = limit
+    try:
+        r = _http.get(f"{upstream}/api/v1/anomaly/history", params=params)
+    except Exception as exc:                                # noqa: BLE001
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
 # ── BFF own health ────────────────────────────────────────────────────────────
 
 @app.route("/health")

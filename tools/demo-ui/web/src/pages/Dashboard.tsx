@@ -1,32 +1,33 @@
 /**
- * tools/demo-ui/web/src/pages/Dashboard.tsx
- * ──────────────────────────────────────────
- * Big-picture landing surface for developers:
- *   - Stack health grid (every watched service, polled every 5 s)
- *   - Live session metrics (p95 / mean / SLO viol / total reqs — TimescaleDB)
- *   - Current decision card (mode / inference age / top / bottom / basis)
- *   - Backend pool weights chart
+ * tools/demo-ui/web/src/pages/Dashboard.tsx  (cockpit "Deck")
+ * ───────────────────────────────────────────────────────────
+ * Flagship live flight-deck for developers, on the shared kit (dark theme):
+ *   - Hero strip: the signature Heartbeat motion + session vitals.
+ *   - Stack-health grid (every watched service, polled every 5 s).
+ *   - Live session metrics (p95 / mean / SLO viol / total reqs) as kit KpiStat
+ *     with rolling sparklines.
+ *   - Current decision card (mode / inference age / top / bottom / basis).
+ *   - Backend pool weights as kit ShareBars.
  *
- * Read-only. Automation lives on /run; manual ops live on /controls.
+ * Read-only. Automation lives on /run (Drive); manual ops live on /controls
+ * (Lab). Degrades gracefully when the BFF is down: zero / empty states, no
+ * crash.
  */
 
-import {
-  Bar,
-  BarChart,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useEffect, useRef, useState } from "react";
 
+import {
+  Badge,
+  Card,
+  Heartbeat,
+  KpiStat,
+  ShareBars,
+  StatusPill,
+  type ShareRow,
+  type Status,
+} from "../ui";
 import { useDemo } from "../state/DemoStateContext";
 import {
-  CLR_BAD,
-  CLR_MUTED,
-  CLR_OK,
-  CLR_WARN,
-  TOOLTIP_STYLE,
   bottomRanked,
   decisionBasis,
   modeLabel,
@@ -35,10 +36,12 @@ import {
 } from "../utils";
 
 
-function statusColor(healthy: boolean, status: string): string {
-  if (healthy) return CLR_OK;
-  if (status === "down") return CLR_BAD;
-  return CLR_WARN;
+const SPARK_MAX = 24;
+
+function svcStatus(healthy: boolean, status: string): Status {
+  if (healthy) return "ok";
+  if (status === "down") return "crit";
+  return "warn";
 }
 
 
@@ -46,148 +49,336 @@ export default function Dashboard() {
   const { state, metrics, services } = useDemo();
   const rankings = state?.last_rankings ?? null;
 
-  const weightData = state
+  // Rolling sparkline history for the live vitals. Pushed when metrics change.
+  const [p95Hist, setP95Hist] = useState<number[]>([]);
+  const [sloHist, setSloHist] = useState<number[]>([]);
+  const lastSeen = useRef<string>("");
+
+  useEffect(() => {
+    if (!metrics || metrics.sample_count <= 0) return;
+    // Dedup on the (count,total) signature so identical polls don't pile up.
+    const sig = `${metrics.sample_count}:${metrics.total_requests}`;
+    if (sig === lastSeen.current) return;
+    lastSeen.current = sig;
+    setP95Hist((h) => [...h, metrics.p95_latency_ms ?? 0].slice(-SPARK_MAX));
+    setSloHist((h) => [...h, metrics.slo_violation_pct].slice(-SPARK_MAX));
+  }, [metrics]);
+
+  const haveMetrics = !!metrics && metrics.sample_count > 0;
+
+  const weightRows: ShareRow[] = state
     ? Object.entries(state.upstream_weights)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([id, w]) => ({
-          name: shortName(id),
-          weight: typeof w === "number" ? w : 0,
-          excluded: state.excluded_backends.includes(id),
+          id,
+          label: shortName(id),
+          value: typeof w === "number" ? w : 0,
+          dim: state.excluded_backends.includes(id),
         }))
     : [];
+  // Normalise weights to a 0..1 share so ShareBars reads as routing share.
+  const weightTotal = weightRows.reduce((s, r) => s + r.value, 0) || 1;
+  const shareRows: ShareRow[] = weightRows.map((r) => ({
+    ...r,
+    value: r.value / weightTotal,
+  }));
 
   return (
     <>
-      {/* ── Stack health grid ───────────────────────────────────────────── */}
-      <div className="card" style={{ marginBottom: 12 }}>
-        <h2>Stack Health</h2>
-        <div className="meta">
-          {services == null
-            ? "probing services…"
-            : `${services.healthy}/${services.total} services healthy · polled every 5 s`}
+      {/* ── Hero: live pulse + the headline vitals ─────────────────────────── */}
+      <Card
+        title="Deck"
+        eyebrow="// live flight deck"
+        actions={
+          <StatusPill status={haveMetrics ? "ok" : "neutral"}>
+            {haveMetrics ? "traffic live" : "idle"}
+          </StatusPill>
+        }
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(280px, 1.3fr) 2fr",
+            gap: 18,
+            alignItems: "stretch",
+          }}
+        >
+          <div
+            style={{
+              height: 150,
+              borderRadius: "var(--sl-radius-md)",
+              background: "var(--sl-surface-sunk)",
+              border: "1px solid var(--sl-hairline)",
+              overflow: "hidden",
+            }}
+          >
+            <Heartbeat width={460} height={150} />
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gap: 12,
+            }}
+          >
+            <KpiStat
+              label="P95 latency"
+              value={haveMetrics && metrics?.p95_latency_ms != null ? metrics.p95_latency_ms : "—"}
+              unit={haveMetrics && metrics?.p95_latency_ms != null ? "ms" : undefined}
+              spark={p95Hist.length > 1 ? p95Hist : undefined}
+              sparkTone="mint"
+              footnote="last 5 min"
+            />
+            <KpiStat
+              label="SLO violations"
+              value={haveMetrics ? `${metrics!.slo_violation_pct.toFixed(1)}` : "—"}
+              unit={haveMetrics ? "%" : undefined}
+              spark={sloHist.length > 1 ? sloHist : undefined}
+              sparkTone="graphite"
+              footnote="window breach rate"
+            />
+            <KpiStat
+              label="Throughput"
+              value={haveMetrics ? metrics!.total_requests.toLocaleString() : "—"}
+              footnote="requests in window"
+            />
+          </div>
         </div>
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 10, marginTop: 12,
-        }}>
-          {(services?.services ?? []).map((svc) => {
-            const clr = statusColor(svc.healthy, svc.status);
-            return (
-              <div key={svc.name} className="health-pill" style={{ borderLeft: `3px solid ${clr}` }}>
-                <div className="name" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span>{svc.name}</span>
-                  <span style={{ fontSize: 9, color: CLR_MUTED, textTransform: "uppercase" }}>{svc.role}</span>
-                </div>
-                <div className="status" style={{ color: clr }}>● {svc.status}</div>
-                {svc.detail && (
-                  <div className="muted" style={{ fontSize: 10, marginTop: 2, fontFamily: "monospace" }}>
-                    {svc.detail}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {services == null && (
-            <div className="muted" style={{ fontStyle: "italic", fontSize: 12 }}>loading…</div>
-          )}
-        </div>
-      </div>
+      </Card>
 
-      {/* ── Live session metrics ────────────────────────────────────────── */}
-      <div className="card" style={{ marginBottom: 12 }}>
-        <h2>Live Session Metrics</h2>
-        <div className="meta">
-          Last 5 minutes · TimescaleDB
-          {metrics && metrics.sample_count > 0
-            ? ` · ${metrics.sample_count} latency samples`
-            : " · waiting for traffic…"}
+      {/* ── Stack health grid ──────────────────────────────────────────────── */}
+      <Card
+        title="Stack health"
+        eyebrow="// services"
+        actions={
+          <StatusPill
+            status={
+              services == null ? "neutral"
+                : services.healthy === services.total ? "ok"
+                : services.healthy === 0 ? "crit"
+                : "warn"
+            }
+          >
+            {services == null ? "probing" : `${services.healthy}/${services.total} healthy`}
+          </StatusPill>
+        }
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+            gap: 10,
+          }}
+        >
+          {(services?.services ?? []).map((svc) => (
+            <div
+              key={svc.name}
+              style={{
+                background: "var(--sl-surface-sunk)",
+                border: "1px solid var(--sl-hairline)",
+                borderRadius: "var(--sl-radius-md)",
+                padding: "11px 13px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--sl-text)" }}>
+                  {svc.name}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "var(--sl-font-mono)",
+                    fontSize: 9,
+                    color: "var(--sl-text-low)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.6px",
+                  }}
+                >
+                  {svc.role}
+                </span>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <StatusPill status={svcStatus(svc.healthy, svc.status)}>{svc.status}</StatusPill>
+              </div>
+              {svc.detail ? (
+                <div
+                  style={{
+                    fontFamily: "var(--sl-font-mono)",
+                    fontSize: 10,
+                    color: "var(--sl-text-low)",
+                    marginTop: 7,
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {svc.detail}
+                </div>
+              ) : null}
+            </div>
+          ))}
+          {services == null ? (
+            <div
+              style={{
+                fontFamily: "var(--sl-font-mono)",
+                fontSize: 12,
+                color: "var(--sl-text-low)",
+                fontStyle: "italic",
+              }}
+            >
+              probing services…
+            </div>
+          ) : null}
         </div>
-        {metrics && metrics.sample_count > 0 ? (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12, marginTop: 12 }}>
-            <Kpi label="P95 LATENCY"
-                 value={metrics.p95_latency_ms != null ? `${metrics.p95_latency_ms} ms` : "—"}
-                 color={metrics.p95_latency_ms != null && metrics.p95_latency_ms > 200 ? CLR_BAD : CLR_OK} />
-            <Kpi label="MEAN LATENCY"
-                 value={metrics.mean_latency_ms != null ? `${metrics.mean_latency_ms} ms` : "—"} />
-            <Kpi label="SLO VIOLATIONS"
-                 value={`${metrics.slo_violation_pct.toFixed(1)}%`}
-                 color={metrics.slo_violation_pct > 5 ? CLR_BAD : metrics.slo_violation_pct > 0 ? CLR_WARN : CLR_OK} />
-            <Kpi label="TOTAL REQUESTS" value={metrics.total_requests.toLocaleString()} />
+      </Card>
+
+      {/* ── Live session metrics (full KPI strip) ──────────────────────────── */}
+      <Card title="Live session metrics" eyebrow="// timescaledb · 5 min window">
+        {haveMetrics ? (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))",
+              gap: 12,
+            }}
+          >
+            <KpiStat
+              label="P95 latency"
+              value={metrics!.p95_latency_ms != null ? metrics!.p95_latency_ms : "—"}
+              unit={metrics!.p95_latency_ms != null ? "ms" : undefined}
+            />
+            <KpiStat
+              label="Mean latency"
+              value={metrics!.mean_latency_ms != null ? metrics!.mean_latency_ms : "—"}
+              unit={metrics!.mean_latency_ms != null ? "ms" : undefined}
+            />
+            <KpiStat
+              label="SLO violations"
+              value={metrics!.slo_violation_pct.toFixed(1)}
+              unit="%"
+            />
+            <KpiStat label="Total requests" value={metrics!.total_requests.toLocaleString()} />
+            <KpiStat label="Latency samples" value={metrics!.sample_count.toLocaleString()} />
           </div>
         ) : (
-          <div className="muted" style={{ fontStyle: "italic", padding: "12px 0", fontSize: 12 }}>
-            {metrics === null
+          <div
+            style={{
+              fontFamily: "var(--sl-font-mono)",
+              fontSize: 12,
+              color: "var(--sl-text-low)",
+              padding: "8px 0",
+            }}
+          >
+            {metrics == null
               ? "TimescaleDB not reachable — start traffic and check TIMESCALEDB_URL"
-              : "Start traffic (top bar or the Run page) to see live metrics…"}
+              : "Start traffic (top bar or the Drive page) to see live metrics…"}
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* ── Current decision + pool weights ─────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div className="card" style={{ margin: 0, borderLeft: "3px solid var(--accent)" }}>
-          <h2>Current Decision</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="OPERATING MODE" value={modeLabel(state)} />
-            <Field label="LAST INFERENCE"
-                   value={state?.last_inference_age_seconds != null ? `${state.last_inference_age_seconds}s ago` : "—"} />
-            <Field label="TOP RANKED" value={topRanked(rankings)} color={CLR_OK} />
-            <Field label="LOWEST RANKED" value={bottomRanked(rankings)} color={CLR_WARN} />
+      {/* ── Current decision + backend pool weights ────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+        <Card title="Current decision" eyebrow="// decision plane">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <Field label="Operating mode" value={modeLabel(state)} />
+            <Field
+              label="Last inference"
+              value={
+                state?.last_inference_age_seconds != null
+                  ? `${state.last_inference_age_seconds}s ago`
+                  : "—"
+              }
+            />
+            <Field label="Top ranked" value={topRanked(rankings)} tone="ok" />
+            <Field label="Lowest ranked" value={bottomRanked(rankings)} tone="warn" />
           </div>
-          <div style={{ marginTop: 12 }}>
-            <div className="muted" style={{ fontSize: 11, marginBottom: 2 }}>DECISION BASIS</div>
-            <div style={{ fontStyle: "italic" }}>{decisionBasis(state, rankings)}</div>
+          <div
+            style={{
+              marginTop: 14,
+              paddingTop: 12,
+              borderTop: "1px solid var(--sl-hairline-soft)",
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--sl-font-mono)",
+                fontSize: 9.5,
+                letterSpacing: "1.2px",
+                textTransform: "uppercase",
+                color: "var(--sl-text-low)",
+                marginBottom: 5,
+              }}
+            >
+              Decision basis
+            </div>
+            <div style={{ fontSize: 13, color: "var(--sl-text-mid)" }}>
+              {decisionBasis(state, rankings)}
+            </div>
           </div>
-        </div>
+        </Card>
 
-        <div className="card" style={{ margin: 0 }}>
-          <h2>Backend Pool Weights</h2>
-          <div className="meta">
-            {state ? `${Object.keys(state.upstream_weights).length} backends` : "loading…"}
-            {state?.excluded_backends.length ? ` · ${state.excluded_backends.length} excluded` : ""}
-          </div>
-          {weightData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={weightData} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
-                <XAxis dataKey="name" tick={{ fill: CLR_MUTED, fontSize: 11 }} />
-                <YAxis tick={{ fill: CLR_MUTED, fontSize: 11 }} />
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  formatter={(val: number, _: string, entry: any) =>
-                    [val, entry.payload.excluded ? "EXCLUDED" : "weight"]}
-                />
-                <Bar dataKey="weight" radius={[3, 3, 0, 0]}>
-                  {weightData.map((entry, i) => (
-                    <Cell key={i} fill={entry.excluded ? CLR_BAD : CLR_OK} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+        <Card
+          title="Backend pool weights"
+          eyebrow="// routing share"
+          actions={
+            <Badge tone="neutral">
+              {state ? `${Object.keys(state.upstream_weights).length} backends` : "—"}
+              {state?.excluded_backends.length ? ` · ${state.excluded_backends.length} excluded` : ""}
+            </Badge>
+          }
+        >
+          {shareRows.length > 0 ? (
+            <ShareBars rows={shareRows} max={1} asPercent />
           ) : (
-            <div className="muted" style={{ padding: "12px 0" }}>loading…</div>
+            <div
+              style={{
+                fontFamily: "var(--sl-font-mono)",
+                fontSize: 12,
+                color: "var(--sl-text-low)",
+                padding: "8px 0",
+              }}
+            >
+              awaiting backend weights…
+            </div>
           )}
-        </div>
+        </Card>
       </div>
     </>
   );
 }
 
 
-function Kpi({ label, value, color }: { label: string; value: string; color?: string }) {
+/* A label/value pair in the decision card. */
+function Field({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "ok" | "warn";
+}) {
+  const color =
+    tone === "ok" ? "var(--sl-ok)" : tone === "warn" ? "var(--sl-warn)" : "var(--sl-text)";
   return (
     <div>
-      <div className="muted" style={{ fontSize: 11, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontWeight: 700, fontSize: 20, color: color ?? "var(--text)" }}>{value}</div>
-    </div>
-  );
-}
-
-function Field({ label, value, color }: { label: string; value: string; color?: string }) {
-  return (
-    <div>
-      <div className="muted" style={{ fontSize: 11, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontWeight: 600, color: color ?? "var(--text)" }}>{value}</div>
+      <div
+        style={{
+          fontFamily: "var(--sl-font-mono)",
+          fontSize: 9.5,
+          letterSpacing: "1.2px",
+          textTransform: "uppercase",
+          color: "var(--sl-text-low)",
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 600, color }}>{value}</div>
     </div>
   );
 }

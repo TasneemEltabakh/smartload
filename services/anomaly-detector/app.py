@@ -56,9 +56,10 @@ from shared.metrics import ServiceMetrics, metrics_response     # noqa: E402
 from shared import bootstrap, config                            # noqa: E402
 from shared.logging_setup import install_correlation_middleware # noqa: E402
 from shared.queries import (                                   # noqa: E402
-    ANOMALY_QUERY,
     ANOMALY_DEFAULT_SERVICE,
+    ANOMALY_HISTORY_QUERY,
     ANOMALY_METRIC_NAMES,
+    ANOMALY_QUERY,
     BACKEND_HEALTH_INSERT,
 )
 
@@ -411,6 +412,78 @@ def get_engine_state():
             last_output=_last_output_payload,
         )
     return jsonify(body)
+
+
+@app.route("/api/v1/anomaly/history", methods=["GET"])
+def get_anomaly_history():
+    """Recent per-backend health verdicts for the operator-UI history view.
+
+    Query params:
+      ?window=N  — how far back to read, in seconds (default 3600, cap 86400).
+      ?backend=  — optional backend_id filter (e.g. "backend_1"); omit for all.
+      ?limit=N   — maximum rows to return, newest first (default 500, cap 5000).
+
+    Returns the verdict rows plus the distinct set of backend_ids present in
+    the window (so the UI can build a backend filter without a second call).
+    Any DB failure collapses to an empty result with HTTP 200 — operator-UI
+    must degrade gracefully rather than render an error state for a history
+    view."""
+    try:
+        window = int(request.args.get("window", 3600))
+    except (TypeError, ValueError):
+        window = 3600
+    if window <= 0:
+        window = 3600
+    window = min(window, 86400)
+
+    try:
+        limit = int(request.args.get("limit", 500))
+    except (TypeError, ValueError):
+        limit = 500
+    if limit <= 0:
+        limit = 500
+    limit = min(limit, 5000)
+
+    backend = request.args.get("backend", type=str) or None
+    interval = f"{window} seconds"
+    empty = {"history": [], "backends": [], "window_seconds": window}
+
+    try:
+        conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
+        try:
+            with conn.cursor() as cur:
+                # backend bound twice: the NULL-guard predicate and the
+                # equality both reference it so one statement serves the
+                # all-backends and single-backend cases (SOT §11).
+                cur.execute(ANOMALY_HISTORY_QUERY, (interval, backend, backend, limit))
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:                                # noqa: BLE001
+        app.logger.warning("[%s] anomaly history query failed: %s", SERVICE_NAME, exc)
+        return jsonify(empty), 200
+
+    history = [
+        {
+            "time":       r[0].isoformat() if r[0] else None,
+            "backend_id": r[1],
+            "status":     r[2],
+            "score":      r[3],
+        }
+        for r in rows
+    ]
+    # Distinct backend_ids in the window, stable-ordered by first appearance.
+    backends: list[str] = []
+    for h in history:
+        bid = h["backend_id"]
+        if bid is not None and bid not in backends:
+            backends.append(bid)
+
+    return jsonify({
+        "history":        history,
+        "backends":       backends,
+        "window_seconds": window,
+    }), 200
 
 
 @app.route("/")

@@ -1,145 +1,245 @@
 /**
  * tools/demo-ui/web/src/Layout.tsx
  * ─────────────────────────────────
- * App shell for the SmartLoad Dev Console. Sidebar nav across the five
- * surfaces + a top bar with the live mode pill, a stack-health summary,
- * Start/Stop traffic shortcuts, and the SSE-connected indicator. Renders
- * the routed page via <Outlet />.
+ * Mission Control shell for the SmartLoad Dev Console, built on the shared
+ * kit (AppShell + Sidebar + Topbar) in the dark theme. The sidebar carries
+ * the cockpit nav across the five surfaces; the topbar holds the live mode
+ * pill, policy / routing summary, stack-health reading, START / STOP traffic
+ * shortcuts, the SSE-connected indicator, and the last-inference age.
+ *
+ * Navigation is delegated: the kit Sidebar reports the selected item id and
+ * this shell drives react-router. The routed page renders via <Outlet />.
  */
 
-import { NavLink, Outlet } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
+import {
+  AppShell,
+  Badge,
+  Button,
+  Logomark,
+  Sidebar,
+  StatusPill,
+  Topbar,
+  type NavGroup,
+} from "./ui";
 import { api } from "./api";
 import { useDemo } from "./state/DemoStateContext";
-import { CLR_BAD, CLR_MUTED, CLR_OK, CLR_WARN, modeBadgeClass, modeLabel } from "./utils";
+import { modeLabel } from "./utils";
 
 
-const NAV: { to: string; label: string; hint: string }[] = [
-  { to: "/",           label: "Dashboard",  hint: "Stack health · live session metrics · current decision" },
-  { to: "/benchmarks", label: "Benchmarks", hint: "Adaptive-bench (RQ4) + baseline results — charts & summaries" },
-  { to: "/run",        label: "Run",        hint: "One-click load profiles + live monitor" },
-  { to: "/controls",   label: "Controls",   hint: "Algorithm · scenarios · manual fault injection" },
-  { to: "/feed",       label: "Live Feed",  hint: "SSE stream (routing / anomaly / policy / scale)" },
+/* ── Cockpit nav. Route paths are unchanged; only labels are cockpit-themed. */
+interface NavRoute {
+  id: string;       // route path used by react-router
+  label: string;    // cockpit label
+  hint: string;     // purpose
+  icon: JSX.Element;
+}
+
+const ICON = {
+  deck: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M3 12h4l3 8 4-16 3 8h4" />
+    </svg>
+  ),
+  drive: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M3 17c4-6 7-9 9-9s2 6 4 6 3-3 5-7" />
+      <circle cx="12" cy="8" r="1.4" fill="currentColor" />
+    </svg>
+  ),
+  lab: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M18.5 5.5l-2 2M7.5 16.5l-2 2" />
+    </svg>
+  ),
+  proof: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M12 3l7 3v6c0 5-3 7-7 9-4-2-7-4-7-9V6z" />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  ),
+  stream: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  ),
+};
+
+const NAV: NavRoute[] = [
+  { id: "/",           label: "Deck",   hint: "Overview — stack health, live metrics, current decision", icon: ICON.deck },
+  { id: "/run",        label: "Drive",  hint: "Load profiles + live monitor",                            icon: ICON.drive },
+  { id: "/controls",   label: "Lab",    hint: "Scenarios · algorithm · chaos injection",                 icon: ICON.lab },
+  { id: "/benchmarks", label: "Proof",  hint: "Benchmark suites — charts & summaries",                    icon: ICON.proof },
+  { id: "/feed",       label: "Stream", hint: "Live decision-plane SSE feed",                             icon: ICON.stream },
+];
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Console",
+    items: NAV.map((n) => ({
+      id: n.id,
+      label: n.label,
+      icon: n.icon,
+      tag: n.id === "/" ? "LIVE" : undefined,
+    })),
+  },
 ];
 
 
+/* Mode → status tone for the topbar mode pill. */
+function modeStatus(state: ReturnType<typeof useDemo>["state"]) {
+  if (!state) return "neutral" as const;
+  if (state.safe_mode) return "warn" as const;
+  if (state.rl_mode === "active") return "ok" as const;
+  return "neutral" as const;
+}
+
+
 export default function Layout() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { state, services, error, sseConnected, busy, action, toast } = useDemo();
 
-  const healthColor =
-    services == null ? CLR_MUTED
-      : services.healthy === services.total ? CLR_OK
-      : services.healthy === 0 ? CLR_BAD
-      : CLR_WARN;
+  // Resolve active nav id from the current path (exact for "/", prefix otherwise).
+  const activeId =
+    NAV.find((n) => n.id !== "/" && location.pathname.startsWith(n.id))?.id ?? "/";
 
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "210px 1fr", minHeight: "100vh" }}>
-      {/* ── Sidebar ──────────────────────────────────────────────────────── */}
-      <aside style={{
-        borderRight: "1px solid var(--border)",
-        background: "#0d1117",
-        padding: "16px 12px",
-        display: "flex", flexDirection: "column", gap: 4,
-      }}>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 16, color: "var(--text)" }}>SmartLoad</div>
-          <div className="muted" style={{ fontSize: 11 }}>Dev Console</div>
-        </div>
+  const stackTone =
+    services == null ? "neutral"
+      : services.healthy === services.total ? "ok"
+      : services.healthy === 0 ? "crit"
+      : "warn";
+  const stackLabel =
+    services == null ? "stack —" : `stack ${services.healthy}/${services.total}`;
 
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            style={({ isActive }) => ({
-              padding: "8px 10px",
-              borderRadius: 4,
-              fontSize: 13,
-              fontWeight: isActive ? 600 : 400,
-              background: isActive ? "var(--accent)" : "transparent",
-              color: isActive ? "#0d1117" : "var(--text)",
-              textDecoration: "none",
-              borderLeft: isActive ? "3px solid var(--ok)" : "3px solid transparent",
-              transition: "background 0.1s",
-            })}
-            title={item.hint}
+  const sidebar = (
+    <Sidebar
+      brandSub="Dev Console"
+      groups={NAV_GROUPS}
+      activeId={activeId}
+      onSelect={(id) => navigate(id)}
+      footer={
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+          <StatusPill status={stackTone}>{stackLabel}</StatusPill>
+          <StatusPill status={sseConnected ? "ok" : "neutral"}>
+            {sseConnected ? "live · sse" : "polling"}
+          </StatusPill>
+          <div
+            style={{
+              fontFamily: "var(--sl-font-mono)",
+              fontSize: 9.5,
+              lineHeight: 1.5,
+              color: "var(--sl-text-low)",
+              marginTop: 2,
+            }}
           >
-            {item.label}
-          </NavLink>
-        ))}
-
-        <div style={{ marginTop: "auto", paddingTop: 16, fontSize: 11, color: CLR_MUTED, lineHeight: 1.5 }}>
-          <div style={{ color: healthColor }}>
-            {services == null ? "○ stack —" : `● stack ${services.healthy}/${services.total}`}
-          </div>
-          <div style={{ color: sseConnected ? CLR_OK : CLR_MUTED, marginTop: 4 }}>
-            {sseConnected ? "● Live (SSE)" : "○ Polling"}
-          </div>
-          <div style={{ marginTop: 6 }}>
             BFF :8091 — developer harness, separate from the operator UI on :8090.
           </div>
         </div>
-      </aside>
+      }
+    />
+  );
 
-      {/* ── Main column ──────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", flexDirection: "column" }}>
-
-        {/* Top bar (mode pill + health + start/stop traffic shortcuts) */}
-        <header className="card" style={{
-          margin: 0,
-          borderRadius: 0,
-          borderBottom: "1px solid var(--border)",
-          borderLeft: 0, borderRight: 0, borderTop: 0,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <div className={modeBadgeClass(state)} style={{ margin: 0, padding: "6px 14px" }}>
-              <div className="name" style={{ fontSize: 13 }}>{modeLabel(state)}</div>
-            </div>
-            <span className="muted" style={{ fontSize: 12 }}>
-              Policy: {state?.policy_type ?? "—"}
-              {state?.policy_ready === false ? " (not ready)" : ""}
-            </span>
-            <span className="muted" style={{ fontSize: 12 }}>
-              Routing: {state?.algorithm ?? "round_robin"}
-            </span>
-            <span style={{ fontSize: 12, color: healthColor }}>
-              {services == null ? "stack —" : `stack ${services.healthy}/${services.total} healthy`}
-            </span>
-            <button
-              style={{ padding: "8px 18px", fontSize: 13, background: "var(--ok)", color: "#0d1117", fontWeight: 700 }}
-              disabled={busy}
-              onClick={() => action("Start Traffic", () => api.demoTraffic(20, 5))}
-            >
-              ▶ START TRAFFIC
-            </button>
-            <button
-              className="secondary"
-              style={{ padding: "8px 16px", fontSize: 13 }}
-              disabled={busy}
-              onClick={() => action("Stop Traffic", () => api.demoTraffic(0, 1))}
-            >
-              ■ STOP
-            </button>
-            {error && <span style={{ color: "var(--bad)", fontSize: 12 }}>⚠ {error}</span>}
-            <span className="muted" style={{ fontSize: 12, marginLeft: "auto" }}>
-              Last inference:{" "}
+  const topbar = (
+    <Topbar
+      crumb={
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <Logomark size={20} animated />
+          <StatusPill status={modeStatus(state)} hideDot={false}>
+            {modeLabel(state)}
+          </StatusPill>
+          <Badge tone="neutral">policy {state?.policy_type ?? "—"}
+            {state?.policy_ready === false ? " · not ready" : ""}
+          </Badge>
+          <Badge tone="neutral">routing {state?.algorithm ?? "round_robin"}</Badge>
+          <StatusPill status={stackTone}>
+            {services == null ? "stack —" : `stack ${services.healthy}/${services.total} healthy`}
+          </StatusPill>
+          {error ? (
+            <StatusPill status="crit">{error}</StatusPill>
+          ) : null}
+        </span>
+      }
+      right={
+        <>
+          <span
+            style={{
+              fontFamily: "var(--sl-font-mono)",
+              fontSize: 11,
+              color: "var(--sl-text-low)",
+            }}
+          >
+            last inference{" "}
+            <span style={{ color: "var(--sl-text-mid)" }}>
               {state?.last_inference_age_seconds != null
                 ? `${state.last_inference_age_seconds}s ago`
                 : "—"}
             </span>
-          </div>
-        </header>
+          </span>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy}
+            onClick={() => action("Start Traffic", () => api.demoTraffic(20, 5))}
+          >
+            ▶ Start traffic
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => action("Stop Traffic", () => api.demoTraffic(0, 1))}
+          >
+            ■ Stop
+          </Button>
+        </>
+      }
+    />
+  );
 
-        {/* Routed page */}
-        <main style={{ padding: 12, flex: 1, overflow: "auto" }}>
-          <Outlet />
-        </main>
-      </div>
+  return (
+    <>
+      <AppShell sidebar={sidebar} topbar={topbar}>
+        <Outlet />
+      </AppShell>
 
-      {/* Toast — sits over everything */}
-      {toast && (
-        <div className={`toast ${toast.ok ? "ok" : "bad"}`}>{toast.msg}</div>
-      )}
-    </div>
+      {/* Toast — preserves the existing DemoStateContext toast behaviour. */}
+      {toast ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 90,
+            background: "var(--sl-text)",
+            color: "var(--sl-surface)",
+            borderRadius: "var(--sl-radius-md)",
+            padding: "13px 18px",
+            boxShadow: "var(--sl-shadow-2)",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            maxWidth: 560,
+            fontSize: 13,
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              flex: "0 0 auto",
+              background: toast.ok ? "var(--sl-ok)" : "var(--sl-crit)",
+              boxShadow: `0 0 8px ${toast.ok ? "var(--sl-ok)" : "var(--sl-crit)"}`,
+            }}
+          />
+          {toast.msg}
+        </div>
+      ) : null}
+    </>
   );
 }
