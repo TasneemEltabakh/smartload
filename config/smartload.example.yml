@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SmartLoad — single-file client bootstrap
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to config/smartload.yml (gitignored), edit the values for your
+# deployment, then render the runtime config:
+#
+#     cp config/smartload.example.yml config/smartload.yml
+#     python scripts/bootstrap-config.py        # writes config/policy.yaml + prints env
+#     docker compose up -d
+#
+# This replaces hand-editing config/policy.yaml + config/.env. When
+# config/smartload.yml is absent the legacy dual-file setup still works
+# unchanged, so adopting this file is optional during the transition.
+#
+# Fields are marked:
+#   [policy] — rendered into config/policy.yaml (runtime operating policy)
+#   [env]    — printed as an env default for your .env / compose
+#   [topology, #133] — accepted + validated now, consumed by the Helm packaging
+#                      work; has no effect on the docker-compose stack yet.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# How SmartLoad reads telemetry. Only prometheus is supported today.
+metrics:
+  provider: prometheus                       # [topology, #133]
+  url: http://client-prometheus:9090         # [topology, #133]
+
+# The load balancer SmartLoad steers. type ∈ nginx | haproxy | envoy | alb.
+loadBalancer:
+  type: nginx                                # [topology, #133]
+  apiUrl: http://load-balancer:8080          # [topology, #133]
+
+# Where backends run. type ∈ docker | kubernetes.
+orchestrator:
+  type: docker                               # [topology, #133]
+
+# The service SmartLoad is balancing — labels for dashboards / audit context.
+service:
+  name: payment-service                      # [topology, #133]
+  namespace: production                      # [topology, #133]
+
+# Service-level objectives.
+slo:
+  p95LatencyMs: 250                          # [policy] -> slo_p95_latency_ms
+  errorRate: 0.005                           # validated (fraction 0..1); reserved
+
+# The load-balancing strategy, in industry vocabulary. The name selects the
+# underlying operating mode + RL pin:
+#   round-robin       -> classical            (RL off)
+#   least-connections -> classical            (RL off)
+#   latency-aware     -> hybrid, RL shadow
+#   forecast-aware    -> hybrid, RL shadow
+#   anomaly-aware     -> hybrid, RL shadow
+#   ai-hybrid         -> hybrid, RL active
+strategy:
+  name: latency-aware                        # [policy] -> operating_mode + safe_mode, [env] -> RL_MODE
+  evaluationIntervalSeconds: 15              # [env]    -> POLL_INTERVAL_SECONDS
+  cooldownSeconds: 60                        # [policy] -> autoscaler_cooldown_seconds
+
+# Backends to register for scraping. name is required; prometheusJob names the
+# scrape job. Consumed by the Helm packaging work (#133).
+backends:                                    # [topology, #133]
+  - name: payment-v1
+    prometheusJob: payment-v1
+  - name: payment-v2
+    prometheusJob: payment-v2

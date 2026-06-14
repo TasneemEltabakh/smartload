@@ -38,9 +38,18 @@ SmartLoad sits between client traffic and a pool of backend services. It combine
 ```bash
 git clone https://github.com/TasneemEltabakh/smartload.git
 cd smartload
-cp config/.env.example .env             # fill in values
-docker compose up -d                    # 14 containers come up
+cp config/smartload.example.yml config/smartload.yml   # edit for your deployment
+python scripts/bootstrap-config.py                     # renders policy.yaml + prints env defaults
+docker compose up -d                                   # 14 containers come up
 ```
+
+The single-file `config/smartload.yml` is the recommended onboarding path: one file
+describes the strategy, SLOs, load balancer, and backends. `bootstrap-config.py`
+translates it into the runtime `config/policy.yaml` (preserving any live
+`policy_version`) and prints the env defaults to add to `.env`. Prefer editing
+`config/policy.yaml` + `config/.env` directly? That still works — the single file is
+opt-in, and the stack falls back to the dual-file setup whenever `smartload.yml` is
+absent.
 
 | Surface | URL | Notes |
 |---|---|---|
@@ -278,7 +287,8 @@ Public datasets the ML services train and evaluate against. `scripts/download-da
 
 ## Configuration
 
-- `config/policy.yaml` — operating policy (mode, safe_mode, SLOs, scaling limits). Edited via the operator UI or `POST /api/v1/policy`.
+- `config/smartload.example.yml` — single-file client bootstrap (strategy, SLOs, load balancer, orchestrator, backends). Copy to `config/smartload.yml` (gitignored) and run `scripts/bootstrap-config.py` to render `policy.yaml` + env defaults. Optional; the dual-file setup below still works when it is absent.
+- `config/policy.yaml` — canonical operating policy (mode, safe_mode, SLOs, scaling limits). Edited via the operator UI, `POST /api/v1/policy`, or rendered from `smartload.yml`.
 - `config/.env.example` — template for required env vars (DB password, Redis URL, model paths). Copy to `.env` at the repo root.
 - Per-service runtime knobs read from env vars; see each service's `README.md`.
 

@@ -125,6 +125,11 @@ services/shared/
 ├── README.md                    # high-level rules
 ├── contracts.py                 # Redis envelopes + pub/sub helpers   (362 lines)
 ├── queries.py                   # canonical SQL constants             (171 lines)
+├── config.py                    # typed env-var helpers + canonical URLs
+├── config_loader.py             # single-file client bootstrap (smartload.yml → policy.yaml + env)
+├── bootstrap.py                 # startup plumbing (path, probes, signals, liveness)
+├── logging_setup.py             # structured logging + correlation IDs
+├── metrics.py                   # Prometheus metric helpers
 └── lb_adapters/
     ├── __init__.py              # exports LoadBalancerAdapter, AdapterState
     ├── base.py                  # abstract base class                 (52 lines)
@@ -537,6 +542,14 @@ class EnvoyAdapter(LoadBalancerAdapter):
 Same for HAProxy and ALB. The `# pragma: no cover` tells coverage tooling not to count these — they're contract markers, not real code.
 
 The ALB README adds one detail: "Will likely depend on boto3 / aws-sdk for upstream weight adjustment via the ALB API."
+
+### 2.4 `config_loader.py` — single-file client bootstrap (#145)
+
+A new client should edit one file, not three. `config/smartload.yml` (copied from the committed `config/smartload.example.yml`; the client copy is gitignored) carries the integration shape in industry vocabulary — `metrics`, `loadBalancer`, `orchestrator`, `service`, `slo`, `strategy`, `backends`. `config_loader.py` is the normaliser that turns it into the two things the stack already consumes.
+
+The module is split so the logic unit-tests without PyYAML: pure functions on plain dicts (`validate`, `to_policy`, `to_env`, `merge_policy`) plus one yaml-touching `read_file`. `validate` raises field-named `SmartLoadConfigError`s. `STRATEGY_PRIMITIVES` is the named-strategy → primitive table (round-robin/least-connections → `classical`; latency/forecast/anomaly-aware → `hybrid` + RL `shadow`; ai-hybrid → `hybrid` + RL `active`) — the single definition the #150 endpoint imports rather than restates.
+
+`scripts/bootstrap-config.py` is the runnable entry point: it validates `smartload.yml`, renders `config/policy.yaml` (atomic write, byte-compatible with policy-manager's writer; **preserves the existing `policy_version`** so a re-render never rolls a live policy back), and prints the implied env (`POLL_INTERVAL_SECONDS`, `RL_MODE`). When `smartload.yml` is absent it is a no-op — the legacy `policy.yaml` + `.env` path is untouched, so adoption is opt-in. `policy.yaml` remains the canonical runtime store (live-updated over `smartload.policy`, sole-written by policy-manager); `smartload.yml` is a read-once bootstrap. Deployment topology fields are validated and accepted now but consumed by the Helm packaging work (#133); the compose-native auto-render is the tracked adoption follow-up, matching the module-first discipline of `config.py` and `bootstrap.py`.
 
 ---
 

@@ -1482,7 +1482,7 @@
   <div class="meta">
     <strong>Version:</strong> 1.0.7bd &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-14 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bd pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;be pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. v1.0.7be landed the single-file client bootstrap (#145): config/smartload.yml + a shared config_loader normaliser + a render CLI that translates the one-file integration shape into the canonical policy.yaml (preserving live policy_version) while the legacy dual-file path keeps working when it is absent. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -5752,6 +5752,28 @@ docker compose logs -f anomaly-detector</code></pre>
   </tbody>
 </table>
 
+<h3>v1.0.7be — 2026-06-14 — Single-file client bootstrap (#145): config/smartload.yml + config_loader + render CLI</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Bootstrap normaliser (new shared module)</strong></td>
+      <td>New <code>services/shared/config_loader.py</code> reads the externally-shared, camelCase integration shape and normalises it into the two things the stack already consumes: the canonical <code>policy.yaml</code> field set and a flat env mapping. Pure <code>validate</code> / <code>to_policy</code> / <code>to_env</code> / <code>merge_policy</code> operate on plain dicts (stdlib-light, no PyYAML/redis/flask); only <code>read_file</code> imports yaml lazily. The named-strategy → primitive table (<code>STRATEGY_PRIMITIVES</code>: round-robin/least-connections → <code>classical</code>; latency/forecast/anomaly-aware → <code>hybrid</code>+RL <code>shadow</code>; ai-hybrid → <code>hybrid</code>+RL <code>active</code>) lives here as the single definition the #150 endpoint will import. <code>validate</code> raises field-named <code>SmartLoadConfigError</code>s (e.g. <code>strategy.name</code>, <code>slo.errorRate</code>, <code>backends[0].name</code>), guarding bool-as-number and cross-mount edge cases.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Render CLI + onboarding flow</strong></td>
+      <td>New <code>scripts/bootstrap-config.py</code> validates <code>config/smartload.yml</code> and renders <code>config/policy.yaml</code> (atomic write byte-compatible with policy-manager's writer; preserves any existing <code>policy_version</code> so a re-render never rolls a live policy back), then prints the implied env (<code>POLL_INTERVAL_SECONDS</code>, <code>RL_MODE</code>). No-op exit 0 when <code>smartload.yml</code> is absent (legacy <code>policy.yaml</code> + <code>.env</code> path preserved); <code>--check</code> validate-only and <code>--print-env</code> modes. Committed template <code>config/smartload.example.yml</code> (client copy <code>config/smartload.yml</code> gitignored). Topology fields (metrics URL, LB endpoint, orchestrator, backend scrape targets) are validated/accepted but deferred to Helm (#133); compose-native auto-render is the tracked adoption follow-up, matching the module-first discipline of <code>shared/config.py</code>/<code>shared/bootstrap.py</code>.</td>
+      <td>This release</td>
+    </tr>
+    <tr>
+      <td><strong>Tests + docs</strong></td>
+      <td>New <code>tests/unit/shared/test_config_loader.py</code> — 38 hermetic tests (validation happy/error paths, strategy mapping for all six names, version-preserving merge, file IO via tmp_path); shared unit suite 58 → 96 green. <code>scripts/lint-structure.py</code> clean of new violations (no new <code>tests/e2e/</code> slice, so no triad obligation). Docs synced: README Quick Start + Configuration sections now lead with the single-file path; SOT §25.2 surfaces table gains a "Single-file client bootstrap" row plus a canonical-onboarding-shape paragraph; PROJECT_WALKTHROUGH config section updated.</td>
+      <td>This release</td>
+    </tr>
+  </tbody>
+</table>
+
 <h3>v1.0.7bd — 2026-06-14 — Anomaly-detector slice closure: stability gate (auto-recovery cool-down) + per-cycle persistence + live/e2e tests + Stage-B live track</h3>
 <table>
   <thead><tr><th>Aspect</th><th>What changed / merged</th><th>Resolved by</th></tr></thead>
@@ -7792,8 +7814,16 @@ docker compose logs -f anomaly-detector</code></pre>
       <td>Reachable at <code>http://localhost:8090</code> against the live compose stack</td>
       <td><span class="badge badge-implemented">Home + Policy page shipped slice #1; other pages pending #121–#125, #131</span></td>
     </tr>
+    <tr>
+      <td>Single-file client bootstrap</td>
+      <td><code>config/smartload.example.yml</code> (schema) &middot; <code>services/shared/config_loader.py</code> (normaliser)</td>
+      <td><code>scripts/bootstrap-config.py</code> renders <code>config/policy.yaml</code> + prints env defaults</td>
+      <td><span class="badge badge-implemented">Runtime-policy subset shipped #145; deployment topology consumed by Helm #133</span></td>
+    </tr>
   </tbody>
 </table>
+
+<p><strong>Canonical onboarding shape (#145).</strong> A new client edits one file rather than three. <code>config/smartload.yml</code> (copied from the committed <code>config/smartload.example.yml</code>, the client copy gitignored) carries the integration shape in industry vocabulary — <code>metrics</code>, <code>loadBalancer</code>, <code>orchestrator</code>, <code>service</code>, <code>slo</code>, <code>strategy</code> (a named strategy per §25.9 / #150), and <code>backends</code>. <code>scripts/bootstrap-config.py</code> validates it (field-named errors), then normalises the runtime-policy subset into <code>config/policy.yaml</code> — the named strategy maps to <code>operating_mode</code> + <code>safe_mode</code>, <code>slo.p95LatencyMs</code> to <code>slo_p95_latency_ms</code>, <code>strategy.cooldownSeconds</code> to <code>autoscaler_cooldown_seconds</code> — while preserving any live <code>policy_version</code> so a re-render never rolls a running deployment back. The env it implies (<code>POLL_INTERVAL_SECONDS</code>, <code>RL_MODE</code>) is printed for <code>.env</code>. <code>policy.yaml</code> stays the canonical runtime store (live-updated over <code>smartload.policy</code>, sole-written by policy-manager); <code>smartload.yml</code> is a read-once bootstrap, and the legacy <code>policy.yaml</code> + <code>.env</code> path keeps working whenever it is absent. Deployment topology in the file (<code>metrics.url</code>, <code>loadBalancer.apiUrl</code>, <code>orchestrator.type</code>, <code>backends[].prometheusJob</code>) is validated and accepted now and consumed by the Helm packaging work (#133); the compose-native auto-render (an init step that runs the bootstrap before policy-consuming services) is the tracked adoption follow-up, matching the module-first discipline of <code>shared/config.py</code> and <code>shared/bootstrap.py</code>.</p>
 
 <h3>25.3 Operator vs Tenant — trust boundary</h3>
 <p>SmartLoad has two distinct human roles whose privileges, surfaces, and audit trails must not overlap.</p>

@@ -146,6 +146,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# SmartLoad single-file client bootstrap — the example is committed, the
+# filled-in client copy is not (it carries deployment-specific values).
+config/smartload.yml
+
 # Spyder project settings
 .spyderproject
 .spyproject
