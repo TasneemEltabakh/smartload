@@ -27,12 +27,13 @@ jobs:
         run: ruff check services test-backends
 
   structure-lint:
-    # Anti-drift structural lints (stdlib-only, no extra deps). The Redis
-    # channel registry is ENFORCED (--strict). The service/feature structure
-    # and OpenAPI-route lints run PERMISSIVE (informational) — flipping them to
-    # --strict is #139, gated on resolving their current warnings (rl-engine
-    # classical-policy READMEs/tests, the adaptive-bench example scenario, and
-    # documenting the /api/v1/metrics/* endpoints in the OpenAPI spec).
+    # Anti-drift structural lints (stdlib-only, no extra deps). All three are
+    # ENFORCED (--strict) as of #139: a structure/route/channel drift fails CI.
+    # The convention is documented in docs/features/README.md ("Structure
+    # contract"); add a new tests/e2e/<feature>/ only with its triad
+    # (docs/features/<feature>.md + examples/scenarios/<feature>/), keep every
+    # service/engine/policy folder READMEd + tested, and document every new
+    # /api/v1 route in docs/openapi/smartload-v1.yaml.
     runs-on: ubuntu-latest
 
     steps:
@@ -47,11 +48,11 @@ jobs:
       - name: Redis channel registry (enforced)
         run: python scripts/lint-redis-channels.py --strict
 
-      - name: Service / feature structure (permissive)
-        run: python scripts/lint-structure.py
+      - name: Service / feature structure (enforced)
+        run: python scripts/lint-structure.py --strict
 
-      - name: OpenAPI route coverage (permissive)
-        run: python scripts/lint-openapi.py
+      - name: OpenAPI route coverage (enforced)
+        run: python scripts/lint-openapi.py --strict
 
       - name: AsyncAPI channel coverage (permissive)
         run: python scripts/lint-asyncapi.py

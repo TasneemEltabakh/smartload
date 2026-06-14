@@ -13,13 +13,21 @@ For feature `<name>`:
 | Surface | Location |
 |---|---|
 | Manifest (this folder) | `docs/features/<name>.md` |
-| Runnable end-to-end scenario | `examples/scenarios/<name>.py` |
+| Runnable end-to-end scenario | `examples/scenarios/<name>/` (or `examples/scenarios/<name>.py`) |
 | End-to-end test | `tests/e2e/<name>/` |
 | HTTP contract | section of `docs/openapi/smartload-v1.yaml` |
 | Redis contract | rows in `docs/redis-channels.md` |
 | Implementation | one or more `services/<role>/` folders |
 
-The structure lint (`scripts/lint-structure.py`) requires all three of the first three to exist together. Half a slice is visible by an empty folder.
+## Structure contract (enforced in CI, #139)
+
+As of #139 all three anti-drift lints run `--strict` in the `structure-lint` CI job — a violation **fails the build**, so the structure is a contract, not a suggestion:
+
+- **`scripts/lint-structure.py --strict`** — every `tests/e2e/<feature>/` must have a sibling `docs/features/<feature>.md` **and** `examples/scenarios/<feature>/` (or `<feature>.py`); every `services/<svc>/` and every `engines/<x>/` · `policies/<x>/` · `lb_adapters/<x>/` plugin folder must carry a `README.md`, and each engine/policy plugin must carry a `test_*.py`. Half a slice is visible by an empty folder.
+- **`scripts/lint-openapi.py --strict`** — every `@app.route("/api/v1/...")` in `services/` must appear in `docs/openapi/smartload-v1.yaml`.
+- **`scripts/lint-redis-channels.py --strict`** — every `smartload.<channel>` literal in `services/` must be registered in `docs/redis-channels.md` (genuine non-channel `smartload.*` Docker labels are allowlisted in the lint).
+
+Run all three locally before pushing: `python scripts/lint-structure.py --strict && python scripts/lint-openapi.py --strict && python scripts/lint-redis-channels.py --strict`.
 
 ## Manifest template
 

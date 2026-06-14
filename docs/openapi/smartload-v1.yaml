@@ -491,6 +491,147 @@ paths:
                 items:
                   $ref: '#/components/schemas/MetricRow'
 
+  /api/v1/metrics/rpm:
+    get:
+      summary: Per-minute request-rate time series (operator-UI throughput card)
+      tags: [telemetry]
+      parameters:
+        - in: query
+          name: window
+          description: "Number of 1-minute buckets to return (default 24, cap 240)."
+          schema: { type: integer, default: 24, maximum: 240 }
+      responses:
+        '200':
+          description: Request-rate buckets plus the current rpm and raw total. Always 200 (empty buckets on DB failure).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  buckets: { type: array, items: { type: object, additionalProperties: true } }
+                  current_rpm: { type: number }
+                  total_requests: { type: integer }
+
+  /api/v1/metrics/latency:
+    get:
+      summary: p50 / p95 / p99 request latency over a rolling window
+      tags: [telemetry]
+      parameters:
+        - in: query
+          name: window
+          description: "Window length in seconds (default 60, cap 3600)."
+          schema: { type: integer, default: 60, maximum: 3600 }
+      responses:
+        '200':
+          description: "Percentiles in ms (null below a 10-sample floor) plus the sample count. Always 200."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  p50_ms: { type: integer, nullable: true }
+                  p95_ms: { type: integer, nullable: true }
+                  p99_ms: { type: integer, nullable: true }
+                  samples: { type: integer }
+
+  /api/v1/metrics/slo:
+    get:
+      summary: SLO compliance — percent of requests within the p95 latency budget
+      tags: [telemetry]
+      parameters:
+        - in: query
+          name: window
+          description: "Window length in seconds (default 3600, cap 86400)."
+          schema: { type: integer, default: 3600, maximum: 86400 }
+        - in: query
+          name: slo_p95
+          description: "Latency budget in ms to score against (default 200)."
+          schema: { type: integer, default: 200 }
+      responses:
+        '200':
+          description: Compliance percent + violation count over the window. Always 200.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  slo_p95_ms: { type: integer }
+                  window_seconds: { type: integer }
+                  samples: { type: integer }
+                  compliant_pct: { type: number }
+                  violations: { type: integer }
+
+  /api/v1/metrics/resources:
+    get:
+      summary: Latest CPU / memory sample per container instance
+      tags: [telemetry]
+      parameters:
+        - in: query
+          name: window
+          description: "How far back to look for a fresh sample, in seconds (default 120, cap 3600)."
+          schema: { type: integer, default: 120, maximum: 3600 }
+      responses:
+        '200':
+          description: One latest CPU/memory record per instance (from the resource-collector daemon). Always 200.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instances: { type: array, items: { type: object, additionalProperties: true } }
+                  window_seconds: { type: integer }
+                  count: { type: integer }
+
+  /api/v1/metrics/backends:
+    get:
+      summary: Per-backend request stats (p95 latency, rpm, error rate) plus a pool aggregate
+      tags: [telemetry]
+      parameters:
+        - in: query
+          name: window
+          description: "Window length in seconds (default 60, cap 3600)."
+          schema: { type: integer, default: 60, maximum: 3600 }
+      responses:
+        '200':
+          description: "Per-backend rows (keyed by NGINX upstream instance) plus a grand-total aggregate from one GROUPING SETS scan. Always 200."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backends:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        instance: { type: string }
+                        p95_ms: { type: integer, nullable: true }
+                        rpm: { type: number }
+                        error_rate_pct: { type: number }
+                        samples: { type: integer }
+                  aggregate: { type: object, nullable: true, additionalProperties: true }
+                  window_seconds: { type: integer }
+
+  /api/v1/engine/state:
+    get:
+      summary: Live per-engine state (policy bootstrap, runloop stats, last cycle)
+      description: |
+        Served by the three decision-plane engines (anomaly-detector,
+        forecasting, rl-engine) and read by the operator-UI Live Engines page.
+        The exact body varies by engine; rl-engine carries the richest snapshot
+        (policy_ready, the operating-policy snapshot, runloop stats, last cycle
+        output, and the env-pinned rl_mode). Always returns 200 — a disabled
+        runloop is a state, not an error.
+      tags: [decision-plane]
+      responses:
+        '200':
+          description: Engine state snapshot (shape varies by engine).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
   /api/v1/stats:
     get:
       summary: Telemetry service own-observability counters
