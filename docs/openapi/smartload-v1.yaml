@@ -99,6 +99,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/policy/strategy:
+    post:
+      summary: Apply a named load-balancing strategy
+      description: |
+        Translates an industry-vocabulary strategy name to the underlying
+        policy primitives (`operating_mode` + `safe_mode` only) and applies them
+        through the same path as `POST /api/v1/policy` — same validation, audit
+        row, and `smartload.policy` envelope.
+
+        Idempotent like `POST /api/v1/policy`. The response surfaces the
+        recommended deploy-time `RL_MODE` env pin for the chosen strategy
+        (`recommended_rl_mode`); `RL_MODE` is never set as a policy field.
+
+        Unknown names return 400 with `field=name` and an `allowed_strategies`
+        list. Actor precedence: `X-Actor` header, then body `actor`, then
+        `anonymous`.
+      tags: [policy]
+      parameters:
+        - in: header
+          name: X-Actor
+          required: false
+          schema: { type: string }
+          description: Logical actor name persisted in the audit row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StrategyRequest'
+      responses:
+        '200':
+          description: Strategy applied (or idempotent no-op)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategyResponse'
+        '400':
+          description: Unknown strategy name or validation failure
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/audit/policy:
     get:
       summary: Recent policy-change audit rows
@@ -542,6 +585,15 @@ components:
         anomaly_recovery_window_seconds: { type: integer, minimum: 1 }
         rl_exploration_rate:             { type: number, minimum: 0, maximum: 1 }
         rl_confidence_threshold:         { type: number, minimum: 0, maximum: 1 }
+        strategy_name:
+          type: string
+          description: |
+            Derived on read (#150): the representative named strategy for the
+            live operating_mode + safe_mode primitive pair, or "custom" when the
+            pair matches no documented strategy. Never persisted. The reverse map
+            is many-to-one (latency/forecast/anomaly-aware + ai-hybrid all share
+            hybrid + safe_mode=false), so this returns the representative name —
+            see docs/features/named-strategies.md.
 
     PolicyPatch:
       type: object
@@ -586,6 +638,60 @@ components:
           description: |
             Envelope event_id published on smartload.policy. Null when the
             publish was skipped (best-effort path).
+
+    StrategyRequest:
+      type: object
+      required: [name]
+      description: |
+        Named load-balancing strategy to apply. The name is translated to its
+        primitives server-side via shared.config_loader.STRATEGY_PRIMITIVES
+        (plus safe-fallback).
+      properties:
+        name:
+          type: string
+          enum:
+            - round-robin
+            - least-connections
+            - latency-aware
+            - forecast-aware
+            - anomaly-aware
+            - ai-hybrid
+            - safe-fallback
+        actor:
+          type: string
+          description: |
+            Logical actor for the audit row. Lower precedence than the X-Actor
+            header. Defaults to "anonymous".
+
+    StrategyResponse:
+      type: object
+      description: |
+        Extends the PolicyUpdateResponse shape with the chosen strategy and the
+        recommended (never-applied) RL_MODE pin.
+      required: [status, policy, changed_fields]
+      properties:
+        status:
+          type: string
+          enum: [updated, no-op]
+        policy:
+          $ref: '#/components/schemas/Policy'
+        changed_fields:
+          type: array
+          items: { type: string }
+        policy_version:
+          type: integer
+        event_id:
+          type: [string, "null"]
+        strategy:
+          type: string
+          description: The named strategy that was applied.
+        recommended_rl_mode:
+          type: [string, "null"]
+          enum: [shadow, active, null]
+          description: |
+            The deploy-time RL_MODE env pin recommended for this strategy.
+            Surfaced for the operator; never set as a policy field. Null when the
+            strategy does not engage the RL plane.
 
     PolicyAuditRow:
       type: object

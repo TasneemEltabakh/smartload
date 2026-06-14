@@ -552,6 +552,78 @@ class TestSmartLoadClientActionsWiring:
         c.close()
 
 
+# ── named-strategy surface (#150) ─────────────────────────────────────────────
+
+from smartload_client.policy import PolicyClient  # noqa: E402
+
+
+class TestPolicySetStrategy:
+
+    def test_set_strategy_posts_to_strategy_endpoint(self):
+        client = MagicMock()
+        client.default_actor = "smartload-client"
+        client._http.post.return_value = _fake_response(
+            200,
+            json_body={
+                "status": "updated",
+                "strategy": "ai-hybrid",
+                "recommended_rl_mode": "active",
+            },
+        )
+        pc = PolicyClient(client)
+        result = pc.set_strategy("ai-hybrid", actor="alice")
+        assert result["strategy"] == "ai-hybrid"
+        assert result["recommended_rl_mode"] == "active"
+        client._http.post.assert_called_once_with(
+            "/api/v1/policy/strategy",
+            json={"name": "ai-hybrid"},
+            headers={"X-Actor": "alice"},
+        )
+
+    def test_set_strategy_defaults_actor_to_client_default(self):
+        client = MagicMock()
+        client.default_actor = "my-tool"
+        client._http.post.return_value = _fake_response(
+            200, json_body={"status": "updated"},
+        )
+        pc = PolicyClient(client)
+        pc.set_strategy("round-robin")
+        _args, kwargs = client._http.post.call_args
+        assert kwargs["headers"] == {"X-Actor": "my-tool"}
+
+    def test_set_strategy_unknown_name_raises_validation_error(self):
+        client = MagicMock()
+        client.default_actor = "smartload-client"
+        client._http.post.return_value = _fake_response(
+            400,
+            json_body={
+                "error": "unknown strategy 'bogus'; allowed: [...]",
+                "field": "name",
+                "allowed_strategies": ["ai-hybrid", "round-robin"],
+            },
+        )
+        pc = PolicyClient(client)
+        with pytest.raises(ValidationError) as exc:
+            pc.set_strategy("bogus")
+        assert exc.value.field == "name"
+
+
+class TestSmartLoadClientStrategyWiring:
+
+    def test_top_level_set_strategy_delegates(self, monkeypatch):
+        c = SmartLoadClient(base_url="http://example:8086")
+        captured = {}
+
+        def fake_set_strategy(name, *, actor=None):
+            captured["call"] = (name, actor)
+            return {"status": "updated", "strategy": name}
+
+        monkeypatch.setattr(c.policy, "set_strategy", fake_set_strategy)
+        c.set_strategy("latency-aware", actor="ops")
+        assert captured["call"] == ("latency-aware", "ops")
+        c.close()
+
+
 # ── status surface (slice #149 / OUI.9) ─────────────────────────────────────
 
 from smartload_client.status import (  # noqa: E402

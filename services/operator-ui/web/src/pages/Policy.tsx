@@ -22,11 +22,13 @@ import {
 
 import {
   api,
+  STRATEGY_NAMES,
   type AuditRow,
   type EnvironmentScope,
   type Policy,
   type PolicyPreviewResponse,
   type RelatedMetrics,
+  type StrategyName,
 } from "../api";
 
 const REFRESH_MS = 10_000;
@@ -63,6 +65,7 @@ export default function PolicyPage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "bad" } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [strategyChoice, setStrategyChoice] = useState<StrategyName | "">("");
 
   async function loadAll() {
     try {
@@ -146,6 +149,31 @@ export default function PolicyPage() {
     } catch (err: any) {
       const fieldHint = err.field ? ` [field: ${err.field}]` : "";
       flash(`commit failed: ${err.message || err}${fieldHint}`, "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyStrategy() {
+    if (!strategyChoice) {
+      flash("pick a strategy first", "bad");
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await api.setStrategy(strategyChoice, "operator-ui");
+      const rl = r.recommended_rl_mode ? `; recommended RL_MODE=${r.recommended_rl_mode}` : "";
+      flash(
+        r.status === "updated"
+          ? `strategy ${r.strategy} applied (v${r.policy_version})${rl}`
+          : `already on ${r.strategy}${rl}`,
+        "ok",
+      );
+      setPreview(null);
+      await loadAll();
+    } catch (err: any) {
+      const fieldHint = err.field ? ` [field: ${err.field}]` : "";
+      flash(`strategy apply failed: ${err.message || err}${fieldHint}`, "bad");
     } finally {
       setBusy(false);
     }
@@ -236,6 +264,39 @@ export default function PolicyPage() {
           <div className="kpi-label"><span className="kpi-icon"><Clock size={14} /></span> Last Updated</div>
           <div className="kpi-value" style={{ fontSize: 22 }}>{timeAgo(lastUpdated)}</div>
           <div className="kpi-trend">most recent change</div>
+        </div>
+      </div>
+
+      {/* ── Named-strategy quick apply (#150) ─────────────────────── */}
+      <div className="card">
+        <div className="card-head">
+          <h2>Strategy</h2>
+          <span className="meta">
+            Apply a named load-balancing strategy. Translates to the underlying
+            primitives (operating mode + safe mode) through the same audited path
+            as the editor below. The primitives editor stays available for
+            advanced changes.
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <Sparkles size={14} /> Active:
+            <strong>{current?.strategy_name ?? "—"}</strong>
+          </span>
+          <select
+            value={strategyChoice}
+            onChange={(e) => setStrategyChoice(e.target.value as StrategyName | "")}
+            disabled={busy}
+            aria-label="Named strategy"
+          >
+            <option value="">Select a strategy…</option>
+            {STRATEGY_NAMES.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <button onClick={applyStrategy} disabled={busy || !strategyChoice}>
+            <ArrowRight size={14} /> Apply strategy
+          </button>
         </div>
       </div>
 

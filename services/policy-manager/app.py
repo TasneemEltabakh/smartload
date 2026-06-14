@@ -54,6 +54,13 @@ from validation import (  # noqa: E402
     validate_merged_policy,
     validate_updates,
 )
+from strategies import (  # noqa: E402
+    ALLOWED_STRATEGIES,
+    StrategyError,
+    name_to_policy,
+    primitives_to_name,
+    recommended_rl_mode,
+)
 
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -316,12 +323,30 @@ def health():
     }), code
 
 
+def _with_derived_strategy(policy: dict) -> dict:
+    """Return a shallow copy of `policy` with the derived `strategy_name` field
+    added (#150).
+
+    `strategy_name` reverse-maps the live (operating_mode, safe_mode) primitive
+    pair to its representative strategy name, or "custom" when the pair matches
+    no documented strategy. The reverse map is many-to-one (latency/forecast/
+    anomaly-aware all map to hybrid+safe_mode=false); the representative-name
+    choice is documented in docs/features/named-strategies.md. Derived on read,
+    never persisted to policy.yaml.
+    """
+    enriched = dict(policy)
+    enriched["strategy_name"] = primitives_to_name(
+        policy.get("operating_mode"), policy.get("safe_mode"),
+    )
+    return enriched
+
+
 @app.route("/api/v1/policy", methods=["GET"])
 def get_policy():
     policy = load_policy()
     if not policy:
         return jsonify({"error": f"policy file not found or empty: {CONFIG_PATH}"}), 404
-    return jsonify(policy)
+    return jsonify(_with_derived_strategy(policy))
 
 
 _AUDIT_QUERY = """
@@ -390,41 +415,46 @@ def get_audit_policy():
     ])
 
 
-@app.route("/api/v1/policy", methods=["POST"])
-def update_policy():
-    """Update one or more policy fields atomically.
+def _apply_policy(
+    raw: dict,
+    actor: str,
+    *,
+    audit_reason_prefix: str | None = None,
+) -> tuple[dict, int]:
+    """Validate + persist + audit + publish a policy update. Shared internal
+    path for both POST /api/v1/policy and POST /api/v1/policy/strategy so the
+    named-strategy endpoint goes through the SAME audit + envelope flow.
+
+    `raw` is the (already JSON-decoded) update dict — canonical policy fields
+    only. `audit_reason_prefix`, when supplied, is recorded on each audit row's
+    actor so the change is grep-able by intent (e.g. the strategy name behind a
+    POST /api/v1/policy/strategy). Returns (response_body, http_status).
 
     Flow:
-      1. Parse + validate the body (rejects 400 with field name on bad input).
+      1. Validate the body (rejects 400 with field name on bad input).
       2. Merge with on-disk policy. Re-validate cross-field invariants.
       3. If the merge produces no field changes, return 200 no-op (no write,
-         no audit, no publish — operators may safely retry POSTs).
+         no audit, no publish — operators may safely retry).
       4. Bump policy_version (monotonic).
       5. Atomic YAML write.
       6. Write one row per changed field to policy_changes.
       7. Publish a PolicyUpdate envelope on smartload.policy.
     """
-    raw = request.get_json(force=True, silent=True)
-    if raw is None:
-        return jsonify({"error": "request body must be valid JSON"}), 400
-    if not isinstance(raw, dict):
-        return jsonify({"error": "request body must be a JSON object"}), 400
-
     existing = load_policy()
     try:
         merged_no_version = validate_updates(raw, existing)
     except PolicyValidationError as exc:
-        return jsonify({"error": str(exc), "field": exc.field}), 400
+        return {"error": str(exc), "field": exc.field}, 400
 
     diff = _changed_fields(existing, merged_no_version)
     if not diff:
         # Idempotent: a POST that matches the on-disk state changes nothing.
         # Return 200 + the existing snapshot so the caller can confirm state.
-        return jsonify({
+        return {
             "status": "no-op",
             "policy": existing,
             "changed_fields": [],
-        }), 200
+        }, 200
 
     new_version = int(existing.get("policy_version", 0)) + 1
     merged = {**merged_no_version, "policy_version": new_version}
@@ -433,16 +463,23 @@ def update_policy():
         _atomic_write_yaml(CONFIG_PATH, merged)
     except Exception as exc:
         log.exception("failed to persist policy")
-        return jsonify({"error": f"failed to persist policy: {exc}"}), 500
+        return {"error": f"failed to persist policy: {exc}"}, 500
 
     changed_field_names = sorted(diff.keys())
-    actor = request.headers.get("X-Actor", "anonymous")
+
+    # Record the intent (strategy name) alongside the actor on the audit row so
+    # the change is grep-able — the policy_changes schema has no separate reason
+    # column, so the strategy is carried in the actor field, mirroring the
+    # `manual:<actor>:` convention the manual-actions slice uses.
+    audit_actor = (
+        f"{audit_reason_prefix}{actor}" if audit_reason_prefix else actor
+    )
 
     # Audit write — best-effort, never rolls back the publish below.
     try:
         db_conn = psycopg2.connect(TIMESCALEDB_URL, connect_timeout=5)
         try:
-            _write_audit_rows(db_conn, diff, new_version, actor)
+            _write_audit_rows(db_conn, diff, new_version, audit_actor)
         finally:
             db_conn.close()
     except Exception:
@@ -456,13 +493,74 @@ def update_policy():
     except Exception:
         log.exception("redis connection failed; smartload.policy publish skipped")
 
-    return jsonify({
+    return {
         "status": "updated",
         "policy": merged,
         "changed_fields": changed_field_names,
         "policy_version": new_version,
         "event_id": event_id,
-    }), 200
+    }, 200
+
+
+@app.route("/api/v1/policy", methods=["POST"])
+def update_policy():
+    """Update one or more policy fields atomically. See `_apply_policy`."""
+    raw = request.get_json(force=True, silent=True)
+    if raw is None:
+        return jsonify({"error": "request body must be valid JSON"}), 400
+    if not isinstance(raw, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+
+    actor = request.headers.get("X-Actor", "anonymous")
+    body, status = _apply_policy(raw, actor)
+    return jsonify(body), status
+
+
+@app.route("/api/v1/policy/strategy", methods=["POST"])
+def post_strategy():
+    """Apply a named load-balancing strategy (#150).
+
+    Accepts {"name": "<strategy>", "actor": "..."} and translates the name to
+    its policy primitives (operating_mode + safe_mode ONLY), then applies them
+    through the SAME internal path as POST /api/v1/policy (same audit + envelope
+    flow). The recommended RL_MODE for the chosen strategy is surfaced in the
+    response (`recommended_rl_mode`) but is NEVER set as a policy field — it is a
+    deploy-time env-var pin.
+
+    Unknown names are rejected with HTTP 400 listing the allowed strategies.
+
+    Actor precedence: X-Actor header, then body "actor", then "anonymous" — so
+    the SDK (body) and curl (header) callers both work, and the header wins for
+    consistency with POST /api/v1/policy.
+    """
+    raw = request.get_json(force=True, silent=True)
+    if raw is None:
+        return jsonify({"error": "request body must be valid JSON"}), 400
+    if not isinstance(raw, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+
+    name = raw.get("name")
+    try:
+        policy_updates = name_to_policy(name)
+    except StrategyError as exc:
+        return jsonify({
+            "error": str(exc),
+            "field": "name",
+            "allowed_strategies": list(exc.allowed or ALLOWED_STRATEGIES),
+        }), 400
+
+    rl_mode = recommended_rl_mode(name)
+    actor = request.headers.get("X-Actor") or raw.get("actor") or "anonymous"
+
+    body, status = _apply_policy(
+        policy_updates, actor, audit_reason_prefix=f"strategy:{name}:",
+    )
+    if status == 200:
+        # Echo the chosen strategy + the recommended (never-applied) RL_MODE so
+        # the operator knows what deploy-time pin matches this strategy.
+        body["strategy"] = name
+        body["recommended_rl_mode"] = rl_mode
+    return jsonify(body), status
 
 
 @app.route("/")
