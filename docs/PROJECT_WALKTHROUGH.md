@@ -1379,7 +1379,7 @@ Same shape across services; only the query name, output dataclass, and channel d
 
 ### Engine-state HTTP surface (per service, #121 session 1)
 
-On top of the cycle above, each AI service now exposes `GET /api/v1/engine/state` for the operator UI's Live Engines page (§5.3 / §5.4). The endpoint returns a uniform JSON shape that the BFF and React consume identically across the three services. To make that work, `_inference_cycle` was extended to record per-cycle telemetry under the same `_state_lock` that already guards engine state:
+On top of the cycle above, each AI service now exposes `GET /api/v1/engine/state` for the operator UI's engine-facing views (Pulse, Foresight, Verdicts, Helmsman — §5.3 / §5.4). The endpoint returns a uniform JSON shape that the BFF and React consume identically across the three services. To make that work, `_inference_cycle` was extended to record per-cycle telemetry under the same `_state_lock` that already guards engine state:
 
 ```python
 # Module-level globals (additions for #121):
@@ -2657,7 +2657,7 @@ The README spells out the dependency chain: depends on #129 (multi-tenancy), #13
 #### What it is
 
 A Flask "backend-for-frontend" that:
-- aggregates `/health` from every service for the Home page,
+- aggregates `/health` from every service for the System and Flightdeck views,
 - proxies `/api/ui/policy` + `/api/ui/audit/policy` to policy-manager (slice #1),
 - proxies `/api/ui/audit/scaling` to autoscaler (slice #2),
 - proxies `/api/ui/scale` to autoscaler and `/api/ui/isolate` to anomaly-detector (slice #3),
@@ -2665,7 +2665,15 @@ A Flask "backend-for-frontend" that:
 - proxies the telemetry dashboard endpoints: `/api/ui/metrics/resources` (per-container CPU/memory, v1.0.7bb) and `/api/ui/metrics/backends` (per-backend p95/req-min/error + a load-balancer aggregate, v1.0.7bc),
 - **structured active alerts (v1.0.7bc)** — `GET /api/ui/alerts?window=N` reads the anomaly ring buffer and returns one row per backend (newest wins) carrying `severity` + the `metric`/`observed_value`/`threshold` evidence the anomaly engines now attach + a human `summary` (`_alert_summary()`); `/api/ui/audit/counts` also returns `actors_unique` (distinct actors across both audit streams); both degrade to an empty body rather than error the page,
 - serves Swagger UI at `/api/docs` against the canonical OpenAPI spec, and the AsyncAPI viewer at `/api/asyncapi-docs` against `docs/asyncapi/smartload-v1.yaml` (the async/event contract — Redis channels + the SSE stream),
-- serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/policy`, `/audit`, `/actions`, `/engines` 404 on hard refresh).
+- serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/pulse`, `/verdicts`, `/controls`, `/ledger` 404 on hard refresh).
+
+**Additive `/api/ui/*` endpoints (v1.0.7br, this work unit; follows v1.0.7bq #173).** The reworked operator UI (§5.4) reads through five further read-only endpoints. Each one degrades to a clean, typed shape on upstream failure rather than 5xx-ing the page, so a panel that loses its source falls back quietly instead of breaking the surface:
+
+- `GET /api/ui/metrics/trends` — one series per KPI plus a delta versus the prior window, so the UI's KPI rail can render sparklines and movement without any client-side synthesis.
+- `GET /api/ui/metrics/forecast-summary` — aligned actual + forecast points with a confidence band and a scale-ahead marker, consumed directly by the Flightdeck hero chart (the client does no linear extrapolation of its own).
+- `GET /api/ui/engines/rl/mode` — the current routing mode, the recommended mode, and the deploy-time / policy-gate context around it. The RL mode is the deploy-time `RL_MODE` pin, not a policy field, so the endpoint describes promotion readiness rather than offering a live promotion control.
+- `GET /api/ui/audit/isolation` — the real isolation / exclusion events, so the Ledger renders genuine isolation rows rather than inferred ones.
+- `GET /api/ui/system/topology` — every service plus the data-flow edges between them, the source for the System view's whole-system map.
 
 #### Files
 
@@ -2845,7 +2853,7 @@ Standard SPA fallback: a real file path returns the file, anything else returns 
 
 #### Live Engines — `bff/engines.py` (#121 session 1)
 
-The Live Engines page needs sub-second updates as envelopes land on the control bus. Polling is too coarse; the SOT §28 callout names SSE as the transport. All the moving parts live in `bff/engines.py`, which keeps `app.py` lean — it just wires two routes plus a lazy thread-start.
+The live engine-facing views need sub-second updates as envelopes land on the control bus. Polling is too coarse; the SOT §28 callout names SSE as the transport. All the moving parts live in `bff/engines.py`, which keeps `app.py` lean — it just wires two routes plus a lazy thread-start.
 
 **Module shape:**
 
@@ -3049,7 +3057,26 @@ Replay first so a freshly-opened page isn't blank. Then block on `q.get(timeout=
 
 #### What it is
 
-A React 18 SPA built with Vite + TypeScript. Six pages shipped: Home (service health, slice #1), Policy (read + diff preview + commit + audit, slice #1), Audit (unified view over both audit streams with kind / actor / action / limit filters, slice #2), Actions (manual scale + isolate forms with confirmation modals, slice #3), Live Engines (per-engine tiles + colour-coded SSE event feed, #121 session 1), and the per-engine deep-dive page at `/engines/<service>` (#121 OUI.3 close-out, v1.0.7k — engine block, run-loop stats, policy snapshot, full last_output, channel-filtered activity ring, one-click Grafana + raw-state jumps).
+A React 18 SPA built with Vite + TypeScript. **Reworked into ten views over a shared design kit (v1.0.7br, this work unit; follows v1.0.7bq #173).** React Router serves the views under three nav groups:
+
+- **OVERVIEW** — Flightdeck (`/`), System (`/system`).
+- **OPERATE** — Pulse (`/pulse`), Foresight (`/foresight`), Verdicts (`/verdicts`), Traffic (`/traffic`), Capacity (`/capacity`).
+- **DECIDE** — Helmsman (`/helmsman`), Controls (`/controls`), Ledger (`/ledger`).
+
+This replaces the prior six pages (Home, Policy, Audit, Actions, LiveEngines, EngineDetail); the legacy `web/src/pages/` directory was removed. The app now lives in `web/src/views/`, a shared design kit in `web/src/ui/`, and data-mode infrastructure in `web/src/lib/datamode.tsx`.
+
+What each view is for:
+
+- **Flightdeck** — the flagship closed-loop overview: a hero forecast-versus-actual chart, a KPI rail, the backend fleet, anomaly verdicts, and the decision stream on one surface.
+- **System** — the whole-system topology of all eleven services (`load-balancer`, `lb-sidecar`, `lb-otel-shipper`, `resource-collector`, `telemetry`, `forecasting`, `anomaly-detector`, `rl-engine`, `autoscaler`, `policy-manager`, `operator-ui`) grouped into planes with the data-flow edges drawn between them; the headless OTLP shippers are shown as healthy infrastructure rather than flagged for having no UI surface.
+- **Pulse** — per-backend vitals plus per-service CPU / memory.
+- **Foresight** — the forecaster, the scale-ahead signal, and an accuracy backtest.
+- **Verdicts** — the anomaly feed with its evidence and a per-backend history drawer.
+- **Traffic** — the load-balancer and lb-sidecar distribution, weights, and exclusions.
+- **Capacity** — the autoscaler's pool-versus-target view, the scale-ahead tie-in, the scaling audit, and the heartbeat.
+- **Helmsman** — RL routing shadow evaluation, the proposed-versus-applied share, and deploy-time promotion readiness.
+- **Controls** — the policy editor, `safe_mode`, and manual scale / isolate / weights with pending / confirmed / failed feedback.
+- **Ledger** — the unified audit trail (policy + scaling + isolation) with CSV export.
 
 #### Files
 
@@ -3061,68 +3088,35 @@ services/operator-ui/web/
 ├── vite.config.ts
 └── src/
     ├── main.tsx        # React entry
-    ├── App.tsx         # Router + layout (nav: Home / Engines / Policy / Audit / Actions)
-    ├── api.ts          # Typed BFF client (policy + audit + actions + engines)
-    ├── styles.css      # Dark theme; per-channel colour vars used by LiveEngines
-    └── pages/
-        ├── Home.tsx
-        ├── Policy.tsx
-        ├── Audit.tsx
-        ├── Actions.tsx
-        ├── LiveEngines.tsx
-        └── EngineDetail.tsx   # /engines/<service> deep-dive page (v1.0.7k)
+    ├── App.tsx         # Router + layout (three nav groups: OVERVIEW / OPERATE / DECIDE)
+    ├── api.ts          # Typed BFF client (policy + audit + actions + engines + the additive /api/ui/* reads)
+    ├── lib/
+    │   └── datamode.tsx   # "robust either way" data-mode infra (useLiveOrDemo, DataModeProvider)
+    ├── ui/             # shared design kit: dual-theme tokens, layout/grid helpers, accessible primitives
+    └── views/
+        ├── Flightdeck.tsx
+        ├── System.tsx
+        ├── Pulse.tsx
+        ├── Foresight.tsx
+        ├── Verdicts.tsx
+        ├── Traffic.tsx
+        ├── Capacity.tsx
+        ├── Helmsman.tsx
+        ├── Controls.tsx
+        └── Ledger.tsx
 ```
 
-#### Live Engines page — two-pane layout (#121)
+#### Design kit — `web/src/ui/` (v1.0.7br)
 
-The page leads with **what just happened**, not with counters. Two regions side-by-side:
+A complete dual theme: `tokens.css` carries both a light and a dark palette, switched by a persisted `ThemeToggle`. Responsive grid helpers, a collapsing sidebar, and a mobile drawer keep the ten views usable from wide desktop down to phone width. Accessibility is built in rather than bolted on: `focus-visible` outlines, focus traps on the `Modal` and `Drawer` primitives, `prefers-reduced-motion` handling, and WCAG-compliant contrast in both themes.
 
-```
-┌─────────────────────────────────┬───────────────────────┐
-│  Engine tile · anomaly-detector │  Activity             │
-│  ────────────────────────────── │  [all][anomaly][...]  │
-│  Last cycle ⚠ 2 of 4 unhealthy  │  ───────────────────  │
-│  b1 degraded@0.92 · b2 …        │  19:42 anomaly        │
-│  Engine: threshold · runloop on │   b1 degraded 0.92    │
-│             [Details ▸]         │  ───────────────────  │
-├─────────────────────────────────┤  19:41 forecast       │
-│  Engine tile · forecasting      │   180 rps in 5m       │
-│  Last forecast 180 rps in 5m    │  ───────────────────  │
-│             [Details ▸]         │  ... (newest first)   │
-├─────────────────────────────────┤                       │
-│  Engine tile · rl-engine        │                       │
-│  Last recommendation shadow ·   │                       │
-│  top b3@0.71, b1@0.42, b2@0.31  │                       │
-└─────────────────────────────────┴───────────────────────┘
-```
+#### Data mode — `web/src/lib/datamode.tsx` (v1.0.7br)
 
-Engine tiles refresh every 5 s from `/api/ui/engines/snapshot`. Each tile's headline is service-specific:
-- **anomaly-detector** — non-healthy backends inline, with score; falls back to "N backend(s) · all healthy" or "no backends in window" when there's nothing to flag.
-- **forecasting** — predicted RPS + horizon + CI band.
-- **rl-engine** — mode + top-3 rankings sorted by score.
+The UI is "robust either way": it shows representative data immediately and upgrades to live as soon as a source answers. `useLiveOrDemo(loader, demo, { panelId })` renders the demonstration data first, then swaps in live data when the loader resolves. A `DataModeProvider` aggregates every panel's source into a single calm Demonstration↔Live badge for the whole surface, so the page does not flicker between states per panel. A per-panel `ErrorState` shows only on a genuine partial outage, where a `degraded` flag means the request errored while some other panel is live, rather than on the expected demonstration fallback.
 
-Status (ok/warn/bad) drives a left-border colour: unreachable → bad, runloop disabled or engine-not-ready → warn, otherwise ok. Footer chips surface the things an operator must see immediately — `safe_mode` (red), `fallback ← <name>` (warn), `not ready` (warn). Everything else — full counters, ISO timestamps, raw `policy_snapshot`, raw `last_output` — moves behind a `Details ▸` button that opens a right-slide drawer.
+The typed client `_fetchJson` treats a non-JSON 2xx response (for example an SPA `index.html` fallback served when no BFF is mounted) as a failure, so a panel falls back to representative data instead of trying to render a non-conforming object.
 
-The **activity feed** (right column) subscribes via `EventSource(ENGINES_STREAM_URL)`. One entry per envelope, colour-coded by a 3 px left border (anomaly red, forecast blue, routing purple, scale green). Channel filter chips at the top of the panel; client-side cap at `FEED_MAX = 200` so the DOM stays bounded under sustained traffic. Stream-state indicator in the page header (`● live` / `○ connecting…` / `✕ stream error`).
-
-The page deliberately surfaces nothing through tables — the first cut packed every counter into a 6-row table per card and felt like a dashboard from 2010. The redesign (commit `eb8e314`) puts headline content first and pushes forensics to detail-on-demand.
-
-#### Per-engine deep-dive page — `/engines/<service>` (v1.0.7k, #121 OUI.3 close-out)
-
-`EngineDetail.tsx` is the full surface for one engine. The right-slide drawer on `/engines` stays as the quick preview; the new page is what operators reach for when they need the complete state of `anomaly-detector`, `forecasting`, or `rl-engine` in one place. Reached by clicking the engine name in any tile on `/engines`, or directly via the SPA fallback at `/engines/<service>`.
-
-Header carries the engine name + a colour-coded status badge (healthy / degraded / unreachable), the primary publish channel, the loaded engine / policy with fallback inline (e.g. `(fallback from arima)` in warn yellow), and two one-click jumps: the matching Grafana dashboard (`/grafana/d/smartload-anomaly`, `…/smartload-forecast`, `…/smartload-rl-routing`) and the raw `/api/v1/engine/state` on the service port. A small spinner in the meta row indicates an in-flight snapshot fetch.
-
-Four content cards sit in a two-column grid (collapses to one column under 900 px):
-
-- **Run-loop stats** — `ticks_total`, `publishes_total`, `last_tick_at` with age in seconds, `last_publish_at`, the `runloop_enabled` flag (rendered in warn yellow when off), and the `rl_mode_env` pin for the RL engine.
-- **Policy snapshot** — pretty-printed JSON of `body.policy_snapshot`.
-- **Last cycle output** — pretty-printed JSON of `body.last_output`, full-width.
-- **Activity on `<channel>`** — last 80 events on the engine's primary publish channel drawn from the BFF snapshot's `channels[…]` ring (anomaly → `smartload.anomaly`, forecasting → `smartload.forecast`, rl-engine → `smartload.routing`). One row per envelope: timestamp · source · `JSON.stringify(payload)` clipped to one line, full payload visible by widening the column. No separate SSE connection on the page — the BFF already buckets events per channel into the snapshot, so the same 5 s `getEnginesSnapshot()` poll cadence that drives the cards also keeps this ring fresh, and the page stays predictable to reason about.
-
-The page handles unknown slugs gracefully: if the URL points at something other than the three configured engines, it renders a brief "unknown engine" message and bounces to `/engines` after 1.2 s.
-
-**Embedded Grafana panels (v1.0.7l, #131 Phase 3).** Below the activity feed the deep-dive page renders a "Live charts" card with two `/d-solo/<dashUid>/<dashSlug>?panelId=<id>&theme=dark&from=now-30m&to=now&refresh=10s` iframes per engine (anomaly → panels 1 + 4 of `smartload-anomaly`; forecasting → 1 + 3 of `smartload-forecast`; rl → 1 + 2 of `smartload-rl-routing`). Two prerequisites land in the Grafana service in `docker-compose.yml`: `GF_SECURITY_ALLOW_EMBEDDING=true` (drops the default `X-Frame-Options: deny` that otherwise blocks any iframe) and `GF_AUTH_ANONYMOUS_ENABLED=true` with `GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer` (read-only, no login prompt — matches the live-engines manifest's "single-tenant + assumed-trusted" Phase 1 posture; real auth lands with #125). The iframe `src` points at `http://localhost:3000` directly for the dev compose stack; a same-origin `/grafana/*` reverse proxy in the BFF is the production path (cleaner cookie story when auth arrives, survives TLS termination at NGINX) and is tracked as a #131 follow-up. URL construction is centralised in `dashUrl()` / `soloPanelUrl()` helpers so the eventual proxy swap only changes a single constant.
+The result is an honest surface: KPI deltas, sparklines, and confidence come from `metrics/trends`; the flagship forecast comes from `metrics/forecast-summary` with no client-side linear synthesis; the Helmsman RL promotion reflects deploy-time readiness rather than a dead control; and the Ledger's isolation rows come from `audit/isolation`.
 
 #### `package.json`
 
@@ -3135,7 +3129,7 @@ The page handles unknown slugs gracefully: if the URL points at something other 
 }
 ```
 
-Four runtime deps. `react-diff-viewer-continued` powers the Policy page's side-by-side diff — the only specialty dep, justified by the central use case of "preview before commit".
+Four runtime deps. `react-diff-viewer-continued` powers the Controls view's policy-editor side-by-side diff — the only specialty dep, justified by the central use case of "preview before commit".
 
 #### `vite.config.ts` — dev-mode proxy
 
@@ -3173,30 +3167,42 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 #### `App.tsx` — layout + routing
 
 ```tsx
+const NAV = [
+  { group: "OVERVIEW", items: [["/", "Flightdeck"], ["/system", "System"]] },
+  { group: "OPERATE",  items: [["/pulse", "Pulse"], ["/foresight", "Foresight"],
+                               ["/verdicts", "Verdicts"], ["/traffic", "Traffic"],
+                               ["/capacity", "Capacity"]] },
+  { group: "DECIDE",   items: [["/helmsman", "Helmsman"], ["/controls", "Controls"],
+                               ["/ledger", "Ledger"]] },
+];
+
 export default function App() {
   return (
-    <div className="layout">
-      <aside className="sidebar">
-        <h1>SmartLoad</h1>
-        <div className="tagline">Operator UI</div>
-        <nav className="nav">
-          <NavLink to="/" end>Home</NavLink>
-          <NavLink to="/policy">Policy</NavLink>
-          <a href="/api/docs" target="_blank" rel="noreferrer">API docs</a>
-        </nav>
-      </aside>
-      <main className="content">
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/policy" element={<PolicyPage />} />
-        </Routes>
-      </main>
-    </div>
+    <DataModeProvider>
+      <div className="layout">
+        <Sidebar nav={NAV} />          {/* collapsing sidebar + mobile drawer */}
+        <main className="content">
+          <Topbar>{/* DataMode badge + ThemeToggle + API docs link */}</Topbar>
+          <Routes>
+            <Route path="/"         element={<Flightdeck />} />
+            <Route path="/system"   element={<System />} />
+            <Route path="/pulse"    element={<Pulse />} />
+            <Route path="/foresight" element={<Foresight />} />
+            <Route path="/verdicts" element={<Verdicts />} />
+            <Route path="/traffic"  element={<Traffic />} />
+            <Route path="/capacity" element={<Capacity />} />
+            <Route path="/helmsman" element={<Helmsman />} />
+            <Route path="/controls" element={<Controls />} />
+            <Route path="/ledger"   element={<Ledger />} />
+          </Routes>
+        </main>
+      </div>
+    </DataModeProvider>
   );
 }
 ```
 
-A two-column layout: sidebar nav, main content. `NavLink` from react-router applies an `active` class automatically on the matching route. The API docs link opens in a new tab — Swagger UI is meant to be referenced alongside the operator's work, not embedded.
+The layout is a collapsing sidebar (with a mobile drawer) plus a main content column. The nav is the three groups from the design kit; `NavLink` applies an `active` class on the matching route. The top bar carries the single Demonstration↔Live data-mode badge, the persisted `ThemeToggle`, and an API docs link that opens Swagger UI in a new tab rather than embedding it. The whole tree is wrapped in `DataModeProvider` so each view's panels report their source into one aggregated badge.
 
 #### `api.ts` — typed BFF client
 
@@ -3247,24 +3253,35 @@ async function _fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 }
 ```
 
-One shared fetch wrapper. Always sets `Content-Type: application/json`. Always parses the body as text first, then JSON — so even non-JSON error responses come out cleanly. On error, the thrown `Error` carries `.status` and `.field` so callers can render field-level validation hints.
+One shared fetch wrapper. Always sets `Content-Type: application/json`. Always parses the body as text first, then JSON — so even non-JSON error responses come out cleanly. On error, the thrown `Error` carries `.status` and `.field` so callers can render field-level validation hints. As of v1.0.7br it also treats a non-JSON 2xx response (for example an SPA `index.html` fallback served when no BFF is mounted) as a failure, so a panel reading through it falls back to representative data instead of rendering a non-conforming object.
 
 ```ts
 export const api = {
-  health: () => _fetchJson<HealthSummary>("/api/ui/health"),
-  getPolicy: () => _fetchJson<Policy>("/api/ui/policy"),
-  setPolicy: (patch, actor?) => _fetchJson<PolicyUpdateResponse>("/api/ui/policy", {
+  // health + policy + audit + actions (unchanged from earlier slices)
+  health:     () => _fetchJson<HealthSummary>("/api/ui/health"),
+  getPolicy:  () => _fetchJson<Policy>("/api/ui/policy"),
+  setPolicy:  (patch, actor?) => _fetchJson<PolicyUpdateResponse>("/api/ui/policy", {
     method: "POST",
     headers: actor ? { "X-Actor": actor } : undefined,
     body: JSON.stringify(patch),
   }),
-  auditPolicy: (limit = 50) => _fetchJson<AuditRow[]>(`/api/ui/audit/policy?limit=${limit}`),
+  auditPolicy:   (limit = 50) => _fetchJson<AuditRow[]>(`/api/ui/audit/policy?limit=${limit}`),
+  // additive reads behind the reworked views (v1.0.7br)
+  trends:          () => _fetchJson<KpiTrends>("/api/ui/metrics/trends"),
+  forecastSummary: () => _fetchJson<ForecastSummary>("/api/ui/metrics/forecast-summary"),
+  rlMode:          () => _fetchJson<RlMode>("/api/ui/engines/rl/mode"),
+  auditIsolation:  (limit = 50) => _fetchJson<AuditRow[]>(`/api/ui/audit/isolation?limit=${limit}`),
+  topology:        () => _fetchJson<SystemTopology>("/api/ui/system/topology"),
 };
 ```
 
-Four methods, four endpoints. The shape is intentionally close to the Python SDK so a reader of one understands the other.
+The shape is intentionally close to the Python SDK so a reader of one understands the other. The additive reads (v1.0.7br) back the new views' panels, each wired through `useLiveOrDemo` so the view shows representative data first and upgrades to whichever of these endpoints answers.
 
-#### `pages/Home.tsx` — health grid
+#### `views/` — health polling and the policy editor
+
+The reworked views (v1.0.7br) keep the same data-handling shapes the earlier pages used; the patterns below moved into the new views rather than being rewritten. Service health drives the System view's per-service status and the Flightdeck KPI rail through the same poll-and-cancel loop, and the policy editor in Controls keeps the read-diff-commit chain intact.
+
+**Health polling** (now feeding System / Flightdeck):
 
 ```tsx
 const POLL_MS = 10_000;
@@ -3297,11 +3314,9 @@ function classFor(svc: ServiceHealth): string {
 
 Three classes drive the pill colour. Anything that isn't `ok` or `degraded` is treated as `bad` (e.g. `unreachable`).
 
-The render itself is a flat grid: one pill per service, each showing status, status code, redis/timescaledb booleans, and any error string.
+The render is a status pill per service, each showing status, status code, redis/timescaledb booleans, and any error string; the System view lays these out across the service planes and the Flightdeck rolls them into its fleet summary.
 
-#### `pages/Policy.tsx` — read + diff + commit + audit
-
-This is the most substantial page. Four cards: current policy, editor, diff preview, recent audit.
+**The policy editor** (now the core of the Controls view) — read + diff + commit + audit. This is the most substantial panel: current policy, editor, diff preview, recent audit, alongside `safe_mode` and the manual scale / isolate / weights controls.
 
 ```tsx
 const [current, setCurrent] = useState<Policy | null>(null);
@@ -3370,9 +3385,9 @@ Three things to notice:
 />
 ```
 
-Side-by-side diff (`splitView`) between the current policy and the draft. **This is the killer feature** of the Policy page — operators see exactly what they're about to commit before they hit the button.
+Side-by-side diff (`splitView`) between the current policy and the draft, themed to match the active light or dark theme rather than pinned dark. **This is the killer feature** of the Controls policy editor — operators see exactly what they're about to commit before they hit the button.
 
-The audit table is a plain `<table>` rendering the last 20 rows with old/new values as `<code>JSON.stringify(...)</code>` so structured values render as their literal JSON form.
+The audit table renders the recent rows with old/new values as `<code>JSON.stringify(...)</code>` so structured values render as their literal JSON form; the full unified audit trail (policy + scaling + isolation, with CSV export) lives in the Ledger view.
 
 ### 5.5 `tools/demo-ui/` — developer Dev Console
 
@@ -3473,7 +3488,7 @@ Plots are fetched directly as `<img src="/api/ui/demo/benchmark/<suite>/runs/<ts
 | | Operator UI (`:8090`) | Demo UI (`:8091`) |
 |---|---|---|
 | **Audience** | Operators running SmartLoad in production | Stakeholders, reviewers, developers showing the system |
-| **Pages** | Home · Policy · Audit · Actions · Live Engines · EngineDetail | Dashboard · Benchmarks · Run · Controls · Live Feed |
+| **Pages** | Flightdeck · System · Pulse · Foresight · Verdicts · Traffic · Capacity · Helmsman · Controls · Ledger | Dashboard · Benchmarks · Run · Controls · Live Feed |
 | **Action shape** | Policy diff preview + confirmation modals; audit trail mandatory | One-click load profiles / chaos / scenario buttons; no audit on demo actions |
 | **Where it lives** | `services/operator-ui/` (production) | `tools/demo-ui/` (development) |
 | **Deployment** | Ships with the Helm chart | Compose-only |

@@ -1,16 +1,18 @@
 // ============================================================================
 // Pulse -- per-backend vitals + resource utilisation
 // ----------------------------------------------------------------------------
-// The fleet's vital signs, node by node: p95 latency with a live trend, request
+// The fleet's vital signs, node by node: p95 latency against its SLO, request
 // throughput, error rate, a health-score bar, and a status pill, with the
 // excluded / unhealthy node called out on its evidence. Below, a resource panel
 // rolls per-container CPU and memory up by service. Cluster roll-up KPIs sit at
-// the top. Every panel tries the live API and falls back to sample data on
-// error or timeout, so the page renders complete with no backend running, and
-// the shell sample/live indicator reflects which path each panel took.
+// the top, sourced from the real KPI-trends feed (recent series + measured
+// window-over-window deltas). Every panel resolves through useLiveOrDemo: it
+// shows representative data immediately and upgrades to live when a backend is
+// reachable, registering its source with the shell's global Demonstration/Live
+// badge so the indicator reflects which path each panel took.
 // ============================================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -25,40 +27,40 @@ import {
   api,
   formatBytes,
   resourcesByService,
-  type BackendMetrics,
   type BackendStat,
-  type ResourcesResponse,
   type ServiceResource,
+  type TrendKpi,
 } from "../api";
 import {
   Badge,
   Card,
   DataTable,
+  EmptyState,
+  ErrorState,
   EvidenceLine,
   KpiStat,
-  Sparkline,
+  LoadState,
   StatusPill,
+  useLiveOrDemo,
   type Column,
   type Status,
 } from "../ui";
-import { loadWithFallback, type DataSource } from "./loader";
 import { useShell } from "./shell-context";
 import {
   PULSE_EXCLUSION_P95_MS,
   PULSE_SAMPLE_BACKENDS,
   PULSE_SAMPLE_RESOURCES,
+  PULSE_SAMPLE_TRENDS,
   PULSE_SLO_P95_MS,
-  PULSE_SPARK_LATENCY,
 } from "./_samplePulse";
-
-const REFRESH_MS = 20_000;
 
 const fmtInt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
 // ── derived per-backend vital row ────────────────────────────────────────────
 // A BackendStat enriched with a verdict the view can style: a health score
-// (0..1), an ok/warn/crit status, an excluded flag, the evidence behind a
-// breach, and a short latency trend for the row sparkline.
+// (0..1), an ok/warn/crit status, an excluded flag, and the evidence behind a
+// breach. There is no per-row latency series in the metrics feed, so the row
+// reads its current p95 against the SLO rather than fabricating a trend.
 
 interface VitalRow {
   instance: string;
@@ -70,7 +72,6 @@ interface VitalRow {
   status: Status;
   excluded: boolean;
   evidence?: { metric: string; observed: string; threshold: string };
-  spark: number[];
 }
 
 // Synthesize a verdict from the raw measurements. A p95 over the exclusion
@@ -98,8 +99,6 @@ function toVitalRow(b: BackendStat, sloP95: number, exclusionP95: number): Vital
     evidence = { metric: "error_rate_pct", observed: `${err.toFixed(2)} %`, threshold: "0.50 %" };
   }
 
-  const spark = PULSE_SPARK_LATENCY[b.instance] ?? (b.p95_ms != null ? [p95, p95] : [0, 0]);
-
   return {
     instance: b.instance,
     p95_ms: b.p95_ms,
@@ -110,7 +109,6 @@ function toVitalRow(b: BackendStat, sloP95: number, exclusionP95: number): Vital
     status,
     excluded,
     evidence,
-    spark,
   };
 }
 
@@ -131,45 +129,39 @@ function statusWord(row: VitalRow): string {
   return "HEALTHY";
 }
 
+// Map a delta_pct to a KpiStat delta direction. Treat a near-zero change as flat
+// so the rail doesn't read as alarmingly volatile on tiny movements.
+function deltaDir(deltaPct: number | null): "up" | "down" | "flat" {
+  if (deltaPct == null || Math.abs(deltaPct) < 0.05) return "flat";
+  return deltaPct > 0 ? "up" : "down";
+}
+
+function fmtDelta(deltaPct: number | null): string | undefined {
+  if (deltaPct == null) return undefined;
+  const r = Number(deltaPct.toFixed(1));
+  return `${r >= 0 ? "+" : ""}${r}%`;
+}
+
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function Pulse() {
-  const { setDataSource, setPlane, setPlaneNodes } = useShell();
+  const { setPlane, setPlaneNodes } = useShell();
 
-  const [backends, setBackends] = useState<BackendMetrics>(PULSE_SAMPLE_BACKENDS);
-  const [resources, setResources] = useState<ResourcesResponse>(PULSE_SAMPLE_RESOURCES);
-  const [backendsLive, setBackendsLive] = useState(false);
+  // Each panel resolves live-or-demo independently and registers its source
+  // with the global Demonstration/Live badge through a unique panelId.
+  const backendsQ = useLiveOrDemo(() => api.getBackendMetrics(), PULSE_SAMPLE_BACKENDS, {
+    panelId: "pulse-backends",
+  });
+  const resourcesQ = useLiveOrDemo(() => api.getResources(), PULSE_SAMPLE_RESOURCES, {
+    panelId: "pulse-resources",
+  });
+  const trendsQ = useLiveOrDemo(() => api.getTrends(), PULSE_SAMPLE_TRENDS, {
+    panelId: "pulse-trends",
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function tick() {
-      const [bkR, resR] = await Promise.all([
-        loadWithFallback(() => api.getBackendMetrics(), PULSE_SAMPLE_BACKENDS),
-        loadWithFallback(() => api.getResources(), PULSE_SAMPLE_RESOURCES),
-      ]);
-
-      if (cancelled) return;
-
-      setBackends(bkR.value);
-      setResources(resR.value);
-      setBackendsLive(bkR.source === "live");
-
-      const sources: DataSource[] = [bkR.source, resR.source];
-      const anySample = sources.some((s) => s === "sample");
-      const allSample = sources.every((s) => s === "sample");
-      setDataSource(anySample ? "sample" : "live");
-      setPlane(allSample ? "bad" : anySample ? "warn" : "ok");
-      setPlaneNodes(bkR.value.backends.length);
-    }
-
-    tick();
-    const id = window.setInterval(tick, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [setDataSource, setPlane, setPlaneNodes]);
+  const backends = backendsQ.value;
+  const resources = resourcesQ.value;
+  const trends = trendsQ.value;
 
   // ── derived vitals + roll-up ───────────────────────────────────────────────
 
@@ -182,33 +174,30 @@ export default function Pulse() {
   const totalCount = rows.length;
   const excludedRows = rows.filter((r) => r.excluded);
   const healthyCount = rows.filter((r) => r.status === "ok").length;
-  const inRotation = rows.filter((r) => !r.excluded);
-
-  const totalRpm = inRotation.reduce((sum, r) => sum + r.rpm, 0);
-  // Worst p95 across the nodes still in rotation -- the SLO-relevant signal.
-  const worstP95 = inRotation.reduce((m, r) => Math.max(m, r.p95_ms ?? 0), 0);
-  // Request-weighted cluster error rate across the routed pool.
-  const weightedErr =
-    backends.aggregate?.error_rate_pct ??
-    (totalRpm > 0
-      ? inRotation.reduce((s, r) => s + r.error_rate_pct * r.rpm, 0) / totalRpm
-      : 0);
 
   const services = useMemo(() => {
     const byService = resourcesByService(resources);
     return Object.entries(byService).sort((a, b) => (b[1].cpu_percent ?? 0) - (a[1].cpu_percent ?? 0));
   }, [resources]);
 
+  // Publish plane health to the shell footer. The console is built to present
+  // cleanly on representative data, so demonstration never reads as degraded:
+  // plane health stays healthy and only the count tracks the routed pool.
+  useEffect(() => {
+    setPlane("ok");
+    setPlaneNodes(totalCount);
+  }, [setPlane, setPlaneNodes, totalCount]);
+
+  const backendsLive = backendsQ.source === "live";
+
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+    <div className="sl-stack">
       <Header backendsLive={backendsLive} excludedCount={excludedRows.length} />
 
       <KpiRail
-        totalRpm={totalRpm}
-        worstP95={worstP95}
-        errorRate={weightedErr}
+        trends={trends}
         healthyCount={healthyCount}
         totalCount={totalCount}
         excludedCount={excludedRows.length}
@@ -218,21 +207,31 @@ export default function Pulse() {
 
       <SectionHead
         title="Per-backend vitals"
-        sub={`${totalCount} nodes. Each row is a live vital reading -- p95 with its trend, throughput, error rate, and a health verdict. ${
+        sub={`${totalCount} nodes. Each row is a live vital reading -- p95 against its SLO, throughput, error rate, and a health verdict. ${
           excludedRows.length > 0
             ? "An excluded node is held out of rotation; its traffic redistributes automatically."
             : "All nodes are in rotation."
         }`}
       />
 
-      <VitalsTable rows={rows} />
+      <VitalsTable
+        rows={rows}
+        state={backendsQ.state}
+        degraded={backendsQ.degraded}
+        onRetry={backendsQ.reload}
+      />
 
       <SectionHead
         title="Resource utilisation"
-        sub="Per-service CPU and memory across the running containers. The test-backend fleet is summed across its replicas; everything else is a single container."
+        sub="Per-service CPU and memory across the running containers. The backend fleet is summed across its replicas; everything else is a single container."
       />
 
-      <ResourcePanel services={services} />
+      <ResourcePanel
+        services={services}
+        state={resourcesQ.state}
+        degraded={resourcesQ.degraded}
+        onRetry={resourcesQ.reload}
+      />
     </div>
   );
 }
@@ -295,7 +294,7 @@ function Header({ backendsLive, excludedCount }: { backendsLive: boolean; exclud
 
       <div style={{ position: "absolute", top: 22, right: 26 }}>
         <Badge tone={backendsLive ? "mint" : "neutral"}>
-          {backendsLive ? "LIVE" : "SAMPLE DATA"}
+          {backendsLive ? "LIVE" : "DEMONSTRATION"}
         </Badge>
       </div>
     </section>
@@ -303,53 +302,63 @@ function Header({ backendsLive, excludedCount }: { backendsLive: boolean; exclud
 }
 
 // ── KPI rail ─────────────────────────────────────────────────────────────────
+// Sourced from the KPI-trends feed: each tile draws the feed's recent series for
+// its sparkline and its measured window-over-window delta, so nothing here is a
+// fabricated constant. The healthy-backends tile pairs the trend's count with
+// the live fleet roll-up for the rotation footnote.
 
 function KpiRail({
-  totalRpm,
-  worstP95,
-  errorRate,
+  trends,
   healthyCount,
   totalCount,
   excludedCount,
 }: {
-  totalRpm: number;
-  worstP95: number;
-  errorRate: number;
+  trends: { throughput_rpm: TrendKpi; p95_latency_ms: TrendKpi; error_rate_pct: TrendKpi; active_backends: TrendKpi };
   healthyCount: number;
   totalCount: number;
   excludedCount: number;
 }) {
-  const p95Status: Status = worstP95 > PULSE_EXCLUSION_P95_MS ? "crit" : worstP95 > PULSE_SLO_P95_MS ? "warn" : "ok";
+  const thr = trends.throughput_rpm;
+  const p95 = trends.p95_latency_ms;
+  const err = trends.error_rate_pct;
+
+  const thrK = thr.current != null ? (thr.current / 1000).toFixed(1) : "—";
+  const p95v = p95.current != null ? Math.round(p95.current).toString() : "—";
+  const errv = err.current != null ? err.current.toFixed(2) : "—";
+
+  const p95Status: Status =
+    p95.current == null ? "ok" : p95.current > PULSE_EXCLUSION_P95_MS ? "crit" : p95.current > PULSE_SLO_P95_MS ? "warn" : "ok";
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+    <div className="sl-grid-kpi">
       <KpiStat
         label={<><TrendingUp size={12} strokeWidth={2} /> Total throughput</>}
-        value={(totalRpm / 1000).toFixed(1)}
+        value={thrK}
         unit="k rpm"
-        footnote={`across ${totalCount - excludedCount} routed nodes`}
-        spark={PULSE_SPARK_LATENCY["api-01"].map((_, i) =>
-          PULSE_SPARK_LATENCY["api-01"][i] / 8 + 480 - i * 2,
-        )}
+        deltaDir={deltaDir(thr.delta_pct)}
+        delta={fmtDelta(thr.delta_pct)}
+        footnote={thr.label}
+        spark={thr.series.length > 1 ? thr.series : undefined}
         sparkTone="mint"
       />
       <KpiStat
         label={<><Gauge size={12} strokeWidth={2} /> Worst p95</>}
-        value={Math.round(worstP95).toString()}
+        value={p95v}
         unit="ms"
         deltaDir={p95Status === "ok" ? "flat" : "down"}
         delta={p95Status === "ok" ? "within SLO" : "over SLO"}
         footnote={`SLO ${PULSE_SLO_P95_MS} ms`}
-        spark={PULSE_SPARK_LATENCY["api-03"]}
+        spark={p95.series.length > 1 ? p95.series : undefined}
         sparkTone="graphite"
       />
       <KpiStat
         label={<><Activity size={12} strokeWidth={2} /> Error rate</>}
-        value={errorRate.toFixed(2)}
+        value={errv}
         unit="%"
-        deltaDir={errorRate > 0.5 ? "down" : "flat"}
-        delta={errorRate > 0.5 ? "elevated" : "nominal"}
-        footnote="request-weighted"
-        spark={PULSE_SPARK_LATENCY["api-05"].map((v) => v / 400)}
+        deltaDir={deltaDir(err.delta_pct)}
+        delta={fmtDelta(err.delta_pct)}
+        footnote={err.label}
+        spark={err.series.length > 1 ? err.series : undefined}
         sparkTone="graphite"
       />
       <KpiStat
@@ -359,7 +368,7 @@ function KpiRail({
         deltaDir={excludedCount > 0 ? "down" : "flat"}
         delta={excludedCount > 0 ? `${excludedCount} excluded` : "all healthy"}
         footnote={excludedCount > 0 ? "node isolated" : "in rotation"}
-        spark={PULSE_SPARK_LATENCY["api-06"].map((v) => v / 20)}
+        spark={trends.active_backends.series.length > 1 ? trends.active_backends.series : undefined}
         sparkTone="mint"
       />
     </div>
@@ -432,7 +441,17 @@ function SectionHead({ title, sub }: { title: string; sub: string }) {
 
 // ── per-backend vitals table ─────────────────────────────────────────────────
 
-function VitalsTable({ rows }: { rows: VitalRow[] }) {
+function VitalsTable({
+  rows,
+  state,
+  degraded,
+  onRetry,
+}: {
+  rows: VitalRow[];
+  state: "loading" | "ready" | "error";
+  degraded: boolean;
+  onRetry: () => void;
+}) {
   const columns: Column<VitalRow>[] = [
     {
       key: "backend",
@@ -461,13 +480,29 @@ function VitalsTable({ rows }: { rows: VitalRow[] }) {
       ),
     },
     {
-      key: "trend",
-      header: "Latency trend",
-      render: (r) => (
-        <div style={{ display: "flex", justifyContent: "flex-start" }}>
-          <Sparkline data={r.spark} tone={r.status === "ok" ? "graphite" : "mint"} width={96} height={24} />
-        </div>
-      ),
+      // No per-row latency series is published in the metrics feed, so the row
+      // reads its current p95 against the SLO rather than drawing a fabricated
+      // trend. Em-dash when the node has too few samples to rule.
+      key: "vsSlo",
+      header: "vs SLO",
+      numeric: true,
+      render: (r) => {
+        if (r.p95_ms == null) {
+          return <span style={{ color: "var(--sl-text-faint)" }}>—</span>;
+        }
+        const ratio = r.p95_ms / PULSE_SLO_P95_MS;
+        const color =
+          ratio > PULSE_EXCLUSION_P95_MS / PULSE_SLO_P95_MS
+            ? "var(--sl-crit)"
+            : ratio > 1
+              ? "var(--sl-warn)"
+              : "var(--sl-mint-deep)";
+        return (
+          <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 12, fontWeight: 600, color }}>
+            {ratio <= 1 ? `${Math.round((1 - ratio) * 100)}% under` : `${Math.round((ratio - 1) * 100)}% over`}
+          </span>
+        );
+      },
     },
     { key: "rpm", header: "Req / min", numeric: true, render: (r) => fmtInt(r.rpm) },
     {
@@ -520,76 +555,128 @@ function VitalsTable({ rows }: { rows: VitalRow[] }) {
 
   return (
     <Card flush>
-      <DataTable
-        columns={columns}
-        rows={rows}
-        rowKey={(r) => r.instance}
-        rowMuted={(r) => r.excluded}
-      />
+      {state === "loading" && rows.length === 0 ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={4} label="Loading per-backend vitals…" />
+        </div>
+      ) : degraded && rows.length === 0 ? (
+        <div style={{ padding: 18 }}>
+          <ErrorState
+            title="Couldn't load per-backend vitals"
+            hint="Showing a representative fleet until the metrics feed is reachable."
+            onRetry={onRetry}
+          />
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={<Boxes size={22} strokeWidth={1.8} />}
+          title="No backends in the pool"
+          hint="The routed pool is empty. Nodes will appear here as they register."
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.instance}
+          rowMuted={(r) => r.excluded}
+        />
+      )}
     </Card>
   );
 }
 
 // ── resource panel ───────────────────────────────────────────────────────────
 
-function ResourcePanel({ services }: { services: [string, ServiceResource][] }) {
+function ResourcePanel({
+  services,
+  state,
+  degraded,
+  onRetry,
+}: {
+  services: [string, ServiceResource][];
+  state: "loading" | "ready" | "error";
+  degraded: boolean;
+  onRetry: () => void;
+}) {
   return (
     <Card flush>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.4fr) repeat(2, minmax(0, 1.3fr)) auto",
-          gap: 12,
-          padding: "10px 18px",
-          borderBottom: "1px solid var(--sl-hairline)",
-          fontFamily: "var(--sl-font-mono)",
-          fontSize: 9,
-          letterSpacing: "1px",
-          textTransform: "uppercase",
-          color: "var(--sl-text-low)",
-          fontWeight: 600,
-        }}
-      >
-        <span>Service</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Cpu size={11} strokeWidth={2} /> CPU</span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><MemoryStick size={11} strokeWidth={2} /> Memory</span>
-        <span style={{ textAlign: "right" }}>Containers</span>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {services.map(([name, r], i) => (
+      {state === "loading" && services.length === 0 ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={5} label="Loading resource utilisation…" />
+        </div>
+      ) : degraded && services.length === 0 ? (
+        <div style={{ padding: 18 }}>
+          <ErrorState
+            title="Couldn't load resource utilisation"
+            hint="Showing representative CPU and memory until the resource feed is reachable."
+            onRetry={onRetry}
+          />
+        </div>
+      ) : services.length === 0 ? (
+        <EmptyState
+          icon={<Cpu size={22} strokeWidth={1.8} />}
+          title="No resource samples yet"
+          hint="Per-container CPU and memory will appear as the resource collector reports."
+        />
+      ) : (
+        <>
           <div
-            key={name}
             style={{
               display: "grid",
               gridTemplateColumns: "minmax(0, 1.4fr) repeat(2, minmax(0, 1.3fr)) auto",
               gap: 12,
-              alignItems: "center",
-              padding: "12px 18px",
-              borderBottom: i < services.length - 1 ? "1px solid var(--sl-hairline-soft)" : undefined,
+              padding: "10px 18px",
+              borderBottom: "1px solid var(--sl-hairline)",
+              fontFamily: "var(--sl-font-mono)",
+              fontSize: 9,
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              color: "var(--sl-text-low)",
+              fontWeight: 600,
             }}
           >
-            <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--sl-text)" }}>
-              {name}
-            </span>
-            <ResourceBar
-              pct={r.cpu_percent}
-              caption={r.cpu_percent != null ? `${r.cpu_percent.toFixed(0)}%` : "—"}
-            />
-            <ResourceBar
-              pct={r.memory_percent}
-              caption={
-                r.memory_used_bytes != null
-                  ? `${formatBytes(r.memory_used_bytes)}${r.memory_percent != null ? ` (${r.memory_percent.toFixed(0)}%)` : ""}`
-                  : "—"
-              }
-            />
-            <span style={{ textAlign: "right", fontFamily: "var(--sl-font-mono)", fontSize: 12, color: "var(--sl-text-mid)" }}>
-              {r.instances}
-            </span>
+            <span>Service</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Cpu size={11} strokeWidth={2} /> CPU</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><MemoryStick size={11} strokeWidth={2} /> Memory</span>
+            <span style={{ textAlign: "right" }}>Containers</span>
           </div>
-        ))}
-      </div>
+
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {services.map(([name, r], i) => (
+              <div
+                key={name}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1.4fr) repeat(2, minmax(0, 1.3fr)) auto",
+                  gap: 12,
+                  alignItems: "center",
+                  padding: "12px 18px",
+                  borderBottom: i < services.length - 1 ? "1px solid var(--sl-hairline-soft)" : undefined,
+                }}
+              >
+                <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--sl-text)" }}>
+                  {name}
+                </span>
+                <ResourceBar
+                  pct={r.cpu_percent}
+                  caption={r.cpu_percent != null ? `${r.cpu_percent.toFixed(0)}%` : "—"}
+                />
+                <ResourceBar
+                  pct={r.memory_percent}
+                  caption={
+                    r.memory_used_bytes != null
+                      ? `${formatBytes(r.memory_used_bytes)}${r.memory_percent != null ? ` (${r.memory_percent.toFixed(0)}%)` : ""}`
+                      : "—"
+                  }
+                />
+                <span style={{ textAlign: "right", fontFamily: "var(--sl-font-mono)", fontSize: 12, color: "var(--sl-text-mid)" }}>
+                  {r.instances}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </Card>
   );
 }

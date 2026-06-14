@@ -6,8 +6,10 @@
    ============================================================================ */
 
 /* theme */
-export { setTheme, getTheme, useTheme } from "./theme";
+export { setTheme, getTheme, getInitialTheme, useTheme } from "./theme";
 export type { Theme } from "./theme";
+export { ThemeToggle } from "./components/ThemeToggle";
+export type { ThemeToggleProps } from "./components/ThemeToggle";
 
 /* brand */
 export { Wordmark } from "./brand/Wordmark";
@@ -50,6 +52,34 @@ export { Toaster, useToast } from "./components/Toast";
 export type { ToastInput, ToastTone } from "./components/Toast";
 export { Tabs } from "./components/Tabs";
 export type { TabsProps, TabItem } from "./components/Tabs";
+
+/* data-mode + load/empty/error states (the "robust either way" surface) */
+export { DataModeBadge } from "./components/DataModeBadge";
+export type { DataModeBadgeProps } from "./components/DataModeBadge";
+export { LoadState } from "./components/LoadState";
+export type { LoadStateProps } from "./components/LoadState";
+export { EmptyState } from "./components/EmptyState";
+export type { EmptyStateProps } from "./components/EmptyState";
+export { ErrorState } from "./components/ErrorState";
+export type { ErrorStateProps } from "./components/ErrorState";
+
+/* data-mode infrastructure (re-exported from lib for one-stop import) */
+export {
+  DataModeProvider,
+  useDataMode,
+  useLiveOrDemo,
+} from "../lib/datamode";
+export type {
+  DataMode,
+  DataSource,
+  ConnectionState,
+  LoadStatus,
+  DataModeContextValue,
+  DataModeProviderProps,
+  LiveOrDemo,
+  UseLiveOrDemoOptions,
+} from "../lib/datamode";
+export { useFocusTrap } from "../lib/useFocusTrap";
 
 /* charts */
 export { ForecastChart } from "./charts/ForecastChart";

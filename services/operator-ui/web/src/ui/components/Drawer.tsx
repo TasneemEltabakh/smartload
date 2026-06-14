@@ -5,6 +5,7 @@
    detail). Escape and scrim click both request close.
    ============================================================================ */
 import { useEffect, type ReactNode } from "react";
+import { useFocusTrap } from "../../lib/useFocusTrap";
 
 export interface DrawerProps {
   open: boolean;
@@ -16,6 +17,8 @@ export interface DrawerProps {
 }
 
 export function Drawer({ open, onClose, title, width = 420, children }: DrawerProps) {
+  const trapRef = useFocusTrap<HTMLElement>(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -41,12 +44,13 @@ export function Drawer({ open, onClose, title, width = 420, children }: DrawerPr
         style={{
           position: "absolute",
           inset: 0,
-          background: "rgba(5, 7, 10, 0.45)",
+          background: "var(--sl-scrim)",
           opacity: open ? 1 : 0,
           transition: "opacity var(--sl-dur-mid) var(--sl-ease)",
         }}
       />
       <aside
+        ref={trapRef}
         role="dialog"
         aria-modal="true"
         style={{

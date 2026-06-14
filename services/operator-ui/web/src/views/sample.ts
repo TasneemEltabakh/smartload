@@ -13,12 +13,14 @@ import type {
   ActivityItem,
   AlertItem,
   BackendMetrics,
+  ForecastSummary,
   HealthSummary,
   OpsMetrics,
   Policy,
   RelatedMetrics,
   RoutingMetrics,
   ThroughputResponse,
+  TrendsResponse,
 } from "../api";
 
 // ── Backend pool ────────────────────────────────────────────────────────────
@@ -148,6 +150,115 @@ export const SAMPLE_SPARK = {
   slo: [99.88, 99.9, 99.91, 99.92, 99.93, 99.92, 99.93, 99.94, 99.94, 99.94],
   error: [0.41, 0.38, 0.34, 0.31, 0.29, 0.3, 0.28, 0.27, 0.27, 0.27],
   backends: [5, 5, 5, 5, 5, 6, 6, 6, 6, 5],
+};
+
+// ── KPI trends (sparklines + window-over-window deltas) ───────────────────────
+// Representative TrendsResponse for the demonstration dataset. Each KPI carries
+// the recent series the tile sparkline draws, the current reading, the delta vs
+// the prior comparable window, a human window label for the footnote, and the
+// unit. Internally consistent with the rest of the sample: ~18.4k rpm, 142 ms
+// p95, 99.94% SLO compliance, 0.27% error rate, 5 of 6 nodes in rotation. The
+// page reads healthy and intentional: throughput climbing, latency and errors
+// easing, SLO inching up, pool steady.
+export const SAMPLE_TRENDS: TrendsResponse = {
+  throughput_rpm: {
+    series: SAMPLE_SPARK.throughput.map((v) => Math.round(v * 1000)),
+    current: 18420,
+    delta_pct: 12.6,
+    label: "vs prior 60m",
+    unit: "rpm",
+  },
+  p95_latency_ms: {
+    series: SAMPLE_SPARK.p95,
+    current: 142,
+    delta_pct: -1.4,
+    label: "SLO 200 ms",
+    unit: "ms",
+  },
+  slo_compliance_pct: {
+    series: SAMPLE_SPARK.slo,
+    current: 99.94,
+    delta_pct: 0.05,
+    label: "vs prior 60m",
+    unit: "%",
+  },
+  error_rate_pct: {
+    series: SAMPLE_SPARK.error,
+    current: 0.27,
+    delta_pct: -12.9,
+    label: "vs prior 60m",
+    unit: "%",
+  },
+  active_backends: {
+    series: SAMPLE_SPARK.backends,
+    current: 5,
+    delta_pct: 0,
+    label: "1 held out of rotation",
+    unit: "count",
+  },
+  window_minutes: 60,
+  last_refreshed: new Date().toISOString(),
+  notes: [],
+};
+
+// ── Forecast summary (flagship hero chart) ────────────────────────────────────
+// Representative ForecastSummary for the demonstration dataset: an aligned
+// actual-vs-forecast series in requests/sec, a confidence band that tightens
+// near "now" and widens out to the +10m horizon, and the scale-ahead marker for
+// the forecast-driven scale-out. Values mirror the sample throughput story
+// (~18.4k rpm ≈ 307 rps now, climbing toward ~366 rps in five minutes). The
+// chart divides rps by ~51.2 to render in k-rpm, matching the sample actual
+// curve that tops out at 18.4k rpm.
+const _NOW = Date.now();
+const _stepIso = (stepsAgo: number) =>
+  new Date(_NOW - stepsAgo * 5 * 60_000).toISOString();
+const _aheadIso = (stepsAhead: number) =>
+  new Date(_NOW + stepsAhead * 5 * 60_000).toISOString();
+
+// Actual throughput (rps) over the last hour in 5-min steps, climbing from
+// ~163 rps to ~307 rps now. Mirrors SAMPLE_ACTUAL (k-rpm) at ~16.67 rps per k.
+export const SAMPLE_FORECAST_SUMMARY: ForecastSummary = {
+  actual: SAMPLE_ACTUAL.map((krpm, i) => ({
+    time: _stepIso(SAMPLE_ACTUAL.length - 1 - i),
+    rps: Math.round((krpm * 1000) / 60),
+  })),
+  // Forecast leads one step ahead: index 0 hands off from the last actual (now),
+  // then projects +5m and +10m. Band tightens near now, widens to the horizon.
+  forecast: [
+    {
+      time: _stepIso(0),
+      predicted_rps: Math.round((18.4 * 1000) / 60),
+      confidence_lower: Math.round((18.2 * 1000) / 60),
+      confidence_upper: Math.round((18.6 * 1000) / 60),
+      horizon_minutes: 0,
+    },
+    {
+      time: _aheadIso(1),
+      predicted_rps: Math.round((19.3 * 1000) / 60),
+      confidence_lower: Math.round((18.6 * 1000) / 60),
+      confidence_upper: Math.round((20.4 * 1000) / 60),
+      horizon_minutes: 5,
+    },
+    {
+      time: _aheadIso(2),
+      predicted_rps: Math.round((21.96 * 1000) / 60),
+      confidence_lower: Math.round((20.5 * 1000) / 60),
+      confidence_upper: Math.round((23.4 * 1000) / 60),
+      horizon_minutes: 10,
+    },
+  ],
+  // Scale-ahead fired on the +5m forecast step crossing the headroom threshold.
+  scale_ahead: {
+    time: _aheadIso(1),
+    action: "scale_out",
+    instance_count: 6,
+    reason: "forecast crossed +18% RPS over the 5-min horizon; pool grew ahead of the spike",
+  },
+  model_name: "forecast-aware",
+  model_version: "1.0.7",
+  horizon_minutes: 10,
+  window_seconds: 3600,
+  notes: [],
 };
 
 // ── Anomaly verdicts ─────────────────────────────────────────────────────────

@@ -11,9 +11,11 @@
 
 import type {
   ForecastHistoryResponse,
+  ForecastSummary,
   RoutingMetrics,
   ScalingAuditRow,
   ThroughputResponse,
+  TrendsResponse,
 } from "../api";
 
 // ── Throughput history (1h, 5-min steps), in rpm ─────────────────────────────
@@ -148,4 +150,114 @@ export const SAMPLE_FORESIGHT_FORECAST_HISTORY: ForecastHistoryResponse = {
   ],
   models: ["seasonal-naive"],
   window_seconds: 3600,
+};
+
+// ── Forecast summary (flagship hero chart) ────────────────────────────────────
+// Representative ForecastSummary shaped to the api.ts type, so the main chart
+// draws a real aligned actual-vs-forecast trace, a genuine confidence band, and
+// a scale-ahead decision marker on the demonstration path, exactly as it would
+// from /api/ui/metrics/forecast-summary when a backend is reachable. Actual is
+// normalised to requests/sec (the chart converts to k-rpm); the trace climbs to
+// ~307 rps now (~18.4k rpm) and the forecast leads to ~366 rps (~22k rpm) on the
+// +10-min horizon, the band tightening at the hand-off and widening with the
+// horizon. The scale-ahead marker pins the first forward step.
+const _actualRps = [
+  163, 173, 168, 187, 200, 210, 218, 213, 227, 248, 270, 285, 307,
+];
+
+export const SAMPLE_FORESIGHT_SUMMARY: ForecastSummary = {
+  actual: _actualRps.map((rps, i) => ({
+    time: new Date(
+      _now - (_actualRps.length - 1 - i) * 5 * 60_000,
+    ).toISOString(),
+    rps,
+  })),
+  forecast: [
+    // First forward step pins to the last actual so the lines hand off cleanly.
+    {
+      time: _iso(0),
+      predicted_rps: 307,
+      confidence_lower: 307,
+      confidence_upper: 307,
+      horizon_minutes: 0,
+    },
+    {
+      time: _iso(-5),
+      predicted_rps: 332,
+      confidence_lower: 315,
+      confidence_upper: 349,
+      horizon_minutes: 5,
+    },
+    {
+      time: _iso(-10),
+      predicted_rps: 366,
+      confidence_lower: 333,
+      confidence_upper: 399,
+      horizon_minutes: 10,
+    },
+  ],
+  scale_ahead: {
+    time: "14:28:41",
+    action: "scale_out",
+    instance_count: 6,
+    reason:
+      "Forecast crossed +18% RPS over the 5-min horizon; pool grew ahead of the spike.",
+  },
+  model_name: "seasonal-naive",
+  model_version: "1.4.0",
+  horizon_minutes: 10,
+  window_seconds: 3600,
+  notes: [],
+};
+
+// Representative forecast confidence (%) for the demonstration path. The view
+// derives a real confidence from the live band width; this is the demo fallback,
+// supplied so the render never carries a hardcoded literal.
+export const SAMPLE_FORESIGHT_CONFIDENCE_PCT = 92;
+
+// ── KPI trends (sparklines for the rail) ──────────────────────────────────────
+// Representative TrendsResponse so the forecaster rail draws real recent series
+// rather than fabricated arrays. Only the active-backends trail is consumed here
+// (the pool-size tile); the rest are populated for shape-completeness and mirror
+// the throughput climb the summary shows (pool stepping 4 -> 5 -> 6 ahead of the
+// spike, holding at 6 now).
+export const SAMPLE_FORESIGHT_TRENDS: TrendsResponse = {
+  throughput_rpm: {
+    series: [13_100, 12_800, 13_600, 14_900, 16_200, 17_100, 18_400],
+    current: 18_400,
+    delta_pct: 7.6,
+    label: "vs prior 5m",
+    unit: "rpm",
+  },
+  p95_latency_ms: {
+    series: [171, 168, 165, 162, 160, 158, 156],
+    current: 156,
+    delta_pct: -1.3,
+    label: "vs prior 5m",
+    unit: "ms",
+  },
+  slo_compliance_pct: {
+    series: [99.5, 99.5, 99.6, 99.6, 99.7, 99.7, 99.7],
+    current: 99.7,
+    delta_pct: 0.1,
+    label: "vs prior 5m",
+    unit: "%",
+  },
+  error_rate_pct: {
+    series: [0.55, 0.53, 0.52, 0.51, 0.5, 0.49, 0.5],
+    current: 0.5,
+    delta_pct: -0.9,
+    label: "vs prior 5m",
+    unit: "%",
+  },
+  active_backends: {
+    series: [4, 4, 5, 5, 5, 6, 6],
+    current: 6,
+    delta_pct: 20,
+    label: "scaled ahead",
+    unit: "count",
+  },
+  window_minutes: 5,
+  last_refreshed: new Date().toISOString(),
+  notes: [],
 };

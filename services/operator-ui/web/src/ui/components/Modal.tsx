@@ -5,6 +5,7 @@
    Renders nothing when closed; Escape and scrim click both request close.
    ============================================================================ */
 import { useEffect, type ReactNode } from "react";
+import { useFocusTrap } from "../../lib/useFocusTrap";
 
 export interface ModalProps {
   open: boolean;
@@ -18,6 +19,8 @@ export interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, footer, children, width = 460 }: ModalProps) {
+  const trapRef = useFocusTrap<HTMLDivElement>(open);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -37,7 +40,7 @@ export function Modal({ open, onClose, title, footer, children, width = 460 }: M
         position: "fixed",
         inset: 0,
         zIndex: 80,
-        background: "rgba(5, 7, 10, 0.5)",
+        background: "var(--sl-scrim)",
         backdropFilter: "blur(2px)",
         display: "grid",
         placeItems: "center",
@@ -45,6 +48,7 @@ export function Modal({ open, onClose, title, footer, children, width = 460 }: M
       }}
     >
       <div
+        ref={trapRef}
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}

@@ -49,10 +49,32 @@ export function DataTable<Row>({
           <tr>
             {columns.map((col) => {
               const active = sort?.key === col.key;
+              const interactive = Boolean(col.sortable && onSort);
+              const ariaSort = !col.sortable
+                ? undefined
+                : active
+                  ? sort?.dir === "asc"
+                    ? "ascending"
+                    : "descending"
+                  : "none";
               return (
                 <th
                   key={col.key}
-                  onClick={col.sortable && onSort ? () => onSort(col.key) : undefined}
+                  scope="col"
+                  role="columnheader"
+                  aria-sort={ariaSort}
+                  tabIndex={interactive ? 0 : undefined}
+                  onClick={interactive ? () => onSort?.(col.key) : undefined}
+                  onKeyDown={
+                    interactive
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onSort?.(col.key);
+                          }
+                        }
+                      : undefined
+                  }
                   style={{
                     position: "sticky",
                     top: 0,

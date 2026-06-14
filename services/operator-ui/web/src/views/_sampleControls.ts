@@ -8,7 +8,7 @@
 // renders fully with no backend running.
 // ============================================================================
 
-import type { LbState, StrategyName } from "../api";
+import type { LbState, RelatedMetrics, RlModeStatus, StrategyName } from "../api";
 import { SAMPLE_BACKENDS } from "./sample";
 
 // Load-balancer weight map mirroring the api.ts LbState shape. Weights sum to
@@ -54,6 +54,39 @@ export interface OpEntry {
   outcome: "ok" | "failed";
   source: "live" | "local";
 }
+
+// Live policy context metrics the editor leans on (the SLO numbers the plane is
+// defending right now). Mirrors api.getRelatedMetrics() so the policy panel can
+// show what the current primitives are holding against, with no backend running.
+export const SAMPLE_RELATED_METRICS: RelatedMetrics = {
+  slo_compliance_pct: 99.2,
+  p95_latency_ms: 214,
+  rps_current: 312,
+};
+
+// Read-only RL routing mode for the brief deploy-time note that links the
+// operator to Helmsman. Promotion is NOT an operator action here — the mode is a
+// deploy-time pin — so this is surfaced for context only. Mirrors the shape and
+// copy of GET /api/ui/engines/rl/mode.
+export const SAMPLE_RL_MODE: RlModeStatus = {
+  current_mode: "shadow",
+  recommended_mode: "shadow",
+  actionable: false,
+  write_path: "deploy-time",
+  runloop_enabled: true,
+  policy_gates: {
+    safe_mode: false,
+    operating_mode: "shadow",
+    strategy_name: "ai-hybrid",
+  },
+  explanation:
+    "RL routing mode is pinned at deploy time by the rl-engine RL_MODE " +
+    "environment variable and is not a runtime-writable policy field. " +
+    "Promotion to active is an operational/deploy change, not a live " +
+    "control. The effective published mode is also gated by the policy " +
+    "safe_mode and operating_mode, which are operator-writable.",
+  notes: [],
+};
 
 export const SAMPLE_OP_HISTORY: OpEntry[] = [
   {

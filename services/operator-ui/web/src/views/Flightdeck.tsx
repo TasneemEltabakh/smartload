@@ -3,18 +3,20 @@
 // ----------------------------------------------------------------------------
 // Tells the closed-loop story: forecast leading actual throughput, the KPI
 // rail, the backend fleet with evidence on the excluded node, recent anomaly
-// verdicts, and the decision stream. Every panel tries the live API and falls
-// back to sample data on error or timeout, so the page renders complete with no
-// backend running. The safe_mode kill switch is owned here and surfaced in the
-// Topbar through the shell context.
+// verdicts, and the decision stream. Every panel resolves its data through
+// useLiveOrDemo: it shows representative demonstration data immediately, then
+// upgrades in place when the live API is reachable, and reports its source to
+// the global Demonstration / Live badge. The safe_mode kill switch is owned
+// here and surfaced in the Topbar through the shell context.
 // ============================================================================
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 import {
   Activity,
   ArrowRight,
   BookOpen,
   Boxes,
+  CheckCircle2,
   Gauge,
   ShieldCheck,
   TrendingUp,
@@ -25,48 +27,47 @@ import {
   type ActivityItem,
   type AlertItem,
   type BackendMetrics,
+  type ForecastSummary,
   type OpsMetrics,
   type Policy,
   type RelatedMetrics,
   type RoutingMetrics,
-  type ThroughputResponse,
+  type TrendKpi,
+  type TrendsResponse,
 } from "../api";
 import {
   Badge,
   Button,
   Card,
   DataTable,
+  EmptyState,
+  ErrorState,
   EvidenceLine,
   ForecastChart,
   KpiStat,
+  LoadState,
   StatusPill,
   Toggle,
+  useLiveOrDemo,
   type Column,
+  type DeltaDir,
+  type LoadStatus,
   type Status,
 } from "../ui";
-import { loadWithFallback, type DataSource } from "./loader";
 import { useShell } from "./shell-context";
 import {
   SAMPLE_ACTIVITY,
-  SAMPLE_ACTUAL,
   SAMPLE_ALERTS,
   SAMPLE_BACKENDS,
   SAMPLE_BACKEND_METRICS,
-  SAMPLE_CONF_HIGH,
-  SAMPLE_CONF_LOW,
-  SAMPLE_FORECAST,
+  SAMPLE_FORECAST_SUMMARY,
   SAMPLE_OPS,
   SAMPLE_POLICY,
   SAMPLE_RELATED,
   SAMPLE_ROUTING,
-  SAMPLE_SCALE_INDEX,
-  SAMPLE_SPARK,
-  SAMPLE_THROUGHPUT,
-  SAMPLE_X_LABELS,
+  SAMPLE_TRENDS,
   type SampleBackend,
 } from "./sample";
-
-const REFRESH_MS = 20_000;
 
 // ── small formatting helpers ─────────────────────────────────────────────────
 
@@ -89,6 +90,25 @@ function activityStatus(kind: ActivityItem["severity"]): Status {
   if (kind === "warn") return "warn";
   return "ok";
 }
+
+// Direction of a KPI delta from the signed percentage. A flat reading (|Δ| < a
+// hair) reads as "flat" so tiny noise doesn't paint a colour.
+function deltaDirFromPct(pct: number | null): DeltaDir {
+  if (pct == null || Math.abs(pct) < 0.005) return "flat";
+  return pct > 0 ? "up" : "down";
+}
+
+// Format a signed percentage delta with a leading arrow, e.g. "▲ 12.6%".
+function fmtDeltaPct(pct: number | null): string {
+  if (pct == null) return "—";
+  if (Math.abs(pct) < 0.005) return "0.00%";
+  const arrow = pct > 0 ? "▲" : "▼";
+  return `${arrow} ${Math.abs(pct).toFixed(2)}%`;
+}
+
+// Convert a requests/sec reading to k-rpm for the throughput chart and hero
+// stats (rps * 60 / 1000), matching the prototype's "k rpm" axis.
+const rpsToKrpm = (rps: number) => (rps * 60) / 1000;
 
 // Merge the api BackendMetrics shape with the richer sample fields (zone,
 // health score, excluded flag, evidence). When on live data we synthesize a
@@ -156,137 +176,216 @@ const SAMPLE_BACKEND_LOOKUP: Record<string, SampleBackend> = Object.fromEntries(
   SAMPLE_BACKENDS.map((b) => [b.instance, b]),
 );
 
+// ── forecast summary -> chart data ────────────────────────────────────────────
+
+interface ChartData {
+  actual: number[];
+  forecast: number[];
+  confLow: number[];
+  confHigh: number[];
+  xLabels: string[];
+  scaleIndex?: number;
+}
+
+interface ForecastReadout {
+  chart: ChartData;
+  actualNow: number;   // k-rpm
+  forecastNext: number; // k-rpm
+  confidencePct: number | null; // derived from band width, not a literal
+  modelName: string | null;
+  scaleAction: string | null;
+  empty: boolean;
+}
+
+// Build the hero / forecast-card readout straight from a ForecastSummary: the
+// actual + forecast series (converted to k-rpm), the confidence band, the
+// scale-ahead marker index, and a confidence derived from the band's relative
+// width at the furthest horizon (a tighter band reads as higher confidence).
+function readForecast(summary: ForecastSummary): ForecastReadout {
+  const actual = summary.actual.map((p) => Number(rpsToKrpm(p.rps).toFixed(2)));
+  const forecast = summary.forecast.map((p) => Number(rpsToKrpm(p.predicted_rps).toFixed(2)));
+
+  const hasActual = actual.length > 0;
+  const hasForecast = forecast.length > 0;
+
+  // Confidence band, aligned to the forecast series. Fall back to the predicted
+  // point itself where a bound is missing so the band never collapses oddly.
+  const confLow = summary.forecast.map((p, i) =>
+    Number(rpsToKrpm(p.confidence_lower ?? p.predicted_rps).toFixed(2)) || forecast[i],
+  );
+  const confHigh = summary.forecast.map((p, i) =>
+    Number(rpsToKrpm(p.confidence_upper ?? p.predicted_rps).toFixed(2)) || forecast[i],
+  );
+
+  // X labels: minutes-before for actual (… -10, now), minutes-ahead for the
+  // forecast tail (+5, +10), so the hand-off at "now" reads cleanly.
+  const step = 5; // 5-min buckets in the demonstration + typical live cadence
+  const xLabels: string[] = [];
+  for (let i = 0; i < actual.length; i++) {
+    const minsAgo = (actual.length - 1 - i) * step;
+    xLabels.push(minsAgo === 0 ? "now" : `-${minsAgo}`);
+  }
+  // Forecast index 0 aligns with the last actual ("now"); subsequent steps lead.
+  for (let i = 1; i < forecast.length; i++) {
+    const mins = summary.forecast[i].horizon_minutes;
+    xLabels.push(mins != null && mins > 0 ? `+${mins}` : `+${i * step}`);
+  }
+
+  // Scale-ahead marker: place it on the forecast step nearest the marker time,
+  // defaulting to the first lead step (the typical "scaled ahead" position).
+  let scaleIndex: number | undefined;
+  if (summary.scale_ahead) {
+    const markerTime = summary.scale_ahead.time ? Date.parse(summary.scale_ahead.time) : NaN;
+    if (!Number.isNaN(markerTime) && hasForecast) {
+      let best = 0;
+      let bestGap = Infinity;
+      summary.forecast.forEach((p, i) => {
+        const t = p.time ? Date.parse(p.time) : NaN;
+        if (Number.isNaN(t)) return;
+        const gap = Math.abs(t - markerTime);
+        if (gap < bestGap) {
+          bestGap = gap;
+          best = i;
+        }
+      });
+      scaleIndex = best;
+    } else if (hasForecast) {
+      scaleIndex = Math.min(1, forecast.length - 1);
+    }
+  }
+
+  const actualNow = hasActual ? actual[actual.length - 1] : 0;
+  const forecastNext = hasForecast ? forecast[forecast.length - 1] : actualNow;
+
+  // Confidence from the band: relative half-width at the furthest horizon,
+  // mapped to a percentage and clamped to a believable 80–99% range. A literal
+  // is never used; an empty/absent band yields null so the tile shows "—".
+  let confidencePct: number | null = null;
+  if (hasForecast) {
+    const lastIdx = forecast.length - 1;
+    const mid = forecast[lastIdx];
+    const lo = confLow[lastIdx];
+    const hi = confHigh[lastIdx];
+    if (mid > 0 && hi >= lo && hi - lo >= 0) {
+      const relHalfWidth = (hi - lo) / 2 / mid; // 0 = perfectly tight
+      const pct = Math.round((1 - relHalfWidth) * 100);
+      confidencePct = Math.max(80, Math.min(99, pct));
+    }
+  }
+
+  return {
+    chart: { actual, forecast, confLow, confHigh, xLabels, scaleIndex },
+    actualNow,
+    forecastNext,
+    confidencePct,
+    modelName: summary.model_name,
+    scaleAction: summary.scale_ahead?.action ?? null,
+    empty: !hasActual && !hasForecast,
+  };
+}
+
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function Flightdeck() {
   const shell = useShell();
-
-  const [ops, setOps] = useState<OpsMetrics>(SAMPLE_OPS);
-  const [related, setRelated] = useState<RelatedMetrics>(SAMPLE_RELATED);
-  const [throughput, setThroughput] = useState<ThroughputResponse>(SAMPLE_THROUGHPUT);
-  const [routing, setRouting] = useState<RoutingMetrics>(SAMPLE_ROUTING);
-  const [backends, setBackends] = useState<BackendMetrics>(SAMPLE_BACKEND_METRICS);
-  const [alerts, setAlerts] = useState<AlertItem[]>(SAMPLE_ALERTS);
-  const [activity, setActivity] = useState<ActivityItem[]>(SAMPLE_ACTIVITY);
-  const [policy, setPolicy] = useState<Policy>(SAMPLE_POLICY);
-
-  // Per-panel source flags; the page is "live" only if every panel is live.
-  const [backendsLive, setBackendsLive] = useState<boolean>(false);
-
   const { setDataSource, setSafeMode, setPlane, setPlaneNodes } = shell;
 
-  // ── data load (live, with sample fallback) ─────────────────────────────────
+  // Each data domain resolves live-or-demo independently and registers a unique
+  // panelId so the global Demonstration / Live badge reflects reality. The demo
+  // fallback is shown immediately, so the page is never blank and reads healthy.
+  const ops = useLiveOrDemo<OpsMetrics>(() => api.getOpsMetrics(), SAMPLE_OPS, {
+    panelId: "flightdeck-ops",
+  });
+  const related = useLiveOrDemo<RelatedMetrics>(() => api.getRelatedMetrics(), SAMPLE_RELATED, {
+    panelId: "flightdeck-related",
+  });
+  const trends = useLiveOrDemo<TrendsResponse>(() => api.getTrends(), SAMPLE_TRENDS, {
+    panelId: "flightdeck-trends",
+  });
+  const forecast = useLiveOrDemo<ForecastSummary>(
+    () => api.getForecastSummary(),
+    SAMPLE_FORECAST_SUMMARY,
+    { panelId: "flightdeck-forecast" },
+  );
+  const routing = useLiveOrDemo<RoutingMetrics>(() => api.getRoutingMetrics(), SAMPLE_ROUTING, {
+    panelId: "flightdeck-routing",
+  });
+  const backends = useLiveOrDemo<BackendMetrics>(() => api.getBackendMetrics(), SAMPLE_BACKEND_METRICS, {
+    panelId: "flightdeck-fleet",
+  });
+  const alerts = useLiveOrDemo<AlertItem[]>(() => api.getAlerts(), SAMPLE_ALERTS, {
+    panelId: "flightdeck-verdicts",
+  });
+  const activity = useLiveOrDemo<ActivityItem[]>(() => api.getActivity(8), SAMPLE_ACTIVITY, {
+    panelId: "flightdeck-stream",
+  });
+  const policyState = useLiveOrDemo<Policy>(() => api.getPolicy(), SAMPLE_POLICY, {
+    panelId: "flightdeck-policy",
+  });
+
+  // The kill switch reads from the shell (Topbar + this card share one path).
+  // The card reflects the live policy reading too, so the surface is consistent.
+  const policy = useMemo<Policy>(
+    () => ({ ...policyState.value, safe_mode: shell.safeMode }),
+    [policyState.value, shell.safeMode],
+  );
+
+  // Only a live policy reading drives the kill switch; offline we keep the
+  // operator's manual choice so a refresh can't revert it.
   useEffect(() => {
-    let cancelled = false;
+    if (policyState.source === "live") setSafeMode(Boolean(policyState.value.safe_mode));
+  }, [policyState.source, policyState.value.safe_mode, setSafeMode]);
 
-    async function tick() {
-      const sources: DataSource[] = [];
-
-      const results = await Promise.all([
-        loadWithFallback(() => api.getOpsMetrics(), SAMPLE_OPS),
-        loadWithFallback(() => api.getRelatedMetrics(), SAMPLE_RELATED),
-        loadWithFallback(() => api.getThroughput(13), SAMPLE_THROUGHPUT),
-        loadWithFallback(() => api.getRoutingMetrics(), SAMPLE_ROUTING),
-        loadWithFallback(() => api.getBackendMetrics(), SAMPLE_BACKEND_METRICS),
-        loadWithFallback(() => api.getAlerts(), SAMPLE_ALERTS),
-        loadWithFallback(() => api.getActivity(8), SAMPLE_ACTIVITY),
-        loadWithFallback(() => api.getPolicy(), SAMPLE_POLICY),
-      ]);
-
-      if (cancelled) return;
-
-      const [
-        opsR,
-        relR,
-        thrR,
-        rouR,
-        bkR,
-        alR,
-        acR,
-        poR,
-      ] = results;
-
-      results.forEach((r) => sources.push(r.source));
-
-      setOps(opsR.value);
-      setRelated(relR.value);
-      setThroughput(thrR.value);
-      setRouting(rouR.value);
-      setBackends(bkR.value);
-      setBackendsLive(bkR.source === "live");
-      setAlerts(alR.value);
-      setActivity(acR.value);
-      setPolicy(poR.value);
-      // Only let a live policy reading drive the kill switch; offline we keep
-      // the operator's manual choice so the periodic refresh can't revert it.
-      if (poR.source === "live") setSafeMode(Boolean(poR.value.safe_mode));
-
-      const anySample = sources.some((s) => s === "sample");
-      const allSample = sources.every((s) => s === "sample");
-      setDataSource(anySample ? "sample" : "live");
-      setPlane(allSample ? "bad" : anySample ? "warn" : "ok");
-      setPlaneNodes(rouR.value.cluster_size_current ?? opsR.value.services_total);
-    }
-
-    tick();
-    const id = window.setInterval(tick, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [setDataSource, setSafeMode, setPlane, setPlaneNodes]);
-
-  // ── derived KPI readings ───────────────────────────────────────────────────
-
-  const throughputRpm = ops.throughput_rpm ?? related.rps_current ?? 0;
-  const p95 = related.p95_latency_ms ?? backends.aggregate?.p95_ms ?? 0;
-  const slo = ops.policy_compliance_pct ?? related.slo_compliance_pct ?? 0;
-  const errorRate = backends.aggregate?.error_rate_pct ?? 0;
-
+  // Publish data-mode + plane health to the shell. Demonstration is an
+  // intentional, healthy posture -- never degraded -- so on demo the plane is
+  // "ok". Excluding a sick node is the plane working as designed, so that alone
+  // never reads as degraded; only a fleet with no node in rotation escalates.
   const fleet = useMemo(
-    () => toFleetRows(backends, !backendsLive, policy.slo_p95_latency_ms),
-    [backends, backendsLive, policy.slo_p95_latency_ms],
+    () => toFleetRows(backends.value, backends.source !== "live", policy.slo_p95_latency_ms),
+    [backends.value, backends.source, policy.slo_p95_latency_ms],
   );
   const activeCount = fleet.filter((b) => !b.excluded).length;
   const excludedCount = fleet.length - activeCount;
 
-  // Forecast chart series. When live throughput is available, derive a short
-  // forecast tail from the trend; otherwise use the sample series.
-  const chart = useMemo(() => {
-    if (backendsLive && throughput.buckets.length >= 4) {
-      const actual = throughput.buckets.map((b) => Number((b.rpm / 1000).toFixed(2)));
-      const last = actual[actual.length - 1];
-      const slope = last - actual[actual.length - 2];
-      const f1 = Number((last + slope * 1.4).toFixed(2));
-      const f2 = Number((last + slope * 3.0).toFixed(2));
-      return {
-        actual,
-        forecast: [last, f1, f2],
-        confLow: [last, Number((f1 * 0.96).toFixed(2)), Number((f2 * 0.92).toFixed(2))],
-        confHigh: [last, Number((f1 * 1.04).toFixed(2)), Number((f2 * 1.1).toFixed(2))],
-        xLabels: SAMPLE_X_LABELS,
-        scaleIndex: SAMPLE_SCALE_INDEX,
-      };
-    }
-    return {
-      actual: SAMPLE_ACTUAL,
-      forecast: SAMPLE_FORECAST,
-      confLow: SAMPLE_CONF_LOW,
-      confHigh: SAMPLE_CONF_HIGH,
-      xLabels: SAMPLE_X_LABELS,
-      scaleIndex: SAMPLE_SCALE_INDEX,
-    };
-  }, [backendsLive, throughput]);
+  const anyLive =
+    ops.source === "live" ||
+    related.source === "live" ||
+    trends.source === "live" ||
+    forecast.source === "live" ||
+    routing.source === "live" ||
+    backends.source === "live" ||
+    alerts.source === "live" ||
+    activity.source === "live" ||
+    policyState.source === "live";
 
-  const actualNow = chart.actual[chart.actual.length - 1];
-  const forecastNext = chart.forecast[chart.forecast.length - 1];
+  useEffect(() => {
+    setDataSource(anyLive ? "live" : "sample");
+    // Calm by default. Demonstration is intentional, and a live fleet that has
+    // isolated a node is healthy operation, so the plane only reads degraded
+    // when live data shows no backend left in rotation at all.
+    const liveOutage = anyLive && fleet.length > 0 && activeCount === 0;
+    setPlane(liveOutage ? "warn" : "ok");
+  }, [anyLive, fleet, activeCount, setDataSource, setPlane]);
+
+  useEffect(() => {
+    setPlaneNodes(routing.value.cluster_size_current ?? ops.value.services_total);
+  }, [routing.value.cluster_size_current, ops.value.services_total, setPlaneNodes]);
+
+  // ── derived KPI readings ───────────────────────────────────────────────────
+
+  const throughputRpm = ops.value.throughput_rpm ?? related.value.rps_current ?? 0;
+  const p95 = related.value.p95_latency_ms ?? backends.value.aggregate?.p95_ms ?? 0;
+  const slo = ops.value.policy_compliance_pct ?? related.value.slo_compliance_pct ?? 0;
+  const errorRate = backends.value.aggregate?.error_rate_pct ?? 0;
+
+  // ── forecast readout (hero chart + ForecastCard) ───────────────────────────
+
+  const fc = useMemo(() => readForecast(forecast.value), [forecast.value]);
 
   // ── safe_mode kill switch ──────────────────────────────────────────────────
-  // The kill switch is owned by the app shell so the Topbar switch and this
-  // card drive the same path (optimistic state, toast, best-effort policy
-  // write). The card also reflects the change in its local policy snapshot.
+  // Owned by the app shell so the Topbar switch and this card drive the same
+  // path (optimistic state, toast, best-effort policy write).
   const onToggleSafeMode = (next: boolean) => {
-    setPolicy((p) => ({ ...p, safe_mode: next }));
     shell.toggleSafeMode(next);
   };
 
@@ -295,15 +394,18 @@ export default function Flightdeck() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
       <HeroBand
-        actualNow={actualNow}
-        forecastNext={forecastNext}
+        fc={fc}
+        forecastState={forecast.state}
         slo={slo}
         activeCount={activeCount}
         excludedCount={excludedCount}
-        chart={chart}
       />
 
       <KpiRail
+        trends={trends.value}
+        state={trends.state}
+        degraded={trends.degraded}
+        onRetry={trends.reload}
         throughputRpm={throughputRpm}
         p95={p95}
         slo={slo}
@@ -318,18 +420,11 @@ export default function Flightdeck() {
         sub="Forecast is leading actual by one step. The pool scaled out ahead of the spike, p95 held flat, and an unhealthy node was excluded on anomaly evidence."
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1.55fr) minmax(0, 1fr)",
-          gap: 18,
-          alignItems: "start",
-        }}
-      >
-        <ForecastCard chart={chart} actualNow={actualNow} forecastNext={forecastNext} />
+      <div className="sl-grid-2-1">
+        <ForecastCard fc={fc} state={forecast.state} degraded={forecast.degraded} live={forecast.source === "live"} onRetry={forecast.reload} />
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           <SafeModeCard armed={shell.safeMode} onToggle={onToggleSafeMode} />
-          <PolicyCard policy={policy} routing={routing} />
+          <PolicyCard policy={policy} routing={routing.value} state={policyState.state} degraded={policyState.degraded} onRetry={policyState.reload} />
         </div>
       </div>
 
@@ -340,23 +435,16 @@ export default function Flightdeck() {
         }`}
       />
 
-      <FleetCard fleet={fleet} />
+      <FleetCard fleet={fleet} state={backends.state} degraded={backends.degraded} onRetry={backends.reload} />
 
       <SectionHead
         title="Verdicts and decisions"
         sub="Every automated call carries evidence and a timestamp. Recent anomaly verdicts on the left, the live decision stream on the right."
       />
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.2fr)",
-          gap: 18,
-          alignItems: "start",
-        }}
-      >
-        <VerdictsPanel alerts={alerts} />
-        <DecisionStream activity={activity} />
+      <div className="sl-grid-1-1">
+        <VerdictsPanel alerts={alerts.value} state={alerts.state} degraded={alerts.degraded} onRetry={alerts.reload} />
+        <DecisionStream activity={activity.value} state={activity.state} degraded={activity.degraded} onRetry={activity.reload} />
       </div>
     </div>
   );
@@ -364,30 +452,21 @@ export default function Flightdeck() {
 
 // ── hero band ────────────────────────────────────────────────────────────────
 
-interface ChartData {
-  actual: number[];
-  forecast: number[];
-  confLow: number[];
-  confHigh: number[];
-  xLabels: string[];
-  scaleIndex: number;
-}
-
 function HeroBand({
-  actualNow,
-  forecastNext,
+  fc,
+  forecastState,
   slo,
   activeCount,
   excludedCount,
-  chart,
 }: {
-  actualNow: number;
-  forecastNext: number;
+  fc: ForecastReadout;
+  forecastState: LoadStatus;
   slo: number;
   activeCount: number;
   excludedCount: number;
-  chart: ChartData;
 }) {
+  const horizonLabel =
+    fc.chart.xLabels.length > 0 ? fc.chart.xLabels[fc.chart.xLabels.length - 1] : "+5";
   return (
     <section
       style={{
@@ -464,8 +543,13 @@ function HeroBand({
             fontSize: 12,
           }}
         >
-          <HeroStat label="actual now" value={`${actualNow.toFixed(1)}k`} unit="rpm" />
-          <HeroStat label="forecast +5m" value={`${forecastNext.toFixed(1)}k`} unit="rpm" tone="mint" />
+          <HeroStat label="actual now" value={`${fc.actualNow.toFixed(1)}k`} unit="rpm" />
+          <HeroStat
+            label={`forecast ${horizonLabel}m`}
+            value={`${fc.forecastNext.toFixed(1)}k`}
+            unit="rpm"
+            tone="mint"
+          />
           <HeroStat label="SLO" value={slo.toFixed(2)} unit="%" />
           <HeroStat
             label="pool"
@@ -478,7 +562,7 @@ function HeroBand({
       <div
         style={{
           position: "relative",
-          height: 236,
+          minHeight: 236,
           borderRadius: "var(--sl-radius-lg)",
           background: "linear-gradient(180deg, var(--sl-surface), var(--sl-surface-sunk))",
           border: "1px solid var(--sl-hairline)",
@@ -500,17 +584,29 @@ function HeroBand({
         >
           FORECAST vs ACTUAL - throughput (k rpm)
         </div>
-        <ForecastChart
-          actual={chart.actual}
-          forecast={chart.forecast}
-          confLow={chart.confLow}
-          confHigh={chart.confHigh}
-          xLabels={chart.xLabels}
-          scaleIndex={chart.scaleIndex}
-          scaleLabel="scale 5 to 6"
-          unit="k rpm"
-          height={226}
-        />
+        {forecastState === "loading" ? (
+          <div style={{ padding: "34px 16px 16px" }}>
+            <LoadState lines={5} lineHeight={18} label="Loading forecast…" />
+          </div>
+        ) : fc.empty ? (
+          <EmptyState
+            icon={<TrendingUp size={20} strokeWidth={2} />}
+            title="No throughput in this window"
+            hint="The forecast appears as soon as request traffic is observed."
+          />
+        ) : (
+          <ForecastChart
+            actual={fc.chart.actual}
+            forecast={fc.chart.forecast}
+            confLow={fc.chart.confLow}
+            confHigh={fc.chart.confHigh}
+            xLabels={fc.chart.xLabels}
+            scaleIndex={fc.chart.scaleIndex}
+            scaleLabel={fc.scaleAction === "scale_in" ? "scale in" : "scale out"}
+            unit="k rpm"
+            height={226}
+          />
+        )}
       </div>
     </section>
   );
@@ -548,7 +644,42 @@ function HeroStat({
 
 // ── KPI rail ─────────────────────────────────────────────────────────────────
 
+// One KPI tile, sourced entirely from a TrendKpi: the delta and its direction
+// come from delta_pct, the footnote from the trend's label, and the sparkline
+// from the trend's series. The headline value stays caller-formatted because
+// each KPI renders its number differently (k-rpm, ms, %, ratio).
+function TrendStat({
+  label,
+  value,
+  unit,
+  kpi,
+  sparkTone,
+}: {
+  label: ReactNode;
+  value: ReactNode;
+  unit?: string;
+  kpi: TrendKpi;
+  sparkTone: "mint" | "graphite";
+}) {
+  return (
+    <KpiStat
+      label={label}
+      value={value}
+      unit={unit}
+      deltaDir={deltaDirFromPct(kpi.delta_pct)}
+      delta={fmtDeltaPct(kpi.delta_pct)}
+      footnote={kpi.label}
+      spark={kpi.series.length > 0 ? kpi.series : undefined}
+      sparkTone={sparkTone}
+    />
+  );
+}
+
 function KpiRail({
+  trends,
+  state,
+  degraded,
+  onRetry,
   throughputRpm,
   p95,
   slo,
@@ -557,6 +688,10 @@ function KpiRail({
   totalCount,
   excludedCount,
 }: {
+  trends: TrendsResponse;
+  state: LoadStatus;
+  degraded: boolean;
+  onRetry: () => void;
   throughputRpm: number;
   p95: number;
   slo: number;
@@ -565,58 +700,81 @@ function KpiRail({
   totalCount: number;
   excludedCount: number;
 }) {
+  if (state === "loading") {
+    return (
+      <div className="sl-grid-kpi">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            style={{
+              background: "var(--sl-surface)",
+              border: "1px solid var(--sl-hairline)",
+              borderRadius: "var(--sl-radius-lg)",
+              boxShadow: "var(--sl-shadow-1)",
+              padding: "15px 17px",
+            }}
+          >
+            <LoadState lines={3} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // The active-backends delta is a count/posture, not a percentage, so it is
+  // expressed in the trend's label rather than a percent.
+  const backendsKpi = trends.active_backends;
+  const backendsDir: DeltaDir = excludedCount > 0 ? "down" : "flat";
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16 }}>
-      <KpiStat
+    <div className="sl-grid-kpi">
+      <TrendStat
         label={<><TrendingUp size={12} strokeWidth={2} /> Throughput</>}
         value={(throughputRpm / 1000).toFixed(1)}
         unit="k rpm"
-        deltaDir="up"
-        delta="+12.6%"
-        footnote="vs 1h ago"
-        spark={SAMPLE_SPARK.throughput}
+        kpi={trends.throughput_rpm}
         sparkTone="mint"
       />
-      <KpiStat
+      <TrendStat
         label={<><Gauge size={12} strokeWidth={2} /> p95 latency</>}
         value={Math.round(p95).toString()}
         unit="ms"
-        deltaDir="flat"
-        delta="0.7%"
-        footnote="SLO 200 ms"
-        spark={SAMPLE_SPARK.p95}
+        kpi={trends.p95_latency_ms}
         sparkTone="graphite"
       />
-      <KpiStat
+      <TrendStat
         label={<><ShieldCheck size={12} strokeWidth={2} /> SLO compliance</>}
         value={slo.toFixed(2)}
         unit="%"
-        deltaDir="up"
-        delta="+0.05%"
-        footnote="7-day window"
-        spark={SAMPLE_SPARK.slo}
+        kpi={trends.slo_compliance_pct}
         sparkTone="mint"
       />
-      <KpiStat
+      <TrendStat
         label={<><Activity size={12} strokeWidth={2} /> Error rate</>}
         value={errorRate.toFixed(2)}
         unit="%"
-        deltaDir="down"
-        delta="-0.04%"
-        footnote="vs 1h ago"
-        spark={SAMPLE_SPARK.error}
+        kpi={trends.error_rate_pct}
         sparkTone="graphite"
       />
       <KpiStat
         label={<><Boxes size={12} strokeWidth={2} /> Active backends</>}
         value={`${activeCount}`}
         unit={`/ ${totalCount}`}
-        deltaDir={excludedCount > 0 ? "down" : "flat"}
+        deltaDir={backendsDir}
         delta={excludedCount > 0 ? `${excludedCount} excluded` : "all in rotation"}
-        footnote={excludedCount > 0 ? "node isolated" : "healthy"}
-        spark={SAMPLE_SPARK.backends}
+        footnote={backendsKpi.label}
+        spark={backendsKpi.series.length > 0 ? backendsKpi.series : undefined}
         sparkTone="mint"
       />
+      {degraded ? (
+        <div style={{ gridColumn: "1 / -1" }}>
+          <ErrorState
+            title="Trend deltas are showing representative data"
+            hint="The KPI values above are current; the window-over-window deltas couldn't be refreshed."
+            onRetry={onRetry}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -637,52 +795,89 @@ function SectionHead({ title, sub }: { title: string; sub: string }) {
 // ── forecast card ────────────────────────────────────────────────────────────
 
 function ForecastCard({
-  chart,
-  actualNow,
-  forecastNext,
+  fc,
+  state,
+  degraded,
+  live,
+  onRetry,
 }: {
-  chart: ChartData;
-  actualNow: number;
-  forecastNext: number;
+  fc: ForecastReadout;
+  state: LoadStatus;
+  degraded: boolean;
+  live: boolean;
+  onRetry: () => void;
 }) {
-  const headroom = Math.max(0, Math.round((1 - actualNow / (forecastNext * 1.45)) * 100));
+  const headroom = Math.max(0, Math.round((1 - fc.actualNow / (fc.forecastNext * 1.45)) * 100));
+  const horizonLabel =
+    fc.chart.xLabels.length > 0 ? fc.chart.xLabels[fc.chart.xLabels.length - 1] : "+5";
   return (
     <Card
       title="Foresight and throughput"
-      eyebrow="// 5-min horizon"
-      actions={<Badge tone="mint">LIVE</Badge>}
+      eyebrow="// forecast horizon"
+      actions={<Badge tone={live ? "mint" : "neutral"}>{live ? "LIVE" : "DEMO"}</Badge>}
       flush
     >
       <div style={{ padding: "0 18px 12px", fontSize: 11.5, color: "var(--sl-text-low)" }}>
-        Mint forecast runs one step ahead of graphite actual; the band is the 90%
+        Mint forecast runs one step ahead of graphite actual; the band is the
         confidence interval. The dashed marker is the scale-ahead decision.
       </div>
 
+      {degraded ? (
+        <div style={{ padding: "0 18px 16px" }}>
+          <ErrorState
+            title="Showing a representative forecast"
+            hint="The live forecast couldn't be reached just now. The chart below is representative."
+            onRetry={onRetry}
+          />
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", gap: 26, padding: "2px 18px 14px", flexWrap: "wrap" }}>
-        <FcStat label="Actual now" value={`${(actualNow * 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })}`} unit="rpm" />
-        <FcStat label="Forecast +5 min" value={`${(forecastNext * 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })}`} unit="rpm" tone="mint" />
-        <FcStat label="Confidence" value="92" unit="%" />
+        <FcStat
+          label="Actual now"
+          value={`${(fc.actualNow * 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
+          unit="rpm"
+        />
+        <FcStat
+          label={`Forecast ${horizonLabel} min`}
+          value={`${(fc.forecastNext * 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })}`}
+          unit="rpm"
+          tone="mint"
+        />
+        <FcStat label="Confidence" value={fc.confidencePct != null ? `${fc.confidencePct}` : "—"} unit="%" />
         <FcStat label="Headroom" value={`${headroom}`} unit="%" />
       </div>
 
-      <div style={{ padding: "0 14px" }}>
-        <ForecastChart
-          actual={chart.actual}
-          forecast={chart.forecast}
-          confLow={chart.confLow}
-          confHigh={chart.confHigh}
-          xLabels={chart.xLabels}
-          scaleIndex={chart.scaleIndex}
-          scaleLabel="scale 5 to 6"
-          unit="k rpm"
-          height={300}
-        />
+      <div style={{ padding: "0 14px", minHeight: 300 }}>
+        {state === "loading" ? (
+          <div style={{ padding: "12px 6px" }}>
+            <LoadState lines={7} lineHeight={20} label="Loading forecast…" />
+          </div>
+        ) : fc.empty ? (
+          <EmptyState
+            icon={<TrendingUp size={22} strokeWidth={2} />}
+            title="No throughput in this window"
+            hint="The forecast and actual series appear as soon as request traffic is observed."
+          />
+        ) : (
+          <ForecastChart
+            actual={fc.chart.actual}
+            forecast={fc.chart.forecast}
+            confLow={fc.chart.confLow}
+            confHigh={fc.chart.confHigh}
+            xLabels={fc.chart.xLabels}
+            scaleIndex={fc.chart.scaleIndex}
+            scaleLabel={fc.scaleAction === "scale_in" ? "scale in" : "scale out"}
+            unit="k rpm"
+            height={300}
+          />
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 18, padding: "8px 18px 18px", flexWrap: "wrap", fontFamily: "var(--sl-font-mono)", fontSize: 11 }}>
         <LegendItem swatch="var(--sl-graphite)" label="Actual throughput" />
         <LegendItem swatch="var(--sl-mint)" label="Forecast" />
-        <LegendItem swatch="var(--sl-mint)" label="90% confidence band" band />
+        <LegendItem swatch="var(--sl-mint)" label="Confidence band" band />
         <LegendItem swatch="var(--sl-text-faint)" label="Scale-ahead decision" dashed />
       </div>
     </Card>
@@ -788,7 +983,19 @@ function SafeModeCard({ armed, onToggle }: { armed: boolean; onToggle: (next: bo
 
 // ── operating policy card ────────────────────────────────────────────────────
 
-function PolicyCard({ policy, routing }: { policy: Policy; routing: RoutingMetrics }) {
+function PolicyCard({
+  policy,
+  routing,
+  state,
+  degraded,
+  onRetry,
+}: {
+  policy: Policy;
+  routing: RoutingMetrics;
+  state: LoadStatus;
+  degraded: boolean;
+  onRetry: () => void;
+}) {
   const rows: Array<[string, ReactNode]> = [
     ["Operating mode", <Badge tone="mint" key="mode">{(policy.operating_mode ?? "adaptive").toUpperCase()}</Badge>],
     ["Strategy", <span key="strat" style={{ fontFamily: "var(--sl-font-mono)", fontWeight: 600 }}>{policy.strategy_name ?? "custom"}</span>],
@@ -798,32 +1005,55 @@ function PolicyCard({ policy, routing }: { policy: Policy; routing: RoutingMetri
   ];
   return (
     <Card title="Operating policy" actions={<Badge tone="neutral">v{policy.policy_version}</Badge>}>
-      <div>
-        {rows.map(([label, value], i) => (
-          <div
-            key={label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "11px 0",
-              borderBottom: i < rows.length - 1 ? "1px solid var(--sl-hairline-soft)" : undefined,
-            }}
-          >
-            <span style={{ fontSize: 12.5, color: "var(--sl-text-mid)" }}>{label}</span>
-            <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--sl-text)" }}>
-              {value}
-            </span>
-          </div>
-        ))}
-      </div>
+      {state === "loading" ? (
+        <LoadState lines={5} lineHeight={16} label="Loading policy…" />
+      ) : (
+        <div>
+          {degraded ? (
+            <div style={{ marginBottom: 12 }}>
+              <ErrorState
+                title="Showing the last representative policy"
+                hint="The live policy snapshot couldn't be refreshed just now."
+                onRetry={onRetry}
+              />
+            </div>
+          ) : null}
+          {rows.map(([label, value], i) => (
+            <div
+              key={label}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "11px 0",
+                borderBottom: i < rows.length - 1 ? "1px solid var(--sl-hairline-soft)" : undefined,
+              }}
+            >
+              <span style={{ fontSize: 12.5, color: "var(--sl-text-mid)" }}>{label}</span>
+              <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 12.5, fontWeight: 600, color: "var(--sl-text)" }}>
+                {value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }
 
 // ── fleet table ──────────────────────────────────────────────────────────────
 
-function FleetCard({ fleet }: { fleet: SampleBackend[] }) {
+function FleetCard({
+  fleet,
+  state,
+  degraded,
+  onRetry,
+}: {
+  fleet: SampleBackend[];
+  state: LoadStatus;
+  degraded: boolean;
+  onRetry: () => void;
+}) {
   const columns: Column<SampleBackend>[] = [
     {
       key: "backend",
@@ -889,25 +1119,75 @@ function FleetCard({ fleet }: { fleet: SampleBackend[] }) {
 
   return (
     <Card flush>
-      <DataTable
-        columns={columns}
-        rows={fleet}
-        rowKey={(b) => b.instance}
-        rowMuted={(b) => b.excluded}
-      />
+      {state === "loading" ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={6} lineHeight={18} label="Loading fleet…" />
+        </div>
+      ) : fleet.length === 0 ? (
+        <EmptyState
+          icon={<Boxes size={22} strokeWidth={2} />}
+          title="No backends reporting yet"
+          hint="Nodes appear here as soon as they register with the load balancer."
+        />
+      ) : (
+        <>
+          {degraded ? (
+            <div style={{ padding: "14px 16px 0" }}>
+              <ErrorState
+                title="Showing a representative fleet"
+                hint="Live backend metrics couldn't be reached just now. The pool below is representative."
+                onRetry={onRetry}
+              />
+            </div>
+          ) : null}
+          <DataTable
+            columns={columns}
+            rows={fleet}
+            rowKey={(b) => b.instance}
+            rowMuted={(b) => b.excluded}
+          />
+        </>
+      )}
     </Card>
   );
 }
 
 // ── verdicts panel ───────────────────────────────────────────────────────────
 
-function VerdictsPanel({ alerts }: { alerts: AlertItem[] }) {
+function VerdictsPanel({
+  alerts,
+  state,
+  degraded,
+  onRetry,
+}: {
+  alerts: AlertItem[];
+  state: LoadStatus;
+  degraded: boolean;
+  onRetry: () => void;
+}) {
   return (
     <Card title="Anomaly verdicts" eyebrow="// evidence-carrying" flush>
-      {alerts.length === 0 ? (
-        <div style={{ padding: 18, fontSize: 13, color: "var(--sl-text-low)" }}>No active verdicts. The fleet is healthy.</div>
+      {state === "loading" ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={4} lineHeight={18} label="Loading verdicts…" />
+        </div>
+      ) : alerts.length === 0 ? (
+        <EmptyState
+          icon={<CheckCircle2 size={22} strokeWidth={2} />}
+          title="No active verdicts"
+          hint="The fleet is healthy. Verdicts appear here when a node crosses an anomaly threshold."
+        />
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
+          {degraded ? (
+            <div style={{ padding: "14px 16px 0" }}>
+              <ErrorState
+                title="Showing representative verdicts"
+                hint="Live anomaly verdicts couldn't be reached just now."
+                onRetry={onRetry}
+              />
+            </div>
+          ) : null}
           {alerts.map((a, i) => {
             const s = alertStatus(a);
             return (
@@ -959,7 +1239,17 @@ const KIND_TONE: Record<ActivityItem["kind"], { bg: string; fg: string; label: s
   policy: { bg: "var(--sl-surface-sunk)", fg: "var(--sl-graphite)", label: "POLICY" },
 };
 
-function DecisionStream({ activity }: { activity: ActivityItem[] }) {
+function DecisionStream({
+  activity,
+  state,
+  degraded,
+  onRetry,
+}: {
+  activity: ActivityItem[];
+  state: LoadStatus;
+  degraded: boolean;
+  onRetry: () => void;
+}) {
   return (
     <Card
       title="Decision stream"
@@ -971,50 +1261,71 @@ function DecisionStream({ activity }: { activity: ActivityItem[] }) {
       }
       flush
     >
-      <div style={{ display: "flex", flexDirection: "column" }}>
-        {activity.map((ev, i) => {
-          const tone = KIND_TONE[ev.kind];
-          const s = activityStatus(ev.severity);
-          return (
-            <div
-              key={`${ev.time}-${i}`}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "auto 1fr auto",
-                gap: 13,
-                padding: "14px 18px",
-                borderBottom: i < activity.length - 1 ? "1px solid var(--sl-hairline-soft)" : undefined,
-                alignItems: "flex-start",
-              }}
-            >
-              <span
+      {state === "loading" ? (
+        <div style={{ padding: 18 }}>
+          <LoadState lines={5} lineHeight={18} label="Loading decision stream…" />
+        </div>
+      ) : activity.length === 0 ? (
+        <EmptyState
+          icon={<BookOpen size={22} strokeWidth={2} />}
+          title="No decisions in this window"
+          hint="Scaling, anomaly, and policy events appear here as the decision plane acts."
+        />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {degraded ? (
+            <div style={{ padding: "14px 16px 0" }}>
+              <ErrorState
+                title="Showing a representative stream"
+                hint="The live decision stream couldn't be reached just now."
+                onRetry={onRetry}
+              />
+            </div>
+          ) : null}
+          {activity.map((ev, i) => {
+            const tone = KIND_TONE[ev.kind];
+            const s = activityStatus(ev.severity);
+            return (
+              <div
+                key={`${ev.time}-${i}`}
                 style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 9,
                   display: "grid",
-                  placeItems: "center",
-                  flex: "0 0 auto",
-                  background: tone.bg,
-                  color: tone.fg,
+                  gridTemplateColumns: "auto 1fr auto",
+                  gap: 13,
+                  padding: "14px 18px",
+                  borderBottom: i < activity.length - 1 ? "1px solid var(--sl-hairline-soft)" : undefined,
+                  alignItems: "flex-start",
                 }}
               >
-                {ev.kind === "scaling" ? <ArrowRight size={15} strokeWidth={2} /> : ev.kind === "anomaly" ? <ShieldCheck size={15} strokeWidth={2} /> : <BookOpen size={15} strokeWidth={2} />}
-              </span>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "var(--sl-text)" }}>
-                    {ev.actor ? `${ev.actor}` : tone.label}
-                  </span>
-                  <StatusPill status={s} hideDot>{tone.label}</StatusPill>
+                <span
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 9,
+                    display: "grid",
+                    placeItems: "center",
+                    flex: "0 0 auto",
+                    background: tone.bg,
+                    color: tone.fg,
+                  }}
+                >
+                  {ev.kind === "scaling" ? <ArrowRight size={15} strokeWidth={2} /> : ev.kind === "anomaly" ? <ShieldCheck size={15} strokeWidth={2} /> : <BookOpen size={15} strokeWidth={2} />}
+                </span>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--sl-text)" }}>
+                      {ev.actor ? `${ev.actor}` : tone.label}
+                    </span>
+                    <StatusPill status={s} hideDot>{tone.label}</StatusPill>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--sl-text-mid)", marginTop: 4, lineHeight: 1.45 }}>{ev.summary}</div>
                 </div>
-                <div style={{ fontSize: 11.5, color: "var(--sl-text-mid)", marginTop: 4, lineHeight: 1.45 }}>{ev.summary}</div>
+                <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 10.5, color: "var(--sl-text-faint)", whiteSpace: "nowrap" }}>{ev.time}</span>
               </div>
-              <span style={{ fontFamily: "var(--sl-font-mono)", fontSize: 10.5, color: "var(--sl-text-faint)", whiteSpace: "nowrap" }}>{ev.time}</span>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </Card>
   );
 }

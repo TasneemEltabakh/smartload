@@ -6,10 +6,12 @@
 // size, evidence reason). The trail is read-only -- rows are never edited, only
 // appended -- so this view is purely a lens over the audit endpoints.
 //
-// It tries the live API for each source (counts, policy audit, scaling audit)
-// and falls back to realistic sample rows on error or timeout, so the page
-// renders complete with no backend running, then publishes its data source up to
-// the app shell exactly like the Flightdeck. Filters (kind / action / actor /
+// Each source resolves through useLiveOrDemo with its own panelId, so the global
+// DataModeBadge reflects reality per source: live policy / scaling / isolation
+// rows when the endpoints are reachable, representative rows from _sampleLedger
+// otherwise. Isolation / exclusion events come from a dedicated live endpoint
+// (api.getIsolationAudit), not a hardcoded merge -- the sample set is the demo
+// fallback, never spliced onto the live path. Filters (kind / action / actor /
 // time range) narrow the merged set; the CSV export writes whatever is currently
 // shown, built client-side.
 // ============================================================================
@@ -20,6 +22,7 @@ import {
   BookOpen,
   Download,
   Filter,
+  Inbox,
   Scale,
   ShieldAlert,
   SlidersHorizontal,
@@ -30,20 +33,25 @@ import {
   api,
   type AuditCounts,
   type AuditRow,
+  type IsolationAuditRow,
   type ScalingAuditRow,
 } from "../api";
 import {
   Badge,
   Button,
   Card,
+  DataModeBadge,
   DataTable,
+  EmptyState,
+  ErrorState,
   KpiStat,
+  LoadState,
   StatusPill,
   Tabs,
+  useLiveOrDemo,
   type Column,
   type Status,
 } from "../ui";
-import { loadWithFallback, type DataSource } from "./loader";
 import { useShell } from "./shell-context";
 import {
   SAMPLE_AUDIT_COUNTS,
@@ -53,8 +61,8 @@ import {
   SAMPLE_LB_CHANGES,
 } from "./_sampleLedger";
 
-const REFRESH_MS = 20_000;
 const ROW_LIMIT = 200;
+const ISOLATION_WINDOW_SECONDS = 7 * 24 * 3600; // 7d, matches the default range
 
 // ── unified row model ─────────────────────────────────────────────────────────
 // Policy and scaling/isolation rows fold into one shape the table can sort and
@@ -123,23 +131,40 @@ function policyToRows(rows: AuditRow[]): LedgerRow[] {
   }));
 }
 
-// Scaling and isolation share the ScalingAuditRow shape. Isolation rows carry an
-// "isolated" / "flagged" cue in their reason, so derive a friendlier action verb
-// from the reason when present; otherwise keep the raw scale verb.
-function scalingToRows(rows: ScalingAuditRow[], origin: string): LedgerRow[] {
+// Autoscaler scale_out / scale_in rows fold straight into the trail as
+// "scaling"-kind operational events carrying the evidence reason.
+function scalingToRows(rows: ScalingAuditRow[]): LedgerRow[] {
+  return rows.map((r, i) => ({
+    id: `scaling-${r.time}-${r.action}-${i}`,
+    ts: tsOf(r.time),
+    iso: r.time,
+    kind: "scaling",
+    action: r.action,
+    actor: "autoscaler",
+    instanceCount: r.instance_count,
+    reason: r.reason,
+  }));
+}
+
+// Real isolation / exclusion events (api.getIsolationAudit) fold into the trail
+// as "scaling"-kind rows with the "isolate" action verb, so they group with the
+// operational actions and read with the anomaly evidence in the reason. The
+// backend id and the verdict status enrich the reason when present.
+function isolationToRows(rows: IsolationAuditRow[]): LedgerRow[] {
   return rows.map((r, i) => {
-    const reason = r.reason ?? "";
-    const isIsolation = /isolated|flagged|anomaly|degraded/i.test(reason);
-    const action = isIsolation ? "isolate" : r.action;
+    const iso = r.time ?? "";
+    const prefix = r.backend_id
+      ? `${r.backend_id} ${r.status === "unhealthy" ? "excluded" : "flagged " + r.status}`
+      : `node ${r.status}`;
+    const reason = r.reason ? `${prefix}: ${r.reason}` : prefix;
     return {
-      id: `${origin}-${r.time}-${r.action}-${i}`,
-      ts: tsOf(r.time),
-      iso: r.time,
+      id: `isolation-${iso}-${r.backend_id ?? "node"}-${i}`,
+      ts: tsOf(iso),
+      iso,
       kind: "scaling",
-      action,
-      actor: isIsolation ? "anomaly-detector" : "autoscaler",
-      instanceCount: r.instance_count,
-      reason: r.reason,
+      action: "isolate",
+      actor: r.actor || "anomaly-detector",
+      reason,
     };
   });
 }
@@ -211,12 +236,59 @@ function downloadCsv(rows: LedgerRow[]) {
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function Ledger() {
-  const shell = useShell();
-  const { setDataSource, setPlane } = shell;
+  const { setDataSource, setPlane } = useShell();
 
-  const [counts, setCounts] = useState<AuditCounts>(SAMPLE_AUDIT_COUNTS);
-  const [policyRows, setPolicyRows] = useState<AuditRow[]>(SAMPLE_AUDIT_POLICY);
-  const [scalingRows, setScalingRows] = useState<ScalingAuditRow[]>(SAMPLE_AUDIT_SCALING);
+  // Each audit source resolves on its own, with its own panelId, so the global
+  // DataModeBadge reflects exactly which feeds are live and which are running on
+  // the representative set. The isolation feed reads from a dedicated live
+  // endpoint -- never a hardcoded merge -- with the sample set as its fallback.
+  const countsLoad = useLiveOrDemo<AuditCounts>(
+    () => api.getAuditCounts(),
+    SAMPLE_AUDIT_COUNTS,
+    { panelId: "ledger.counts" },
+  );
+  const policyLoad = useLiveOrDemo<AuditRow[]>(
+    () => api.auditPolicy(ROW_LIMIT),
+    SAMPLE_AUDIT_POLICY,
+    { panelId: "ledger.policy" },
+  );
+  const scalingLoad = useLiveOrDemo<ScalingAuditRow[]>(
+    () => api.auditScaling(ROW_LIMIT),
+    SAMPLE_AUDIT_SCALING,
+    { panelId: "ledger.scaling" },
+  );
+  const isolationLoad = useLiveOrDemo<IsolationAuditRow[]>(
+    () => api.getIsolationAudit(ISOLATION_WINDOW_SECONDS, ROW_LIMIT),
+    SAMPLE_AUDIT_ISOLATION,
+    { panelId: "ledger.isolation" },
+  );
+
+  const counts = countsLoad.value;
+  const policyRows = policyLoad.value;
+  const scalingRows = scalingLoad.value;
+  const isolationRows = isolationLoad.value;
+
+  // The trail card is loading until every contributing row source has settled,
+  // and reports an error only when every source failed (a single live source is
+  // enough to render a meaningful trail).
+  const rowLoads = [policyLoad, scalingLoad, isolationLoad];
+  const trailLoading = rowLoads.some((l) => l.state === "loading");
+  const trailErrored = rowLoads.every((l) => l.degraded);
+  const reloadTrail = () => {
+    policyLoad.reload();
+    scalingLoad.reload();
+    isolationLoad.reload();
+  };
+
+  // Publish a shell data source / plane health for the chrome footer, derived
+  // from the resolved sources (distinct from the global live/demonstration
+  // badge, which the provider drives on its own).
+  const anyLive = policyLoad.source === "live" || scalingLoad.source === "live" || isolationLoad.source === "live";
+  const allDemo = policyLoad.source === "demo" && scalingLoad.source === "demo" && isolationLoad.source === "demo";
+  useEffect(() => {
+    setDataSource(anyLive ? "live" : "sample");
+    setPlane(allDemo ? "warn" : "ok");
+  }, [anyLive, allDemo, setDataSource, setPlane]);
 
   // filters
   const [kind, setKind] = useState<"all" | LedgerKind>("all");
@@ -224,52 +296,18 @@ export default function Ledger() {
   const [action, setAction] = useState<string>("all");
   const [actor, setActor] = useState<string>("all");
 
-  // ── data load (live, with sample fallback) ─────────────────────────────────
-  useEffect(() => {
-    let cancelled = false;
-
-    async function tick() {
-      const results = await Promise.all([
-        loadWithFallback(() => api.getAuditCounts(), SAMPLE_AUDIT_COUNTS),
-        loadWithFallback(() => api.auditPolicy(ROW_LIMIT), SAMPLE_AUDIT_POLICY),
-        loadWithFallback(() => api.auditScaling(ROW_LIMIT), SAMPLE_AUDIT_SCALING),
-      ]);
-
-      if (cancelled) return;
-
-      const [coR, poR, scR] = results;
-      setCounts(coR.value);
-      setPolicyRows(poR.value);
-      setScalingRows(scR.value);
-
-      const sources: DataSource[] = results.map((r) => r.source);
-      const anySample = sources.some((s) => s === "sample");
-      const allSample = sources.every((s) => s === "sample");
-      setDataSource(anySample ? "sample" : "live");
-      setPlane(allSample ? "bad" : anySample ? "warn" : "ok");
-    }
-
-    tick();
-    const id = window.setInterval(tick, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [setDataSource, setPlane]);
-
   // ── merge into the unified, time-ordered trail ─────────────────────────────
-  // Isolation events are sample-only today (no dedicated list endpoint), so they
-  // join the merge unconditionally; they read as operational "scaling"-kind rows
-  // carrying the anomaly evidence in the reason.
+  // Policy commits, autoscaler actions and live isolation / exclusion events all
+  // fold into one append-only stream, newest first.
   const allRows = useMemo<LedgerRow[]>(() => {
     const merged = [
       ...policyToRows(policyRows),
-      ...scalingToRows(scalingRows, "scaling"),
-      ...scalingToRows(SAMPLE_AUDIT_ISOLATION, "isolation"),
+      ...scalingToRows(scalingRows),
+      ...isolationToRows(isolationRows),
     ];
     merged.sort((a, b) => b.ts - a.ts);
     return merged;
-  }, [policyRows, scalingRows]);
+  }, [policyRows, scalingRows, isolationRows]);
 
   // distinct actions / actors for the dropdowns, derived from the live set
   const actionOptions = useMemo(
@@ -294,29 +332,49 @@ export default function Ledger() {
     });
   }, [allRows, kind, range, action, actor]);
 
-  // ── derived KPI readings (prefer live counts, else derive from rows) ────────
+  // ── KPI readings ──────────────────────────────────────────────────────────
+  // Prefer the live counts endpoint when it resolved live -- the authoritative
+  // totals -- and take its numbers verbatim so the live path never shows a count
+  // derived (and therefore fabricated) from the rows on screen. When counts fell
+  // back to the demo set, derive the rollups from the merged rows instead, so the
+  // tiles stay honest and consistent with the trail below them.
+  const countsLive = countsLoad.source === "live";
   const kpis = useMemo(() => {
     const policyCount = allRows.filter((r) => r.kind === "policy").length;
     const scalingCount = allRows.filter((r) => r.kind === "scaling").length;
     const actors = new Set(allRows.map((r) => r.actor)).size;
-    const last = allRows.length > 0 ? allRows[0].iso : counts.last_event_at;
+    const lastFromRows = allRows.length > 0 ? allRows[0].iso : null;
+    if (countsLive) {
+      return {
+        total: counts.total_events,
+        policy: counts.policy_changes,
+        scaling: counts.scaling_actions,
+        actors: counts.actors_unique,
+        lastUpdated: counts.last_event_at ? fmtTime(counts.last_event_at) : "—",
+      };
+    }
     return {
-      total: counts.total_events || allRows.length,
-      policy: counts.policy_changes || policyCount,
-      scaling: counts.scaling_actions || scalingCount,
-      actors: counts.actors_unique || actors,
-      lastUpdated: last ? fmtTime(last) : "—",
+      total: allRows.length,
+      policy: policyCount,
+      scaling: scalingCount,
+      actors,
+      lastUpdated: lastFromRows ? fmtTime(lastFromRows) : "—",
     };
-  }, [allRows, counts]);
+  }, [allRows, counts, countsLive]);
 
   // ── render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <SectionHead
-        title="Ledger"
-        sub="The unified, immutable audit trail. Every committed policy change and scaling or isolation action, time-ordered, with the actor and the evidence behind it. Rows are append-only; nothing here is ever edited."
-      />
+    <div className="sl-stack" style={{ gap: 22 }}>
+      <div className="sl-cluster" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <SectionHead
+          title="Ledger"
+          sub="The unified, immutable audit trail. Every committed policy change and scaling or isolation action, time-ordered, with the actor and the evidence behind it. Rows are append-only; nothing here is ever edited."
+        />
+        <div style={{ flex: "0 0 auto", paddingTop: 8 }}>
+          <DataModeBadge />
+        </div>
+      </div>
 
       <KpiRail kpis={kpis} />
 
@@ -336,7 +394,13 @@ export default function Ledger() {
         onExport={() => downloadCsv(filtered)}
       />
 
-      <TrailCard rows={filtered} />
+      <TrailCard
+        rows={filtered}
+        loading={trailLoading}
+        errored={trailErrored}
+        unfiltered={allRows.length}
+        onRetry={reloadTrail}
+      />
 
       <SectionHead
         title="Load-balancer changes"
@@ -370,7 +434,7 @@ function KpiRail({
 }) {
   const fmtInt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 16 }}>
+    <div className="sl-grid-kpi">
       <KpiStat
         label={<><BookOpen size={12} strokeWidth={2} /> Total events</>}
         value={fmtInt(kpis.total)}
@@ -566,7 +630,19 @@ function actionStatus(row: LedgerRow): Status {
   return "neutral";
 }
 
-function TrailCard({ rows }: { rows: LedgerRow[] }) {
+function TrailCard({
+  rows,
+  loading,
+  errored,
+  unfiltered,
+  onRetry,
+}: {
+  rows: LedgerRow[];
+  loading: boolean;
+  errored: boolean;
+  unfiltered: number;
+  onRetry: () => void;
+}) {
   const columns: Column<LedgerRow>[] = [
     {
       key: "time",
@@ -660,17 +736,48 @@ function TrailCard({ rows }: { rows: LedgerRow[] }) {
     },
   ];
 
-  return (
-    <Card flush>
-      {rows.length === 0 ? (
-        <div style={{ padding: 28, textAlign: "center", fontSize: 13, color: "var(--sl-text-low)" }}>
-          No audit entries match the current filters.
-        </div>
-      ) : (
-        <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} />
-      )}
-    </Card>
-  );
+  // Representative rows always render so the demonstration reads as a healthy,
+  // complete trail. Load / error states fire only when the whole trail is empty
+  // (the honest "nothing to show yet / nothing reachable" cases); a filter that
+  // matches nothing always shows the calm filter-empty state.
+  let body: React.ReactNode;
+  if (unfiltered === 0 && loading) {
+    body = (
+      <div style={{ padding: "16px 18px" }}>
+        <LoadState lines={6} label="Loading the audit trail…" />
+      </div>
+    );
+  } else if (unfiltered === 0 && errored) {
+    body = (
+      <div style={{ padding: 18 }}>
+        <ErrorState
+          title="Couldn't reach the audit trail"
+          hint="The policy, scaling, and isolation feeds are unreachable right now. They will refresh on the next read."
+          onRetry={onRetry}
+        />
+      </div>
+    );
+  } else if (rows.length === 0) {
+    body = (
+      <EmptyState
+        icon={<Inbox size={22} strokeWidth={1.8} />}
+        title={
+          unfiltered === 0
+            ? "No audit entries on record"
+            : "No entries match the current filters"
+        }
+        hint={
+          unfiltered === 0
+            ? "The trail is empty for this window. Committed decisions will appear here as they happen."
+            : "Widen the time range or clear a filter to see more of the trail."
+        }
+      />
+    );
+  } else {
+    body = <DataTable columns={columns} rows={rows} rowKey={(r) => r.id} />;
+  }
+
+  return <Card flush>{body}</Card>;
 }
 
 // ── planned: load-balancer change history ────────────────────────────────────

@@ -1,37 +1,19 @@
+/* ----------------------------------------------------------------------------
+   The legacy --* palette that used to live here is now defined in ui/tokens.css,
+   aliased onto the themed --sl-* tokens so a single data-theme switch drives
+   both systems. This file keeps only structural rules, the responsive shell,
+   the grid helpers, and the accessibility layer -- all theme-token driven.
+   ---------------------------------------------------------------------------- */
+
 :root {
-  --bg: #0b0e13;
-  --bg-soft: #0e1116;
-  --panel: #141923;
-  --panel-2: #1a2030;
-  --panel-3: #20283a;
-  --border: #232a38;
-  --border-soft: #1a2030;
-  --text: #e6edf3;
-  --muted: #7d8590;
-  --muted-2: #5b6371;
-  --accent: #4dabf7;
-  --accent-2: #22d3ee;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --bad: #f85149;
-  --link: #4dabf7;
-  --teal: #2dd4bf;
-  --cyan: #22d3ee;
-  --violet: #a78bfa;
-  --pink: #f472b6;
-  --amber: #f59e0b;
-  --emerald: #10b981;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--sl-font-sans);
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(34, 211, 238, 0.06), transparent 60%),
-    radial-gradient(900px 500px at -10% 110%, rgba(167, 139, 250, 0.05), transparent 60%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
@@ -49,7 +31,7 @@ a:hover { text-decoration: underline; }
 }
 
 .sidebar {
-  background: linear-gradient(180deg, #121723 0%, #0e1219 100%);
+  background: var(--sl-rail-grad);
   border-right: 1px solid var(--border);
   padding: 22px 14px;
   display: flex;
@@ -63,7 +45,7 @@ a:hover { text-decoration: underline; }
   font-size: 18px;
   margin: 0 0 2px;
   letter-spacing: 0.2px;
-  background: linear-gradient(90deg, #e6edf3, #b6c4d4);
+  background: var(--sl-brand-grad);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -97,7 +79,7 @@ a:hover { text-decoration: underline; }
 .nav a.active svg { color: var(--cyan); }
 
 .nav a:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--sl-hover-wash);
   text-decoration: none;
 }
 
@@ -146,12 +128,12 @@ a:hover { text-decoration: underline; }
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--cyan), var(--violet));
+  background: var(--sl-avatar-grad);
   display: grid;
   place-items: center;
   font-size: 11px;
   font-weight: 700;
-  color: #0d1117;
+  color: var(--sl-on-accent);
 }
 
 .sidebar-footer .operator-name {
@@ -210,7 +192,7 @@ a:hover { text-decoration: underline; }
   border-radius: 999px;
   font-size: 11px;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--sl-raise-wash);
   text-decoration: none;
 }
 .refresh-chip:hover { color: var(--text); text-decoration: none; }
@@ -257,7 +239,7 @@ a:hover { text-decoration: underline; }
 
 .kpi {
   position: relative;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+  background: linear-gradient(180deg, var(--sl-raise-wash), rgba(255, 255, 255, 0)),
               var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -448,7 +430,7 @@ a:hover { text-decoration: underline; }
   padding: 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--sl-raise-wash);
 }
 
 .health-pill .name { font-weight: 600; margin-bottom: 4px; }
@@ -556,7 +538,7 @@ a:hover { text-decoration: underline; }
   gap: 10px;
   padding: 10px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--sl-raise-wash);
   border: 1px solid var(--border-soft);
   margin-bottom: 8px;
   font-size: 12px;
@@ -619,7 +601,7 @@ a:hover { text-decoration: underline; }
 }
 
 .qa-tile {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
+  background: linear-gradient(180deg, var(--sl-raise-wash), rgba(255, 255, 255, 0)),
               var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -710,7 +692,7 @@ textarea {
 
 button {
   background: var(--accent);
-  color: #0d1117;
+  color: var(--sl-on-accent);
   border: 0;
   border-radius: 6px;
   padding: 8px 14px;
@@ -728,8 +710,8 @@ button.secondary { background: transparent; color: var(--text); border: 1px soli
 button.secondary:hover { border-color: var(--muted-2); }
 button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); font-weight: 500; }
 button.ghost:hover { color: var(--text); border-color: var(--muted-2); }
-button.danger { background: var(--bad); color: #fff; }
-button.warn   { background: var(--warn); color: #0d1117; }
+button.danger { background: var(--bad); color: var(--sl-on-accent); }
+button.warn   { background: var(--warn); color: var(--sl-on-accent); }
 
 /* ── Toast ─────────────────────────────────────────────────────────────── */
 
@@ -779,7 +761,7 @@ table th {
   font-size: 10px;
 }
 
-table tr:hover td { background: rgba(255, 255, 255, 0.02); }
+table tr:hover td { background: var(--sl-raise-wash); }
 
 .muted { color: var(--muted); }
 .muted-2 { color: var(--muted-2); }
@@ -819,7 +801,7 @@ table td.empty {
   cursor: pointer;
 }
 
-.chip:hover { background: rgba(255, 255, 255, 0.04); }
+.chip:hover { background: var(--sl-hover-wash); }
 
 .chip.on {
   background: rgba(34, 211, 238, 0.16);
@@ -834,7 +816,7 @@ table td.empty {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--sl-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -940,13 +922,7 @@ table td.empty {
 }
 
 /* ── Live Engines (#121) ────────────────────────────────────────────────── */
-
-:root {
-  --ch-anomaly:  #f85149;
-  --ch-forecast: #4dabf7;
-  --ch-routing:  #c084fc;
-  --ch-scale:    #3fb950;
-}
+/* Channel accents (--ch-*) are defined in ui/tokens.css so both themes apply. */
 
 .engines-page-header {
   display: flex;
@@ -1012,7 +988,7 @@ table td.empty {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--sl-raise-wash);
   color: var(--muted);
 }
 .engine-tile .tile-icon svg { width: 16px; height: 16px; }
@@ -1186,7 +1162,7 @@ table td.empty {
 
 .feed-event {
   border-left: 3px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--sl-raise-wash);
   padding: 8px 10px;
   border-radius: 0 6px 6px 0;
   font-size: 12px;
@@ -1235,7 +1211,7 @@ table td.empty {
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--sl-scrim);
   display: flex;
   justify-content: flex-end;
   z-index: 1000;
@@ -1462,7 +1438,7 @@ table td.empty {
 .audit-table-wrap > .head .meta { color: var(--muted); font-size: 11px; margin: 0; }
 
 .audit-table-wrap table { font-size: 12px; }
-.audit-table-wrap table th { padding: 10px 14px; background: rgba(255, 255, 255, 0.02); }
+.audit-table-wrap table th { padding: 10px 14px; background: var(--sl-raise-wash); }
 .audit-table-wrap table td { padding: 10px 14px; }
 
 /* ── Actions page ─────────────────────────────────────────────────────── */
@@ -1775,10 +1751,10 @@ table td.empty {
   position: absolute;
   inset: 0 auto 0 0;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), var(--cyan));
+  background: var(--sl-capacity-fill);
 }
-.capacity-bar.warn .fill { background: linear-gradient(90deg, var(--amber), var(--warn)); }
-.capacity-bar.bad  .fill { background: linear-gradient(90deg, var(--bad), #ff7b72); }
+.capacity-bar.warn .fill { background: var(--sl-capacity-fill-warn); }
+.capacity-bar.bad  .fill { background: var(--sl-capacity-fill-bad); }
 
 /* Small inline severity / status badge (Active Alerts, key-value rows). */
 .sev-badge {
@@ -1807,7 +1783,7 @@ table td.empty {
   border-radius: 6px;
   white-space: nowrap;
 }
-.audit-val.old { color: var(--muted); background: rgba(255, 255, 255, 0.03); text-decoration: line-through; }
+.audit-val.old { color: var(--muted); background: var(--sl-raise-wash); text-decoration: line-through; }
 .audit-val.new { color: var(--ok); background: rgba(63, 185, 80, 0.10); }
 .audit-val.empty { color: var(--muted-2); text-decoration: none; background: transparent; }
 
@@ -1815,7 +1791,7 @@ table td.empty {
 .json-examples {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--sl-raise-wash);
   padding: 12px;
   font-size: 11px;
 }
@@ -1829,3 +1805,274 @@ table td.empty {
 }
 .json-examples pre:hover { color: var(--accent); }
 .json-examples .note { color: var(--muted); margin: 4px 0 0; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   RESPONSIVE APP SHELL  (consumed by ui/components/AppShell + Sidebar + Topbar)
+   ----------------------------------------------------------------------------
+   Breakpoints (shared with the grid helpers below):
+     >= 1024px  full rail (--sl-rail-width), two-column grid.
+     768-1023px collapsed icon-rail (--sl-rail-width-collapsed).
+     < 768px    rail becomes an off-canvas drawer toggled from the Topbar.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.sl-shell {
+  display: grid;
+  grid-template-columns: var(--sl-rail-width, 248px) minmax(0, 1fr);
+  min-height: 100vh;
+  background: var(--sl-bg);
+  color: var(--sl-text);
+  font-family: var(--sl-font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.sl-shell-rail {
+  min-width: 0;
+  grid-column: 1;
+}
+
+.sl-shell-main {
+  grid-column: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sl-shell-content {
+  width: 100%;
+  padding: 24px 28px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* The off-canvas scrim is inert until the mobile drawer is open. */
+.sl-shell-scrim {
+  display: none;
+}
+
+/* Collapsed icon-rail between 768 and 1023px. */
+@media (max-width: 1023px) {
+  .sl-shell {
+    grid-template-columns: var(--sl-rail-width-collapsed, 76px) minmax(0, 1fr);
+  }
+  .sl-shell-content {
+    padding: 20px 22px 48px;
+  }
+}
+
+/* Off-canvas drawer below 768px: rail leaves the flow, content goes full-width. */
+@media (max-width: 767px) {
+  .sl-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sl-shell-rail {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 60;
+    width: min(86vw, var(--sl-rail-width, 248px));
+    transform: translateX(-100%);
+    transition: transform var(--sl-dur-mid) var(--sl-ease);
+    box-shadow: var(--sl-shadow-2);
+  }
+  .sl-shell-main {
+    grid-column: 1;
+  }
+  .sl-shell-content {
+    padding: 18px 16px 44px;
+  }
+  .sl-shell-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: var(--sl-scrim);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--sl-dur-mid) var(--sl-ease);
+  }
+  /* When the host sets menu-open, slide the rail in and arm the scrim. */
+  .sl-shell-menu-open .sl-shell-rail {
+    transform: translateX(0);
+  }
+  .sl-shell-menu-open .sl-shell-scrim {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  /* On mobile the off-canvas rail always shows its full (labelled) form. */
+  .sl-shell-rail .sl-sidebar {
+    height: 100%;
+    width: 100%;
+  }
+}
+
+/* The Topbar menu button only appears on the drawer breakpoint. */
+.sl-topbar-menu { display: none !important; }
+@media (max-width: 767px) {
+  .sl-topbar-menu { display: inline-flex !important; }
+  .sl-topbar { padding-left: 16px !important; padding-right: 16px !important; }
+  /* Keep the topbar from crowding on narrow screens. */
+  .sl-topbar-live { display: none; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   RESPONSIVE GRID HELPERS  (Phase-2 views swap their inline grids for these)
+   ----------------------------------------------------------------------------
+   .sl-grid-kpi   KPI strip:        5 -> 4 -> 3 -> 2 -> 1 cols
+   .sl-grid-2-1   1.55fr / 1fr split (main + rail) -> stacked
+   .sl-grid-1-1   even two-up                       -> stacked
+   .sl-grid-3     even three-up      3 -> 2 -> 1
+   .sl-cluster    inline-wrap row of controls/chips (flex, wraps)
+   .sl-stack      vertical stack with consistent rhythm
+   All use gap: var(--sl-space-4) and min-width:0 tracks so children never
+   overflow their column.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.sl-grid-kpi {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sl-space-4);
+}
+.sl-grid-2-1 {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: var(--sl-space-4);
+  align-items: start;
+}
+.sl-grid-1-1 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sl-space-4);
+  align-items: start;
+}
+.sl-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sl-space-4);
+  align-items: start;
+}
+.sl-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sl-space-2);
+}
+.sl-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sl-space-4);
+  min-width: 0;
+}
+
+@media (max-width: 1280px) {
+  .sl-grid-kpi { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 1024px) {
+  .sl-grid-kpi { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .sl-grid-2-1 { grid-template-columns: minmax(0, 1fr); }
+  .sl-grid-3   { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 768px) {
+  .sl-grid-kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sl-grid-1-1 { grid-template-columns: minmax(0, 1fr); }
+  .sl-grid-3   { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {
+  .sl-grid-kpi { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   MOTION HELPERS  (shimmer skeleton + status pulse)
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.sl-shimmer {
+  display: block;
+  background:
+    linear-gradient(
+      100deg,
+      var(--sl-surface-sunk) 30%,
+      var(--sl-hairline) 50%,
+      var(--sl-surface-sunk) 70%
+    );
+  background-size: 200% 100%;
+  animation: sl-shimmer-slide 1.4s ease-in-out infinite;
+}
+@keyframes sl-shimmer-slide {
+  from { background-position: 180% 0; }
+  to   { background-position: -20% 0; }
+}
+
+.sl-pulse {
+  animation: sl-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sl-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACCESSIBILITY -- focus-visible rings for every interactive element
+   ----------------------------------------------------------------------------
+   A consistent 2px mint ring (theme-aware via --sl-focus-ring). Keyboard-only:
+   :focus-visible keeps the ring off mouse clicks. Covers kit components (via
+   their stable class hooks) and legacy elements alike.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:where(
+  a,
+  button,
+  [role="button"],
+  [role="switch"],
+  [role="tab"],
+  input,
+  select,
+  textarea,
+  summary,
+  [tabindex]
+):focus-visible,
+.sl-nav-item:focus-visible,
+.sl-topbar-menu:focus-visible,
+th[role="columnheader"]:focus-visible,
+table th[tabindex]:focus-visible {
+  outline: 2px solid var(--sl-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--sl-radius-sm);
+}
+
+/* Sortable table headers read as buttons to assistive tech and take a ring. */
+table th[aria-sort],
+table th[role="columnheader"] {
+  cursor: pointer;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   REDUCED MOTION -- honour the OS preference
+   ----------------------------------------------------------------------------
+   Disable the signature Heartbeat draw, the refresh spin, the status pulse, the
+   shimmer slide, and hover transforms. Anything still useful (color/opacity)
+   stays; only movement is removed.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .sl-shimmer {
+    animation: none !important;
+    background: var(--sl-surface-sunk);
+  }
+  .sl-pulse,
+  .refresh-chip .pulse,
+  .refresh-indicator {
+    animation: none !important;
+  }
+  /* Neutralise hover lifts so nothing jumps for motion-sensitive users. */
+  .qa-tile:hover,
+  .kpi:hover {
+    transform: none !important;
+  }
+}

@@ -5,8 +5,7 @@
 // used to be two pages (Actions + Policy):
 //
 //   1. The safe_mode KILL SWITCH (prominent, armed/red), wired through the app
-//      shell so it shares the Topbar switch's path (optimistic state + toast +
-//      best-effort policy write).
+//      shell so it shares the Topbar switch's path.
 //   2. The operating-policy editor: read the live policy, edit its fields, then
 //      run a Diff & commit flow (policy/preview shows the old -> new diff in a
 //      Modal) before setPolicy commits. A named-strategy quick-apply selector
@@ -14,13 +13,20 @@
 //   3. Manual overrides as confirm-gated action cards: scale to N (scale),
 //      isolate a backend (isolate), and force routing weights (lb/weights).
 //      Each is reversible and audit-logged.
-//   4. A session operations strip: the last actions performed this session,
-//      held in local state.
+//   4. A session operations strip: the last actions performed this session.
 //
-// Every read tries the live API and falls back to sample data on error/timeout
-// (loadWithFallback), so the page renders complete with no backend running.
-// Actions are best-effort: success and failure both raise a toast and append to
-// the session strip; nothing here can crash the page when offline.
+// HONEST ACTION FEEDBACK. Every write (kill switch, strategy apply, policy
+// commit, scale, isolate, weights) reports pending -> confirmed/failed from the
+// REAL API result. Nothing is reported as succeeded before the call resolves;
+// a failure surfaces a calm critical toast and a "failed" worklog row.
+//
+// DEMONSTRATION SAFETY. Reads resolve live-or-demo through useLiveOrDemo, so the
+// page is fully populated on representative data with no backend running. But
+// destructive actions never FAKE success offline: when no live backend has been
+// resolved, the commit / scale / isolate / weights affordances are held with a
+// clear "connect a live backend to apply" hint, and their confirm dialogs state
+// plainly that they would apply once live. The kill switch reflects the
+// operator's local intent without claiming a backend write was confirmed.
 // ============================================================================
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -29,8 +35,10 @@ import {
   ArrowRight,
   Boxes,
   Check,
+  Compass,
   GitCompare,
   ListChecks,
+  Loader2,
   Power,
   ShieldCheck,
   Sliders,
@@ -46,6 +54,8 @@ import {
   type Policy,
   type PolicyDiffEntry,
   type PolicyPreviewResponse,
+  type RelatedMetrics,
+  type RlModeStatus,
   type StrategyName,
 } from "../api";
 import {
@@ -53,24 +63,34 @@ import {
   Button,
   Card,
   DataTable,
+  EmptyState,
   Modal,
   StatusPill,
   Toggle,
+  useLiveOrDemo,
   useToast,
   type Column,
 } from "../ui";
-import { loadWithFallback } from "./loader";
 import { useShell } from "./shell-context";
 import { SAMPLE_POLICY } from "./sample";
 import {
   SAMPLE_BACKEND_IDS,
   SAMPLE_LB_STATE,
   SAMPLE_OP_HISTORY,
+  SAMPLE_RELATED_METRICS,
+  SAMPLE_RL_MODE,
   STRATEGY_BLURB,
   type OpEntry,
 } from "./_sampleControls";
 
 const ACTOR = "operator";
+
+// Panel ids registered with the DataModeProvider so the global indicator
+// reflects which panels resolved live vs demonstration.
+const PANEL_POLICY = "controls.policy";
+const PANEL_LB = "controls.lb";
+const PANEL_RELATED = "controls.related";
+const PANEL_RL_MODE = "controls.rl-mode";
 
 // The policy primitives the editor exposes. operating_mode and safe_mode are
 // handled separately (mode is a select, safe_mode is the kill switch), so this
@@ -115,7 +135,16 @@ const fmtVal = (v: unknown): string => {
 
 // Coerce a form value back to the policy field's runtime type. Numeric specs
 // parse to number (NaN guarded by the caller); everything else passes through.
-const coerce = (spec: FieldSpec, raw: string): number => Number(raw);
+const coerce = (_spec: FieldSpec, raw: string): number => Number(raw);
+
+function errText(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  return "no live backend reached";
+}
+
+// The disabled hint shown on every destructive affordance while offline, so the
+// console never pretends an action wrote to a backend that isn't there.
+const OFFLINE_HINT = "Connect a live backend to apply.";
 
 // ── component ────────────────────────────────────────────────────────────────
 
@@ -123,10 +152,37 @@ export default function Controls() {
   const shell = useShell();
   const toast = useToast();
 
-  // Live-or-sample reads.
-  const [policy, setPolicy] = useState<Policy>(SAMPLE_POLICY);
-  const [lb, setLb] = useState<LbState>(SAMPLE_LB_STATE);
-  const [live, setLive] = useState(false);
+  // ── live-or-demo reads (per panel) ─────────────────────────────────────────
+  const policyQ = useLiveOrDemo<Policy>(
+    () => api.getPolicy(),
+    SAMPLE_POLICY,
+    { panelId: PANEL_POLICY },
+  );
+  const lbQ = useLiveOrDemo<LbState>(
+    () => api.getLbState(),
+    SAMPLE_LB_STATE,
+    { panelId: PANEL_LB },
+  );
+  const relatedQ = useLiveOrDemo<RelatedMetrics>(
+    () => api.getRelatedMetrics(),
+    SAMPLE_RELATED_METRICS,
+    { panelId: PANEL_RELATED },
+  );
+  const rlModeQ = useLiveOrDemo<RlModeStatus>(
+    () => api.getRlMode(),
+    SAMPLE_RL_MODE,
+    { panelId: PANEL_RL_MODE },
+  );
+
+  // A backend is "live" for write purposes once the policy read resolves live.
+  // Destructive actions key off this so they never fake success offline.
+  const connected = policyQ.source === "live";
+
+  // The policy snapshot the editor edits against. Held locally so a confirmed
+  // commit can advance it without waiting for the next read; seeded from the
+  // resolved read.
+  const [policy, setPolicyState] = useState<Policy>(SAMPLE_POLICY);
+  const [lb, setLbState] = useState<LbState>(SAMPLE_LB_STATE);
 
   // Working copy of the editable policy fields (string-backed for inputs).
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -138,6 +194,7 @@ export default function Controls() {
   // Modal state for the diff & commit flow.
   const [preview, setPreview] = useState<PolicyPreviewResponse | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
 
   const backendIds = useMemo(() => {
@@ -145,30 +202,25 @@ export default function Controls() {
     return fromLb.length ? fromLb : SAMPLE_BACKEND_IDS;
   }, [lb]);
 
-  // ── data load (live, with sample fallback) ─────────────────────────────────
+  // ── sync local editor state from the resolved reads ────────────────────────
+  // Re-seed whenever the policy read changes (initial demo, then live upgrade),
+  // so the editor opens against whatever the page actually resolved to.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const [poR, lbR] = await Promise.all([
-        loadWithFallback(() => api.getPolicy(), SAMPLE_POLICY),
-        loadWithFallback(() => api.getLbState(), SAMPLE_LB_STATE),
-      ]);
-      if (cancelled) return;
-      setPolicy(poR.value);
-      setLb(lbR.value);
-      setLive(poR.source === "live" && lbR.source === "live");
-      seedDraft(poR.value);
-      setMode(poR.value.operating_mode ?? "hybrid");
-      // Only a live policy reading drives the shared kill switch, so the read
-      // can't stomp the operator's manual choice while offline.
-      if (poR.source === "live") shell.setSafeMode(Boolean(poR.value.safe_mode));
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // shell.setSafeMode is stable (from context); intentionally one-shot load.
+    setPolicyState(policyQ.value);
+    seedDraft(policyQ.value);
+    setMode(policyQ.value.operating_mode ?? "hybrid");
+    // Only a live policy read drives the shared kill switch, so a demo read
+    // never stomps the operator's manual choice while offline.
+    if (policyQ.source === "live") {
+      shell.setSafeMode(Boolean(policyQ.value.safe_mode));
+    }
+    // shell.setSafeMode is stable (from context); track the resolved value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [policyQ.value, policyQ.source]);
+
+  useEffect(() => {
+    setLbState(lbQ.value);
+  }, [lbQ.value]);
 
   function seedDraft(p: Policy) {
     const next: Record<string, string> = {};
@@ -182,7 +234,7 @@ export default function Controls() {
   // ── session worklog helper ─────────────────────────────────────────────────
   function logOp(entry: Omit<OpEntry, "id" | "time" | "source">) {
     setHistory((prev) => [
-      { ...entry, id: Date.now() + Math.random(), time: nowClock(), source: live ? "live" : "local" },
+      { ...entry, id: Date.now() + Math.random(), time: nowClock(), source: connected ? "live" : "local" },
       ...prev,
     ]);
   }
@@ -209,31 +261,60 @@ export default function Controls() {
   const changedCount = Object.keys(patch).length;
 
   // ── policy: diff & commit ──────────────────────────────────────────────────
+  // Preview shows a busy state while the live preview resolves; offline it
+  // computes the diff locally so the operator can still review what WOULD apply.
   async function openDiff() {
     if (changedCount === 0) {
       toast.push({ title: "No changes to commit", detail: "Draft matches the live policy.", tone: "info" });
       return;
     }
-    // Try the live preview; fall back to a locally computed diff offline so the
-    // operator always sees what will change before committing.
-    const res = await loadWithFallback(
-      () => api.previewPolicy(patch),
-      localPreview(patch, policy),
-    );
-    setPreview(res.value);
+    setPreviewing(true);
     setPreviewOpen(true);
+    try {
+      const res = await api.previewPolicy(patch);
+      setPreview(res);
+    } catch {
+      // Offline / unreachable: fall back to a locally computed diff so the
+      // operator always sees what would change before deciding.
+      setPreview(localPreview(patch, policy));
+    } finally {
+      setPreviewing(false);
+    }
   }
 
   async function commit() {
+    // Demonstration: do not fake a backend write. Apply to the local snapshot
+    // so the editor reflects the operator's intent, log it as a local op, and
+    // say so plainly.
+    if (!connected) {
+      const merged = { ...policy, ...patch } as Policy;
+      setPolicyState(merged);
+      seedDraft(merged);
+      setMode(merged.operating_mode ?? mode);
+      toast.push({
+        title: "Saved locally (demonstration)",
+        detail: "No live backend connected; nothing was written.",
+        tone: "info",
+      });
+      logOp({
+        kind: "policy",
+        summary: `Edited ${changedCount} policy field${changedCount === 1 ? "" : "s"} locally (demonstration; not written to a backend).`,
+        outcome: "ok",
+      });
+      setPreviewOpen(false);
+      setPreview(null);
+      return;
+    }
+
     setCommitting(true);
     try {
       const res = await api.setPolicy(patch, ACTOR);
-      setPolicy(res.policy);
+      setPolicyState(res.policy);
       seedDraft(res.policy);
       setMode(res.policy.operating_mode ?? mode);
       toast.push({
         title: "Policy committed",
-        detail: `v${res.policy_version} - ${res.changed_fields.join(", ") || "no-op"}`,
+        detail: `v${res.policy_version} · ${res.changed_fields.join(", ") || "no-op"}`,
         tone: "ok",
       });
       logOp({
@@ -241,26 +322,23 @@ export default function Controls() {
         summary: `Committed policy v${res.policy_version}: ${res.changed_fields.join(", ") || "no fields changed"}.`,
         outcome: "ok",
       });
+      setPreviewOpen(false);
+      setPreview(null);
     } catch (e) {
-      // Offline / rejected: keep the draft, apply optimistically to the local
-      // snapshot so the page reflects intent, and record the attempt.
-      const merged = { ...policy, ...patch } as Policy;
-      setPolicy(merged);
-      seedDraft(merged);
+      // A live backend rejected the write: keep the draft, do NOT advance the
+      // snapshot, and report the failure honestly.
       toast.push({
-        title: "Commit not confirmed",
+        title: "Commit failed",
         detail: errText(e),
         tone: "crit",
       });
       logOp({
         kind: "policy",
-        summary: `Policy commit (${changedCount} field${changedCount === 1 ? "" : "s"}) not confirmed by backend.`,
+        summary: `Policy commit (${changedCount} field${changedCount === 1 ? "" : "s"}) was rejected by the backend.`,
         outcome: "failed",
       });
     } finally {
       setCommitting(false);
-      setPreviewOpen(false);
-      setPreview(null);
     }
   }
 
@@ -271,9 +349,20 @@ export default function Controls() {
 
   // ── named-strategy quick-apply ─────────────────────────────────────────────
   async function applyStrategy(name: StrategyName) {
+    if (!connected) {
+      const merged = { ...policy, strategy_name: name } as Policy;
+      setPolicyState(merged);
+      toast.push({
+        title: "Strategy staged (demonstration)",
+        detail: "No live backend connected; nothing was written.",
+        tone: "info",
+      });
+      logOp({ kind: "strategy", summary: `Selected strategy "${name}" locally (demonstration; not written).`, outcome: "ok" });
+      return;
+    }
     try {
       const res = await api.setStrategy(name, ACTOR);
-      setPolicy(res.policy);
+      setPolicyState(res.policy);
       seedDraft(res.policy);
       setMode(res.policy.operating_mode ?? mode);
       toast.push({
@@ -283,102 +372,115 @@ export default function Controls() {
       });
       logOp({ kind: "strategy", summary: `Applied named strategy "${name}" (policy v${res.policy_version}).`, outcome: "ok" });
     } catch (e) {
-      const merged = { ...policy, strategy_name: name } as Policy;
-      setPolicy(merged);
-      toast.push({ title: "Strategy not confirmed", detail: errText(e), tone: "crit" });
-      logOp({ kind: "strategy", summary: `Strategy "${name}" not confirmed by backend.`, outcome: "failed" });
+      toast.push({ title: "Strategy apply failed", detail: errText(e), tone: "crit" });
+      logOp({ kind: "strategy", summary: `Strategy "${name}" was rejected by the backend.`, outcome: "failed" });
     }
   }
 
   // ── kill switch (shared with the shell / Topbar) ───────────────────────────
+  // Reflect the operator's local intent and keep the shared shell state in sync
+  // (so the Topbar switch agrees), but be honest about whether a write landed.
   function onToggleSafeMode(next: boolean) {
-    setPolicy((p) => ({ ...p, safe_mode: next }));
-    shell.toggleSafeMode(next); // optimistic state + toast + best-effort write
+    setPolicyState((p) => ({ ...p, safe_mode: next }));
+    shell.toggleSafeMode(next); // optimistic shared state + best-effort write
     logOp({
       kind: "safe_mode",
-      summary: next
-        ? "Engaged safe mode: automation frozen on last known-good."
-        : "Released safe mode: decision plane resumed.",
+      summary: connected
+        ? next
+          ? "Engaged safe mode: automation frozen on last known-good."
+          : "Released safe mode: decision plane resumed."
+        : next
+          ? "Engaged safe mode locally (demonstration; not written to a backend)."
+          : "Released safe mode locally (demonstration; not written to a backend).",
       outcome: "ok",
     });
   }
 
   // ── render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
-      <PageHead live={live} policyVersion={policy.policy_version} mode={policy.operating_mode} />
+    <div className="sl-stack">
+      <PageHead
+        connected={connected}
+        policyVersion={policy.policy_version}
+        mode={policy.operating_mode}
+      />
 
-      <KillSwitch armed={shell.safeMode} onToggle={onToggleSafeMode} />
+      <KillSwitch armed={shell.safeMode} connected={connected} onToggle={onToggleSafeMode} />
+
+      <RlModeNote rl={rlModeQ.value} source={rlModeQ.source} />
 
       <SectionHead
         title="Operating policy"
         sub="Edit the live policy primitives, then review a field-level diff before committing. Or apply a named strategy to set the primitives in one move. Every commit is versioned and audit-logged."
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.55fr) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
+      <div className="sl-grid-2-1">
         <PolicyEditor
           policy={policy}
           draft={draft}
           mode={mode}
           changedCount={changedCount}
+          connected={connected}
+          related={relatedQ.value}
+          relatedLive={relatedQ.source === "live"}
+          policyLoading={policyQ.state === "loading" && policyQ.source !== "live"}
           onField={(k, v) => setDraft((d) => ({ ...d, [k]: v }))}
           onMode={setMode}
           onReset={resetDraft}
           onDiff={openDiff}
         />
-        <StrategyPicker current={policy.strategy_name} onApply={applyStrategy} />
+        <StrategyPicker current={policy.strategy_name} connected={connected} onApply={applyStrategy} />
       </div>
 
       <SectionHead
         title="Manual overrides"
-        sub="Direct, deliberate actions. Each opens a confirm step and is reversible and audit-logged: the load balancer keeps serving on the last committed state throughout."
+        sub="Direct, deliberate actions. Each opens a confirm step and is reversible and audit-logged: the load balancer keeps serving on the last committed state throughout. When no live backend is connected these are held — a demonstration never writes."
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 18, alignItems: "start" }}>
+      <div className="sl-grid-3">
         <ScaleCard
           current={policy.max_backends}
+          connected={connected}
           onApply={async (n, reason) => {
-            try {
-              const res = await api.scale(n, ACTOR, reason);
-              toast.push({
-                title: res.status === "applied" ? `Scaled to ${res.final_count}` : "Scale no-op",
-                detail: `${res.previous_count} -> ${res.final_count} (${res.action})`,
-                tone: res.status === "applied" ? "ok" : "info",
-              });
-              logOp({ kind: "scale", summary: `Scale to ${n}: ${res.previous_count} -> ${res.final_count} (${res.action}).`, outcome: "ok" });
-            } catch (e) {
-              toast.push({ title: "Scale not confirmed", detail: errText(e), tone: "crit" });
-              logOp({ kind: "scale", summary: `Scale to ${n} not confirmed by backend.`, outcome: "failed" });
-            }
+            const res = await api.scale(n, ACTOR, reason);
+            toast.push({
+              title: res.status === "applied" ? `Scaled to ${res.final_count}` : "Scale no-op",
+              detail: `${res.previous_count} -> ${res.final_count} (${res.action})`,
+              tone: res.status === "applied" ? "ok" : "info",
+            });
+            logOp({ kind: "scale", summary: `Scale to ${n}: ${res.previous_count} -> ${res.final_count} (${res.action}).`, outcome: "ok" });
+          }}
+          onFail={(n, e) => {
+            toast.push({ title: "Scale failed", detail: errText(e), tone: "crit" });
+            logOp({ kind: "scale", summary: `Scale to ${n} was rejected by the backend.`, outcome: "failed" });
           }}
         />
         <IsolateCard
           backendIds={backendIds}
+          connected={connected}
           onApply={async (id, status, reason) => {
-            try {
-              const res = await api.isolate(id, status, ACTOR, reason);
-              toast.push({ title: `Marked ${id} ${res.anomaly_status}`, detail: res.reason || "isolate applied", tone: "ok" });
-              logOp({ kind: "isolate", summary: `Set ${id} to ${status} (score ${res.score}).`, outcome: "ok" });
-            } catch (e) {
-              toast.push({ title: "Isolate not confirmed", detail: errText(e), tone: "crit" });
-              logOp({ kind: "isolate", summary: `Mark ${id} ${status} not confirmed by backend.`, outcome: "failed" });
-            }
+            const res = await api.isolate(id, status, ACTOR, reason);
+            toast.push({ title: `Marked ${id} ${res.anomaly_status}`, detail: res.reason || "isolate applied", tone: "ok" });
+            logOp({ kind: "isolate", summary: `Set ${id} to ${status} (score ${res.score}).`, outcome: "ok" });
+          }}
+          onFail={(id, status, e) => {
+            toast.push({ title: "Isolate failed", detail: errText(e), tone: "crit" });
+            logOp({ kind: "isolate", summary: `Mark ${id} ${status} was rejected by the backend.`, outcome: "failed" });
           }}
         />
         <WeightsCard
           lb={lb}
           backendIds={backendIds}
+          connected={connected}
           onApply={async (weights) => {
-            try {
-              const res = await api.setLbWeights(weights);
-              setLb((s) => ({ ...s, upstream_weights: res.applied_weights }));
-              toast.push({ title: "Routing weights forced", detail: `${Object.keys(res.applied_weights).length} backends`, tone: "ok" });
-              logOp({ kind: "weights", summary: `Forced routing weights across ${Object.keys(weights).length} backends.`, outcome: "ok" });
-            } catch (e) {
-              setLb((s) => ({ ...s, upstream_weights: weights }));
-              toast.push({ title: "Weights not confirmed", detail: errText(e), tone: "crit" });
-              logOp({ kind: "weights", summary: `Force routing weights not confirmed by backend.`, outcome: "failed" });
-            }
+            const res = await api.setLbWeights(weights);
+            setLbState((s) => ({ ...s, upstream_weights: res.applied_weights }));
+            toast.push({ title: "Routing weights forced", detail: `${Object.keys(res.applied_weights).length} backends`, tone: "ok" });
+            logOp({ kind: "weights", summary: `Forced routing weights across ${Object.keys(weights).length} backends.`, outcome: "ok" });
+          }}
+          onFail={(e) => {
+            toast.push({ title: "Force weights failed", detail: errText(e), tone: "crit" });
+            logOp({ kind: "weights", summary: `Force routing weights was rejected by the backend.`, outcome: "failed" });
           }}
         />
       </div>
@@ -389,7 +491,9 @@ export default function Controls() {
       <CommitModal
         open={previewOpen}
         preview={preview}
+        previewing={previewing}
         committing={committing}
+        connected={connected}
         targetVersion={(policy.policy_version ?? 0) + 1}
         onClose={() => {
           setPreviewOpen(false);
@@ -417,14 +521,9 @@ function localPreview(patch: Partial<Policy>, current: Policy): PolicyPreviewRes
   return { valid: true, errors: [], changed_fields: diff.map((d) => d.field), diff, warnings };
 }
 
-function errText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  return "no live backend reached";
-}
-
 // ── page head ──────────────────────────────────────────────────────────────────
 
-function PageHead({ live, policyVersion, mode }: { live: boolean; policyVersion: number; mode: string }) {
+function PageHead({ connected, policyVersion, mode }: { connected: boolean; policyVersion: number; mode: string }) {
   return (
     <section
       style={{
@@ -463,10 +562,10 @@ function PageHead({ live, policyVersion, mode }: { live: boolean; policyVersion:
         Edit the operating policy with a reviewed diff, apply a named strategy, or take a manual override. Every
         action is reversible and audit-logged, and the load balancer keeps serving throughout.
       </p>
-      <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+      <div className="sl-cluster" style={{ marginTop: 18 }}>
         <Badge tone="neutral">policy v{policyVersion}</Badge>
         <Badge tone="mint">{(mode ?? "adaptive").toUpperCase()}</Badge>
-        <Badge tone={live ? "mint" : "graphite"}>{live ? "LIVE" : "SAMPLE DATA"}</Badge>
+        <Badge tone={connected ? "mint" : "neutral"}>{connected ? "LIVE BACKEND" : "DEMONSTRATION"}</Badge>
       </div>
     </section>
   );
@@ -483,9 +582,48 @@ function SectionHead({ title, sub }: { title: string; sub: string }) {
   );
 }
 
+// ── RL-mode deploy-time note (read-only, links to Helmsman) ──────────────────────
+
+function RlModeNote({ rl, source }: { rl: RlModeStatus; source: "live" | "demo" }) {
+  const current = rl.current_mode ?? "shadow";
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-start",
+        padding: "13px 16px",
+        borderRadius: "var(--sl-radius-md)",
+        background: "var(--sl-info-tint)",
+        border: "1px solid var(--sl-info-line)",
+      }}
+    >
+      <Compass size={16} strokeWidth={2} color="var(--sl-info)" style={{ flex: "0 0 auto", marginTop: 1 }} />
+      <div style={{ fontSize: 12, color: "var(--sl-text-mid)", lineHeight: 1.5 }}>
+        RL routing is currently{" "}
+        <b style={{ color: "var(--sl-text)" }}>{current.toUpperCase()}</b>. Promotion to active is a{" "}
+        <b>deploy-time</b> change to the routing engine, not a policy field you can commit here. The{" "}
+        <b>safe_mode</b> and <b>operating_mode</b> gates below still shape the effective mode. See{" "}
+        <b>Helmsman</b> for the shadow-vs-applied comparison and promotion readiness.
+        {source !== "live" ? (
+          <span style={{ color: "var(--sl-text-low)" }}> Showing representative values.</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 // ── kill switch ────────────────────────────────────────────────────────────────
 
-function KillSwitch({ armed, onToggle }: { armed: boolean; onToggle: (next: boolean) => void }) {
+function KillSwitch({
+  armed,
+  connected,
+  onToggle,
+}: {
+  armed: boolean;
+  connected: boolean;
+  onToggle: (next: boolean) => void;
+}) {
   return (
     <section
       style={{
@@ -502,17 +640,23 @@ function KillSwitch({ armed, onToggle }: { armed: boolean; onToggle: (next: bool
       }}
     >
       <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <Power size={18} strokeWidth={2} color={armed ? "var(--sl-crit)" : "var(--sl-mint)"} />
           <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.3px", color: "var(--sl-text)" }}>Safe mode kill switch</span>
           <StatusPill status={armed ? "crit" : "ok"} hideDot>
             {armed ? "AUTOMATION FROZEN" : "ENGINE AUTONOMOUS"}
           </StatusPill>
+          {!connected ? <Badge tone="neutral">LOCAL INTENT</Badge> : null}
         </div>
         <p style={{ fontSize: 12.5, color: armed ? "var(--sl-crit)" : "var(--sl-text-mid)", margin: "8px 0 0", maxWidth: "78ch" }}>
           {armed
             ? "Automation is frozen at its last known-good state. The load balancer keeps routing on the last committed weights; traffic never stops. Reversible and audit-logged."
             : "The decision plane is making automated routing and scaling calls. Flip to freeze every automated decision and hold the deterministic fallback. Reversible and audit-logged."}
+          {!connected ? (
+            <span style={{ display: "block", marginTop: 6, color: "var(--sl-text-low)" }}>
+              No live backend connected: this reflects your local intent only and isn't written to a backend.
+            </span>
+          ) : null}
         </p>
       </div>
       <div
@@ -545,6 +689,10 @@ function PolicyEditor({
   draft,
   mode,
   changedCount,
+  connected,
+  related,
+  relatedLive,
+  policyLoading,
   onField,
   onMode,
   onReset,
@@ -554,6 +702,10 @@ function PolicyEditor({
   draft: Record<string, string>;
   mode: string;
   changedCount: number;
+  connected: boolean;
+  related: RelatedMetrics;
+  relatedLive: boolean;
+  policyLoading: boolean;
   onField: (key: string, value: string) => void;
   onMode: (value: string) => void;
   onReset: () => void;
@@ -565,63 +717,93 @@ function PolicyEditor({
       eyebrow="// primitives"
       actions={<Badge tone="neutral">v{policy.policy_version}</Badge>}
     >
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Field label="Operating mode" hint="How aggressively the plane scales and routes.">
-          <select
-            value={mode}
-            onChange={(e) => onMode(e.target.value)}
-            style={selectStyle}
-            aria-label="Operating mode"
-          >
-            {(OPERATING_MODES.includes(mode) ? OPERATING_MODES : [mode, ...OPERATING_MODES]).map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </Field>
-
-        {POLICY_FIELDS.map((f) => {
-          const raw = draft[f.key as string] ?? "";
-          const dirty = f.options
-            ? raw !== "" && raw !== String(policy[f.key] ?? "")
-            : raw !== "" && Number(raw) !== policy[f.key];
-          return (
-            <Field key={f.key as string} label={f.label} unit={f.unit} hint={f.hint} dirty={dirty}>
-              {f.options ? (
-                <select
-                  value={raw}
-                  onChange={(e) => onField(f.key as string, e.target.value)}
-                  style={{ ...selectStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
-                  aria-label={f.label}
-                >
-                  {(f.options.includes(raw) || raw === "" ? f.options : [raw, ...f.options]).map((o) => (
-                    <option key={o} value={o}>
-                      {o}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  value={raw}
-                  step={f.step}
-                  min={f.min}
-                  max={f.max}
-                  onChange={(e) => onField(f.key as string, e.target.value)}
-                  style={{ ...inputStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
-                  aria-label={f.label}
-                />
-              )}
-            </Field>
-          );
-        })}
+      {/* live context the primitives are defending */}
+      <div
+        style={{
+          display: "flex",
+          gap: 18,
+          flexWrap: "wrap",
+          padding: "0 0 14px",
+          marginBottom: 14,
+          borderBottom: "1px solid var(--sl-hairline-soft)",
+        }}
+      >
+        <ContextStat label="SLO compliance" value={related.slo_compliance_pct != null ? `${related.slo_compliance_pct.toFixed(1)}` : "—"} unit="%" />
+        <ContextStat label="p95 latency" value={related.p95_latency_ms != null ? `${Math.round(related.p95_latency_ms)}` : "—"} unit="ms" />
+        <ContextStat label="Throughput" value={related.rps_current != null ? `${Math.round(related.rps_current)}` : "—"} unit="rps" />
+        <span style={{ marginLeft: "auto", alignSelf: "center" }}>
+          <Badge tone={relatedLive ? "mint" : "neutral"}>{relatedLive ? "LIVE" : "DEMO"}</Badge>
+        </span>
       </div>
+
+      {policyLoading ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <span key={i} className="sl-shimmer" style={{ height: 56, borderRadius: 8 }} />
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <Field label="Operating mode" hint="How aggressively the plane scales and routes.">
+            <select
+              value={mode}
+              onChange={(e) => onMode(e.target.value)}
+              style={selectStyle}
+              aria-label="Operating mode"
+            >
+              {(OPERATING_MODES.includes(mode) ? OPERATING_MODES : [mode, ...OPERATING_MODES]).map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          {POLICY_FIELDS.map((f) => {
+            const raw = draft[f.key as string] ?? "";
+            const dirty = f.options
+              ? raw !== "" && raw !== String(policy[f.key] ?? "")
+              : raw !== "" && Number(raw) !== policy[f.key];
+            return (
+              <Field key={f.key as string} label={f.label} unit={f.unit} hint={f.hint} dirty={dirty}>
+                {f.options ? (
+                  <select
+                    value={raw}
+                    onChange={(e) => onField(f.key as string, e.target.value)}
+                    style={{ ...selectStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
+                    aria-label={f.label}
+                  >
+                    {(f.options.includes(raw) || raw === "" ? f.options : [raw, ...f.options]).map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={raw}
+                    step={f.step}
+                    min={f.min}
+                    max={f.max}
+                    onChange={(e) => onField(f.key as string, e.target.value)}
+                    style={{ ...inputStyle, borderColor: dirty ? "var(--sl-mint)" : "var(--sl-hairline)" }}
+                    aria-label={f.label}
+                  />
+                )}
+              </Field>
+            );
+          })}
+        </div>
+      )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--sl-hairline-soft)" }}>
         <div style={{ fontSize: 12, color: changedCount > 0 ? "var(--sl-mint-deep)" : "var(--sl-text-low)", fontWeight: 600 }}>
           {changedCount > 0 ? `${changedCount} pending change${changedCount === 1 ? "" : "s"}` : "No pending changes"}
+          {changedCount > 0 && !connected ? (
+            <span style={{ color: "var(--sl-text-low)", fontWeight: 500 }}> · {OFFLINE_HINT}</span>
+          ) : null}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <Button variant="ghost" size="sm" onClick={onReset} disabled={changedCount === 0}>
@@ -634,11 +816,23 @@ function PolicyEditor({
             onClick={onDiff}
             disabled={changedCount === 0}
           >
-            Diff &amp; commit
+            {connected ? "Diff & commit" : "Diff (review only)"}
           </Button>
         </div>
       </div>
     </Card>
+  );
+}
+
+function ContextStat({ label, value, unit }: { label: string; value: string; unit: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, color: "var(--sl-text-low)", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontFamily: "var(--sl-font-mono)", fontWeight: 700, fontSize: 17, letterSpacing: "-0.5px", marginTop: 2, color: "var(--sl-text)" }}>
+        {value}
+        <span style={{ fontSize: 11, color: "var(--sl-text-low)", fontWeight: 500, marginLeft: 3 }}>{unit}</span>
+      </div>
+    </div>
   );
 }
 
@@ -670,17 +864,33 @@ function Field({
 
 // ── strategy quick-apply ───────────────────────────────────────────────────────
 
-function StrategyPicker({ current, onApply }: { current?: string; onApply: (name: StrategyName) => void }) {
+function StrategyPicker({
+  current,
+  connected,
+  onApply,
+}: {
+  current?: string;
+  connected: boolean;
+  onApply: (name: StrategyName) => Promise<void>;
+}) {
   const [sel, setSel] = useState<StrategyName>(
     (STRATEGY_NAMES.includes((current ?? "") as StrategyName) ? (current as StrategyName) : "ai-hybrid"),
   );
   const [busy, setBusy] = useState(false);
   const isCurrent = sel === current;
 
+  const label = busy
+    ? "Applying…"
+    : isCurrent
+      ? "Already applied"
+      : connected
+        ? `Apply ${sel}`
+        : `Stage ${sel} (demonstration)`;
+
   return (
     <Card title="Named strategy" eyebrow="// quick-apply">
       <p style={{ fontSize: 12, color: "var(--sl-text-low)", margin: "0 0 12px" }}>
-        Apply an alias over the policy primitives in one move. Current: {" "}
+        Apply an alias over the policy primitives in one move. Current:{" "}
         <span style={{ fontFamily: "var(--sl-font-mono)", fontWeight: 600, color: "var(--sl-text)" }}>{current ?? "custom"}</span>.
       </p>
       <select value={sel} onChange={(e) => setSel(e.target.value as StrategyName)} style={selectStyle} aria-label="Named strategy">
@@ -696,24 +906,42 @@ function StrategyPicker({ current, onApply }: { current?: string; onApply: (name
       <Button
         variant="primary"
         size="sm"
-        icon={<Workflow size={13} strokeWidth={2} />}
+        icon={busy ? <Loader2 size={13} strokeWidth={2} style={spinStyle} /> : <Workflow size={13} strokeWidth={2} />}
         disabled={busy || isCurrent}
         onClick={async () => {
           setBusy(true);
-          await onApply(sel);
-          setBusy(false);
+          try {
+            await onApply(sel);
+          } finally {
+            setBusy(false);
+          }
         }}
         style={{ width: "100%", justifyContent: "center" }}
       >
-        {isCurrent ? "Already applied" : `Apply ${sel}`}
+        {label}
       </Button>
+      {!connected && !isCurrent ? (
+        <p style={{ fontSize: 10.5, color: "var(--sl-text-faint)", margin: "8px 0 0", textAlign: "center" }}>
+          {OFFLINE_HINT} Staged locally for the demonstration.
+        </p>
+      ) : null}
     </Card>
   );
 }
 
 // ── manual override: scale ──────────────────────────────────────────────────────
 
-function ScaleCard({ current, onApply }: { current: number; onApply: (n: number, reason?: string) => Promise<void> }) {
+function ScaleCard({
+  current,
+  connected,
+  onApply,
+  onFail,
+}: {
+  current: number;
+  connected: boolean;
+  onApply: (n: number, reason?: string) => Promise<void>;
+  onFail: (n: number, e: unknown) => void;
+}) {
   const [n, setN] = useState<string>(String(current));
   const [reason, setReason] = useState("");
   const [open, setOpen] = useState(false);
@@ -726,6 +954,7 @@ function ScaleCard({ current, onApply }: { current: number; onApply: (n: number,
       icon={<Boxes size={16} strokeWidth={2} />}
       title="Scale to N"
       blurb="Set the backend pool to an exact count. Reversible and audit-logged."
+      connected={connected}
     >
       <Field label="Target backends">
         <input type="number" min={0} step={1} value={n} onChange={(e) => setN(e.target.value)} style={inputStyle} aria-label="Target backends" />
@@ -747,16 +976,21 @@ function ScaleCard({ current, onApply }: { current: number; onApply: (n: number,
             <Button
               variant="primary"
               size="sm"
-              disabled={busy}
-              icon={<Check size={13} strokeWidth={2} />}
+              disabled={busy || !connected}
+              icon={busy ? <Loader2 size={13} strokeWidth={2} style={spinStyle} /> : <Check size={13} strokeWidth={2} />}
               onClick={async () => {
                 setBusy(true);
-                await onApply(target, reason || undefined);
-                setBusy(false);
-                setOpen(false);
+                try {
+                  await onApply(target, reason || undefined);
+                  setOpen(false);
+                } catch (e) {
+                  onFail(target, e);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              {busy ? "Applying..." : "Confirm scale"}
+              {busy ? "Applying…" : "Confirm scale"}
             </Button>
           </>
         }
@@ -764,6 +998,7 @@ function ScaleCard({ current, onApply }: { current: number; onApply: (n: number,
         <ConfirmBody
           line={<>Scale the pool to <b style={{ color: "var(--sl-text)" }}>{target}</b> backend{target === 1 ? "" : "s"}.</>}
           reason={reason}
+          connected={connected}
         />
       </Modal>
     </ActionCard>
@@ -774,7 +1009,17 @@ function ScaleCard({ current, onApply }: { current: number; onApply: (n: number,
 
 const ISOLATE_STATUSES: IsolateStatus[] = ["unhealthy", "degraded", "healthy"];
 
-function IsolateCard({ backendIds, onApply }: { backendIds: string[]; onApply: (id: string, status: IsolateStatus, reason?: string) => Promise<void> }) {
+function IsolateCard({
+  backendIds,
+  connected,
+  onApply,
+  onFail,
+}: {
+  backendIds: string[];
+  connected: boolean;
+  onApply: (id: string, status: IsolateStatus, reason?: string) => Promise<void>;
+  onFail: (id: string, status: IsolateStatus, e: unknown) => void;
+}) {
   const [id, setId] = useState(backendIds[0] ?? "");
   const [status, setStatus] = useState<IsolateStatus>("unhealthy");
   const [reason, setReason] = useState("");
@@ -791,6 +1036,7 @@ function IsolateCard({ backendIds, onApply }: { backendIds: string[]; onApply: (
       icon={<ShieldCheck size={16} strokeWidth={2} />}
       title="Isolate backend"
       blurb="Force an anomaly verdict on a node so the router holds it out. Reversible and audit-logged."
+      connected={connected}
     >
       <Field label="Backend">
         <select value={id} onChange={(e) => setId(e.target.value)} style={selectStyle} aria-label="Backend to isolate">
@@ -823,16 +1069,21 @@ function IsolateCard({ backendIds, onApply }: { backendIds: string[]; onApply: (
             <Button
               variant={status === "healthy" ? "primary" : "danger"}
               size="sm"
-              disabled={busy}
-              icon={<Check size={13} strokeWidth={2} />}
+              disabled={busy || !connected}
+              icon={busy ? <Loader2 size={13} strokeWidth={2} style={spinStyle} /> : <Check size={13} strokeWidth={2} />}
               onClick={async () => {
                 setBusy(true);
-                await onApply(id, status, reason || undefined);
-                setBusy(false);
-                setOpen(false);
+                try {
+                  await onApply(id, status, reason || undefined);
+                  setOpen(false);
+                } catch (e) {
+                  onFail(id, status, e);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              {busy ? "Applying..." : "Confirm"}
+              {busy ? "Applying…" : "Confirm"}
             </Button>
           </>
         }
@@ -840,6 +1091,7 @@ function IsolateCard({ backendIds, onApply }: { backendIds: string[]; onApply: (
         <ConfirmBody
           line={<>Set <b style={{ color: "var(--sl-text)" }}>{id}</b> to verdict <b style={{ color: "var(--sl-text)" }}>{status}</b>.{status !== "healthy" ? " Traffic redistributes to the rest of the pool." : " The node returns to rotation."}</>}
           reason={reason}
+          connected={connected}
         />
       </Modal>
     </ActionCard>
@@ -851,11 +1103,15 @@ function IsolateCard({ backendIds, onApply }: { backendIds: string[]; onApply: (
 function WeightsCard({
   lb,
   backendIds,
+  connected,
   onApply,
+  onFail,
 }: {
   lb: LbState;
   backendIds: string[];
+  connected: boolean;
   onApply: (weights: Record<string, number>) => Promise<void>;
+  onFail: (e: unknown) => void;
 }) {
   // Per-backend numeric inputs, seeded from the live weight map.
   const [weights, setWeights] = useState<Record<string, string>>(() =>
@@ -885,6 +1141,7 @@ function WeightsCard({
       icon={<Sliders size={16} strokeWidth={2} />}
       title="Force routing weights"
       blurb="Override the per-backend split. The plane resumes scoring once released. Reversible and audit-logged."
+      connected={connected}
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 188, overflow: "auto", paddingRight: 2 }}>
         {backendIds.map((b) => (
@@ -922,16 +1179,21 @@ function WeightsCard({
             <Button
               variant="primary"
               size="sm"
-              disabled={busy}
-              icon={<Check size={13} strokeWidth={2} />}
+              disabled={busy || !connected}
+              icon={busy ? <Loader2 size={13} strokeWidth={2} style={spinStyle} /> : <Check size={13} strokeWidth={2} />}
               onClick={async () => {
                 setBusy(true);
-                await onApply(parsed);
-                setBusy(false);
-                setOpen(false);
+                try {
+                  await onApply(parsed);
+                  setOpen(false);
+                } catch (e) {
+                  onFail(e);
+                } finally {
+                  setBusy(false);
+                }
               }}
             >
-              {busy ? "Applying..." : "Confirm override"}
+              {busy ? "Applying…" : "Confirm override"}
             </Button>
           </>
         }
@@ -951,6 +1213,7 @@ function WeightsCard({
             <span>Weights do not sum to 1.00; the load balancer normalizes on apply.</span>
           </div>
         ) : null}
+        {!connected ? <OfflineNotice /> : null}
       </Modal>
     </ActionCard>
   );
@@ -958,7 +1221,19 @@ function WeightsCard({
 
 // ── action card shell ───────────────────────────────────────────────────────────
 
-function ActionCard({ icon, title, blurb, children }: { icon: ReactNode; title: string; blurb: string; children: ReactNode }) {
+function ActionCard({
+  icon,
+  title,
+  blurb,
+  connected,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  blurb: string;
+  connected: boolean;
+  children: ReactNode;
+}) {
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -977,6 +1252,7 @@ function ActionCard({ icon, title, blurb, children }: { icon: ReactNode; title: 
           {icon}
         </span>
         <div style={{ fontSize: 14, fontWeight: 700, color: "var(--sl-text)" }}>{title}</div>
+        {!connected ? <span style={{ marginLeft: "auto" }}><Badge tone="neutral">REVIEW ONLY</Badge></span> : null}
       </div>
       <p style={{ fontSize: 11.5, color: "var(--sl-text-low)", margin: "8px 0 14px", lineHeight: 1.45 }}>{blurb}</p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>{children}</div>
@@ -984,7 +1260,7 @@ function ActionCard({ icon, title, blurb, children }: { icon: ReactNode; title: 
   );
 }
 
-function ConfirmBody({ line, reason }: { line: ReactNode; reason?: string }) {
+function ConfirmBody({ line, reason, connected }: { line: ReactNode; reason?: string; connected: boolean }) {
   return (
     <div>
       <p style={{ margin: "0 0 12px" }}>{line}</p>
@@ -997,6 +1273,34 @@ function ConfirmBody({ line, reason }: { line: ReactNode; reason?: string }) {
         <ShieldCheck size={14} strokeWidth={2} style={{ flex: "0 0 auto", marginTop: 1 }} />
         <span>Reversible and audit-logged. The load balancer keeps serving on the last committed state.</span>
       </div>
+      {!connected ? <OfflineNotice /> : null}
+    </div>
+  );
+}
+
+// Calm notice shown inside a confirm dialog when no live backend is connected:
+// the action is held, and the dialog says plainly it would apply once live.
+function OfflineNotice() {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        marginTop: 12,
+        padding: "9px 11px",
+        borderRadius: 9,
+        background: "var(--sl-info-tint)",
+        border: "1px solid var(--sl-info-line)",
+        fontSize: 11.5,
+        color: "var(--sl-text-mid)",
+        alignItems: "flex-start",
+      }}
+    >
+      <AlertTriangle size={14} strokeWidth={2} color="var(--sl-info)" style={{ flex: "0 0 auto", marginTop: 1 }} />
+      <span>
+        No live backend connected. This is held in the demonstration and would be
+        applied once a backend is reachable; nothing is written now.
+      </span>
     </div>
   );
 }
@@ -1006,19 +1310,28 @@ function ConfirmBody({ line, reason }: { line: ReactNode; reason?: string }) {
 function CommitModal({
   open,
   preview,
+  previewing,
   committing,
+  connected,
   targetVersion,
   onClose,
   onConfirm,
 }: {
   open: boolean;
   preview: PolicyPreviewResponse | null;
+  previewing: boolean;
   committing: boolean;
+  connected: boolean;
   targetVersion: number;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   const blocked = preview ? !preview.valid || preview.errors.length > 0 : false;
+  const confirmLabel = committing
+    ? "Committing…"
+    : connected
+      ? `Commit to v${targetVersion}`
+      : "Save locally";
   return (
     <Modal
       open={open}
@@ -1036,21 +1349,26 @@ function CommitModal({
           <Button
             variant="primary"
             size="sm"
-            disabled={committing || blocked}
-            icon={<Check size={13} strokeWidth={2} />}
+            disabled={committing || previewing || blocked}
+            icon={committing ? <Loader2 size={13} strokeWidth={2} style={spinStyle} /> : <Check size={13} strokeWidth={2} />}
             onClick={onConfirm}
           >
-            {committing ? "Committing..." : `Commit to v${targetVersion}`}
+            {confirmLabel}
           </Button>
         </>
       }
     >
-      {!preview ? (
-        <div style={{ color: "var(--sl-text-low)" }}>Computing diff...</div>
+      {previewing && !preview ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 9, color: "var(--sl-text-low)" }}>
+          <Loader2 size={15} strokeWidth={2} style={spinStyle} />
+          Computing diff…
+        </div>
+      ) : !preview ? (
+        <EmptyState title="Nothing to preview" hint="Edit a field to see its diff." />
       ) : (
         <div>
           <p style={{ margin: "0 0 12px" }}>
-            {preview.diff.length} field{preview.diff.length === 1 ? "" : "s"} change. Review the old → new values, then commit.
+            {preview.diff.length} field{preview.diff.length === 1 ? "" : "s"} change. Review the old → new values, then {connected ? "commit" : "save locally"}.
           </p>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 1, borderRadius: 10, overflow: "hidden", border: "1px solid var(--sl-hairline)" }}>
@@ -1081,10 +1399,14 @@ function CommitModal({
             </Notice>
           ) : null}
 
-          <div style={{ display: "flex", gap: 7, marginTop: 12, fontSize: 11.5, color: "var(--sl-text-low)", alignItems: "flex-start" }}>
-            <ShieldCheck size={14} strokeWidth={2} style={{ flex: "0 0 auto", marginTop: 1 }} />
-            <span>Committing writes a new policy version and is audit-logged. Reversible by committing the prior values.</span>
-          </div>
+          {connected ? (
+            <div style={{ display: "flex", gap: 7, marginTop: 12, fontSize: 11.5, color: "var(--sl-text-low)", alignItems: "flex-start" }}>
+              <ShieldCheck size={14} strokeWidth={2} style={{ flex: "0 0 auto", marginTop: 1 }} />
+              <span>Committing writes a new policy version and is audit-logged. Reversible by committing the prior values.</span>
+            </div>
+          ) : (
+            <OfflineNotice />
+          )}
         </div>
       )}
     </Modal>
@@ -1126,6 +1448,11 @@ function HistoryStrip({ history }: { history: OpEntry[] }) {
       render: (r) => <Badge tone="neutral">{KIND_META[r.kind].label}</Badge>,
     },
     {
+      key: "source",
+      header: "Where",
+      render: (r) => <Badge tone={r.source === "live" ? "mint" : "neutral"}>{r.source === "live" ? "LIVE" : "LOCAL"}</Badge>,
+    },
+    {
       key: "summary",
       header: "Detail",
       render: (r) => <span style={{ fontSize: 12.5, color: "var(--sl-text-mid)" }}>{r.summary}</span>,
@@ -1141,9 +1468,7 @@ function HistoryStrip({ history }: { history: OpEntry[] }) {
   return (
     <Card flush actions={<Badge tone="neutral">{history.length} ops</Badge>} title="Session operations" eyebrow="// local">
       {history.length === 0 ? (
-        <div style={{ padding: 18, fontSize: 13, color: "var(--sl-text-low)", display: "flex", alignItems: "center", gap: 9 }}>
-          <ListChecks size={15} strokeWidth={2} /> No operations yet this session.
-        </div>
+        <EmptyState icon={<ListChecks size={20} strokeWidth={1.8} />} title="No operations yet this session" hint="Actions you take here are listed newest-first." />
       ) : (
         <DataTable columns={columns} rows={history} rowKey={(r) => String(r.id)} rowMuted={(r) => r.outcome === "failed"} />
       )}
@@ -1169,4 +1494,10 @@ const inputStyle: React.CSSProperties = {
 const selectStyle: React.CSSProperties = {
   ...inputStyle,
   cursor: "pointer",
+};
+
+// Inline spinner animation referencing the existing @keyframes spin in
+// styles.css, so a busy Loader2 rotates without needing a new utility class.
+const spinStyle: React.CSSProperties = {
+  animation: "spin 0.9s linear infinite",
 };

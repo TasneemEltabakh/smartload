@@ -21,6 +21,7 @@ import type {
   EnginesSnapshot,
   EngineStreamEvent,
   LbState,
+  RlModeStatus,
 } from "../api";
 
 // The channel the routing engine publishes RoutingRecommendation envelopes on.
@@ -166,3 +167,31 @@ export const SAMPLE_LB_STATE: LbState = {
 // LbState (the BFF surface exposes weights + exclusions only), so it is sampled
 // here for the current-state panel.
 export const SAMPLE_LB_ALGORITHM = "weighted-round-robin";
+
+// ── RL routing mode (shadow evaluation / promotion readiness) ─────────────────
+// Mirrors the api.ts RlModeStatus shape and the GET /api/ui/engines/rl/mode
+// response verbatim. The routing engine is pinned to SHADOW by the deploy-time
+// RL_MODE env: it evaluates routing every cycle and its proposals are compared
+// against the live applied weights, but it never drives the load balancer here.
+// `actionable` is false by contract — promotion is an operational/deploy change,
+// not a live toggle. The two operator-writable gates (safe_mode, operating_mode)
+// are surfaced so the readiness panel can explain what would still need to move.
+export const SAMPLE_RL_MODE: RlModeStatus = {
+  current_mode: "shadow",
+  recommended_mode: "shadow",
+  actionable: false,
+  write_path: "deploy-time",
+  runloop_enabled: true,
+  policy_gates: {
+    safe_mode: false,
+    operating_mode: "shadow",
+    strategy_name: "ai-hybrid",
+  },
+  explanation:
+    "RL routing mode is pinned at deploy time by the rl-engine RL_MODE " +
+    "environment variable and is not a runtime-writable policy field. " +
+    "Promotion to active is an operational/deploy change, not a live " +
+    "control. The effective published mode is also gated by the policy " +
+    "safe_mode and operating_mode, which are operator-writable.",
+  notes: [],
+};
