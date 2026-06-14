@@ -44,11 +44,18 @@ _REPO = pathlib.Path(__file__).resolve().parents[2]
 
 # ── load the shipped decision rule (importlib, no package install) ─────────────
 
-def _load_decisions():
-    mod_path = _REPO / "services" / "autoscaler" / "decisions.py"
-    spec = importlib.util.spec_from_file_location("autoscaler_decisions", mod_path)
+def _load_autoscaler_module(name: str):
+    """Load a single-file module from services/autoscaler/ by importlib (no
+    package install). The autoscaler dir is put on sys.path so intra-package
+    imports (controllers.py imports decisions) resolve."""
+    asc_root = _REPO / "services" / "autoscaler"
+    if str(asc_root) not in sys.path:
+        sys.path.insert(0, str(asc_root))
+    mod_path = asc_root / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"autoscaler_{name}", mod_path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["autoscaler_decisions"] = mod
+    sys.modules[f"autoscaler_{name}"] = mod
+    sys.modules.setdefault(name, mod)  # so `from decisions import ...` resolves
     spec.loader.exec_module(mod)
     return mod
 
@@ -62,7 +69,8 @@ def _load_forecaster_cls():
     return eng.MovingAverageEngine, base.HistoryWindow
 
 
-decisions = _load_decisions()
+decisions = _load_autoscaler_module("decisions")
+controllers = _load_autoscaler_module("controllers")
 MovingAverageEngine, HistoryWindow = _load_forecaster_cls()
 
 
@@ -128,6 +136,77 @@ def signal_reactive(demand: np.ndarray, t: int, p: SimParams) -> float:
     reactive-fallback signal — purely backward-looking."""
     lo = max(0, t - p.reactive_window_steps + 1)
     return float(np.mean(demand[lo:t + 1]))
+
+
+class HoltForecaster:
+    """Holt's linear (double-exponential smoothing) trend extrapolator.
+
+    A genuinely *forward-looking* forecaster built only from past observations
+    (no leakage): it tracks a smoothed level and trend and projects ``lead``
+    steps ahead. Unlike the moving average — which averages the trailing window
+    and therefore lags every ramp — this extrapolates the trend, so on smooth
+    non-stationary demand (ramp, diurnal, sawtooth) it leads the curve and gives
+    the controller the forward signal the warm-up delay needs. It cannot
+    anticipate an unsignalled step (a flash crowd), but once a spike begins the
+    trend term swings up sharply and it reacts faster than a trailing mean.
+
+    Stands in as a pluggable "real extrapolating forecaster" until the dedicated
+    forecasting track lands; the controller treats it as one interchangeable
+    signal input. State is carried across steps, fed one observation per step.
+    """
+
+    def __init__(self, alpha: float = 0.3, beta: float = 0.05,
+                 phi: float = 0.9, lead: int = 20):
+        self.alpha = alpha
+        self.beta = beta
+        self.phi = phi          # trend damping: tames noise-amplified over-projection
+        self.lead = lead
+        # Geometric damping sum Σ_{i=1..lead} φ^i — the damped-Holt h-step factor.
+        self._damp = sum(phi ** i for i in range(1, lead + 1)) if phi < 1 else lead
+        self.level: float | None = None
+        self.trend = 0.0
+
+    def update_and_forecast(self, y: float) -> float:
+        if self.level is None:
+            self.level = float(y)
+            self.trend = 0.0
+        else:
+            prev = self.level
+            self.level = self.alpha * y + (1 - self.alpha) * (self.level + self.phi * self.trend)
+            self.trend = self.beta * (self.level - prev) + (1 - self.beta) * self.phi * self.trend
+        # Damped projection over the warm-up lead window; never below the current
+        # observation (a falling trend must not under-provision load present now).
+        return max(0.0, float(y), self.level + self._damp * self.trend)
+
+
+def make_noisy_oracle(demand: np.ndarray, p: SimParams, seed: int,
+                      rel_sigma: float = 0.10):
+    """S/C calibrated-noise forecast: the oracle lookahead corrupted by a
+    deterministic multiplicative error ~N(1, rel_sigma) clipped to [0.7, 1.3].
+
+    This bounds *below* what a good-but-imperfect forecaster (≈10 % error) could
+    deliver to the controller — the realistic upper region between the lagging
+    moving average and the perfect oracle. Seeded per run so it is deterministic
+    and reproducible; the error draw is independent of the demand noise draw.
+
+    The error is an AR(1) process (φ=0.85), not white noise: real forecast errors
+    are temporally correlated (a model that is high now tends to stay high), and
+    a correlated error is both more realistic and avoids the artificial per-step
+    churn a white-noise signal would inflict on the controller.
+    """
+    rng = np.random.default_rng(1_000_003 + seed)
+    n = len(demand)
+    phi = 0.85
+    innov = rng.normal(0.0, rel_sigma * (1 - phi ** 2) ** 0.5, size=n)
+    e = np.zeros(n)
+    for i in range(1, n):
+        e[i] = phi * e[i - 1] + innov[i]
+    err = (1.0 + e).clip(0.7, 1.3)
+
+    def _sig(t: int) -> float:
+        return signal_oracle(demand, t, p) * float(err[t])
+
+    return _sig
 
 
 # ── the provisioning loop ──────────────────────────────────────────────────────
@@ -230,6 +309,72 @@ def _run_dynamic(demand: np.ndarray, p: SimParams, signal_fn, *,
     return _finalize(demand, instances, capacity, cap_per, scale_actions)
 
 
+def _run_controller(demand: np.ndarray, p: SimParams, signal_fn,
+                    cpolicy: "controllers.ControlPolicy", *,
+                    start_count: int) -> RunResult:
+    """Replay `demand` under a target-based controller (controllers.decide_target).
+
+    Differences from `_run_dynamic`: scale-out can add MANY instances in one
+    action (they all warm up in parallel and land together at t+w), and the two
+    cooldowns are tracked independently (fast out, slow in). Warm-up in-flight
+    capacity is counted toward the controller's `current_count` exactly as the
+    production autoscaler counts pending containers, so it does not re-issue a
+    scale-out it has already committed to.
+    """
+    n = len(demand)
+    cap_per = p.per_instance_capacity_rps
+
+    current = start_count                  # provisioned-and-serving instance count
+    pending: list[tuple[int, int]] = []    # (land_step, +delta) awaiting warm-up
+    last_out_t: int | None = None
+    last_in_t: int | None = None
+    scale_actions = 0
+
+    instances = np.zeros(n)
+    capacity = np.zeros(n)
+
+    for t in range(n):
+        if pending:
+            still = []
+            for land_t, delta in pending:
+                if land_t <= t:
+                    current = min(current + delta, p.max_backends)
+                else:
+                    still.append((land_t, delta))
+            pending = still
+
+        capacity[t] = current * cap_per
+        instances[t] = current
+
+        effective_count = min(current + sum(d for _, d in pending), p.max_backends)
+        so = None if last_out_t is None else float(t - last_out_t)
+        si = None if last_in_t is None else float(t - last_in_t)
+
+        pred = float(signal_fn(t))
+        dec = controllers.decide_target(
+            predicted_rps=pred,
+            current_count=effective_count,
+            policy=cpolicy,
+            seconds_since_scale_out=so,
+            seconds_since_scale_in=si,
+        )
+
+        if dec.action == decisions.ACTION_SCALE_OUT:
+            delta = dec.target_count - effective_count
+            if delta > 0:
+                pending.append((t + p.warmup_steps, delta))
+                last_out_t = t
+                scale_actions += 1
+        elif dec.action == decisions.ACTION_SCALE_IN:
+            delta = effective_count - dec.target_count
+            if delta > 0:
+                current = max(current - delta, p.min_backends)
+                last_in_t = t
+                scale_actions += 1
+
+    return _finalize(demand, instances, capacity, cap_per, scale_actions)
+
+
 def _run_naive(demand: np.ndarray, p: SimParams, *, cooldown: float,
               start_count: int = 1) -> RunResult:
     """S5: threshold strategy. Scale out when observed util > 0.8, scale in when
@@ -320,11 +465,60 @@ def _warm_start(demand: np.ndarray, p: SimParams) -> int:
     return int(np.clip(n0, p.min_backends, p.max_backends))
 
 
+# Default knobs for the target-based controller family (C-strategies). The
+# headline run uses these; the frontier sweep in run.py overrides `headroom`.
+DEFAULT_HEADROOM = 0.15
+DEFAULT_SCALE_IN_DEADBAND = 0.15
+
+
+def control_policy(p: SimParams, *, cooldown: float, headroom: float = DEFAULT_HEADROOM,
+                   sizing: str = "headroom", qos_beta: float = 1.0,
+                   max_step_out: int = 0, max_step_in: int = 1,
+                   scale_in_deadband: float = DEFAULT_SCALE_IN_DEADBAND
+                   ) -> "controllers.ControlPolicy":
+    """Build a ControlPolicy from sim params. Asymmetric cooldown: scale-out is
+    immediate (0 s) so a spike is met at once; scale-in waits `cooldown` seconds
+    and sheds one instance at a time (fast out, slow in)."""
+    return controllers.ControlPolicy(
+        min_backends=p.min_backends,
+        max_backends=p.max_backends,
+        per_instance_capacity_rps=p.per_instance_capacity_rps,
+        headroom=headroom,
+        sizing=sizing,
+        qos_beta=qos_beta,
+        scale_out_cooldown_s=0.0,
+        scale_in_cooldown_s=cooldown,
+        max_step_out=max_step_out,
+        max_step_in=max_step_in,
+        scale_in_deadband=scale_in_deadband,
+    )
+
+
+def _ma_engine(p: SimParams) -> MovingAverageEngine:
+    return MovingAverageEngine(
+        horizon_minutes=max(1, int(p.horizon_steps // 60)),
+        window_samples=p.forecast_window_samples,
+    )
+
+
 def run_strategy(strategy: str, demand: np.ndarray, p: SimParams, *,
-                 cooldown: float | None = None) -> RunResult:
-    """Run one named strategy on one demand realization. `strategy` is one of:
-    S1_oracle, S2_predictive, S3_reactive, S4_static_max, S4_static_matched,
-    S5_naive. Returns a RunResult."""
+                 cooldown: float | None = None, seed: int = 0,
+                 headroom: float = DEFAULT_HEADROOM,
+                 sizing: str = "headroom", qos_beta: float = 1.0) -> RunResult:
+    """Run one named strategy on one demand realization.
+
+    Baselines S1..S5 call the shipped ±1 `decide()` rule (signal varies). The
+    C-strategies call the target-based `controllers.decide_target` (multi-step,
+    asymmetric cooldown); only the SIGNAL fed in differs between them, so they
+    isolate the controller from the forecast quality:
+
+      C1_ctrl_oracle    perfect-foresight signal — new-controller upper bound.
+      C2_ctrl_predictive shipped moving-average forecast (today's headline).
+      C3_ctrl_reactive  trailing-mean signal — the reactive control reference.
+      C4_ctrl_trend     Holt trend extrapolation — a forward-looking forecast.
+      C5_ctrl_noisy_oracle calibrated-noise (~10 % error) good-forecast bound.
+      C6_ctrl_sqrt_trend square-root-staffing sizing law on the trend signal.
+    """
     cd = p.cooldown_seconds if cooldown is None else cooldown
     n0 = _warm_start(demand, p)
 
@@ -332,10 +526,7 @@ def run_strategy(strategy: str, demand: np.ndarray, p: SimParams, *,
         return _run_dynamic(demand, p, lambda t: signal_oracle(demand, t, p),
                             cooldown=cd, start_count=n0)
     if strategy == "S2_predictive":
-        engine = MovingAverageEngine(
-            horizon_minutes=max(1, int(p.horizon_steps // 60)),
-            window_samples=p.forecast_window_samples,
-        )
+        engine = _ma_engine(p)
         return _run_dynamic(demand, p,
                             lambda t: signal_predictive(demand, t, p, engine),
                             cooldown=cd, start_count=n0)
@@ -350,6 +541,32 @@ def run_strategy(strategy: str, demand: np.ndarray, p: SimParams, *,
         return _run_static(demand, p, n_match)
     if strategy == "S5_naive":
         return _run_naive(demand, p, cooldown=cd, start_count=n0)
+
+    # ── target-based controller family ────────────────────────────────────────
+    if strategy.startswith("C"):
+        cpol = control_policy(p, cooldown=cd, headroom=headroom,
+                              sizing=sizing, qos_beta=qos_beta)
+        if strategy == "C1_ctrl_oracle":
+            sig = lambda t: signal_oracle(demand, t, p)
+        elif strategy == "C2_ctrl_predictive":
+            engine = _ma_engine(p)
+            sig = lambda t: signal_predictive(demand, t, p, engine)
+        elif strategy == "C3_ctrl_reactive":
+            sig = lambda t: signal_reactive(demand, t, p)
+        elif strategy == "C4_ctrl_trend":
+            holt = HoltForecaster(lead=p.warmup_steps)
+            sig = lambda t: holt.update_and_forecast(float(demand[t]))
+        elif strategy == "C5_ctrl_noisy_oracle":
+            sig = make_noisy_oracle(demand, p, seed)
+        elif strategy == "C6_ctrl_sqrt_trend":
+            cpol = control_policy(p, cooldown=cd, sizing="sqrt_staffing",
+                                  qos_beta=qos_beta)
+            holt = HoltForecaster(lead=p.warmup_steps)
+            sig = lambda t: holt.update_and_forecast(float(demand[t]))
+        else:
+            raise ValueError(f"unknown strategy: {strategy!r}")
+        return _run_controller(demand, p, sig, cpol, start_count=n0)
+
     raise ValueError(f"unknown strategy: {strategy!r}")
 
 
@@ -360,6 +577,12 @@ STRATEGIES: tuple[str, ...] = (
     "S4_static_max",
     "S4_static_matched",
     "S5_naive",
+    "C1_ctrl_oracle",
+    "C2_ctrl_predictive",
+    "C3_ctrl_reactive",
+    "C4_ctrl_trend",
+    "C5_ctrl_noisy_oracle",
+    "C6_ctrl_sqrt_trend",
 )
 
 STRATEGY_LABELS: dict[str, str] = {
@@ -369,4 +592,10 @@ STRATEGY_LABELS: dict[str, str] = {
     "S4_static_max": "S4 Static N=max (SLA-optimal)",
     "S4_static_matched": "S4 Static N=cost-matched",
     "S5_naive": "S5 Naive-threshold",
+    "C1_ctrl_oracle": "C1 Controller + oracle (new upper bound)",
+    "C2_ctrl_predictive": "C2 Controller + MA forecast",
+    "C3_ctrl_reactive": "C3 Controller + reactive (trailing mean)",
+    "C4_ctrl_trend": "C4 Controller + trend forecast",
+    "C5_ctrl_noisy_oracle": "C5 Controller + calibrated-noise forecast",
+    "C6_ctrl_sqrt_trend": "C6 Sqrt-staffing + trend forecast",
 }

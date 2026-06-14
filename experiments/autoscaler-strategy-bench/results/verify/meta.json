@@ -1,0 +1,61 @@
+{
+  "tag": "verify",
+  "generated_utc": "2026-06-14T02:55:10.886840+00:00",
+  "git_commit": "6619f7be73a6af1c1ab566bcd600ee9eb92ee5f4",
+  "runtime_seconds": 1.797,
+  "python": "3.11.15",
+  "numpy": "1.26.4",
+  "pandas": "2.3.3",
+  "seeds": [
+    1000,
+    1001,
+    1002,
+    1003,
+    1004,
+    1005,
+    1006,
+    1007
+  ],
+  "n_seeds": 8,
+  "profiles": [
+    "steady",
+    "diurnal",
+    "ramp",
+    "spike",
+    "sawtooth",
+    "burst"
+  ],
+  "strategies": [
+    "S1_oracle",
+    "S2_predictive",
+    "S3_reactive",
+    "S4_static_max",
+    "S4_static_matched",
+    "S5_naive"
+  ],
+  "params": {
+    "per_instance_capacity_rps": 100.0,
+    "cooldown_seconds": 60.0,
+    "min_backends": 1,
+    "max_backends": 10,
+    "run_steps": 1800,
+    "horizon_steps": 300,
+    "warmup_steps": 20,
+    "forecast_window_samples": 60,
+    "reactive_window_steps": 60,
+    "peak_demand_mult_of_capacity": 8.0
+  },
+  "warmup_delay_seconds": 20,
+  "cooldown_sweep": false,
+  "metrics": [
+    "sla_pct",
+    "unmet_rps",
+    "overprov_cost",
+    "scale_actions",
+    "settling_s"
+  ],
+  "policy_source": "config/policy.yaml",
+  "decision_rule": "services/autoscaler/decisions.py::decide",
+  "forecaster": "services/forecasting/engines/moving_average/engine.py::MovingAverageEngine",
+  "demand_shapes": "services/rl-engine/training/closed_loop_sim.py::_demand_curve (+ spike, sawtooth)"
+}
