@@ -809,7 +809,7 @@ components:
           description: Seconds left on the cooldown clock (informational; unchanged by simulate).
         would_audit_reason:
           type: string
-          description: The reason that the real action would persist (`manual:<actor>: <reason>`).
+          description: "The reason that the real action would persist (`manual:<actor>: <reason>`)."
         policy_bounds:
           type: object
           required: [min_backends, max_backends]
