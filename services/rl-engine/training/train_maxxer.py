@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,7 +41,6 @@ logging.getLogger("obs_builder").setLevel(logging.ERROR)
 
 from obs_builder import N_MAX_BACKENDS, build_action_mask, all_masked_fallback  # noqa: E402
 from training.env_v2 import SmartLoadEnvV2, action_to_weights, DEFAULT_NORM      # noqa: E402
-from training.closed_loop_sim import DEFAULT_EPISODE_LENGTH                       # noqa: E402
 
 _MODELS_DIR = _RL_ENGINE / "models"
 SLA_MS = 200.0

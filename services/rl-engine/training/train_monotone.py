@@ -50,9 +50,13 @@ _IDLE_UTIL_MAX = 0.15
 
 def _slots(state):
     ss = sorted(state, key=lambda s: s.backend_id)
-    lat = np.full(N, np.inf); load = np.zeros(N); mask = np.zeros(N, dtype=bool)
+    lat = np.full(N, np.inf)
+    load = np.zeros(N)
+    mask = np.zeros(N, dtype=bool)
     for i, s in enumerate(ss[:N]):
-        lat[i] = s.latency_ms; load[i] = s.queue_depth; mask[i] = is_eligible(s.health)
+        lat[i] = s.latency_ms
+        load[i] = s.queue_depth
+        mask[i] = is_eligible(s.health)
     return lat, load, mask
 
 
@@ -78,10 +82,11 @@ def evaluate(cfg: MonotoneConfig, seeds, kinds=TRAIN_KINDS):
             router = MonotoneRouter(cfg, N)
             done = False
             while not done:
-                l, ld, m = _slots(state)
+                lt, ld, m = _slots(state)
                 if not m.any():
-                    m = m.copy(); m[0] = True
-                state, met, done = sim.step(router.weights(l, ld, m))
+                    m = m.copy()
+                    m[0] = True
+                state, met, done = sim.step(router.weights(lt, ld, m))
                 lat.append(met.served_mean_latency_ms)
         a = np.asarray(lat)
         out[kind] = (float(np.percentile(a, 95)), float(np.mean(a > SLA_MS)))
@@ -123,7 +128,8 @@ def fit_one_seed(seed, budget, n_train_seeds):
         improved = False
         for k, st in steps.items():
             for d in (st, -st):
-                params = best.to_dict(); params[k] = max(0.05, params[k] + d)
+                params = best.to_dict()
+                params[k] = max(0.05, params[k] + d)
                 cand = MonotoneConfig.from_dict(params)
                 loss = composite_loss(evaluate(cand, train_seeds))
                 if loss < best_loss:
@@ -164,7 +170,7 @@ def main(n_seeds, budget, n_train_seeds, out_dir: Path):
     _, med_cfg, med_loss = order[len(order) // 2]
     _write(out_dir / "candidate_mono", med_cfg,
            {"selected_as": "median-degr_pow over training seeds",
-            "fitted_seeds": [{"seed": s, **c.to_dict(), "train_loss": l} for s, c, l in fitted]})
+            "fitted_seeds": [{"seed": s, **c.to_dict(), "train_loss": ls} for s, c, ls in fitted]})
     print(f"[train_monotone] headline candidate_mono: {med_cfg.to_dict()}", flush=True)
     return fitted
 

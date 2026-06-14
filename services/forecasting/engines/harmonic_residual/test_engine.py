@@ -15,7 +15,7 @@ from engines.harmonic_residual.engine import HarmonicResidualEngine  # noqa: E40
 
 def _ts(n, step_s=300):
     # n ISO-8601 stamps at `step_s` seconds apart (default 5-min cadence).
-    return [f"2024-01-01T00:00:00+00:00" if i == 0 else
+    return ["2024-01-01T00:00:00+00:00" if i == 0 else
             np.datetime64("2024-01-01T00:00:00") + np.timedelta64(i * step_s, "s")
             for i in range(n)]
 
