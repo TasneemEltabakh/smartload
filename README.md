@@ -68,6 +68,7 @@ absent.
 pip install -e clients/python
 python clients/python/examples/quickstart.py                 # prints current policy
 python examples/scenarios/policy-management/policy_walk.py   # end-to-end walkthrough
+python examples/scenarios/forecast-autoscale/forecast_walk.py  # forecast -> scale slice
 ```
 
 ```python

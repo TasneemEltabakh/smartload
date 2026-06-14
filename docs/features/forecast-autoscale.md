@@ -1,6 +1,6 @@
 # Forecast + Autoscale
 
-> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **Trained ARIMA artifact landed v1.0.7i** (25.0% test MAPE; ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI). **Forecasts hypertable landed v1.0.7w** — the Forecast dashboard's predicted line is now dense across the bucket interval (#159, closes §35.8). **Closed-loop autoscaler ↔ lb-sidecar coordination landed v1.0.7z** — the lb-sidecar now subscribes to `smartload.scale` and rewrites `upstream.conf` to match the live Docker pool on every scaling event (#164). Remaining work: tighten ARIMA MAPE, SDK `subscribe_forecast`, e2e + scenario, webhook fan-out (#130).
+> **Slice status — partial.** Both services compose end-to-end: forecasting publishes `ForecastResult` envelopes; the autoscaler subscribes, makes scale_in / scale_out decisions, actuates the test-backend pool via the Docker SDK. Forecast + Scaling Grafana dashboards ship (v1.0.7e + v1.0.7f). **Trained ARIMA artifact landed v1.0.7i** (25.0% test MAPE; ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI). **Forecasts hypertable landed v1.0.7w** — the Forecast dashboard's predicted line is now dense across the bucket interval (#159, closes §35.8). **Closed-loop autoscaler ↔ lb-sidecar coordination landed v1.0.7z** — the lb-sidecar now subscribes to `smartload.scale` and rewrites `upstream.conf` to match the live Docker pool on every scaling event (#164). **E2E suite + runnable scenario landed v1.0.7bh** — `tests/e2e/forecast-autoscale/` (migrated from `tests/integration/test_autoscaler.py`, history preserved) and `examples/scenarios/forecast-autoscale/forecast_walk.py` complete the feature triad (#140). Remaining work: tighten ARIMA MAPE, webhook fan-out (#130).
 
 ## What this slice delivers
 
@@ -16,8 +16,10 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 | HTTP | `GET /api/v1/audit/scaling` (autoscaler) — recent scaling decisions (shipped slice #2) | ✓ |
 | UI | Live Engines forecast tile + Audit page scaling events + Actions page "Scale to N" form | ✓ |
 | Grafana | Forecast dashboard `/d/smartload-forecast/` (v1.0.7f) + Scaling dashboard `/d/smartload-scaling/` (v1.0.7e) | ✓ |
-| SDK | `client.subscribe_forecast(callback)` Redis subscriber + `client.scale(target_count, actor)` operator override | partial (scale shipped; subscribe pending) |
+| SDK | `client.subscribe_forecast(callback)` + `client.subscribe_scale(callback)` (BFF SSE filters) + `client.scale(target_count, actor)` operator override | ✓ |
 | Webhook | HMAC-signed outbound POST on every scale event (#130) | pending |
+| E2E test | `tests/e2e/forecast-autoscale/test_forecast_autoscale.py` — forecast→scale slice + cooldown + operator override, via the SDK | ✓ |
+| Scenario | `examples/scenarios/forecast-autoscale/forecast_walk.py` — runnable narration of the slice | ✓ |
 
 ## Implementation pointers
 
@@ -30,6 +32,7 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 - Storage: `scaling_events` hypertable + `forecasts` hypertable (TimescaleDB; both 30-day retention)
 - UI: `services/operator-ui/web/src/pages/LiveEngines.tsx` (forecast tile) + `services/operator-ui/web/src/pages/Audit.tsx` (scaling decisions)
 - Grafana: `infrastructure/grafana/dashboards/{smartload-forecast,smartload-scaling}.json`
+- E2E + scenario: `tests/e2e/forecast-autoscale/test_forecast_autoscale.py` + `examples/scenarios/forecast-autoscale/forecast_walk.py` — both inject a `ForecastResult` on `smartload.forecast` (no operator publish surface exists) and observe the autoscaler's `ScalingEvent` via the SDK; pure-Python decision-matrix unit coverage stays in `tests/integration/test_autoscaler_decisions.py`
 
 ## Status
 
@@ -47,10 +50,10 @@ Backends scale ahead of demand instead of in response to it. The forecasting ser
 - [x] SDK `client.scale(target_count, actor)` operator method
 - [x] ARIMA model artifact (`arima_model.pkl`) — N2.2 shipped v1.0.7i (extracted from PR #144 kernel; 25.0% test MAPE — ships behind `FORECAST_ENGINE=arima` until tuned below the <20% SOT KPI per §17.4)
 - [x] Continuous `forecasts` hypertable — forecasting service persists every publish; the Forecast Grafana dashboard's predicted line is dense across the bucket interval (v1.0.7w, #159, closes SOT §35.8). 6 new unit tests + 4 integration tests.
-- [ ] SDK method — `client.subscribe_forecast(callback)`
+- [x] SDK method — `client.subscribe_forecast(callback)` (single-channel filter over the BFF SSE stream)
 - [ ] Webhook fan-out for scaling events (#130)
-- [ ] Scenario script `examples/scenarios/forecast-autoscale/forecast_walk.py`
-- [ ] E2E test suite `tests/e2e/forecast-autoscale/`
+- [x] Scenario script `examples/scenarios/forecast-autoscale/forecast_walk.py` (v1.0.7bh, #140) — injects a high forecast, watches `smartload.scale` for the matching scale_out, confirms the scaling audit, then exercises the operator override
+- [x] E2E test suite `tests/e2e/forecast-autoscale/` (v1.0.7bh, #140) — 4 tests: forecast-driven scale_out (+ scaling-audit visibility), cooldown suppression, operator-override noop, operator-override audit round-trip. Migrated from `tests/integration/test_autoscaler.py` (history preserved via `git mv`); observation now goes through the SDK
 - [ ] §25.9 slice-catalog row flipped to *Shipped*
 
 ## Non-goals
