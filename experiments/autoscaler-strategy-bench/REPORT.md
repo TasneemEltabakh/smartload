@@ -207,7 +207,77 @@ there — the synthetic `spike` remains the harder, more discriminating stressor
 
 ---
 
-## 5. Methods, fairness, provenance
+## 5. Forecaster integration (the upstream dependency)
+
+The controller is forecaster-agnostic: any engine that emits a request-rate
+forecast plugs into the signal slot. To de-risk the final number this work was
+to land against the dedicated forecasting track's engine, the `harmonic_residual`
+forecaster (robust harmonic regression + AR(1) residual + conformal bands) was
+plugged into the *exact same* harness — only the signal changes — via
+`eval_harmonic.py` (no Docker, no merge: the engine is loaded by file path from a
+worktree of its branch and called through `forecast_ahead(steps=warm-up lead)`).
+
+This is the central finding restated from the signal side: **forecast accuracy is
+not autoscaling utility.** A forecaster tuned for symmetric point accuracy (and
+robust to outliers) is *misaligned* with the autoscaler's asymmetric loss
+(under-provisioning breaks the SLA; over-provisioning only costs money), and can
+be a *worse* scaler signal than a trailing mean.
+
+As first integrated, the harmonic engine scored **91.3 % under the controller —
+below the trailing-mean MA (98.3 %)** — collapsing on exactly the profiles that
+matter (diurnal 78.6, burst 81.1, spike 90.9). Two structural causes were
+identified and confirmed by ablation in this harness, then fixed upstream:
+
+1. **Global trend lags curved/rising demand.** A linear trend fit over a long
+   window (forced when the seasonal period dwarfs the history) lags the slope.
+   Fix: keep the fit window *local* so the projected trend reflects the recent
+   slope.
+2. **Symmetric robustness smooths away flash crowds.** IRLS downweights upward
+   spikes as outliers — the load the scaler must serve. Fix: asymmetric
+   (`downward`-only) robustness that keeps upward residuals at full weight.
+
+A negative result worth recording: sizing to the engine's **conformal upper band**
+instead of the point forecast did **not** help (95.5 → 95.1 %) — the band corrects
+symmetric in-sample error, not the structural undershoot; the point forecast
+itself had to lead and cover.
+
+With both fixes the harmonic engine matches the best realistic signal and nearly
+closes the gap to the oracle ceiling (synthetic, 6 × 8, SLA% under the controller):
+
+| Signal under the controller | Aggregate | diurnal | spike | burst |
+|---|---|---|---|---|
+| MA (trailing mean) | 98.3 | 98.3 | 96.4 | 96.6 |
+| Trend (Holt, §2.2) | 99.2 | 99.4 | 98.5 | 98.4 |
+| Harmonic — default config | 91.3 | 78.6 | 90.9 | 81.1 |
+| Harmonic — local fit window | 99.1 | 99.5 | 97.8 | 97.9 |
+| **Harmonic — local + asymmetric robust** | **99.2** | 99.5 | 98.0 | 98.2 |
+| Oracle (ceiling) | 99.9 | 99.6 | 100.0 | 100.0 |
+
+Real traces (3 × 8): harmonic default 95.4 % → both fixes **97.3 %** (bursty
+Alibaba proxy 86.9 → 92.6 %), matching the trend signal (97.9 %) and approaching
+the oracle (99.7 %).
+
+**Conclusions for the integration.**
+- The **local fit window is the decisive lever** (91.3 → 99.1); asymmetric
+  robustness adds a smaller, real increment on the spike/burst profiles
+  (→ 99.2). Both shipped on the forecasting branch after this evaluation.
+- These gains require the *scaler-tuned* parameters, which are **not** the
+  accuracy-optimal defaults (the default still scores 91.3 %). The autoscaler
+  path must instantiate the engine with the scaler preset; a named
+  "autoscaler profile" on the forecasting service is recommended so it cannot be
+  misconfigured (the default-vs-tuned gap is ~8 pts).
+- Net: the harmonic engine is now a **validated, interchangeable production
+  signal** for the controller (99.2 % synthetic / 97.3 % real), on par with the
+  built-in trend forecaster. The controller remains the dominant lever — even a
+  trailing mean reaches 98.3 % — so the forecaster's job is the last ~1–2 pts on
+  the non-stationary/bursty profiles, which the scaler-tuned harmonic delivers.
+
+Reproduce: `python experiments/autoscaler-strategy-bench/eval_harmonic.py
+--forecasting-root <path-to>/services/forecasting [--real]`.
+
+---
+
+## 6. Methods, fairness, provenance
 
 - **Fitness function untouched.** The warm-up model (`sim.py`: scale-out lands at
   `t+w`, scale-in immediate, in-flight capacity counted) and all five metrics are
@@ -233,7 +303,7 @@ there — the synthetic `spike` remains the harder, more discriminating stressor
 
 ---
 
-## 6. What was tried, including failures
+## 7. What was tried, including failures
 
 - **±1 rule with a better forecast alone** — rejected by the baseline itself: even
   perfect foresight (S1) is stuck at 88 % on spike and 95.5 % aggregate. The slew
@@ -260,7 +330,7 @@ there — the synthetic `spike` remains the harder, more discriminating stressor
 
 ---
 
-## 7. Winner & promotion recommendation
+## 8. Winner & promotion recommendation
 
 **Winner: the target-based controller (`controllers.decide_target`) with headroom
 sizing, multi-step out, and asymmetric cooldown** — fed the best available
@@ -280,14 +350,19 @@ Lower `headroom` for smooth/diurnal demand (e.g. Azure), where the knee sits lef
 `controllers.decide_target(...)`, track the two cooldown timers in place of the
 single cooldown clock, and teach the actuation path (`cluster_client`) to apply a
 multi-step target instead of ±1. Keep `decide()` as the default until the live
-path is integration-tested. When the dedicated forecasting track lands, wire its
-forecaster in as the controller's signal input (the same plug the trend
-forecaster occupies) — the controller is forecaster-agnostic by construction.
+path is integration-tested. For the forecast signal, the dedicated forecasting
+track's `harmonic_residual` engine is validated (§5) as an interchangeable input
+— wire it in with its **scaler-tuned** preset (local fit window + asymmetric
+robustness), not the accuracy-optimal default; the built-in trend forecaster is
+the dependency-free fallback. The controller is forecaster-agnostic by
+construction.
 
 **Reproduce:**
 ```
 python experiments/autoscaler-strategy-bench/run.py --tag improved --cooldown-sweep
 python experiments/autoscaler-strategy-bench/frontier.py --tag improved_frontier
 python experiments/autoscaler-strategy-bench/run_real.py --tag improved_real
+python experiments/autoscaler-strategy-bench/eval_harmonic.py \
+    --forecasting-root <path-to>/services/forecasting   # §5 forecaster integration
 pytest services/autoscaler/test_controllers.py -q
 ```
