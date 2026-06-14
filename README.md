@@ -84,6 +84,21 @@ Full SDK reference (every method, exception type, threading model): [SOT §27](d
 
 ---
 
+## Demo scenarios
+
+Operator-runnable, dev-time demo scripts live in [`scripts/scenarios/`](scripts/scenarios/) — one per shipped feature. Each snapshots baseline state, triggers the feature, watches for the expected response, narrates progress to the console, and exits `0` on success / non-zero on timeout. Run any of them against a live stack:
+
+```bash
+python scripts/scenarios/forecast_burst.py        # high-RPS forecast -> scale_out
+python scripts/scenarios/safe_mode_toggle.py      # flip safe_mode, watch propagation, restore
+python scripts/scenarios/anomaly_inject.py        # inject an anomaly, watch reroute, recover
+python scripts/scenarios/scale_to_n.py --target 4 # manual scale, watch the cluster settle
+```
+
+These are distinct from the lint-triad scenarios under `examples/scenarios/`: they are demo / reproducibility artefacts, not enforced tests. Full table + run instructions: [`scripts/scenarios/README.md`](scripts/scenarios/README.md).
+
+---
+
 ## Integrate with anything
 
 SmartLoad publishes decisions over two channels — pick whichever fits your stack:
