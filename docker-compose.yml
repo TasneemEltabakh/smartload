@@ -564,6 +564,7 @@ services:
       SMARTLOAD_AVAILABLE_ENVS: ${SMARTLOAD_AVAILABLE_ENVS:-dev,staging,prod}
     volumes:
       - ./docs/openapi:/app/openapi:ro
+      - ./docs/asyncapi:/app/asyncapi:ro
     depends_on:
       - redis
       - policy-manager

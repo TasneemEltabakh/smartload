@@ -53,6 +53,9 @@ jobs:
       - name: OpenAPI route coverage (permissive)
         run: python scripts/lint-openapi.py
 
+      - name: AsyncAPI channel coverage (permissive)
+        run: python scripts/lint-asyncapi.py
+
 
   unit-tests:
     # Pure-Python tests (envelope round-trip, drop-reason callback, SQL

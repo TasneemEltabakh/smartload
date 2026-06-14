@@ -11,9 +11,10 @@
 # matches the layout of every AI service. Without the widened context the
 # BFF can't import shared.contracts.parse_envelope for the engines stream.
 #
-# Note on the OpenAPI spec: docs/openapi/smartload-v1.yaml lives outside the
-# services/ tree. Rather than widen the build context further, docker-compose
-# mounts it at runtime as a read-only volume at /app/openapi/smartload-v1.yaml.
+# Note on the API specs: docs/openapi/smartload-v1.yaml and
+# docs/asyncapi/smartload-v1.yaml live outside the services/ tree. Rather than
+# widen the build context further, docker-compose mounts them at runtime as
+# read-only volumes at /app/openapi/ and /app/asyncapi/.
 
 # ── stage 1: frontend ─────────────────────────────────────────────────────────
 FROM node:20-alpine AS web-builder
@@ -40,12 +41,13 @@ COPY shared           /app/shared
 # Built frontend
 COPY --from=web-builder /web/dist /app/web/dist
 
-# Placeholder so the directory exists; docker-compose mounts the real spec.
-RUN mkdir -p /app/openapi
+# Placeholders so the directories exist; docker-compose mounts the real specs.
+RUN mkdir -p /app/openapi /app/asyncapi
 
 ENV PORT=8090 \
     WEB_DIST=/app/web/dist \
     OPENAPI_PATH=/app/openapi/smartload-v1.yaml \
+    ASYNCAPI_PATH=/app/asyncapi/smartload-v1.yaml \
     PYTHONUNBUFFERED=1
 
 EXPOSE 8090

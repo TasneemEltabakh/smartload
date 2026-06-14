@@ -6,7 +6,7 @@ Per the SOT lock (commit `6f89a13`), this is a **transparency + override layer**
 
 ## Layout
 
-- `bff/` — Flask BFF (backend-for-frontend). Aggregates `/health` from every service, proxies API calls, serves Swagger UI, holds session state if needed.
+- `bff/` — Flask BFF (backend-for-frontend). Aggregates `/health` from every service, proxies API calls, serves Swagger UI (`/api/docs`, OpenAPI) and the AsyncAPI viewer (`/api/asyncapi-docs`, event contract), holds session state if needed.
 - `web/` — frontend (React 18 + TypeScript, built with Vite). Pages:
   - Home — service health overview
   - Policy — read + diff-preview + commit

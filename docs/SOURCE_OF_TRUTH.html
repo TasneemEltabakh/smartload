@@ -1480,9 +1480,9 @@
   <h1>SmartLoad <span class="badge badge-canonical">Canonical SoT</span> <span class="badge badge-target">Design Authority</span></h1>
   <div class="subtitle">AI-Driven Intelligent Load Management System for Optimized Resource Allocation in Distributed Networks</div>
   <div class="meta">
-    <strong>Version:</strong> 1.0.7bd &nbsp;·&nbsp;
+    <strong>Version:</strong> 1.0.7bj &nbsp;·&nbsp;
     <strong>Last updated:</strong> 2026-06-14 &nbsp;·&nbsp;
-    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bi pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. v1.0.7be landed the single-file client bootstrap (#145): config/smartload.yml + a shared config_loader normaliser + a render CLI that translates the one-file integration shape into the canonical policy.yaml (preserving live policy_version) while the legacy dual-file path keeps working when it is absent. v1.0.7bf&ndash;bi closed the S6 Wave-1 batch (built in parallel, integrated conflict-free): #146 side-effect-free dry-run <code>POST /api/v1/actions/simulate</code> on autoscaler + anomaly-detector (shared validation with the real endpoints), #150 named-strategy alias <code>POST /api/v1/policy/strategy</code> + derived <code>strategy_name</code> (reusing the #145 <code>STRATEGY_PRIMITIVES</code> table through one <code>_apply_policy()</code> path), #140 the forecast→scale slice migrated to <code>tests/e2e/forecast-autoscale/</code>, and #126 a <code>scripts/scenarios/</code> demo-script library. Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
+    <strong>Status:</strong> <span class="badge badge-active">S6 — Phase 3B — v1.0.7ap&rarr;bj pre-Sprint-6 release hardening + operator-UI gap-closure: 3 critical bug fixes (quorum guard → no empty-pool 502, the root cause of the v1.0.7an isolation_forest revert; Isolation-Forest non-finite feature guard; Flask dev server → waitress), DB migration runner (#141), structural lints wired into CI, /health compose healthchecks, and three shared service modules (config / bootstrap / logging+correlation) adopted across all 7 app services (#143 correlation middleware). v1.0.7ba made the test backends closed-loop M/G/c queues (latency now rises with load) + an open-loop Fortio saturation probe. v1.0.7bb added per-container CPU/memory telemetry (a resource-collector daemon polling the Docker stats API onto the existing metrics pipeline, zero schema change). v1.0.7bc aligned the operator UI to the design mockups for every panel backed by real data — a per-backend metrics endpoint (telemetry GROUPING SETS scan → per-backend p95/rpm/error + a load-balancer aggregate), evidence-carrying AnomalyEvents → a structured alerts feed with severity, and audit actors + old/new columns + CSV — omitting by design the mockup widgets with no source of truth (honest-data principle). v1.0.7bd closed the anomaly-detector slice: an auto-recovery cool-down (flip-confirmation stability gate) + per-cycle backend_health persistence, a live-stack acceptance test + e2e/scenario coverage, and a complementary Stage-B live-injection retrain/validation track alongside the shipped #165 recalibration. v1.0.7be landed the single-file client bootstrap (#145): config/smartload.yml + a shared config_loader normaliser + a render CLI that translates the one-file integration shape into the canonical policy.yaml (preserving live policy_version) while the legacy dual-file path keeps working when it is absent. v1.0.7bf&ndash;bi closed the S6 Wave-1 batch (built in parallel, integrated conflict-free): #146 side-effect-free dry-run <code>POST /api/v1/actions/simulate</code> on autoscaler + anomaly-detector (shared validation with the real endpoints), #150 named-strategy alias <code>POST /api/v1/policy/strategy</code> + derived <code>strategy_name</code> (reusing the #145 <code>STRATEGY_PRIMITIVES</code> table through one <code>_apply_policy()</code> path), #140 the forecast→scale slice migrated to <code>tests/e2e/forecast-autoscale/</code>, and #126 a <code>scripts/scenarios/</code> demo-script library. v1.0.7bj documented the asynchronous surface: an AsyncAPI 3.0 spec at <code>docs/asyncapi/smartload-v1.yaml</code> covering the five Redis control-bus channels + the operator-UI SSE stream (the companion to the OpenAPI HTTP contract), with a <code>scripts/lint-asyncapi.py</code> parity guard wired into the structure-lint CI job, and is browsable in the operator UI at <code>/api/asyncapi-docs</code> (the async analogue of Swagger UI). Binding constraint remains evaluation evidence (retrained PPO + full-length bench), not code</span> &nbsp;·&nbsp;
     <strong>Authority mode:</strong> <span class="badge badge-target">Design + Implementation Reference</span><br>
     <strong>Project:</strong> Zewail City CIE Graduation Project — SDP2 2025/2026 &nbsp;·&nbsp;
     <strong>Team 09:</strong> Tasneem Muhammed (202101031), Nada Nabil (202101220), Rghda Salah (202101510) &nbsp;·&nbsp;
@@ -4170,6 +4170,7 @@ SELECT add_retention_policy('metrics_1min', INTERVAL '30 days', if_not_exists =>
   </tbody>
 </table>
 <p class="small muted">Every <code>/api/v1/*</code> route in this table is checked by <code>scripts/lint-openapi.py</code> against <code>docs/openapi/smartload-v1.yaml</code>. New endpoints land in the OpenAPI file in the same commit they ship in source.</p>
+<p class="small muted">The asynchronous surface has the same discipline: the five Redis control-bus channels (§5) and the operator-UI Server-Sent-Events stream are documented in <code>docs/asyncapi/smartload-v1.yaml</code> (AsyncAPI 3.0), the companion to the OpenAPI HTTP spec, and <code>scripts/lint-asyncapi.py</code> checks that every <code>smartload.*</code> channel in source appears there. Payload shapes trace to <code>services/shared/contracts.py</code>; the human-readable catalog is <code>docs/redis-channels.md</code>.</p>
 
 <h3>Error response shape (target)</h3>
 <p>All REST errors should follow a single Problem-Details-style shape (RFC 7807 minus the URI):</p>
@@ -5714,6 +5715,33 @@ docker compose logs -f anomaly-detector</code></pre>
 <!-- ========================================================================== -->
 <section id="sec-15-changelog">
 <h1>22. Change Log &amp; Decision History</h1>
+
+<h3>v1.0.7bj — 2026-06-14 — AsyncAPI documentation for the asynchronous surface (5 Redis control-bus channels + operator-UI SSE stream)</h3>
+<table>
+  <thead><tr><th>Aspect</th><th>What changed</th><th>Resolved by</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>AsyncAPI 3.0 spec</strong></td>
+      <td>New <code>docs/asyncapi/smartload-v1.yaml</code> — the canonical machine-readable contract for the <strong>asynchronous</strong> surface, mirroring the role <code>docs/openapi/smartload-v1.yaml</code> plays for HTTP. Documents all five Redis pub/sub channels (<code>smartload.policy</code> / <code>.anomaly</code> / <code>.forecast</code> / <code>.routing</code> / <code>.scale</code>) as AsyncAPI channels, each with its canonical <code>Envelope</code> message, typed payload schema, per-channel TTL (<code>x-ttl-seconds</code>), retention, and webhook-eligibility, plus paired <code>send</code>/<code>receive</code> operations carrying the actual publisher (<code>x-publisher</code>) and subscriber (<code>x-subscribers</code>) service sets. A sixth channel documents the operator-UI <strong>Server-Sent-Events</strong> stream (<code>/api/ui/engines/stream</code>) — the BFF's re-broadcast of the four runtime channels to the browser, with the <code>{channel, envelope, payload}</code> frame shape. Payload schemas (enums, required/optional fields) are sourced field-for-field from <code>services/shared/contracts.py</code> and the canonical enums in <code>docs/openapi/smartload-v1.yaml</code> / <code>config/policy.yaml</code>; servers cover Redis (local + in-cluster) and the operator-UI HTTP server.</td>
+      <td>v1.0.7bj</td>
+    </tr>
+    <tr>
+      <td><strong>Parity lint + CI guard</strong></td>
+      <td>New <code>scripts/lint-asyncapi.py</code> (stdlib-only, the third sibling of <code>lint-redis-channels.py</code> + <code>lint-openapi.py</code>): greps <code>services/</code> for <code>smartload.&lt;topic&gt;</code> channel literals (re-using the Docker-label exclusion) and asserts each appears as a <code>channels.*.address</code> in the AsyncAPI spec. Permissive by default, <code>--strict</code> for gating. Wired into the <code>structure-lint</code> CI job as a permissive step alongside the OpenAPI check.</td>
+      <td>v1.0.7bj</td>
+    </tr>
+    <tr>
+      <td><strong>Operator-UI viewer</strong></td>
+      <td>The operator UI now serves the AsyncAPI spec the way it already serves Swagger UI for OpenAPI. New <code>bff/docs_pages.py</code> (pure, Flask-free — testable like <code>engines.py</code>) returns a <code>@asyncapi/react-component</code> viewer page; BFF routes <code>GET /api/asyncapi-docs</code> (the viewer) + <code>GET /api/asyncapi.yaml</code> (raw spec, mirrors <code>/api/openapi.yaml</code>); new <code>ASYNCAPI_PATH</code> env + a <code>./docs/asyncapi:/app/asyncapi:ro</code> compose mount + Dockerfile <code>mkdir</code>/ENV; an "Event docs" sidebar link + two Vite dev-proxy entries. The viewer fetches the spec same-origin, so the mounted YAML stays the single source — no regeneration on change.</td>
+      <td>v1.0.7bj</td>
+    </tr>
+    <tr>
+      <td><strong>Tests + doc sync</strong></td>
+      <td>8 new pure unit tests (<code>tests/unit/operator-ui/test_docs_pages.py</code>); operator-UI unit suite <strong>49 passed</strong>. The live <code>/api/asyncapi-docs</code> + <code>/api/asyncapi.yaml</code> routes were smoke-tested through the Flask test client and rendered in-browser (full Info/Servers/Operations/Messages/Schemas tree, zero errors). Spec parses, all internal <code>$ref</code>s resolve, both lints green. Docs: this §22 rows + status badge + version bump (bi&rarr;bj); §11 contract-authority note + §26.11 (renamed "OpenAPI / AsyncAPI specs + viewers") + the §25 surfaces table + both §26/§28 endpoint tables; <code>docs/redis-channels.md</code> pairing line; README contract-surface table + access table + CI-guardrail list + docs tree + lint commands; WALKTHROUGH contract-surfaces table + BFF section; operator-UI README; PROJECT_STATE delta.</td>
+      <td>v1.0.7bj</td>
+    </tr>
+  </tbody>
+</table>
 
 <h3>v1.0.7bc — 2026-06-14 — operator-ui mockup parity: per-backend metrics, structured alerts, audit old/new columns</h3>
 <table>
@@ -7824,9 +7852,9 @@ docker compose logs -f anomaly-detector</code></pre>
       <td><span class="badge badge-implemented">v1 covers policy + audit + telemetry + health</span></td>
     </tr>
     <tr>
-      <td>Redis pub/sub (control bus)</td>
-      <td><code>docs/redis-channels.md</code></td>
-      <td>SDK <code>events.py</code> helpers (Python today; Node / Go future)</td>
+      <td>Redis pub/sub (control bus) + SSE</td>
+      <td><code>docs/asyncapi/smartload-v1.yaml</code> (AsyncAPI 3.0) + <code>docs/redis-channels.md</code></td>
+      <td>AsyncAPI viewer at <code>http://&lt;operator-ui&gt;:8090/api/asyncapi-docs</code>; SDK <code>events.py</code> helpers (Python today; Node / Go future)</td>
       <td><span class="badge badge-implemented">5 channels registered; SDK <code>subscribe_policy</code> shipped slice #1</span></td>
     </tr>
     <tr>
@@ -8326,6 +8354,8 @@ flowchart TD
     <tr><td><code>GET /api/ui/audit/policy</code></td><td>Proxy to policy-manager <code>GET /api/v1/audit/policy</code></td></tr>
     <tr><td><code>GET /api/docs</code></td><td>Swagger UI rendered from <code>docs/openapi/smartload-v1.yaml</code></td></tr>
     <tr><td><code>GET /api/openapi.yaml</code></td><td>Raw spec (used by Swagger UI; consumable directly by tooling)</td></tr>
+    <tr><td><code>GET /api/asyncapi-docs</code></td><td>AsyncAPI viewer rendered from <code>docs/asyncapi/smartload-v1.yaml</code> (the async/event contract)</td></tr>
+    <tr><td><code>GET /api/asyncapi.yaml</code></td><td>Raw AsyncAPI spec (used by the viewer; consumable directly by tooling)</td></tr>
   </tbody>
 </table>
 
@@ -8474,8 +8504,9 @@ curl -s -X POST http://localhost:8086/api/v1/policy \
   -H 'X-Actor: ops-cli' \
   -d '{"safe_mode": false}' | jq</code></pre>
 
-<h3>26.11 OpenAPI spec + Swagger UI</h3>
-<p>The canonical machine-readable spec is <code>docs/openapi/smartload-v1.yaml</code> (OpenAPI 3.1). Mounted into the operator UI BFF as a read-only volume and rendered via Swagger UI at <code>http://&lt;operator-ui&gt;:8090/api/docs</code>. The <code>scripts/lint-openapi.py</code> guardrail enforces parity: every <code>/api/v1/*</code> route in source must appear in the spec.</p>
+<h3>26.11 OpenAPI / AsyncAPI specs + viewers</h3>
+<p>The canonical machine-readable HTTP spec is <code>docs/openapi/smartload-v1.yaml</code> (OpenAPI 3.1). Mounted into the operator UI BFF as a read-only volume and rendered via Swagger UI at <code>http://&lt;operator-ui&gt;:8090/api/docs</code>. The <code>scripts/lint-openapi.py</code> guardrail enforces parity: every <code>/api/v1/*</code> route in source must appear in the spec.</p>
+<p>The asynchronous surface is documented in <code>docs/asyncapi/smartload-v1.yaml</code> (AsyncAPI 3.0) — the five Redis control-bus channels + the operator-UI SSE stream. It is mounted the same way (read-only volume) and rendered at <code>http://&lt;operator-ui&gt;:8090/api/asyncapi-docs</code> via the <code>@asyncapi/react-component</code> viewer, which fetches the raw spec from <code>/api/asyncapi.yaml</code> (same-origin, the async analogue of <code>/api/openapi.yaml</code>). The <code>scripts/lint-asyncapi.py</code> guardrail enforces parity: every <code>smartload.*</code> channel in source must appear in the spec.</p>
 
 </section>
 
@@ -8904,6 +8935,8 @@ flowchart LR
     <tr><td><code>GET /api/ui/engines/stream</code> <span class="badge badge-implemented">#121 session 1</span></td><td>SSE — replay-then-live. On connect the BFF emits the current ring buffer (newest-last), then forwards every new envelope. Heartbeat comment (<code>: heartbeat\n\n</code>) every 15&nbsp;s so idle proxies don't close the connection. Headers: <code>Cache-Control: no-cache</code>, <code>X-Accel-Buffering: no</code>, <code>Connection: keep-alive</code>. Each client gets a bounded <code>queue.Queue(maxsize=256)</code>; slow clients drop events silently. Connection lifecycle unsubscribes in the generator's <code>finally</code>.</td></tr>
     <tr><td><code>GET /api/docs</code></td><td>Swagger UI rendered from the canonical OpenAPI spec.</td></tr>
     <tr><td><code>GET /api/openapi.yaml</code></td><td>Raw spec from <code>/app/openapi/smartload-v1.yaml</code> (mounted as a read-only Docker volume).</td></tr>
+    <tr><td><code>GET /api/asyncapi-docs</code></td><td>AsyncAPI viewer rendered from the canonical AsyncAPI spec (Redis channels + SSE stream).</td></tr>
+    <tr><td><code>GET /api/asyncapi.yaml</code></td><td>Raw spec from <code>/app/asyncapi/smartload-v1.yaml</code> (mounted as a read-only Docker volume).</td></tr>
     <tr><td><code>GET /assets/*</code></td><td>Static Vite-built JS / CSS bundles. <strong>Flask's <code>static_url_path</code> is scoped to <code>/assets</code></strong> (not <code>""</code>) so the SPA fallback below catches every other path — direct URLs to <code>/policy</code>, <code>/audit</code>, <code>/actions</code> all render correctly on hard refresh.</td></tr>
     <tr><td><code>GET /health</code></td><td>BFF's own health endpoint.</td></tr>
     <tr><td><code>GET /</code>, <code>GET /&lt;anything&gt;</code></td><td>SPA fallback — serves <code>web/dist/index.html</code> so the React router can pick up the path.</td></tr>

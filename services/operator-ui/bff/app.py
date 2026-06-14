@@ -11,6 +11,8 @@ Responsibilities:
     expose /api/ui/engines/snapshot (per-engine state) + /api/ui/engines/stream
     (SSE feed of recent + live envelopes)
   - Serve Swagger UI at /api/docs reading docs/openapi/smartload-v1.yaml
+  - Serve the AsyncAPI viewer at /api/asyncapi-docs reading
+    docs/asyncapi/smartload-v1.yaml (the async/event contract)
   - Serve the React build at / (production) — Vite dev server handles dev
 
 Out of scope (separate issues):
@@ -50,6 +52,7 @@ from engines import (  # noqa: E402
     subscriber_loop,
 )
 from aggregator import build_status_response  # noqa: E402
+from docs_pages import asyncapi_docs_html  # noqa: E402
 
 try:
     from flask_swagger_ui import get_swaggerui_blueprint
@@ -80,6 +83,10 @@ WEB_DIST = os.environ.get(
 OPENAPI_PATH = os.environ.get(
     "OPENAPI_PATH",
     "/app/openapi/smartload-v1.yaml",
+)
+ASYNCAPI_PATH = os.environ.get(
+    "ASYNCAPI_PATH",
+    "/app/asyncapi/smartload-v1.yaml",
 )
 
 logging.basicConfig(
@@ -124,6 +131,31 @@ def serve_openapi():
         os.path.dirname(OPENAPI_PATH),
         os.path.basename(OPENAPI_PATH),
         mimetype="application/x-yaml",
+    )
+
+
+# ── AsyncAPI (event contract) ───────────────────────────────────────────────────
+
+@app.route("/api/asyncapi.yaml")
+def serve_asyncapi():
+    """Serve the canonical AsyncAPI spec for the viewer (and SDK tooling) to
+    consume — the async analogue of /api/openapi.yaml."""
+    if not os.path.isfile(ASYNCAPI_PATH):
+        return jsonify({"error": f"asyncapi spec not found: {ASYNCAPI_PATH}"}), 404
+    return send_from_directory(
+        os.path.dirname(ASYNCAPI_PATH),
+        os.path.basename(ASYNCAPI_PATH),
+        mimetype="application/x-yaml",
+    )
+
+
+@app.route("/api/asyncapi-docs")
+def asyncapi_docs():
+    """Render the AsyncAPI spec in-browser — the async analogue of the Swagger
+    UI at /api/docs. The page fetches the spec from /api/asyncapi.yaml."""
+    return Response(
+        asyncapi_docs_html("/api/asyncapi.yaml"),
+        mimetype="text/html",
     )
 
 
@@ -1429,5 +1461,6 @@ def serve_spa(path: str):
 
 
 if __name__ == "__main__":
-    log.info("starting on port %d (web_dist=%s, openapi=%s)", PORT, WEB_DIST, OPENAPI_PATH)
+    log.info("starting on port %d (web_dist=%s, openapi=%s, asyncapi=%s)",
+             PORT, WEB_DIST, OPENAPI_PATH, ASYNCAPI_PATH)
     app.run(host="0.0.0.0", port=PORT)

@@ -9,6 +9,8 @@ export default defineConfig({
       "/api/ui":      { target: "http://localhost:8090", changeOrigin: true },
       "/api/docs":    { target: "http://localhost:8090", changeOrigin: true },
       "/api/openapi.yaml": { target: "http://localhost:8090", changeOrigin: true },
+      "/api/asyncapi-docs": { target: "http://localhost:8090", changeOrigin: true },
+      "/api/asyncapi.yaml": { target: "http://localhost:8090", changeOrigin: true },
     },
   },
   build: {

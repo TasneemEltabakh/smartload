@@ -1,0 +1,815 @@
+asyncapi: 3.0.0
+
+info:
+  title: SmartLoad Control Bus
+  version: 1.0.0
+  description: |
+    Canonical contract for the SmartLoad **asynchronous** surface — the companion
+    to `docs/openapi/smartload-v1.yaml`, which covers the synchronous HTTP
+    surface.
+
+    Every inter-service message in SmartLoad flows over **Redis pub/sub**. There
+    are five control-bus channels; each carries one typed payload wrapped in the
+    canonical **Envelope** (`event_id`, `source`, `version`, `timestamp`,
+    `payload`). The operator-UI subscribes to four of those channels on a
+    background thread and re-broadcasts them to the browser over **Server-Sent
+    Events** so an operator sees the live decision plane without touching Redis.
+
+    Authority:
+      - Payload shapes (code source of truth): `services/shared/contracts.py`.
+      - Channel catalog (human-readable): `docs/redis-channels.md`.
+      - Stability & versioning policy: SOT §11 (Interface & Contract Authority).
+
+    Envelope rules (SOT §11):
+      - `event_id` (UUID) lets subscribers de-duplicate across re-publishes.
+      - `source` is the publisher's kebab-case service name.
+      - `version` is the envelope schema version (currently 1), bumped only on
+        envelope-semantics changes — independent of the channel name. New
+        *optional* payload fields are additive and do not bump it.
+      - `timestamp` is RFC 3339 UTC. Subscribers drop messages older than the
+        channel's TTL (see `x-ttl-seconds` per channel). Naive or unparseable
+        timestamps are dropped.
+      - Delivery is fire-and-forget pub/sub: a message published with no live
+        subscriber is lost. Durability is the audit hypertables, not the broker
+        (see SOT §30 Database).
+  contact:
+    name: SmartLoad
+    url: https://github.com/TasneemEltabakh/smartload
+  license:
+    name: Proprietary
+  tags:
+    - name: control-bus
+      description: Redis pub/sub channels that carry inter-service decisions.
+    - name: sse
+      description: Operator-UI live event stream over Server-Sent Events.
+
+defaultContentType: application/json
+
+servers:
+  redis-local:
+    host: localhost:6379
+    protocol: redis
+    description: Redis pub/sub broker — local development (host-mapped port).
+  redis-cluster:
+    host: redis:6379
+    protocol: redis
+    description: >-
+      Redis pub/sub broker — in-cluster (Docker Compose service name). Override
+      with the `REDIS_URL` env var; default `redis://redis:6379`.
+  operator-ui:
+    host: localhost:8090
+    protocol: http
+    protocolVersion: "1.1"
+    description: >-
+      operator-UI BFF (Flask). Serves the live engines Server-Sent Events
+      stream at `/api/ui/engines/stream`. Pure read — owns no channel or table.
+
+channels:
+  policy:
+    address: smartload.policy
+    title: Policy updates
+    description: |
+      The current operating policy. Re-published in full on every accepted
+      change so late-joining subscribers converge on a complete snapshot.
+    servers:
+      - $ref: "#/servers/redis-local"
+      - $ref: "#/servers/redis-cluster"
+    messages:
+      policyUpdate:
+        $ref: "#/components/messages/PolicyUpdate"
+    x-ttl-seconds: null            # policy snapshots never expire
+    x-retention: pub/sub (no buffer)
+    x-webhook-eligible: true       # planned via #130
+
+  anomaly:
+    address: smartload.anomaly
+    title: Backend anomaly verdicts
+    description: |
+      One health verdict per backend per inference cycle. Stale verdicts are
+      dropped by subscribers after 30s so a dead detector cannot pin a backend
+      in a wrong state indefinitely.
+    servers:
+      - $ref: "#/servers/redis-local"
+      - $ref: "#/servers/redis-cluster"
+    messages:
+      anomalyEvent:
+        $ref: "#/components/messages/AnomalyEvent"
+    x-ttl-seconds: 30
+    x-retention: pub/sub (no buffer)
+    x-webhook-eligible: true
+
+  forecast:
+    address: smartload.forecast
+    title: Load forecasts
+    description: |
+      Predicted request rate over a look-ahead horizon, with a prediction
+      interval. Drives autoscaler scale decisions. TTL is the 3-minute forecast
+      window.
+    servers:
+      - $ref: "#/servers/redis-local"
+      - $ref: "#/servers/redis-cluster"
+    messages:
+      forecastResult:
+        $ref: "#/components/messages/ForecastResult"
+    x-ttl-seconds: 180
+    x-retention: pub/sub (no buffer)
+    x-webhook-eligible: true
+
+  routing:
+    address: smartload.routing
+    title: Routing recommendations
+    description: |
+      Per-backend routing scores from the RL engine. In `shadow` mode these are
+      logged only; in `active` mode the LB sidecar applies them as NGINX
+      upstream weights. Stale recommendations drop after 30s.
+    servers:
+      - $ref: "#/servers/redis-local"
+      - $ref: "#/servers/redis-cluster"
+    messages:
+      routingRecommendation:
+        $ref: "#/components/messages/RoutingRecommendation"
+    x-ttl-seconds: 30
+    x-retention: pub/sub (no buffer)
+    x-webhook-eligible: true
+
+  scale:
+    address: smartload.scale
+    title: Scaling actions
+    description: |
+      One event per scale_out / scale_in action taken by the autoscaler. Never
+      expires — scaling actions are an auditable record. The durable copy lives
+      in the `scaling_events` hypertable.
+    servers:
+      - $ref: "#/servers/redis-local"
+      - $ref: "#/servers/redis-cluster"
+    messages:
+      scalingEvent:
+        $ref: "#/components/messages/ScalingEvent"
+    x-ttl-seconds: null            # actions are auditable; never expire
+    x-retention: pub/sub (no buffer)
+    x-webhook-eligible: true
+
+  enginesStream:
+    address: /api/ui/engines/stream
+    title: Operator-UI live engines stream (SSE)
+    description: |
+      Server-Sent Events stream the operator-UI exposes to the browser. The BFF
+      subscribes once to all four runtime channels (anomaly, forecast, routing,
+      scale) on a background thread, keeps a per-channel ring buffer (capacity
+      100), and fans every parsed envelope out to connected SSE clients.
+
+      On connect, the server replays the ring buffer (so a fresh page is not
+      blank), then streams live envelopes as they arrive. A comment-only
+      heartbeat frame (`: heartbeat`) is sent every 15s to keep idle
+      connections alive through intermediate proxies. Slow clients drop events
+      rather than back-pressuring publishers.
+
+      Each `data:` frame is one JSON object: `{ channel, envelope, payload }`,
+      where `envelope` is the metadata only (the typed body is hoisted to
+      `payload`). `smartload.policy` is intentionally not on this stream.
+    servers:
+      - $ref: "#/servers/operator-ui"
+    messages:
+      engineStreamEntry:
+        $ref: "#/components/messages/EngineStreamEntry"
+
+operations:
+  publishPolicyUpdate:
+    action: send
+    channel:
+      $ref: "#/channels/policy"
+    title: Publish a policy snapshot
+    summary: policy-manager publishes the full policy on every accepted change.
+    description: |
+      Event-driven (not periodic): one publish per accepted change. An
+      idempotent no-op POST (body equals on-disk state) publishes nothing.
+    x-publisher: policy-manager
+    messages:
+      - $ref: "#/channels/policy/messages/policyUpdate"
+
+  consumePolicyUpdate:
+    action: receive
+    channel:
+      $ref: "#/channels/policy"
+    title: Reload policy live
+    summary: Decision-plane services hot-reload their runtime parameters.
+    description: |
+      Each subscriber applies the new snapshot in place — no restart. Additive
+      optional fields are ignored by older subscribers.
+    x-subscribers:
+      - anomaly-detector
+      - forecasting
+      - rl-engine
+      - autoscaler
+      - lb-sidecar
+    messages:
+      - $ref: "#/channels/policy/messages/policyUpdate"
+
+  publishAnomalyEvent:
+    action: send
+    channel:
+      $ref: "#/channels/anomaly"
+    title: Publish a backend health verdict
+    summary: anomaly-detector publishes one verdict per backend per cycle.
+    description: |
+      Periodic, every `POLL_INTERVAL_SECONDS` (compose default 10s). The
+      `/api/v1/isolate` manual endpoint publishes a synthetic verdict on the
+      same channel. Each verdict is also written to the `backend_health`
+      hypertable.
+    x-publisher: anomaly-detector
+    messages:
+      - $ref: "#/channels/anomaly/messages/anomalyEvent"
+
+  consumeAnomalyEvent:
+    action: receive
+    channel:
+      $ref: "#/channels/anomaly"
+    title: React to backend health
+    summary: LB sidecar excludes/includes backends; RL engine and UI consume.
+    description: |
+      lb-sidecar excludes a degraded/unhealthy backend from the NGINX upstream
+      (subject to the quorum guard that prevents an empty pool); rl-engine folds
+      health into routing; operator-UI surfaces active alerts and the live feed.
+    x-subscribers:
+      - lb-sidecar
+      - rl-engine
+      - operator-ui
+    messages:
+      - $ref: "#/channels/anomaly/messages/anomalyEvent"
+
+  publishForecastResult:
+    action: send
+    channel:
+      $ref: "#/channels/forecast"
+    title: Publish a load forecast
+    summary: forecasting publishes a predicted request rate each cycle.
+    description: |
+      Periodic, every `POLL_INTERVAL_SECONDS` (compose default 60s). Also
+      written to the `forecasts` hypertable.
+    x-publisher: forecasting
+    messages:
+      - $ref: "#/channels/forecast/messages/forecastResult"
+
+  consumeForecastResult:
+    action: receive
+    channel:
+      $ref: "#/channels/forecast"
+    title: Drive scale decisions
+    summary: autoscaler sizes the backend pool from the forecast.
+    description: |
+      autoscaler compares predicted RPS against current capacity
+      (`instance_count * per_instance_capacity_rps`) and may emit a
+      ScalingEvent. The forecast's `event_id` becomes `forecast_event_id` on the
+      resulting ScalingEvent for provenance.
+    x-subscribers:
+      - autoscaler
+    messages:
+      - $ref: "#/channels/forecast/messages/forecastResult"
+
+  publishRoutingRecommendation:
+    action: send
+    channel:
+      $ref: "#/channels/routing"
+    title: Publish routing scores
+    summary: rl-engine publishes per-backend routing scores each cycle.
+    description: |
+      Periodic, every `POLL_INTERVAL_SECONDS` (compose default 5s). `mode`
+      defaults to `shadow` (log-only) — an operator must opt in to `active`
+      before these weights affect live routing.
+    x-publisher: rl-engine
+    messages:
+      - $ref: "#/channels/routing/messages/routingRecommendation"
+
+  consumeRoutingRecommendation:
+    action: receive
+    channel:
+      $ref: "#/channels/routing"
+    title: Apply routing weights
+    summary: LB sidecar applies weights when mode=active.
+    description: |
+      lb-sidecar rewrites the NGINX upstream weights from `server_rankings` only
+      when `mode=active`; in `shadow` it records but does not apply them.
+    x-subscribers:
+      - lb-sidecar
+    messages:
+      - $ref: "#/channels/routing/messages/routingRecommendation"
+
+  publishScalingEvent:
+    action: send
+    channel:
+      $ref: "#/channels/scale"
+    title: Publish a scaling action
+    summary: autoscaler publishes one event per scale action.
+    description: |
+      Event-driven. Emitted by both the automatic run loop and the manual
+      `/api/v1/scale` endpoint (one event per operator click, never per
+      intermediate step). Also written to the `scaling_events` hypertable.
+    x-publisher: autoscaler
+    messages:
+      - $ref: "#/channels/scale/messages/scalingEvent"
+
+  consumeScalingEvent:
+    action: receive
+    channel:
+      $ref: "#/channels/scale"
+    title: React to pool changes
+    summary: LB sidecar re-syncs the upstream; operator-UI audits + feeds.
+    description: |
+      lb-sidecar re-queries the Docker pool and rewrites `upstream.conf`
+      (#164 — closes the autoscaler → NGINX loop); operator-UI records the
+      action and surfaces it on the live feed; a webhook-dispatcher is planned
+      (#130).
+    x-subscribers:
+      - lb-sidecar
+      - operator-ui
+    messages:
+      - $ref: "#/channels/scale/messages/scalingEvent"
+
+  receiveEnginesStream:
+    action: receive
+    channel:
+      $ref: "#/channels/enginesStream"
+    title: Stream the live decision plane to the browser
+    summary: Browser clients consume the operator-UI SSE feed.
+    description: |
+      A long-lived HTTP GET that returns `text/event-stream`. The connection
+      first replays the ring buffer, then streams live envelopes, with a
+      heartbeat comment every 15s.
+    bindings:
+      http:
+        method: GET
+        bindingVersion: "0.3.0"
+    x-publisher: operator-ui
+    messages:
+      - $ref: "#/channels/enginesStream/messages/engineStreamEntry"
+
+components:
+  messages:
+    PolicyUpdate:
+      name: PolicyUpdate
+      title: Policy update
+      summary: Full operating-policy snapshot.
+      contentType: application/json
+      tags:
+        - name: control-bus
+      payload:
+        $ref: "#/components/schemas/PolicyUpdateEnvelope"
+      examples:
+        - name: hybridSnapshot
+          summary: Operator switched to hybrid mode.
+          payload:
+            event_id: 7c1a2b8e-4f3d-4a21-9b2e-2f6a0c9d11aa
+            source: policy-manager
+            version: 1
+            timestamp: "2026-06-14T12:00:00.000000+00:00"
+            payload:
+              operating_mode: hybrid
+              safe_mode: false
+              min_backends: 1
+              max_backends: 10
+              slo_p95_latency_ms: 200
+              anomaly_latency_multiplier: 3.0
+              per_instance_capacity_rps: 100
+              autoscaler_cooldown_seconds: 60
+              policy_version: 35
+              anomaly_response: auto-isolate
+              anomaly_recovery_window_seconds: 30
+              rl_exploration_rate: 0.0
+              rl_confidence_threshold: 0.6
+              changed_fields: ["operating_mode"]
+              timestamp: "2026-06-14T12:00:00.000000+00:00"
+
+    AnomalyEvent:
+      name: AnomalyEvent
+      title: Anomaly event
+      summary: Per-backend health verdict.
+      contentType: application/json
+      tags:
+        - name: control-bus
+      payload:
+        $ref: "#/components/schemas/AnomalyEventEnvelope"
+      examples:
+        - name: degradedBackend
+          summary: A backend tripped the latency threshold.
+          payload:
+            event_id: 1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+            source: anomaly-detector
+            version: 1
+            timestamp: "2026-06-14T12:00:05.000000+00:00"
+            payload:
+              backend_id: test-backend-3
+              status: degraded
+              score: 0.82
+              timestamp: "2026-06-14T12:00:05.000000+00:00"
+              metric: latency_ms
+              observed_value: 612.0
+              threshold: 600.0
+              severity: warning
+              model_version: threshold-v1
+
+    ForecastResult:
+      name: ForecastResult
+      title: Forecast result
+      summary: Predicted request rate over a horizon.
+      contentType: application/json
+      tags:
+        - name: control-bus
+      payload:
+        $ref: "#/components/schemas/ForecastResultEnvelope"
+      examples:
+        - name: fiveMinuteHorizon
+          summary: Five-minute look-ahead forecast.
+          payload:
+            event_id: 9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b
+            source: forecasting
+            version: 1
+            timestamp: "2026-06-14T12:01:00.000000+00:00"
+            payload:
+              horizon_minutes: 5
+              predicted_rps: 420.0
+              confidence_lower: 380.0
+              confidence_upper: 460.0
+              timestamp: "2026-06-14T12:01:00.000000+00:00"
+              model_id: moving_average
+
+    RoutingRecommendation:
+      name: RoutingRecommendation
+      title: Routing recommendation
+      summary: Per-backend routing scores.
+      contentType: application/json
+      tags:
+        - name: control-bus
+      payload:
+        $ref: "#/components/schemas/RoutingRecommendationEnvelope"
+      examples:
+        - name: shadowRanking
+          summary: Shadow-mode ranking (log only).
+          payload:
+            event_id: 3d2c1b0a-9e8f-4716-8253-1a2b3c4d5e6f
+            source: rl-engine
+            version: 1
+            timestamp: "2026-06-14T12:00:05.000000+00:00"
+            payload:
+              mode: shadow
+              server_rankings:
+                - backend_id: test-backend-1
+                  score: 0.9
+                - backend_id: test-backend-2
+                  score: 0.7
+              timestamp: "2026-06-14T12:00:05.000000+00:00"
+              policy_version: 35
+
+    ScalingEvent:
+      name: ScalingEvent
+      title: Scaling event
+      summary: A scale_out / scale_in action.
+      contentType: application/json
+      tags:
+        - name: control-bus
+      payload:
+        $ref: "#/components/schemas/ScalingEventEnvelope"
+      examples:
+        - name: scaleOut
+          summary: Forecast-driven scale-out.
+          payload:
+            event_id: a1b2c3d4-e5f6-4789-9abc-def012345678
+            source: autoscaler
+            version: 1
+            timestamp: "2026-06-14T12:01:01.000000+00:00"
+            payload:
+              action: scale_out
+              instance_count: 4
+              reason: "forecast predicted_rps=420 exceeds 3 backends x 100 capacity"
+              timestamp: "2026-06-14T12:01:01.000000+00:00"
+              forecast_event_id: 9f8e7d6c-5b4a-4938-8271-605f4e3d2c1b
+              mechanism: start
+
+    EngineStreamEntry:
+      name: EngineStreamEntry
+      title: Engine stream entry (SSE frame)
+      summary: One envelope re-broadcast over Server-Sent Events.
+      contentType: application/json
+      tags:
+        - name: sse
+      payload:
+        $ref: "#/components/schemas/EngineStreamEntry"
+      examples:
+        - name: anomalyFrame
+          summary: An anomaly verdict as delivered to the browser.
+          payload:
+            channel: smartload.anomaly
+            envelope:
+              event_id: 1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+              source: anomaly-detector
+              version: 1
+              timestamp: "2026-06-14T12:00:05.000000+00:00"
+            payload:
+              backend_id: test-backend-3
+              status: degraded
+              score: 0.82
+
+  schemas:
+    EnvelopeBase:
+      type: object
+      title: Envelope metadata
+      description: >-
+        Canonical wrapper fields present on every control-bus message
+        (`services/shared/contracts.py::Envelope`). The typed body lives under
+        `payload`.
+      required: [event_id, source, version, timestamp]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: UUID. Enables subscriber de-duplication across re-publishes.
+        source:
+          type: string
+          description: Publisher service name (kebab-case), e.g. "anomaly-detector".
+        version:
+          type: integer
+          const: 1
+          description: Envelope schema version (`ENVELOPE_VERSION`).
+        timestamp:
+          type: string
+          format: date-time
+          description: >-
+            RFC 3339 UTC. Subscribers drop messages older than the channel's
+            `x-ttl-seconds`.
+
+    PolicyUpdateEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          required: [payload]
+          properties:
+            payload:
+              $ref: "#/components/schemas/PolicyUpdatePayload"
+
+    AnomalyEventEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          required: [payload]
+          properties:
+            payload:
+              $ref: "#/components/schemas/AnomalyEventPayload"
+
+    ForecastResultEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          required: [payload]
+          properties:
+            payload:
+              $ref: "#/components/schemas/ForecastResultPayload"
+
+    RoutingRecommendationEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          required: [payload]
+          properties:
+            payload:
+              $ref: "#/components/schemas/RoutingRecommendationPayload"
+
+    ScalingEventEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeBase"
+        - type: object
+          required: [payload]
+          properties:
+            payload:
+              $ref: "#/components/schemas/ScalingEventPayload"
+
+    PolicyUpdatePayload:
+      type: object
+      title: Policy update payload
+      description: >-
+        Full canonical operating-policy snapshot. Published by policy-manager to
+        smartload.policy. Mirrors `PolicyUpdate` in
+        `services/shared/contracts.py` and the field set in `config/policy.yaml`.
+      required:
+        - operating_mode
+        - safe_mode
+        - min_backends
+        - max_backends
+        - slo_p95_latency_ms
+        - anomaly_latency_multiplier
+        - per_instance_capacity_rps
+        - autoscaler_cooldown_seconds
+        - policy_version
+      properties:
+        operating_mode:
+          type: string
+          enum: [classical-only, hybrid, rl-only]
+          description: Decision-plane mode the stack operates under.
+        safe_mode:
+          type: boolean
+          description: When true, decisions are advisory only (no live actuation).
+        min_backends:
+          type: integer
+          minimum: 0
+        max_backends:
+          type: integer
+          minimum: 1
+        slo_p95_latency_ms:
+          type: integer
+          description: Target p95 latency the autoscaler protects.
+        anomaly_latency_multiplier:
+          type: number
+          description: Latency multiple over baseline that flags an anomaly.
+        per_instance_capacity_rps:
+          type: integer
+          description: Assumed sustainable requests/sec per backend instance.
+        autoscaler_cooldown_seconds:
+          type: integer
+        policy_version:
+          type: integer
+          description: Monotonic. policy-manager increments it per accepted change.
+        anomaly_response:
+          type: string
+          enum: [auto-isolate, advisory]
+          default: auto-isolate
+        anomaly_recovery_window_seconds:
+          type: integer
+          default: 30
+        rl_exploration_rate:
+          type: number
+          default: 0.0
+        rl_confidence_threshold:
+          type: number
+          default: 0.6
+        changed_fields:
+          type: [array, "null"]
+          items:
+            type: string
+          description: Field names differing from the previous snapshot. Optional.
+        timestamp:
+          type: string
+          format: date-time
+
+    AnomalyEventPayload:
+      type: object
+      title: Anomaly event payload
+      description: >-
+        Per-backend health verdict. Published by anomaly-detector to
+        smartload.anomaly. Mirrors `AnomalyEvent` in
+        `services/shared/contracts.py`.
+      required: [backend_id, status, score]
+      properties:
+        backend_id:
+          type: string
+          description: Canonical backend container name, e.g. "test-backend-1".
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        score:
+          type: number
+          description: Anomaly score; higher means more anomalous.
+        timestamp:
+          type: string
+          format: date-time
+        features:
+          type: [object, "null"]
+          additionalProperties: true
+          description: Per-feature contributions (debug only). Optional.
+        model_version:
+          type: [string, "null"]
+          description: Which model/engine produced the score. Optional.
+        metric:
+          type: [string, "null"]
+          description: Signal that tripped, e.g. "latency_ms". Optional evidence.
+        observed_value:
+          type: [number, "null"]
+          description: Measured value at decision time. Optional evidence.
+        threshold:
+          type: [number, "null"]
+          description: Boundary the value crossed. Optional evidence.
+        severity:
+          type: [string, "null"]
+          enum: [critical, warning, null]
+          description: Operator-UI alert bucket. Optional.
+
+    ForecastResultPayload:
+      type: object
+      title: Forecast result payload
+      description: >-
+        Predicted request rate over a look-ahead horizon. Published by
+        forecasting to smartload.forecast. Mirrors `ForecastResult` in
+        `services/shared/contracts.py`.
+      required: [horizon_minutes, predicted_rps, confidence_lower, confidence_upper]
+      properties:
+        horizon_minutes:
+          type: integer
+          description: Look-ahead window in minutes (e.g. 5).
+        predicted_rps:
+          type: number
+          description: Predicted requests per second.
+        confidence_lower:
+          type: number
+          description: Lower bound of the prediction interval.
+        confidence_upper:
+          type: number
+          description: Upper bound of the prediction interval.
+        timestamp:
+          type: string
+          format: date-time
+        model_id:
+          type: [string, "null"]
+          description: Provenance, e.g. "moving_average" | "arima_v2". Optional.
+
+    RoutingRecommendationPayload:
+      type: object
+      title: Routing recommendation payload
+      description: >-
+        Per-backend routing scores. Published by rl-engine to smartload.routing.
+        Mirrors `RoutingRecommendation` in `services/shared/contracts.py`.
+      required: [mode, server_rankings]
+      properties:
+        mode:
+          type: string
+          enum: [shadow, active]
+          description: shadow = log only; active = LB applies these weights.
+        server_rankings:
+          type: array
+          description: Backends ranked by routing score.
+          items:
+            $ref: "#/components/schemas/ServerRanking"
+        timestamp:
+          type: string
+          format: date-time
+        policy_version:
+          type: [integer, "null"]
+          description: The policy snapshot RL was reasoning under. Optional join key.
+
+    ServerRanking:
+      type: object
+      title: Server ranking
+      required: [backend_id, score]
+      properties:
+        backend_id:
+          type: string
+        score:
+          type: number
+          description: Routing score; higher means more preferred.
+
+    ScalingEventPayload:
+      type: object
+      title: Scaling event payload
+      description: >-
+        A scale_out / scale_in action. Published by autoscaler to
+        smartload.scale. Mirrors `ScalingEvent` in
+        `services/shared/contracts.py`.
+      required: [action, instance_count, reason]
+      properties:
+        action:
+          type: string
+          enum: [scale_out, scale_in]
+        instance_count:
+          type: integer
+          description: Resulting backend count after the action.
+        reason:
+          type: string
+          description: Human-readable justification.
+        timestamp:
+          type: string
+          format: date-time
+        forecast_event_id:
+          type: [string, "null"]
+          description: event_id of the ForecastResult that triggered this. Optional.
+        mechanism:
+          type: [string, "null"]
+          enum: [start, provision, stop, decommission, null]
+          description: >-
+            Lifecycle path within the action (#155). start = toggled an existing
+            labelled container to running; provision = created a new container
+            via the Docker SDK; stop = toggled to stopped; decommission =
+            stopped + removed a dynamic-only container. Null = not recorded
+            (legacy / pre-#155). Optional.
+
+    EngineStreamEntry:
+      type: object
+      title: Engine stream entry
+      description: >-
+        One envelope as re-broadcast over the operator-UI SSE stream. Produced
+        by `services/operator-ui/bff/engines.py::build_entry`. `envelope` is the
+        metadata only (the typed body is hoisted to `payload`).
+      required: [channel, envelope, payload]
+      properties:
+        channel:
+          type: string
+          enum:
+            - smartload.anomaly
+            - smartload.forecast
+            - smartload.routing
+            - smartload.scale
+          description: The control-bus channel this entry came from.
+        envelope:
+          $ref: "#/components/schemas/EnvelopeBase"
+        payload:
+          oneOf:
+            - $ref: "#/components/schemas/AnomalyEventPayload"
+            - $ref: "#/components/schemas/ForecastResultPayload"
+            - $ref: "#/components/schemas/RoutingRecommendationPayload"
+            - $ref: "#/components/schemas/ScalingEventPayload"
+          description: The typed body, matching `channel`.

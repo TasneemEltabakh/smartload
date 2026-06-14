@@ -7,6 +7,7 @@ import {
   ScrollText,
   Play,
   ExternalLink,
+  Radio,
 } from "lucide-react";
 
 import ActionsPage from "./pages/Actions";
@@ -69,6 +70,9 @@ export default function App() {
           </NavLink>
           <a href="/api/docs" target="_blank" rel="noreferrer">
             <ExternalLink size={16} strokeWidth={1.75} /> API docs
+          </a>
+          <a href="/api/asyncapi-docs" target="_blank" rel="noreferrer">
+            <Radio size={16} strokeWidth={1.75} /> Event docs
           </a>
         </nav>
 

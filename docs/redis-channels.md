@@ -2,7 +2,7 @@
 
 Canonical catalog of every Redis pub/sub channel SmartLoad uses. Every channel mentioned in `services/` source must appear here — enforced by `scripts/lint-redis-channels.py` (permissive today, enforcing later).
 
-Pairs with `docs/openapi/smartload-v1.yaml` to form the complete external contract surface.
+Pairs with `docs/openapi/smartload-v1.yaml` (HTTP contract) and `docs/asyncapi/smartload-v1.yaml` (AsyncAPI 3.0 — the machine-readable contract for these channels plus the operator-UI SSE stream) to form the complete external contract surface.
 
 ## Channels
 

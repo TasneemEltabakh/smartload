@@ -96,12 +96,12 @@ Client traffic
 
 ### Two cross-service contracts
 
-Every interaction between services flows through one of two contract surfaces:
+Every interaction between services flows through one of two transport surfaces, each pinned by a machine-readable contract:
 
-| Surface | Where it lives | Carried by |
+| Surface | Canonical contract | Carried by |
 |---|---|---|
-| HTTP REST (`/api/v1/*`) | `docs/openapi/smartload-v1.yaml` | Operator UI, SDK, external integrators |
-| Redis pub/sub | `docs/redis-channels.md` + `services/shared/contracts.py` | Inter-service events |
+| HTTP REST (`/api/v1/*`) | `docs/openapi/smartload-v1.yaml` (OpenAPI 3.1) | Operator UI, SDK, external integrators |
+| Redis pub/sub + SSE | `docs/asyncapi/smartload-v1.yaml` (AsyncAPI 3.0) + `docs/redis-channels.md` + `services/shared/contracts.py` | Inter-service events, operator-UI live feed |
 
 The shared layer (`services/shared/`) is the in-tree home of both: envelope dataclasses for Redis, SQL constants for TimescaleDB reads. **Read `services/shared/` first — every service depends on it.**
 
@@ -2622,7 +2622,7 @@ A Flask "backend-for-frontend" that:
 - **Live Engines (#121 session 1)** — runs a daemon Redis-subscriber thread that consumes `smartload.{anomaly,forecast,routing,scale}` into an in-process per-channel ring buffer, exposes `GET /api/ui/engines/snapshot` (parallel fan-out to each AI service's `/api/v1/engine/state` + ring contents) and `GET /api/ui/engines/stream` (SSE replay-then-live with 15 s heartbeat comments),
 - proxies the telemetry dashboard endpoints: `/api/ui/metrics/resources` (per-container CPU/memory, v1.0.7bb) and `/api/ui/metrics/backends` (per-backend p95/req-min/error + a load-balancer aggregate, v1.0.7bc),
 - **structured active alerts (v1.0.7bc)** — `GET /api/ui/alerts?window=N` reads the anomaly ring buffer and returns one row per backend (newest wins) carrying `severity` + the `metric`/`observed_value`/`threshold` evidence the anomaly engines now attach + a human `summary` (`_alert_summary()`); `/api/ui/audit/counts` also returns `actors_unique` (distinct actors across both audit streams); both degrade to an empty body rather than error the page,
-- serves Swagger UI at `/api/docs` against the canonical OpenAPI spec,
+- serves Swagger UI at `/api/docs` against the canonical OpenAPI spec, and the AsyncAPI viewer at `/api/asyncapi-docs` against `docs/asyncapi/smartload-v1.yaml` (the async/event contract — Redis channels + the SSE stream),
 - serves the React build at `/` in production, scoping Flask's static handler to `/assets/*` so the SPA fallback catches every non-asset path (otherwise direct URLs to `/policy`, `/audit`, `/actions`, `/engines` 404 on hard refresh).
 
 #### Files
@@ -2716,6 +2716,8 @@ def serve_openapi():
 ```
 
 Swagger UI is served from the registered blueprint at `/api/docs`. The blueprint pulls the spec from `/api/openapi.yaml`, which streams the file from the bind-mounted path. The `try/except` import is so the BFF stays importable in dev environments without `flask-swagger-ui` installed.
+
+The asynchronous surface gets the same treatment at `/api/asyncapi-docs`. There is no Flask package equivalent to `flask-swagger-ui` for AsyncAPI, so `bff/docs_pages.py` (a pure, Flask-free module — testable like `engines.py`) returns a small viewer page that loads `@asyncapi/react-component` from a CDN and points it at `/api/asyncapi.yaml`, which streams `docs/asyncapi/smartload-v1.yaml` from its own bind-mounted path (`ASYNCAPI_PATH`). The spec is fetched same-origin at runtime, so the page never embeds it — the mounted YAML stays the single source.
 
 **Health aggregation — parallel fan-out.**
 

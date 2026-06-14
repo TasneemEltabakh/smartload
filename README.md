@@ -56,6 +56,7 @@ absent.
 | Client traffic ingress | `http://localhost:8080` | NGINX load balancer |
 | Operator UI | `http://localhost:8090` | Home + Policy editor + Audit + Actions |
 | API docs (Swagger UI) | `http://localhost:8090/api/docs` | Live from `docs/openapi/smartload-v1.yaml` |
+| Event docs (AsyncAPI) | `http://localhost:8090/api/asyncapi-docs` | Live from `docs/asyncapi/smartload-v1.yaml` |
 | Locust traffic simulator | `http://localhost:8089` | Synthetic load |
 | Grafana | `http://localhost:3000` | Telemetry dashboards (`admin` / `admin`) |
 | Prometheus | `http://localhost:9090` | Metrics |
@@ -188,15 +189,16 @@ Every interface has a single source of truth:
 | Surface | Canonical contract | Reference |
 |---|---|---|
 | HTTP REST | [`docs/openapi/smartload-v1.yaml`](docs/openapi/smartload-v1.yaml) (OpenAPI 3.1) | [SOT §26](docs/SOURCE_OF_TRUTH.html#sec-26-api-guide) |
-| Redis pub/sub | [`docs/redis-channels.md`](docs/redis-channels.md) | [SOT §11](docs/SOURCE_OF_TRUTH.html#sec-interface-authority) |
+| Async events (Redis pub/sub + SSE) | [`docs/asyncapi/smartload-v1.yaml`](docs/asyncapi/smartload-v1.yaml) (AsyncAPI 3.0) + [`docs/redis-channels.md`](docs/redis-channels.md) | [SOT §11](docs/SOURCE_OF_TRUTH.html#sec-interface-authority) |
 | Webhooks | inline in OpenAPI spec | [SOT §29](docs/SOURCE_OF_TRUTH.html#sec-29-webhooks) |
 | Python SDK | `clients/python/smartload_client/` | [SOT §27](docs/SOURCE_OF_TRUTH.html#sec-27-sdk) |
 | Database schema | [`infrastructure/timescaledb/init.sql`](infrastructure/timescaledb/init.sql) | [SOT §30](docs/SOURCE_OF_TRUTH.html#sec-30-database) |
 | Per-feature manifests | [`docs/features/`](docs/features/) | one file per shipped feature |
 
-Three CI guardrails keep contracts honest:
+Four CI guardrails keep contracts honest:
 - `scripts/lint-redis-channels.py` — every Redis channel in source must appear in the registry
 - `scripts/lint-openapi.py` — every `/api/v1/*` route in source must appear in the OpenAPI spec
+- `scripts/lint-asyncapi.py` — every `smartload.*` channel in source must appear in the AsyncAPI spec
 - `scripts/lint-structure.py` — every `tests/e2e/<feature>/` must have a sibling `docs/features/<feature>.md` + `examples/scenarios/<feature>/`
 
 ---
@@ -246,7 +248,8 @@ smartload/
 │   ├── PROJECT_STATE.md              # point-in-time audit of where the project stands
 │   ├── features/                     # per-feature manifests
 │   ├── architecture/                 # control / data plane, multi-tenancy, failure modes
-│   ├── openapi/                      # smartload-v1.yaml
+│   ├── openapi/                      # smartload-v1.yaml (HTTP contract, OpenAPI 3.1)
+│   ├── asyncapi/                     # smartload-v1.yaml (async contract, AsyncAPI 3.0)
 │   ├── planned/                      # placeholder docs for unimplemented services
 │   ├── academic-assessment.md        # project provenance + thesis / poster / presentation lift table
 │   └── redis-channels.md             # canonical channel registry
@@ -290,6 +293,7 @@ Structural lints (permissive today; strict mode planned):
 python scripts/lint-structure.py
 python scripts/lint-redis-channels.py
 python scripts/lint-openapi.py
+python scripts/lint-asyncapi.py
 ```
 
 ---
