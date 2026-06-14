@@ -265,6 +265,61 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /api/v1/actions/simulate:
+    post:
+      summary: Dry-run a manual action (scale or isolate)
+      description: |
+        Preview-before-apply for the manual-action surface (#146). Present on
+        BOTH the autoscaler (port 8085) and the anomaly-detector (port 8082);
+        each accepts the SAME request body as its real counterpart
+        (`POST /api/v1/scale` and `POST /api/v1/isolate` respectively) and runs
+        the SAME validation path, so a failed simulate guarantees a failed real
+        action with the same 400 + `field`.
+
+        Side-effect free: no cluster change, no `scaling_events` /
+        `backend_health` row, no envelope publish, and the autoscaler cooldown
+        clock is left untouched.
+
+        The autoscaler returns a `SimulateScaleResponse` (what the scale would
+        do, plus the live policy bounds). The anomaly-detector returns a
+        `SimulateIsolateResponse` (the synthetic `AnomalyEvent` envelope that
+        an isolate would publish, un-published).
+      tags: [autoscaler, anomaly-detector]
+      parameters:
+        - in: header
+          name: X-Actor
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/ManualScaleRequest'
+                - $ref: '#/components/schemas/ManualIsolateRequest'
+      responses:
+        '200':
+          description: Dry-run plan (scale preview on autoscaler, isolate envelope on anomaly-detector)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SimulateScaleResponse'
+                  - $ref: '#/components/schemas/SimulateIsolateResponse'
+        '400':
+          description: Same validation error the real action would return
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Cluster query failed (autoscaler only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /api/v1/lb/state:
     get:
       summary: Current LB adapter state
@@ -627,6 +682,58 @@ components:
         actor:          { type: string }
         reason:         { type: string }
         event_id:       { type: string, format: uuid }
+
+    SimulateScaleResponse:
+      type: object
+      description: |
+        Autoscaler dry-run (#146). What POST /api/v1/scale WOULD do, computed
+        via the same plan path. No side effects.
+      required: [would_execute, current_count, target_count, action, cooldown_remaining_s, would_audit_reason, policy_bounds]
+      properties:
+        would_execute:
+          type: boolean
+          description: false when the plan is a no-op (target == current).
+        current_count:        { type: integer }
+        target_count:         { type: integer }
+        action:
+          type: string
+          enum: [scale_out, scale_in, noop]
+        cooldown_remaining_s:
+          type: number
+          description: Seconds left on the cooldown clock (informational; unchanged by simulate).
+        would_audit_reason:
+          type: string
+          description: The reason that the real action would persist (`manual:<actor>: <reason>`).
+        policy_bounds:
+          type: object
+          required: [min_backends, max_backends]
+          properties:
+            min_backends: { type: integer }
+            max_backends: { type: integer }
+
+    SimulateIsolateResponse:
+      type: object
+      description: |
+        Anomaly-detector dry-run (#146). The synthetic AnomalyEvent envelope
+        that POST /api/v1/isolate WOULD publish — returned un-published, with
+        no backend_health write.
+      required: [would_publish, channel, envelope, backend_id, status, severity, reason]
+      properties:
+        would_publish: { type: boolean, enum: [true] }
+        channel:       { type: string, enum: [smartload.anomaly] }
+        envelope:
+          type: object
+          required: [event_id, source, version, timestamp, payload]
+          properties:
+            event_id:  { type: string, format: uuid }
+            source:    { type: string }
+            version:   { type: integer }
+            timestamp: { type: string, format: date-time }
+            payload:   { type: object, additionalProperties: true }
+        backend_id: { type: string }
+        status:     { type: string, enum: [healthy, degraded, unhealthy] }
+        severity:   { type: string, enum: [critical, warning, info] }
+        reason:     { type: string }
 
     MetricRow:
       type: object

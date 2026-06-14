@@ -3,11 +3,12 @@ examples/scenarios/manual-actions/manual_actions_walk.py
 ─────────────────────────────────────────────────────────
 Proves the manual-actions slice (#123) end-to-end.
 
-Reads the live policy via the SDK to learn the safe scaling band, runs a
-manual scale (current → mid-band) and a manual isolate, then confirms
-both actions land in the audit streams with the `manual:<actor>:`
-reason prefix that the Audit UI surfaces. Restores the cluster to the
-starting backend count on the way out.
+Reads the live policy via the SDK to learn the safe scaling band, dry-runs
+each manual action via POST /api/v1/actions/simulate (#146) and proves the
+preview is side-effect free, then runs the real manual scale (current →
+mid-band) and manual isolate, confirming both land in the audit streams with
+the `manual:<actor>:` reason prefix that the Audit UI surfaces. Restores the
+cluster to the starting backend count on the way out.
 
 Exit code:
   0 — observed expected behaviour
@@ -100,7 +101,39 @@ def main() -> int:
         if target == baseline:
             target = max(min_b, baseline - 1)
 
-        # 4. Manual scale.
+        # 3a. Dry-run the scale first (#146). Preview WHAT would happen without
+        #     actuating: no cluster change, no audit row, cooldown untouched.
+        print(f"  -> simulate scale {baseline} -> {target} (dry-run)")
+        try:
+            sim = c.simulate_scale(target, actor="manual_walk", reason="walkthrough")
+        except SmartLoadError as exc:
+            return _fail(f"simulate scale failed: {exc}")
+        if sim.get("target_count") != target:
+            return _fail(f"simulate target_count {sim.get('target_count')} != {target}")
+        if sim.get("current_count") != baseline:
+            return _fail(
+                f"simulate current_count {sim.get('current_count')} != baseline {baseline}"
+            )
+        bounds = sim.get("policy_bounds", {})
+        print(f"  ok: simulate says action={sim['action']} "
+              f"would_execute={sim['would_execute']} "
+              f"bounds=[{bounds.get('min_backends')}, {bounds.get('max_backends')}]")
+
+        # 3b. Confirm the dry-run wrote nothing — the audit head row is unchanged.
+        sca_after_sim = c.list_audit("scaling", limit=1)
+        if sca_before and sca_after_sim and \
+                sca_before[0].get("time") != sca_after_sim[0].get("time"):
+            return _fail("simulate scale wrote a scaling_events row (it must not)")
+        print("  ok: simulate left the audit stream untouched")
+
+        # 3c. A failed simulate must imply a failed real action (same field).
+        try:
+            c.simulate_scale(max_b + 99, actor="manual_walk")
+            return _fail("out-of-band simulate should have raised ValidationError")
+        except ValidationError as exc:
+            print(f"  ok: out-of-band simulate rejected (field={exc.field})")
+
+        # 4. Manual scale (the real action the simulate previewed).
         print(f"  -> manual scale {baseline} -> {target} (actor=manual_walk)")
         try:
             r = c.scale(target, actor="manual_walk", reason="walkthrough")
@@ -129,8 +162,25 @@ def main() -> int:
         except ValidationError as exc:
             print(f"  ok: out-of-band scale rejected (field={exc.field})")
 
-        # 6. Manual isolate.
+        # 5a. Dry-run the isolate (#146): preview the synthetic AnomalyEvent
+        #     envelope that WOULD publish — without publishing it.
         backend_id = "test-backend-3"
+        print(f"  -> simulate isolate {backend_id} status=unhealthy (dry-run)")
+        try:
+            sim_iso = c.simulate_isolate(backend_id, "unhealthy",
+                                         actor="manual_walk", reason="walkthrough")
+        except SmartLoadError as exc:
+            return _fail(f"simulate isolate failed: {exc}")
+        if not sim_iso.get("would_publish"):
+            return _fail(f"unexpected simulate isolate body: {sim_iso}")
+        env = sim_iso.get("envelope", {})
+        if env.get("payload", {}).get("backend_id") != backend_id:
+            return _fail("simulate isolate envelope payload backend_id mismatch")
+        print(f"  ok: simulate isolate envelope "
+              f"(channel={sim_iso['channel']}, severity={sim_iso['severity']}, "
+              f"event_id={env.get('event_id', '')[:8]})")
+
+        # 6. Manual isolate (the real action the simulate previewed).
         print(f"  -> manual isolate {backend_id} status=unhealthy")
         try:
             r = c.isolate(backend_id, "unhealthy",

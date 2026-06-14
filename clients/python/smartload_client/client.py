@@ -208,6 +208,31 @@ class SmartLoadClient:
         client.actions.isolate()."""
         return self.actions.isolate(backend_id, status, actor=actor, reason=reason)
 
+    # ── dry-run / simulate (#146) ──────────────────────────────────────────
+
+    def simulate_scale(
+        self,
+        target_count: int,
+        *,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Preview a manual scale without actuating. Convenience wrapper around
+        client.actions.simulate_scale()."""
+        return self.actions.simulate_scale(target_count, actor=actor, reason=reason)
+
+    def simulate_isolate(
+        self,
+        backend_id: str,
+        status: IsolateStatus = "unhealthy",
+        *,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Preview a manual isolate without publishing. Convenience wrapper
+        around client.actions.simulate_isolate()."""
+        return self.actions.simulate_isolate(backend_id, status, actor=actor, reason=reason)
+
     def subscribe_policy(self, callback):
         return self.events.subscribe_policy(callback)
 

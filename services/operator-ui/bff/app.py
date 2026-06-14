@@ -327,6 +327,43 @@ def ui_manual_isolate():
     return (r.text, r.status_code, {"Content-Type": "application/json"})
 
 
+@app.route("/api/ui/actions/simulate/scale", methods=["POST"])
+def ui_simulate_scale():
+    """Proxy to autoscaler's POST /api/v1/actions/simulate — dry-run scale (#146).
+
+    Both services expose the same path (/api/v1/actions/simulate) on different
+    upstreams, so the BFF disambiguates by suffixing the UI route with the
+    action kind. The operator UI hits one origin for the preview-before-apply
+    flow."""
+    upstream = SERVICE_URLS["autoscaler"]
+    body = request.get_data(as_text=True) or "{}"
+    headers = {"Content-Type": "application/json"}
+    actor = request.headers.get("X-Actor") or "operator-ui"
+    headers["X-Actor"] = actor
+    try:
+        r = _http.post(f"{upstream}/api/v1/actions/simulate", content=body, headers=headers)
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
+@app.route("/api/ui/actions/simulate/isolate", methods=["POST"])
+def ui_simulate_isolate():
+    """Proxy to anomaly-detector's POST /api/v1/actions/simulate — dry-run
+    isolate (#146). Returns the synthetic AnomalyEvent envelope that an isolate
+    would publish, without publishing it."""
+    upstream = SERVICE_URLS["anomaly-detector"]
+    body = request.get_data(as_text=True) or "{}"
+    headers = {"Content-Type": "application/json"}
+    actor = request.headers.get("X-Actor") or "operator-ui"
+    headers["X-Actor"] = actor
+    try:
+        r = _http.post(f"{upstream}/api/v1/actions/simulate", content=body, headers=headers)
+    except Exception as exc:
+        return jsonify({"error": f"upstream unreachable: {exc}"}), 502
+    return (r.text, r.status_code, {"Content-Type": "application/json"})
+
+
 # ── lb-sidecar proxies (T2.1) ────────────────────────────────────────────────
 
 @app.route("/api/ui/lb/state", methods=["GET"])

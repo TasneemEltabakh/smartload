@@ -154,3 +154,88 @@ class ActionsClient:
             raise SmartLoadError(f"isolate POST failed: {exc}") from exc
         _raise_for_status(r)
         return r.json()
+
+    # ── dry-run / simulate (#146) ──────────────────────────────────────────
+
+    def simulate_scale(
+        self,
+        target_count: int,
+        *,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Preview a manual scale WITHOUT actuating it.
+
+        Accepts the same arguments as scale(); runs the same validation, so an
+        out-of-bounds target raises the same ValidationError(field='target_count')
+        as scale() would. No cluster change, no audit row, no envelope, and the
+        cooldown clock is untouched.
+
+        Returns the autoscaler's dry-run body:
+          {
+            "would_execute":        bool,
+            "current_count":        int,
+            "target_count":         int,
+            "action":               "scale_out" | "scale_in" | "noop",
+            "cooldown_remaining_s": float,
+            "would_audit_reason":   "manual:<actor>: <reason>",
+            "policy_bounds":        {"min_backends": int, "max_backends": int},
+          }
+        """
+        body: dict = {"target_count": target_count}
+        if actor is not None:
+            body["actor"] = actor
+        elif self._parent.default_actor:
+            body["actor"] = self._parent.default_actor
+        if reason is not None:
+            body["reason"] = reason
+
+        url = f"{self._parent.autoscaler_url}/api/v1/actions/simulate"
+        try:
+            r = httpx.post(url, json=body, timeout=self._parent.timeout)
+        except httpx.RequestError as exc:
+            raise SmartLoadError(f"simulate scale POST failed: {exc}") from exc
+        _raise_for_status(r)
+        return r.json()
+
+    def simulate_isolate(
+        self,
+        backend_id: str,
+        status: IsolateStatus = "unhealthy",
+        *,
+        actor: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> dict:
+        """Preview a manual isolate WITHOUT publishing it.
+
+        Accepts the same arguments as isolate(); runs the same validation, so an
+        unknown status raises the same ValidationError(field='status') as
+        isolate() would. No envelope is published and no backend_health row is
+        written.
+
+        Returns the anomaly-detector's dry-run body:
+          {
+            "would_publish": True,
+            "channel":       "smartload.anomaly",
+            "envelope":      {event_id, source, version, timestamp, payload},
+            "backend_id":    str,
+            "status":        "healthy" | "degraded" | "unhealthy",
+            "severity":      "critical" | "warning" | "info",
+            "reason":        "manual:<actor>: <reason>",
+          }
+        """
+        body: dict = {"backend_id": backend_id, "status": status}
+        if actor is not None:
+            body["actor"] = actor
+        elif self._parent.default_actor:
+            body["actor"] = self._parent.default_actor
+        if reason is not None:
+            body["reason"] = reason
+
+        url = f"{self._parent.anomaly_detector_url}/api/v1/actions/simulate"
+        try:
+            r = httpx.post(url, json=body, timeout=self._parent.timeout)
+        except httpx.RequestError as exc:
+            raise SmartLoadError(f"simulate isolate POST failed: {exc}") from exc
+        _raise_for_status(r)
+        return r.json()

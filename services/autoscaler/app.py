@@ -750,6 +750,104 @@ def post_manual_scale():
     })
 
 
+# ── manual actions: POST /api/v1/actions/simulate (dry-run, #146) ─────────────
+
+
+def _cooldown_remaining_seconds(policy: Policy) -> float:
+    """Seconds left on the autoscaler cooldown clock, 0.0 when none is active.
+
+    Reads `_last_action_monotonic` under the lock and compares against
+    `policy.cooldown_seconds`. Manual scales bump the same clock, so the
+    value reported here is exactly what the next auto-decide tick would see
+    via `decide(seconds_since_last_action=...)`. The simulate path reports it
+    purely for the operator preview — it does NOT touch the clock."""
+    with _state_lock:
+        last = _last_action_monotonic
+        cooldown = policy.cooldown_seconds
+    elapsed = _seconds_since(last)
+    if elapsed is None:
+        return 0.0
+    remaining = cooldown - elapsed
+    return round(remaining, 2) if remaining > 0 else 0.0
+
+
+@app.route("/api/v1/actions/simulate", methods=["POST"])
+def post_simulate():
+    """Dry-run a manual scale: report what POST /api/v1/scale WOULD do.
+
+    Accepts the SAME request body as POST /api/v1/scale and runs the SAME
+    validation path (`plan_manual_scale` — bounds checks against the live
+    policy, integer coercion). A failed simulate implies a failed real
+    action: both return 400 with the same `field`.
+
+    Performs NO actuation: no `cluster.scale_*` call, no `scaling_events`
+    row, no `ScalingEvent` envelope, and the cooldown clock is left
+    untouched. The backend count is read read-only (the same query the real
+    endpoint uses to compute the plan) so `current_count`/`target_count`
+    reflect the live cluster.
+
+    Body (identical to /scale):
+      {
+        "target_count": <int, in [min_backends, max_backends]>,
+        "actor":        <string, default "operator">,
+        "reason":       <string, default "manual override">
+      }
+
+    Returns:
+      {
+        "would_execute":        <bool — true unless the plan is a noop>,
+        "current_count":        <int>,
+        "target_count":         <int>,
+        "action":               "scale_out" | "scale_in" | "noop",
+        "cooldown_remaining_s": <float — seconds left on the cooldown clock>,
+        "would_audit_reason":   "manual:<actor>: <reason>",
+        "policy_bounds":        {"min_backends": <int>, "max_backends": <int>}
+      }
+    """
+    raw = request.get_json(force=True, silent=True)
+    if not isinstance(raw, dict):
+        return jsonify({"error": "request body must be a JSON object"}), 400
+
+    actor = (raw.get("actor") or request.headers.get("X-Actor") or "operator")
+    reason = raw.get("reason")
+
+    with _state_lock:
+        policy = _policy
+
+    cluster = _make_cluster_client()
+    try:
+        current_count = cluster.get_backend_count()
+    except Exception as exc:                            # noqa: BLE001
+        log.exception("could not read backend count")
+        return jsonify({"error": f"cluster query failed: {exc}"}), 503
+
+    # SAME validation + planning path as POST /api/v1/scale. The plan is a
+    # pure dataclass — no side effects — so we can read everything off it.
+    try:
+        plan = plan_manual_scale(
+            target_count=raw.get("target_count"),
+            current_count=current_count,
+            policy=policy,
+            actor=actor,
+            user_reason=reason,
+        )
+    except ManualScaleError as exc:
+        return jsonify({"error": exc.message, "field": exc.field}), 400
+
+    return jsonify({
+        "would_execute":        plan.action != ACTION_NOOP,
+        "current_count":        current_count,
+        "target_count":         plan.target_count,
+        "action":               plan.action,
+        "cooldown_remaining_s": _cooldown_remaining_seconds(policy),
+        "would_audit_reason":   plan.reason,
+        "policy_bounds": {
+            "min_backends": policy.min_backends,
+            "max_backends": policy.max_backends,
+        },
+    })
+
+
 # ── entrypoint ────────────────────────────────────────────────────────────────
 
 def main() -> None:
