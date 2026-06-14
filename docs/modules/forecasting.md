@@ -41,12 +41,14 @@ ramp case that ARIMA cannot handle, holds calibrated 95 percent coverage, runs i
 under a millisecond, and converts into a measured downstream autoscaler SLA gain.
 
 It is pure NumPy with no trained artifact and no new dependencies, fully
-deterministic. It is now the **promoted default** (`FORECAST_ENGINE=harmonic_residual`
-in compose + `.env`), having cleared the &lt;20% MAPE SLO at 5.4% with a +6.3 SLA-pp
-downstream autoscaler win. `moving_average` stays as the artifact-free never-fails
-fallback the run loop reverts to. The run loop also drives a config-gated
-scaler-facing look-ahead: `FORECAST_LEAD_STEPS` (deployed `5` = the 5-min horizon
-at 1-min buckets) calls `forecast_ahead(steps=N)`, with `FORECAST_FIT_WINDOW=120` +
+deterministic. It is now the **promoted default**: `FORECAST_ENGINE` defaults to
+`harmonic_residual` in compose, and an operator can override it through the
+deployment env. The engine cleared the under-20 percent MAPE SLO at 5.4 percent
+with a +6.3 SLA-pp downstream autoscaler win. `moving_average` stays as the
+artifact-free never-fails fallback the run loop reverts to if the requested engine
+fails to construct. The run loop also drives a config-gated scaler-facing
+look-ahead: `FORECAST_LEAD_STEPS` (deployed `5`, the 5-minute horizon at 1-minute
+buckets) calls `forecast_ahead(steps=N)`, with `FORECAST_FIT_WINDOW=120` and
 `FORECAST_ROBUST_MODE=downward` as the scaler preset.
 
 ```mermaid
@@ -134,6 +136,27 @@ converts it into the published `ForecastResult` shape:
 | `predicted_rps` | Point forecast for the next bucket |
 | `confidence_lower` | Lower edge of the band |
 | `confidence_upper` | Upper edge of the band |
+
+The run loop is driven by deployment env vars. The code default of each one
+reproduces the accuracy-optimal single-step behaviour, so an unconfigured process
+is byte-identical to the pre-look-ahead run loop. The shipped compose file then
+sets the operating defaults that turn the run loop on and wire the scaler-facing
+look-ahead. Both columns are taken from the source: code defaults from `app.py`,
+compose defaults from `docker-compose.yml`.
+
+| Env var | Code default | Compose default | Role |
+|---|---|---|---|
+| `FORECAST_RUNLOOP_ENABLED` | `false` | `true` | Off keeps the service a health-only stub; on starts the poll and publish loop |
+| `FORECAST_ENGINE` | `harmonic_residual` | `harmonic_residual` | Engine the run loop requests, falling back to `moving_average` on a load failure |
+| `POLL_INTERVAL_SECONDS` | `60` | `60` | Seconds between poll cycles |
+| `FORECAST_WINDOW_MINUTES` | `60` | `60` | DB lookback bound into `FORECAST_QUERY` as a parameter |
+| `FORECAST_LEAD_STEPS` | `1` | `5` | Look-ahead in 1-minute buckets; greater than 1 dispatches to `forecast_ahead` |
+| `FORECAST_FIT_WINDOW` | unset, engine default | `120` | Trailing samples the harmonic engine fits per call; short keeps the trend local |
+| `FORECAST_ROBUST_MODE` | `symmetric` | `downward` | Symmetry of the IRLS downweighting; downward keeps full weight on upward spikes |
+
+The compose preset is the scaler-facing configuration: a 5-step look-ahead, a
+short local fit window, and asymmetric-downward robustness. The code defaults are
+the accuracy-optimal configuration. Section 5 separates the two in detail.
 
 ---
 
@@ -312,6 +335,42 @@ At `steps == 1` the weight is exactly 1 for any `shrink`, so `forecast()` and
 untouched. For longer leads, a noise slope on flat demand is shrunk out (no
 spurious scale churn downstream), while a real ramp keeps `shrink` near 1 and
 projects fully.
+
+`_trend_shrink` has two guarded edge cases. A degenerate trend column or fewer
+than three residuals returns `shrink = 0` (no projectable trend). A perfectly
+clean fit, residual sigma at zero, returns `shrink = 1` so a noise-free ramp keeps
+its full lead. The multi-step point is then assembled from the weighted trend, the
+seasonal terms at the future index, and the decayed residual:
+
+```mermaid
+flowchart TD
+  call["forecast_ahead over steps buckets"]
+  seas["seasonal terms at index n plus steps minus 1, periodic and bounded"]
+  ar["AR1 term phi^steps times e_last, decays with the lead"]
+  shrink["shrink = t2 / t2 + C from slope SNR"]
+  edgea{"degenerate trend or fewer than 3 resid?"}
+  edgeb{"residual sigma at zero?"}
+  z0["shrink = 0"]
+  z1["shrink = 1"]
+  w["weight = shrink + 1 minus shrink times rho^steps-1"]
+  one{"steps equals 1?"}
+  full["weight = 1, single-step identity preserved"]
+  trend["projected trend = weight times full_trend"]
+  point["point = trend plus seasonal plus AR1, floored at 0"]
+
+  call --> seas --> point
+  call --> ar --> point
+  call --> shrink
+  shrink --> edgea
+  edgea -->|"yes"| z0 --> w
+  edgea -->|"no"| edgeb
+  edgeb -->|"yes"| z1 --> w
+  edgeb -->|"no"| w
+  w --> one
+  one -->|"yes"| full --> trend
+  one -->|"no"| trend
+  trend --> point
+```
 
 ### 4.6 Graceful degradation
 
@@ -566,13 +625,18 @@ configuration, with no second model and no fitness regression.
   percent MAPE with 0.097 CI-coverage: the `d=0` artifact is trend-blind and
   badly miscalibrated on trending demand. It is not the default and is not the
   candidate.
-- `harmonic_residual` is a candidate behind a flag. The default engine remains
-  `moving_average`. Activation is `FORECAST_ENGINE=harmonic_residual`. There is no
-  artifact to ship or version.
+- `harmonic_residual` is the promoted operating default
+  (`FORECAST_ENGINE` defaults to `harmonic_residual` in compose), not a
+  candidate behind an off-by-default flag. `moving_average` is retained only as
+  the artifact-free safety fallback the run loop reverts to if the requested
+  engine fails to construct. An operator can still pin a different engine via
+  `FORECAST_ENGINE`. There is no artifact to ship or version.
 - The single-step `forecast()` is byte-identical to `forecast_ahead(1)`; the trend
-  damping only affects multi-step leads. The downstream SLA gain depends on wiring
-  `forecast_ahead(steps=w)` into the path the autoscaler consumes; that lead-time
-  projection is a follow-up before flipping the default in production.
+  damping only affects multi-step leads. The lead-time projection is wired into
+  the live path: the run loop calls `forecast_ahead(steps=N)` whenever
+  `FORECAST_LEAD_STEPS > 1`, deployed at `5` so the published forecast is a true
+  5-minute look-ahead. The downstream SLA gain depends on that wiring, which is
+  now in place rather than a pending follow-up.
 - The Alibaba MAPE caveat: on the near-zero-minute proxy, MAPE is numerically
   unstable for every engine including persistence. Read sMAPE, RMSE/MAE, and
   CI-coverage there, not MAPE.

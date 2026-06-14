@@ -131,6 +131,44 @@ the instance at startup; it maps the names `threshold`, `isolation_forest`,
 
 ## 4. The temporal feature extractor (`features/trend.py`)
 
+The extractor turns the four stateless point features into ten enriched features:
+the same four passed through, plus six backend-relative temporal signals. Three of
+the new signals lean on per-backend state carried across cycles (the guarded
+baselines, the deviation scale, the CUSUM accumulator, and the recent-means
+history); the two shape ratios need no state at all. The diagram below is the
+whole pipeline at a glance; the subsections then take each stage in turn.
+
+```mermaid
+flowchart LR
+    subgraph IN[point features this window]
+        L["latency_ms (window MAX)"]
+        M["latency_rolling_mean_ms"]
+        E["error_rate"]
+        SD["latency_rolling_std_ms"]
+    end
+    subgraph STATE[per backend state]
+        BM["base_mean, base_max"]
+        DS["dev_scale"]
+        CU["cusum_pos"]
+        RM["recent_means deque"]
+    end
+    M --> DEV["mean_dev, max_dev deviation from baseline"]
+    L --> DEV
+    BM --> DEV
+    DEV --> STD["standardise by dev_scale"]
+    DS --> STD
+    STD --> CUS["one sided CUSUM accumulate and drain"]
+    CU --> CUS
+    RM --> SL["OLS slope normalised by baseline"]
+    L --> SH["max_ratio, std_ratio within window shape"]
+    M --> SH
+    SD --> SH
+    DEV --> OUT["six trend signals"]
+    CUS --> OUT
+    SL --> OUT
+    SH --> OUT
+```
+
 ### 4.1 Feature order
 
 The module fixes three ordered tuples. The trend block is appended to the point
@@ -159,7 +197,7 @@ guarded EWMA baselines carried in state. The signals are computed as follows.
 | `std_ratio` | STD over mean, the within-window dispersion (high for a spiky window) | `latency_rolling_std_ms / mean` when `mean > 1e-9` else `0.0` |
 
 `max_ratio` and `std_ratio` are pure shape and are reported even during warmup;
-the four history-dependent signals are suppressed during warmup (4.5).
+the four history-dependent signals are suppressed during warmup (4.7).
 
 ### 4.3 The OLS slope
 
@@ -200,6 +238,35 @@ if abs(mean_dev) < recovery_dev:
 This makes recovery fast without touching accumulation during a real drift, where
 the deviation stays large and the branch is not taken.
 
+The accumulator therefore moves through three regimes per window. In control it
+is held near zero, either by the slack subtraction or by the hard-drain. Under a
+sustained upward drift it climbs, one slack-reduced increment at a time, until it
+crosses the drift gates. Once the level returns inside `recovery_dev` it collapses
+geometrically rather than bleeding off slowly.
+
+```mermaid
+stateDiagram-v2
+    [*] --> InControl
+    InControl --> Accumulating: standardised deviation above slack cusum_k
+    Accumulating --> Accumulating: drift persists, add deviation minus slack, cap at cusum_cap
+    Accumulating --> Recovering: abs mean_dev below recovery_dev
+    InControl --> InControl: deviation within slack, floor at zero
+    Recovering --> Recovering: multiply by recovery_decay each in control window
+    Recovering --> InControl: accumulator near zero
+    Recovering --> Accumulating: drift resumes before fully drained
+```
+
+The cap at `cusum_cap` keeps a single large spike from launching the accumulator
+far past the unhealthy gate, and the floor at zero keeps a long quiet stretch from
+driving it negative and masking the next real drift. The table below names each
+move in the loop body.
+
+| state | trigger | accumulator update |
+|---|---|---|
+| in control | standardised deviation at or below `cusum_k` | floored at 0 by the `max(0.0, ...)` term |
+| accumulating | standardised deviation above `cusum_k` | `+ standardised - cusum_k`, capped at `cusum_cap` |
+| recovering | `abs(mean_dev) < recovery_dev` | `*= recovery_decay` (geometric drain) |
+
 ### 4.5 The contamination-guarded baseline
 
 A plain EWMA baseline chases a slow ramp: it drags itself up to meet the rising
@@ -215,8 +282,17 @@ normal regime and falling smoothly toward `0` as the anomaly asserts itself:
 
 The effective learning rate is `baseline_alpha * min(guard_inst, guard_cusum)`,
 applied to `base_mean`, `base_max`, and (with `scale_alpha`) to `dev_scale`. The
-report records that with this guard `mean_dev` grows to about 1.1 during a ramp
-instead of collapsing to zero.
+two guards are summarised below.
+
+| guard | reads | value in normal regime | what it does under anomaly |
+|---|---|---|---|
+| `guard_inst` | current `abs(mean_dev)` against `guard_dev` | 1 while deviation is at or below `guard_dev` | falls toward 0 as the instantaneous deviation grows, damping the update |
+| `guard_cusum` | `cusum_pos` against `freeze_cusum` | 1 while drift is below `freeze_cusum` | falls toward 0 once persistent drift is confirmed, freezing the baseline |
+
+The smaller of the two wins, so either a single sharp window or a confirmed slow
+drift is enough to stop the baseline from learning the anomaly. The report records
+that with this guard `mean_dev` grows to about 1.1 during a ramp instead of
+collapsing to zero.
 
 ### 4.6 The per-cycle update
 
@@ -483,6 +559,23 @@ point-feature pipeline and follows the same structure.
    0.3, and clean-control FP-rate at most 0.06. If any gate fails the bundle is
    not written.
 
+The three seed ranges play three separate roles, and the gate at the end is what
+lets the trainer refuse to ship a degenerate model.
+
+```mermaid
+flowchart TD
+    A["fit seeds 700 to 739: clean post warmup windows"] --> B["fit StandardScaler and IsolationForest"]
+    B --> C["calibration seeds 800 to 819: score decision_function"]
+    C --> D["grid HA in 10 15 20 25, UB in 2 4 6, require UB below HA"]
+    D --> E["keep pairs with clean control FP at or below 0.05"]
+    E --> F["choose pair maximising binary F1"]
+    F --> G["set unhealthy_score_scale, compute band"]
+    G --> H["evaluation seeds 820 to 839: per profile held out F1"]
+    H --> I{"gates pass? band above 0.01, degraded reachable, gradual recall above 0.3, clean FP at or below 0.06"}
+    I -- no --> J["abort, do not write bundle"]
+    I -- yes --> K["write trend_forest.pkl bundle"]
+```
+
 ### 6.4 Bundle contents and load-time validation
 
 The bundle is a dict:
@@ -534,6 +627,25 @@ affect tiering, are then placed at the 60th percentile of the corresponding sign
 over anomalous post-warmup windows. The result is written to
 `trend_rule_calibration.json`. Calibration seeds `300..331` are disjoint from the
 benchmark eval seeds `1..8` and from the `trend_forest` seeds `700..839`.
+
+The selection is ranked lexicographically: feasibility first (the pooled clean
+false-positive rate must clear the budget), then mean F1, then mean recall on the
+injecting profiles as a tie-breaker. The flow is as follows.
+
+```mermaid
+flowchart TD
+    A["grid over cusum_degraded, max_dev_degraded, mean_dev_degraded, recovery_slope"] --> B["for each combo build a TrendRuleEngine"]
+    B --> C["score the four training profiles on seeds 300 to 331"]
+    C --> D["mean binary F1, mean injecting recall, pooled clean FP"]
+    D --> E{"pooled clean FP at or below FP_BUDGET 0.05?"}
+    E -- no --> F["mark infeasible"]
+    E -- yes --> G["mark feasible"]
+    F --> H["rank by feasible, then F1, then recall"]
+    G --> H
+    H --> I["best degraded entry gates plus recovery_slope"]
+    I --> J["place unhealthy gates at P60 of anomalous windows"]
+    J --> K["write trend_rule_calibration.json"]
+```
 
 ---
 

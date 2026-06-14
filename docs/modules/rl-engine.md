@@ -47,11 +47,11 @@ The routing-policy plane was substantially extended by PR #172, which added the
 latency-monotone capacity-aware router (`candidate_mono`), its non-monotone
 benchmark foil (`candidate_maxxer`), the classical baselines used for comparison,
 and the monotonicity probe that acts as an acceptance gate. `candidate_mono` is now
-the **deployed recommended policy** — served by the `monotone` plugin
+the **deployed recommended policy**, served by the `monotone` plugin
 (`RL_POLICY=monotone`, config from `models/candidate_mono/params.json`, no pickled
-artifact). It beats the PPO bandit + every classical baseline on the closed-loop sim
-and the real HTTP stack and passes the monotonicity probe; the trained PPO (audited
-as round-robin-equivalent) stays selectable for comparison. The remainder of this
+artifact). It beats the PPO bandit and every classical baseline on the closed-loop
+sim and the real HTTP stack and passes the monotonicity probe; the trained PPO
+(audited as round-robin-equivalent) stays selectable for comparison. The remainder of this
 document covers the whole plane, with depth on those additions.
 
 ---
@@ -64,16 +64,20 @@ document covers the whole plane, with depth on those additions.
 | `services/rl-engine/runloop.py` | Pure-Python loop logic: state build from rows, mode composition (`effective_mode`), policy bootstrap with fallback, `RoutingAction` to envelope conversion. Testable without Flask/Redis/DB. |
 | `services/rl-engine/policy_base.py` | The policy contract: `RoutingPolicy` ABC, `BackendState`, `Ranking`, `RoutingAction`, health constants, `is_eligible`, `_routing_fallback`, `select_policy` factory. |
 | `services/rl-engine/obs_builder.py` | Observation tensor layout, `N_MAX_BACKENDS` (= 5), action mask, `all_masked_fallback`. Imported by serving plugins. |
+| `services/rl-engine/routing_templates.py` | Serving-safe template-to-weights map (uniform, inverse-latency, exclude-slowest, concentrate-fastest). Imports only `obs_builder`; used by the PPO plugin's DQN-templates artifact kind. |
 | `services/rl-engine/policies/monotone/policy.py` | `MonotonePolicy`: serving plugin for `candidate_mono`. Inlines the monotone router math; imports only `obs_builder` and `policy_base`. |
 | `services/rl-engine/policies/monotone/README.md` | Per-plugin notes for the monotone policy. |
-| `services/rl-engine/policies/ppo/policy.py` | `PPOPolicy`: serving plugin wrapping the trained PPO/SAC/DQN artifacts (`candidate_v2` is the continuous-weights kind). |
+| `services/rl-engine/policies/ppo/policy.py` | `PPOPolicy`: serving plugin wrapping the trained PPO/SAC/DQN artifacts. The artifact kind (`discrete_argmax`, `continuous_weights`, `discrete_templates`) is read from `artifact_meta.json`; `candidate_v2` is the continuous-weights kind. |
+| `services/rl-engine/policies/random_shadow/policy.py` | `RandomShadowPolicy`: uniform-random scores, always shadow. The bootstrap safety net. |
 | `services/rl-engine/policies/round_robin/policy.py` | `RoundRobinPolicy`: classical cyclic scheduler, backend_id pointer. |
 | `services/rl-engine/policies/least_connections/policy.py` | `LeastConnectionsPolicy`: classical lowest-load scheduler. |
-| `services/rl-engine/training/monotone_router.py` | `MonotoneRouter` and `MonotoneConfig`: the shared router core. Imported by the trainer and the benchmark adapter; the serving plugin keeps a byte-equivalent inline copy. |
+| `services/rl-engine/training/monotone_router.py` | `MonotoneRouter` and `MonotoneConfig`: the shared router core. Imported by the trainer and the benchmark adapter; the serving plugin keeps an inline copy kept equivalent to it. |
 | `services/rl-engine/training/train_monotone.py` | Fits `candidate_mono` by black-box search over the curriculum kinds and writes per-seed `params.json` artifacts. |
 | `services/rl-engine/training/train_maxxer.py` | Trains `candidate_maxxer`, the non-monotone SLA-targeted PPO foil. |
 | `experiments/rl-routing-bench/REPORT.md` | Full write-up: contenders, scenarios, monotonicity probe, the gate, promotion recommendation. |
 | `experiments/rl-routing-bench/results/20260614T045152Z/SUMMARY.md` | The numeric run: per-scenario tables, multi-seed groups, probe results. |
+| `experiments/rl-routing-bench/results/20260614T045152Z/probe.json` | Per-policy monotonicity-probe verdicts: pass flag, max weight-rise, sweep and violation counts. |
+| `experiments/rl-routing-bench/results/live_stack.json` | Real-HTTP cross-check numbers (the live-stack table in Section 9.7). |
 
 Note: `policy_base.py` is named to avoid collision with the per-plugin
 `policies/<plugin>/policy.py` files. Serving plugins import only `obs_builder` and
@@ -117,6 +121,15 @@ builds an `EnginePolicy` and triggers `policy.reload(...)` so runtime knobs
 (`operating_mode`, `confidence_threshold`, `exploration_rate`) update in place
 without reloading the artifact from disk.
 
+Observation width versus pool cap: `obs_builder.N_MAX_BACKENDS` is 5, the fixed
+slot count for the observation and action-mask tensors, and every policy ranks at
+most the first five backends in sorted `backend_id` order. The operating policy's
+`max_backends`, set to 3 in `config/policy.yaml`, is a separate knob: it caps how
+many backends the autoscaler provisions, not the routing tensor width. The two are
+independent. A pool kept at or below the autoscaler cap always fits inside the
+five-slot observation, so the routing plane is unaffected by the current `max_backends`
+value.
+
 ---
 
 ## 4. The policy contract
@@ -146,6 +159,27 @@ flowchart LR
 
 ### 4.2 Health and eligibility
 
+Health is assigned in `build_state_from_rows` before any policy sees the state. The
+anomaly verdict wins when present; otherwise health is derived locally, with the
+no-signal case refusing to classify rather than defaulting to healthy.
+
+```mermaid
+flowchart TD
+  ROW["row: instance, latency, request_count, error_rate"] --> Q1{"anomaly verdict for this backend?"}
+  Q1 -->|yes| USE["health = anomaly status"]
+  Q1 -->|no| Q2{"both latency and error_rate absent?"}
+  Q2 -->|yes| UNK["health = unknown"]
+  Q2 -->|no| Q3{"error_rate above 0.05?"}
+  Q3 -->|yes| UNH["health = unhealthy"]
+  Q3 -->|no| Q4{"latency above 200 ms?"}
+  Q4 -->|yes| DEG["health = degraded"]
+  Q4 -->|no| HLT["health = healthy"]
+```
+
+Eligibility then filters that health to a routing decision. It is a policy concern,
+not a metric concern: the predicate lives once in `policy_base.is_eligible` and
+every serving path agrees on it.
+
 ```python
 ELIGIBLE_HEALTH = frozenset({HEALTH_HEALTHY, HEALTH_DEGRADED})
 
@@ -153,11 +187,12 @@ def is_eligible(health: str) -> bool:
     return health in ELIGIBLE_HEALTH
 ```
 
-Eligibility is a policy concern, not a metric concern. Only `healthy` and
-`degraded` backends may receive routed traffic. `unhealthy` backends are excluded
-because they are failing; `unknown` backends are excluded because there is no
-telemetry to route on. Degraded backends are slower but still serving, so they stay
-in the pool.
+| Health | Eligible | Why |
+|---|---|---|
+| `healthy` | yes | Serving normally; the default routing target. |
+| `degraded` | yes | Slower than its baseline but still serving, so it stays in the pool. |
+| `unhealthy` | no | Failing; excluded so traffic is not sent into errors. |
+| `unknown` | no | No telemetry in the window; excluded because there is no signal to route on, and a silent backend must not be mistaken for a good one. |
 
 ### 4.3 The ABC and the all-unhealthy fallback
 
@@ -170,8 +205,20 @@ config in place.
 classical policies (round_robin, least_connections). When no eligible backend
 exists it emits the canonical warning via `obs_builder.all_masked_fallback`, then
 returns uniform-scored shadow rankings so the run loop still has a valid envelope to
-publish. (The monotone and PPO plugins instead return empty shadow rankings when no
-backend is eligible, rather than manufacturing a best-of-the-bad pick.)
+publish. The monotone and PPO plugins instead return empty shadow rankings when no
+backend is eligible, rather than manufacturing a best-of-the-bad pick.
+
+The policies therefore split into two families on the no-eligible case, and they
+also differ in what their `score` means. The table below captures both, so the
+envelope a consumer receives is never ambiguous.
+
+| Policy | Score semantics | No eligible backend | Stateful |
+|---|---|---|---|
+| `random_shadow` | Uniform-random per backend, always shadow. | Ranks every backend in `state` with random scores. | no (seeded RNG) |
+| `round_robin` | Descending rank scores, head of rotation first. | `_routing_fallback`: uniform-scored shadow rankings plus a warning. | yes (last served `backend_id`) |
+| `least_connections` | Descending rank scores, lowest load first. | `_routing_fallback`: uniform-scored shadow rankings plus a warning. | no |
+| `ppo` | Normalized routing weights over eligible backends. | Empty shadow rankings; no best-of-the-bad pick. | yes (loaded artifact) |
+| `monotone` | Normalized routing weights over eligible backends. | Empty shadow rankings; no best-of-the-bad pick. | yes (running-min, damped weights) |
 
 ### 4.4 The factory
 
@@ -183,7 +230,7 @@ policies are:
 | `random_shadow` | `RandomShadowPolicy` | baseline / safety net (always shadow) |
 | `round_robin` | `RoundRobinPolicy` | classical cyclic |
 | `least_connections` | `LeastConnectionsPolicy` | classical lowest-load |
-| `ppo` | `PPOPolicy` | trained artifact wrapper (PPO / SAC / DQN / continuous-weights) |
+| `ppo` | `PPOPolicy` | trained artifact wrapper (discrete-argmax MaskablePPO, continuous-weights PPO, or DQN templates) |
 | `monotone` | `MonotonePolicy` | latency-monotone capacity-aware (`candidate_mono`) |
 
 An unknown name raises `ValueError`. Bootstrap (`bootstrap_policy` in `runloop.py`)
@@ -244,8 +291,12 @@ agrees.
 
 `MonotonePolicy` (serving) and `MonotoneRouter` (`training/monotone_router.py`,
 shared by trainer and benchmark) implement the same algorithm. The serving plugin
-inlines the math so train and serve agree byte-for-byte, importing only
-`obs_builder` and `policy_base`.
+inlines the math so train and serve agree, importing only `obs_builder` and
+`policy_base`. The one deliberate difference is the load total that selects the
+damping factor: the trainer sums load over all slots, the serving plugin sums
+`queue_depth` over the eligible backends only. This shifts the idle-bypass
+boundary slightly but does not touch the scoring or the monotonicity property,
+which depend on latency alone.
 
 ### 6.1 What it computes, in words
 
@@ -312,34 +363,62 @@ exactly the state the monotonicity probe tests.
 
 ### 6.4 Configuration
 
-Config is read from `params.json` (the `monotone_config` block, same shape the
-trainer writes), defaulting to `models/candidate_mono/`. A missing or unreadable
-artifact falls back to the built-in defaults below.
+Config is read from the `monotone_config` block of `params.json` (the same shape
+the trainer writes), defaulting to `models/candidate_mono/`. A missing or
+unreadable artifact falls back to the built-in defaults: the constructor seeds
+`_DEFAULTS` and overlays whatever the artifact supplies, so any field absent from
+the file keeps its default.
 
-| Param | Meaning | Default | Effect |
-|---|---|---|---|
-| `degr_pow` | Exponent on current slowness `degr_i` in the score. | 1.0 | Higher values penalize a slowing backend more sharply, concentrating traffic on faster backends. At 1.0 the score is exactly capacity over slowness. |
-| `alpha` | Damping factor under load, in 0..1. | 0.4 | Lower values move the weight vector toward the new target more slowly across windows, damping closed-loop oscillation; higher values react faster. |
-| `cut` | Hard-shed threshold as a multiple of the pool minimum latency. | 3.0 | A backend with `lat > cut * min_lat` has its score scaled by 1e-3, effectively removing it until it recovers. |
-| `cap_floor_ms` | Floor on the capacity-estimate latency. | 5.0 | Prevents a near-zero observed latency from producing an unbounded capacity estimate. Held fixed during training. |
-| `idle_load` | Total observed load below which damping is bypassed. | 8.0 | When the pool is near idle the damping is skipped (`a = 1.0`) so idle latency stays minimal and the controller does not lag behind a quiet pool. |
+There are two distinct value sets to keep straight. The *deployed* values are the
+ones in the shipped `models/candidate_mono/params.json`, written by the trainer as
+the median-by-`degr_pow` seed (Section 7). The *fallback defaults* are the
+hard-coded `_DEFAULTS` in `MonotonePolicy` and the dataclass defaults in
+`MonotoneConfig`, used only when the artifact cannot be read.
 
-The serving defaults in `MonotonePolicy` and the dataclass defaults in
-`MonotoneConfig` match: `degr_pow=1.0, alpha=0.4, cut=3.0, cap_floor_ms=5.0,
-idle_load=8.0`.
+| Param | Meaning | Deployed | Fallback default | Effect |
+|---|---|---|---|---|
+| `degr_pow` | Exponent on current slowness `degr_i` in the score. | 0.85 | 1.0 | Higher values penalize a slowing backend more sharply, concentrating traffic on faster backends. At 1.0 the score is exactly capacity over slowness. |
+| `alpha` | Damping factor under load, in 0..1. | 0.192 | 0.4 | Lower values move the weight vector toward the new target more slowly across windows, damping closed-loop oscillation; higher values react faster. |
+| `cut` | Hard-shed threshold as a multiple of the pool minimum latency. | 5.605 | 3.0 | A backend with `lat > cut * min_lat` has its score scaled by 1e-3, effectively removing it until it recovers. |
+| `cap_floor_ms` | Floor on the capacity-estimate latency. | 5.0 | 5.0 | Prevents a near-zero observed latency from producing an unbounded capacity estimate. Held fixed during training, so it is identical in both sets. |
+| `idle_load` | Total observed load below which damping is bypassed. | 10.986 | 8.0 | When the pool is near idle the damping is skipped (`a = 1.0`) so idle latency stays minimal and the controller does not lag behind a quiet pool. |
+
+The deployed values are the fitted controller, not the fallback defaults: the
+artifact's `degr_pow=0.85, alpha=0.192, cut=5.605, cap_floor_ms=5.0,
+idle_load=10.986` are what serve in production. The fallback set
+(`degr_pow=1.0, alpha=0.4, cut=3.0, cap_floor_ms=5.0, idle_load=8.0`) is the
+built-in floor `MonotonePolicy._DEFAULTS` and `MonotoneConfig` agree on, reached
+only when the artifact is missing or corrupt. Both sets are monotone by
+construction, since monotonicity does not depend on the parameter values
+(Section 6.5).
 
 ### 6.5 Monotonicity by construction
 
 The property the benchmark verifies: holding history fixed, routing weight for a
 backend never increases as its current latency increases.
 
-Why it holds. The capacity estimate `base_i` (and therefore `cap_i`) is a running
+Why it holds. The argument chains four steps, each of which can only hold or lower
+a backend's weight as its current latency rises.
+
+```mermaid
+flowchart TD
+  LAT["current latency lat_i increases"] --> CAP["cap_i unchanged: base_i is a running min over PAST latencies, independent of lat_i"]
+  LAT --> DEGR["degr_i equals lat_i over base_i, so degr_i increases"]
+  DEGR --> SCORE["score_i equals cap_i over degr_i to the degr_pow, strictly decreasing for positive degr_pow"]
+  LAT --> SHED["if lat_i crosses cut times min_lat, score_i scaled by 1e-3, lower still"]
+  SCORE --> NORM["after normalization a smaller raw score cannot gain share"]
+  SHED --> NORM
+  NORM --> BLEND["damping is a convex blend with previous weights, preserves ordering"]
+  BLEND --> OUT["weight_i is non-increasing in lat_i"]
+```
+
+In words: the capacity estimate `base_i`, and therefore `cap_i`, is a running
 minimum over past latencies, so it does not depend on the current `lat_i` at all.
 The only place `lat_i` enters the score is through `degr_i = lat_i / base_i`, and the
 score is `cap_i / degr_i ^ degr_pow`. With `degr_pow > 0`, that is strictly
 decreasing in `lat_i`. The hard-shed step can only further reduce the score of a
 backend whose latency crosses the cut. After normalization, a backend whose raw
-score falls (because its latency rose) cannot gain a larger share. The damping step
+score falls because its latency rose cannot gain a larger share. The damping step
 is a convex blend with the previous weights and preserves the ordering of the
 target. So weight is non-increasing in current latency. Every one of the five
 training seeds passes the probe with a maximum weight-rise of exactly 0.0 (Section
@@ -356,8 +435,9 @@ degrades into a region the model never saw.
 ## 7. How candidate_mono is trained
 
 `train_monotone.py` fits `MonotoneConfig` by black-box search and emits per-seed
-`params.json` artifacts. There is no neural network: the policy is the five-parameter
-controller, and training is a search over those parameters.
+`params.json` artifacts. There is no neural network: the policy is the five-field
+controller config, and training searches the four free fields (`degr_pow`, `alpha`,
+`cut`, `idle_load`) with `cap_floor_ms` held fixed at 5.0.
 
 ### 7.1 Curriculum and the held-out family
 
@@ -369,23 +449,25 @@ TRAIN_KINDS = ["homogeneous", "heterogeneous", "degrading", "near-idle"]
 
 The held-out `dual-degrade` family is never used in training. Its benchmark number
 therefore measures true generalisation, not fit. The near-idle kind is constructed
-by rejection sampling: `_reset_train` retries seeds until the scenario's mean demand
-over total capacity is at or below `_IDLE_UTIL_MAX = 0.15`.
+by rejection sampling: `_reset_train` retries up to 400 seeds until the scenario's
+mean demand over total capacity is at or below `_IDLE_UTIL_MAX = 0.15`. The other
+three kinds are drawn directly with `force_kind`.
 
 ### 7.2 Training-seed robustness axis
 
 The whole search is run `N_SEEDS` times (default 5) with different RNG, which
 controls both the training-scenario draw and the search population. Each run yields
-one fitted `MonotoneConfig`, hence one artifact. Per seed, the training seeds are
-`20000 + seed * 137 + i` for `i` in range. This 20000-band is disjoint from the
-30000-34000 eval bands, so training never touches the evaluation seeds. The
-benchmark then aggregates the five fitted configs to a mean with 95% CI across
-training seeds.
+one fitted `MonotoneConfig`, hence one artifact. Within one run the evaluation uses
+`n_train_seeds` scenario seeds (default 24), computed as
+`20000 + seed * 137 + i` for `i` from 0 to `n_train_seeds - 1`. This 20000-band is
+disjoint from the 30000-34000 eval bands, so training never touches the evaluation
+seeds. The benchmark then aggregates the five fitted configs to a mean with 95% CI
+across training seeds.
 
 ```mermaid
 flowchart TD
   SEEDS["N_SEEDS search runs, distinct RNG"] --> ONE["fit_one_seed"]
-  ONE --> POP["population: defaults + 2 hand configs + budget random samples"]
+  ONE --> POP["population: defaults + 1 hand config + budget random samples"]
   POP --> EVAL1["evaluate each on TRAINING seeds over 4 curriculum kinds"]
   EVAL1 --> BEST["pick lowest composite_loss"]
   BEST --> COORD["coordinate refinement: +/- step per param, 10 passes, halve steps when no improvement"]
@@ -410,14 +492,17 @@ near-idle: 60}`.
 ### 7.4 Search
 
 The search has two stages. First, a population is evaluated: the dataclass defaults,
-two hand-chosen configs, and `budget` random samples drawn over `degr_pow` in
-[0.3, 2.5], `alpha` in [0.2, 0.8], `cut` in [2.0, 6.0], `idle_load` in [4.0, 16.0]
-(with `cap_floor_ms` fixed at 5.0). Second, coordinate refinement runs 10 passes:
-for each of `degr_pow`, `alpha`, `cut`, `idle_load` it tries a step up and down,
-keeps any improvement, and halves all step sizes for the next pass when a pass yields
-no improvement. The headline `candidate_mono` is the seed with the median `degr_pow`,
+one hand-chosen config (`degr_pow=1.0, alpha=0.3, cut=3.0`), and `budget` random
+samples (default 30) drawn over `degr_pow` in [0.3, 2.5], `alpha` in [0.2, 0.8],
+`cut` in [2.0, 6.0], `idle_load` in [4.0, 16.0] (with `cap_floor_ms` fixed at 5.0).
+Second, coordinate refinement runs 10 passes from the best population member: for
+each of `degr_pow`, `alpha`, `cut`, `idle_load` it tries a step up and a step down
+(initial steps 0.4, 0.15, 0.8, 3.0, each parameter floored at 0.05), keeps any
+improvement, and halves all step sizes for the next pass when a pass yields no
+improvement. The headline `candidate_mono` is the seed with the median `degr_pow`,
 chosen as a robust central pick rather than the single best-loss config. The five
-fitted seeds are tightly clustered (`degr_pow` 0.39 to 1.36, all monotone).
+fitted seeds are tightly clustered (`degr_pow` 0.39, 0.65, 0.85, 1.00, 1.36, all
+monotone); the median, 0.85, is the deployed seed-3 config.
 
 ### 7.5 Train / serve / eval share one implementation
 
@@ -425,7 +510,8 @@ fitted seeds are tightly clustered (`degr_pow` 0.39 to 1.36, all monotone).
 adapter. The serving plugin (`policies/monotone/policy.py`) carries an inline copy
 kept equivalent to `MonotoneRouter`, importing only `obs_builder` and `policy_base`
 and never from `training/`. So the runtime image contains no training code, and the
-math used to fit, to benchmark, and to serve is the same.
+scoring and damping math used to fit, to benchmark, and to serve is the same, down
+to the one idle-bypass detail noted at the start of Section 6.
 
 ---
 

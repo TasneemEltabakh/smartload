@@ -39,53 +39,101 @@ ceiling" that pinned even the perfect-foresight oracle at 88.0 %.
 
 ### 1.2 Implementation status: wired, and the deployed default
 
-The target-based controller is **implemented** (`controllers.py`),
-**unit-tested** (the controller decisions plus the app-level wiring), and
-**benchmarked** (synthetic, real-trace, and frontier results below). It is
-**wired into the serving path** behind a controller selector, and is now the
-**deployed default** (`AUTOSCALER_CONTROLLER=target` in compose + `.env`): 98.3% SLA
-with the moving-average signal and 99.2% with the forward forecast, vs the ±1
-rule's ~77%. The in-code default stays `step` so existing integration / e2e tests
-exercise the unchanged single-step path; the deployment opts into `target`.
+The target-based controller is implemented (`controllers.py`), unit-tested (the
+controller decisions plus the app-level wiring), and benchmarked (synthetic,
+real-trace, and frontier results below). It is wired into the serving path
+behind a controller selector, and it is the controller the stack runs when it is
+brought up with the committed Compose file.
 
-`app.py` reads `AUTOSCALER_CONTROLLER` at boot:
+There are two distinct defaults, and they differ on purpose. The selector is
+read once at boot from `AUTOSCALER_CONTROLLER`:
 
-- `step` (in-code default) keeps `decisions.decide`, the plus-or-minus-one rule, at
-  both decision sites (the forecast-driven tick and the reactive fallback);
+- the in-code fallback in `app.py` is `step`, so a bare `python app.py` (and the
+  integration and end-to-end suites, which import or launch the service without
+  setting the variable) exercises the unchanged single-step path;
+- the deployed value comes from `docker-compose.yml`, which sets
+  `AUTOSCALER_CONTROLLER: ${AUTOSCALER_CONTROLLER:-target}`. With no operator
+  override the Compose substitution resolves to `target`, so the running
+  container selects the target-based controller.
+
+`.env.example` does not set `AUTOSCALER_CONTROLLER`, so the Compose `:-target`
+fallback is what takes effect on a default deployment. An operator who wants the
+plus-or-minus-one rule sets `AUTOSCALER_CONTROLLER=step` in the environment.
+
+The benchmark margin behind making `target` the deployed default: 98.3 % SLA on
+the moving-average signal and 99.2 % on the forward forecast, against the
+plus-or-minus-one rule's roughly 77 %.
+
+The two selector values map onto the two decision modules:
+
+- `step` keeps `decisions.decide`, the plus-or-minus-one rule, at both decision
+  sites (the forecast-driven tick and the reactive fallback);
 - `target` routes both sites through `controllers.decide_target`, tracking two
-  independent scale-out / scale-in cooldown clocks and actuating multi-step
+  independent scale-out and scale-in cooldown clocks and actuating multi-step
   jumps toward the sized target.
 
-The selection is surfaced on `/health` as `"controller": "step" | "target"` and
-logged once at startup. The Dockerfile now copies `controllers.py` into the
+An unrecognised value falls back to `step` rather than crash-looping the service.
+The selection is surfaced on `/health` as `"controller": "step"` or `"target"`
+and logged once at startup. The Dockerfile copies `controllers.py` into the
 image, so the controller source ships in the running container regardless of the
 selected mode.
 
 ```mermaid
 flowchart LR
-  ENV["AUTOSCALER_CONTROLLER"] --> SEL{"controller kind"}
+  COMPOSE["docker-compose default target"] --> ENV["AUTOSCALER_CONTROLLER"]
+  ENV --> SEL{"controller kind"}
   APP["app.py decision sites"] --> SEL
-  SEL -- "step (default)" --> DEC["decisions.decide (plus/minus 1)"]
-  SEL -- "target" --> CTRL["controllers.decide_target (target-based)"]
-  DEC --> ACT["controllers.actuate_to_target -> cluster_client"]
+  SEL -- "step, in-code fallback" --> DEC["decisions.decide, plus or minus 1"]
+  SEL -- "target, deployed default" --> CTRL["controllers.decide_target, target-based"]
+  DEC --> ACT["controllers.actuate_to_target then cluster_client"]
   CTRL --> ACT
-  DOCK["Dockerfile COPY set"] -.->|"now includes controllers.py"| CTRL
+  DOCK["Dockerfile COPY set includes controllers.py"] -.-> CTRL
 ```
 
-The two-step gap that previously kept the controller dark (not imported by
-`app.py`, not copied into the image) is closed: `app.py` imports the wiring
-helpers from `controllers`, and the Dockerfile carries `controllers.py`. The
-target-based tuning is exposed as deploy-time environment variables
-(`AUTOSCALER_HEADROOM`, `AUTOSCALER_SIZING`, `AUTOSCALER_QOS_BETA`,
-`AUTOSCALER_SCALE_OUT_COOLDOWN_SECONDS`, `AUTOSCALER_SCALE_IN_COOLDOWN_SECONDS`,
-`AUTOSCALER_MAX_STEP_OUT`, `AUTOSCALER_MAX_STEP_IN`,
-`AUTOSCALER_SCALE_IN_DEADBAND`); `min_backends`, `max_backends`, and
-`per_instance_capacity_rps` still come from the live policy, so a runtime policy
-reload continues to move the bounds for both controllers.
+Both decision modules ship in the image and both are reachable at runtime: the
+selector chooses between them, and `app.py` imports the wiring helpers from
+`controllers` either way. The target-based tuning is exposed as deploy-time
+environment variables (`AUTOSCALER_HEADROOM`, `AUTOSCALER_SIZING`,
+`AUTOSCALER_QOS_BETA`, `AUTOSCALER_SCALE_OUT_COOLDOWN_SECONDS`,
+`AUTOSCALER_SCALE_IN_COOLDOWN_SECONDS`, `AUTOSCALER_MAX_STEP_OUT`,
+`AUTOSCALER_MAX_STEP_IN`, `AUTOSCALER_SCALE_IN_DEADBAND`); `min_backends`,
+`max_backends`, and `per_instance_capacity_rps` still come from the live policy,
+so a runtime policy reload continues to move the bounds for both controllers.
 
-The shipped `decide()` rule remains the default and is left behaviourally
-untouched: with `step` selected, the actuation path applies exactly one instance
-per action as before.
+The shipped `decide()` rule is left behaviourally untouched: with `step`
+selected, the actuation path applies exactly one instance per action as before.
+
+Actuation has its own default that is separate from the controller choice. With
+the committed configuration the autoscaler toggles the backends that Compose
+already provisions: `scale_out` prefers starting a stopped pool container and
+`scale_in` stops a running one, so the live pool moves within the
+Compose-provisioned set. Creating and destroying brand-new containers beyond that
+set is the dynamic-pool path, gated behind `AUTOSCALER_PROVISIONING_ENABLED`,
+which is off by default and is turned on only for the adaptive benchmark. With
+provisioning off, a scale-out that has no stopped container left to start records
+no action rather than expanding the pool, and exactly one audit row is written
+for the count actually reached.
+
+### 1.3 Deployed policy snapshot
+
+The bounds and capacity the controller scales within are not in the autoscaler's
+own configuration: they come from the live operating policy in
+`config/policy.yaml`, loaded at boot and refreshed on `smartload.policy`. The
+fields the autoscaler reads, with the committed values:
+
+| Policy field | Committed value | Used by the autoscaler as |
+|---|---|---|
+| `min_backends` | 1 | Lower clamp for both controllers |
+| `max_backends` | 3 | Upper clamp for both controllers |
+| `per_instance_capacity_rps` | 100 | Divisor in the capacity comparison and both sizing laws |
+| `autoscaler_cooldown_seconds` | 60 | The single cooldown clock for `step` |
+| `policy_version` | 60 | Monotonic guard against stale reloads |
+
+The committed `max_backends` is 3, so the live pool ceiling is well below the
+`max_backends = 10` used in the benchmark harness (section 6). The benchmark
+measures the controller's decision quality on a wider pool; the deployed ceiling
+is an operating choice, and a runtime policy publish can move it without a
+restart because the bounds are read from the live policy on every decision.
 
 ---
 
@@ -93,11 +141,11 @@ per action as before.
 
 | Path | Role | Status |
 |---|---|---|
-| `services/autoscaler/decisions.py` | Shipped plus-or-minus-one decision rule (`decide`, `Policy`, `policy_from_payload`, `Decision`, action constants) | **Live** (default controller; copied into image) |
-| `services/autoscaler/app.py` | Service entrypoint; selects the controller via `AUTOSCALER_CONTROLLER` and dispatches at the forecast and reactive sites | **Live** |
-| `services/autoscaler/manual.py` | Operator manual-override path | **Live** (copied into image) |
-| `services/autoscaler/cluster_client.py` | Actuation: applies a backend count | **Live** |
-| `services/autoscaler/controllers.py` | Target-based controller (`ControlPolicy`, `target_for_load`, `decide_target`) plus the wiring helpers (`control_policy_from`, `select_decision`, `actuate_to_target`) | **Live** (imported by app.py, copied into image; selected by `AUTOSCALER_CONTROLLER=target`) |
+| `services/autoscaler/decisions.py` | Shipped plus-or-minus-one decision rule (`decide`, `Policy`, `policy_from_payload`, `Decision`, action constants) | Live: in-code fallback controller, the `step` path; copied into image |
+| `services/autoscaler/app.py` | Service entrypoint; selects the controller via `AUTOSCALER_CONTROLLER` and dispatches at the forecast and reactive sites | Live |
+| `services/autoscaler/manual.py` | Operator manual-override path | Live: copied into image |
+| `services/autoscaler/cluster_client.py` | Actuation: applies a backend count | Live |
+| `services/autoscaler/controllers.py` | Target-based controller (`ControlPolicy`, `target_for_load`, `decide_target`) plus the wiring helpers (`control_policy_from`, `select_decision`, `actuate_to_target`) | Live: imported by app.py, copied into image; the `target` path is the deployed Compose default |
 | `tests/unit/autoscaler/test_controllers.py` | Unit tests for the controller decisions | Tests (CI) |
 | `tests/unit/autoscaler/test_controller_wiring.py` | Unit tests for the controller selection + actuation glue | Tests (CI) |
 | `services/autoscaler/Dockerfile` | Image build; copies decisions/manual/controllers/app + shared | Build |
@@ -344,7 +392,7 @@ post-shed capacity `300 >= 195`, so it sheds one to 3.
 | Slew rate | capped at one instance per cooldown window | unbounded scale-out per action (unless `max_step_out` set) |
 | Forecast use | one input rate per tick | one input rate per tick; signal is interchangeable (oracle / MA / reactive / trend / harmonic) |
 | Safety margin | none beyond the integer boundary | tunable `headroom` (or `qos_beta`) tracing the Pareto frontier |
-| Status | default controller (`AUTOSCALER_CONTROLLER=step`) | wired and selectable (`AUTOSCALER_CONTROLLER=target`); off by default |
+| Status | in-code fallback (`AUTOSCALER_CONTROLLER=step`); selected when nothing sets the variable | deployed default via Compose (`AUTOSCALER_CONTROLLER=target`); wired and selectable |
 
 ---
 
@@ -574,15 +622,17 @@ Conclusions for the integration:
 
 ## 8. Caveats and limitations
 
-- **Off by default (the primary caveat).** The controller is wired and
-  selectable, but the production default is still `decisions.decide`: it only
-  takes the serving path when an operator sets `AUTOSCALER_CONTROLLER=target`.
-  Everything in section 6 and 7 was measured on the benchmark harness, not on
-  the live stack; the live behaviour of `target` mode has unit coverage for the
-  decision and actuation glue but has not yet been exercised end-to-end against
-  a running cluster, so a live integration test (forecast-driven multi-step
-  scale-out under provisioning) remains the recommended next step before making
-  `target` the default.
+- **Deployed default, but only unit-validated on the live glue (the primary
+  caveat).** The Compose file selects `target` by default, so the running
+  container scales with `controllers.decide_target`. The in-code fallback is
+  still `step`, which is why a bare process launch and the existing integration
+  and end-to-end suites continue to exercise the single-step path. The decision
+  and actuation glue for `target` (`select_decision`, `control_policy_from`,
+  `actuate_to_target`) has unit coverage, but the multi-step path has not yet
+  been exercised end-to-end against a running cluster. Everything in section 6
+  and 7 was measured on the benchmark harness, not on the live stack. A live
+  integration test, forecast-driven multi-step scale-out under provisioning,
+  remains the recommended next step to validate the deployed default in place.
 - **Oracle gap.** C1 (controller + oracle) is an explicit upper-bound reference
   using true future demand, not a deployable controller. The realistic gap is
   C2/C4 (98.3 / 99.2 % synthetic, 96.3 / 97.9 % real) against the C1 ceiling
