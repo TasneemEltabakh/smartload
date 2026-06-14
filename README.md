@@ -147,6 +147,7 @@ Every architectural decision lives in [`docs/SOURCE_OF_TRUTH.html`](docs/SOURCE_
 | Self-host or deploy | [§25 Distribution](docs/SOURCE_OF_TRUTH.html#sec-25-distribution) + [§20 Deployment](docs/SOURCE_OF_TRUTH.html#sec-14-deploy) |
 | Query the database | [§30 Database Design](docs/SOURCE_OF_TRUTH.html#sec-30-database) |
 | Write a plugin / contribute to a service | [§7 Service Directory](docs/SOURCE_OF_TRUTH.html#sec-5-directory) + [§8 Deep Dives](docs/SOURCE_OF_TRUTH.html#sec-6-deepdives) + [`docs/PROJECT_WALKTHROUGH.md`](docs/PROJECT_WALKTHROUGH.md) |
+| Understand a module's internal mechanics (diagrams + math) | [`docs/modules/`](docs/modules/) — per-module deep-dives for rl-engine, forecasting, anomaly-detector, autoscaler |
 
 ---
 
