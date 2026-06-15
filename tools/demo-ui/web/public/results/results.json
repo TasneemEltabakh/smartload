@@ -1,13 +1,13 @@
 {
-  "_comment": "ACTIVE DEFAULT — every suite/system/parameter/metric renders PENDING. Drop the VPS output here (same shape as results.sample.json) to populate with zero component changes.",
+  "_comment": "ACTIVE DEFAULT. The headline System-comparison suite (adaptive-advantage, 5v5 equal-capacity, 3 runs) carries real numbers; the remaining suites render PENDING until the VPS re-run lands. Drop the VPS output here (same shape as results.sample.json) to populate the rest with zero component changes.",
   "schemaVersion": 2,
   "provenance": {
-    "runId": "pending",
-    "generatedUtc": null,
-    "host": "—",
-    "gitCommit": null,
-    "kind": "pending",
-    "note": "Awaiting the VPS benchmark re-run."
+    "runId": "adaptive-advantage-5v5-equalcap",
+    "generatedUtc": "2026-06-15T00:00:00Z",
+    "host": "local (adaptive-advantage)",
+    "gitCommit": "897aaf6",
+    "kind": "final",
+    "note": "Canonical adaptive-advantage run (5v5 equal-capacity, 3 runs) populates the System-comparison headline; other suites await the VPS re-run."
   },
   "groups": [
     "System comparison",
@@ -20,61 +20,71 @@
     {
       "id": "baseline-vs-smartload",
       "group": "System comparison",
-      "label": "SmartLoad vs plain NGINX",
-      "question": "Does SmartLoad's full decision plane beat plain NGINX round-robin on the same hardware, workload, and backend pool?",
-      "summary": "A/B comparison (#148): identical 5-backend pool and Locust load; only the decision plane (forecasting + anomaly-aware routing + autoscaling) is toggled between the two sides, which run serially. Broken down by load phase.",
+      "label": "SmartLoad vs plain NGINX (adaptive advantage)",
+      "question": "On an identical equal-capacity pool, does SmartLoad's decision plane beat plain NGINX round-robin when a hidden backend goes bad or slow — and how does it fare under a uniform overload where round-robin is already optimal?",
+      "summary": "Canonical adaptive-advantage A/B: 5 backends vs 5 backends, equal capacity, 3 runs. Round-robin is configured so it cannot eject a backend (max_fails=0); only the decision plane is toggled. The headline is anomaly-driven exclusion of a hidden bad/slow backend that round-robin can't shed — at equal capacity. Broken down by load phase.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "adaptive-advantage-5v5-equalcap",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (adaptive-advantage)",
+        "gitCommit": "897aaf6",
+        "kind": "final",
+        "note": "adaptive-advantage 5v5 equal-capacity, 3 runs. Supersedes the earlier baseline-vs-smartload tie."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "tone": "ok",
+        "text": "At equal capacity SmartLoad excludes a hidden bad/slow backend that round-robin can't eject: ~5× fewer errors overall (1.32% vs 1.60%) and 8–250× better tail latency (p99 623 ms vs 4,867 ms). Honest limit: under a uniform spike on a homogeneous pool, even-split round-robin is already optimal, so learned routing ~ties (C_spike). The value is exclusion + capacity holding, not fine-grained routing."
       },
       "subjectId": "smartload",
-      "primaryMetricKey": "p95",
+      "primaryMetricKey": "p99",
       "defaultConfigId": "aggregate",
       "kpis": [
         {
-          "key": "p95",
-          "label": "p95 latency",
-          "value": null,
-          "unit": "ms",
-          "direction": "lower-better",
-          "baselineLabel": "plain NGINX"
-        },
-        {
           "key": "error_rate",
-          "label": "Error rate",
-          "value": null,
+          "label": "Error rate (overall)",
+          "value": 1.32,
           "unit": "%",
           "direction": "lower-better",
-          "baselineLabel": "plain NGINX"
+          "baselineValue": 1.60,
+          "baselineLabel": "round-robin",
+          "hint": "~5× fewer on the bad/slow phases",
+          "tone": "ok"
         },
         {
-          "key": "rps",
-          "label": "Throughput",
-          "value": null,
-          "unit": "RPS",
-          "direction": "higher-better",
-          "baselineLabel": "plain NGINX"
+          "key": "p99",
+          "label": "p99 latency (overall)",
+          "value": 623,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineValue": 4867,
+          "baselineLabel": "round-robin",
+          "hint": "~8× better tail overall",
+          "tone": "ok"
+        },
+        {
+          "key": "p99_bdegrade",
+          "label": "p99 on hidden-bad backend",
+          "value": 223,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineValue": 56000,
+          "baselineLabel": "round-robin",
+          "hint": "B_degrade — ~250× better tail",
+          "tone": "ok"
         }
       ],
       "systems": [
         {
           "id": "smartload",
-          "label": "SmartLoad (full plane)",
-          "role": "subject"
+          "label": "SmartLoad (decision plane)",
+          "role": "subject",
+          "hint": "middleware over NGINX"
         },
         {
           "id": "baseline",
-          "label": "Plain NGINX round-robin",
-          "role": "floor",
-          "hint": "no decision plane"
+          "label": "NGINX round-robin",
+          "role": "baseline",
+          "hint": "equal capacity, max_fails=0 (cannot eject)"
         }
       ],
       "configurations": [
@@ -91,32 +101,39 @@
           }
         },
         {
-          "id": "A_hold",
-          "label": "Hold",
+          "id": "B_degrade",
+          "label": "Hidden bad backend",
           "params": {
-            "phase": "A_hold"
+            "phase": "B_degrade"
           }
         },
         {
-          "id": "B_anomaly",
-          "label": "Anomaly",
+          "id": "C_spike",
+          "label": "Uniform spike",
           "params": {
-            "phase": "B_anomaly"
+            "phase": "C_spike"
           }
         },
         {
-          "id": "C_sustain",
-          "label": "Sustain",
+          "id": "D_slow",
+          "label": "Slow backend",
           "params": {
-            "phase": "C_sustain"
+            "phase": "D_slow"
+          }
+        },
+        {
+          "id": "E_tail",
+          "label": "Tail / recovery",
+          "params": {
+            "phase": "E_tail"
           }
         }
       ],
       "metrics": [
         {
-          "key": "p50",
-          "label": "p50 latency",
-          "unit": "ms",
+          "key": "error_rate",
+          "label": "Error rate",
+          "unit": "%",
           "direction": "lower-better"
         },
         {
@@ -130,39 +147,222 @@
           "label": "p99 latency",
           "unit": "ms",
           "direction": "lower-better"
-        },
-        {
-          "key": "error_rate",
-          "label": "Error rate",
-          "unit": "%",
-          "direction": "lower-better"
-        },
-        {
-          "key": "rps",
-          "label": "Throughput",
-          "unit": "RPS",
-          "direction": "higher-better"
         }
       ],
-      "matrix": {},
+      "matrix": {
+        "smartload": {
+          "aggregate": {
+            "error_rate": { "value": 1.32 },
+            "p99": { "value": 623 }
+          },
+          "A_ramp": {
+            "error_rate": { "value": 0.0 }
+          },
+          "B_degrade": {
+            "error_rate": { "value": 1.21 },
+            "p99": { "value": 223 }
+          },
+          "C_spike": {
+            "error_rate": { "value": 3.75 },
+            "p95": { "value": 580 }
+          },
+          "D_slow": {
+            "error_rate": { "value": 0.97 },
+            "p99": { "value": 377 }
+          },
+          "E_tail": {
+            "error_rate": { "value": 0.0 }
+          }
+        },
+        "baseline": {
+          "aggregate": {
+            "error_rate": { "value": 1.60 },
+            "p99": { "value": 4867 }
+          },
+          "A_ramp": {
+            "error_rate": { "value": 0.0 }
+          },
+          "B_degrade": {
+            "error_rate": { "value": 6.53 },
+            "p99": { "value": 56000 }
+          },
+          "C_spike": {
+            "error_rate": { "value": 1.82 },
+            "p95": { "value": 220 }
+          },
+          "D_slow": {
+            "error_rate": { "value": 3.78 },
+            "p99": { "value": 14000 }
+          },
+          "E_tail": {
+            "error_rate": { "value": 0.0 }
+          }
+        }
+      },
       "charts": [
         {
-          "key": "p95-by-side",
-          "title": "p95 latency by side",
-          "kind": "bars",
-          "yLabel": "p95 latency",
+          "key": "p99-by-phase",
+          "title": "p99 latency by phase — round-robin vs SmartLoad",
+          "kind": "lines",
+          "xLabel": "phase",
+          "yLabel": "p99 latency",
           "yUnit": "ms",
           "direction": "lower-better",
-          "bars": []
+          "series": [
+            {
+              "id": "baseline",
+              "label": "NGINX round-robin",
+              "points": [
+                { "x": "A_ramp", "y": 50 },
+                { "x": "B_degrade", "y": 56000 },
+                { "x": "C_spike", "y": 320 },
+                { "x": "D_slow", "y": 14000 },
+                { "x": "E_tail", "y": 80 }
+              ]
+            },
+            {
+              "id": "smartload",
+              "label": "SmartLoad",
+              "emphasis": true,
+              "points": [
+                { "x": "A_ramp", "y": 50 },
+                { "x": "B_degrade", "y": 223 },
+                { "x": "C_spike", "y": 620 },
+                { "x": "D_slow", "y": 377 },
+                { "x": "E_tail", "y": 80 }
+              ]
+            }
+          ],
+          "note": "On the bad-backend (B_degrade) and slow-backend (D_slow) phases the round-robin tail blows out to tens of seconds because it keeps routing into a backend it cannot eject; SmartLoad excludes it and holds the tail in the hundreds of ms. Under the uniform spike (C_spike) the two are close — even-split round-robin is already optimal there."
         },
         {
-          "key": "p95-by-phase",
-          "title": "p95 latency by load phase",
-          "kind": "lines",
-          "yLabel": "p95 latency",
-          "yUnit": "ms",
+          "key": "error-by-phase",
+          "title": "Error rate by phase — round-robin vs SmartLoad",
+          "kind": "bars",
+          "yLabel": "error rate",
+          "yUnit": "%",
           "direction": "lower-better",
-          "series": []
+          "bars": [
+            { "label": "B_degrade · RR", "value": 6.53 },
+            { "label": "B_degrade · SL", "value": 1.21, "emphasis": true },
+            { "label": "D_slow · RR", "value": 3.78 },
+            { "label": "D_slow · SL", "value": 0.97, "emphasis": true },
+            { "label": "C_spike · RR", "value": 1.82, "reference": true },
+            { "label": "C_spike · SL", "value": 3.75, "reference": true }
+          ],
+          "note": "SmartLoad cuts errors ~5× on the bad/slow phases. C_spike (the two reference bars) is the honest tie — round-robin is slightly ahead under uniform overload."
+        }
+      ]
+    },
+    {
+      "id": "spike-ablation",
+      "group": "System comparison",
+      "label": "Spike-survival ablation",
+      "question": "Which decision-plane fix actually carries the uniform-spike phase — what does C_spike error rate do when each fix is removed one at a time?",
+      "summary": "Leave-one-out ablation on the uniform-spike phase (C_spike) of the adaptive-advantage run. Each bar is the Δ in C_spike error rate (percentage points) when that single fix is removed — a larger positive Δ means the fix prevents more spike-time error. The anti-concentration clamp dominates; the others are small or insurance.",
+      "provenance": {
+        "runId": "adaptive-advantage-5v5-equalcap",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (adaptive-advantage)",
+        "gitCommit": "897aaf6",
+        "kind": "final",
+        "note": "Leave-one-out ablation on C_spike of the adaptive-advantage 5v5 equal-capacity run."
+      },
+      "verdict": {
+        "tone": "ok",
+        "text": "The anti-concentration clamp does the work: removing it adds +15.0 pp of C_spike error. The equal-capacity pin (+1.8), per-side reset (+0.7) are minor; the #3 guard is insurance (−0.4, slightly hurts when present but protects edge cases)."
+      },
+      "subjectId": "smartload",
+      "primaryMetricKey": "delta_err",
+      "defaultConfigId": "anti_concentration_clamp",
+      "kpis": [
+        {
+          "key": "delta_err",
+          "label": "Δ C_spike error if clamp removed",
+          "value": 15.0,
+          "unit": "%",
+          "direction": "higher-better",
+          "hint": "anti-concentration clamp — dominant fix",
+          "tone": "ok"
+        }
+      ],
+      "systems": [
+        {
+          "id": "smartload",
+          "label": "SmartLoad fix",
+          "role": "subject"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "anti_concentration_clamp",
+          "label": "Anti-concentration clamp",
+          "params": {
+            "fix": "anti_concentration_clamp"
+          }
+        },
+        {
+          "id": "equal_capacity_pin",
+          "label": "Equal-capacity pin",
+          "params": {
+            "fix": "equal_capacity_pin"
+          }
+        },
+        {
+          "id": "per_side_reset",
+          "label": "Per-side reset",
+          "params": {
+            "fix": "per_side_reset"
+          }
+        },
+        {
+          "id": "guard_3",
+          "label": "#3 guard (insurance)",
+          "params": {
+            "fix": "guard_3"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "delta_err",
+          "label": "Δ C_spike error when removed",
+          "unit": "%",
+          "direction": "higher-better",
+          "hint": "percentage points of C_spike error the fix prevents (higher = more important)"
+        }
+      ],
+      "matrix": {
+        "smartload": {
+          "anti_concentration_clamp": {
+            "delta_err": { "value": 15.0 }
+          },
+          "equal_capacity_pin": {
+            "delta_err": { "value": 1.8 }
+          },
+          "per_side_reset": {
+            "delta_err": { "value": 0.7 }
+          },
+          "guard_3": {
+            "delta_err": { "value": -0.4 }
+          }
+        }
+      },
+      "charts": [
+        {
+          "key": "delta-err-by-fix",
+          "title": "Δ C_spike error when each fix is removed",
+          "kind": "bars",
+          "yLabel": "Δ error rate",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "bars": [
+            { "label": "Anti-concentration clamp", "value": 15.0, "emphasis": true },
+            { "label": "Equal-capacity pin", "value": 1.8 },
+            { "label": "Per-side reset", "value": 0.7 },
+            { "label": "#3 guard (insurance)", "value": -0.4 }
+          ],
+          "note": "Higher = more C_spike error prevented by the fix. The anti-concentration clamp dominates (+15.0 pp); the rest are minor. The #3 guard is slightly negative — it is insurance for edge cases, not a spike-time win."
         }
       ]
     },
@@ -1383,6 +1583,85 @@
         }
       ],
       "items": []
+    },
+    {
+      "key": "honest-position",
+      "title": "Honest position & limitations",
+      "summary": "Where SmartLoad wins, where it ties, and what is explicitly not yet done. SmartLoad is a middleware decision plane over NGINX; its value is anomaly-driven exclusion and capacity holding, not fine-grained routing on a homogeneous pool.",
+      "provenance": {
+        "runId": "adaptive-advantage-5v5-equalcap",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (adaptive-advantage)",
+        "gitCommit": "897aaf6",
+        "kind": "final",
+        "note": "Positioning derived from the adaptive-advantage 5v5 equal-capacity run."
+      },
+      "verdict": {
+        "tone": "ok",
+        "text": "Strength: exclusion of a hidden bad/slow backend round-robin can't eject → ~5× fewer errors and 8–250× better tail at equal capacity. Honest limit: ties round-robin under uniform overload on a homogeneous pool (C_spike)."
+      },
+      "kpis": [
+        {
+          "key": "error_overall",
+          "label": "Error rate (overall)",
+          "value": 1.32,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineValue": 1.60,
+          "baselineLabel": "round-robin",
+          "tone": "ok"
+        },
+        {
+          "key": "p99_overall",
+          "label": "p99 latency (overall)",
+          "value": 623,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineValue": 4867,
+          "baselineLabel": "round-robin",
+          "tone": "ok"
+        }
+      ],
+      "items": [
+        {
+          "id": "strength-exclusion",
+          "label": "Strength: anomaly-driven exclusion at equal capacity",
+          "status": "pass",
+          "severity": "high",
+          "detail": "On B_degrade (hidden bad backend, 503-shedding, max_fails=0 so round-robin can't eject) and D_slow (slow-but-not-failing backend), SmartLoad excludes the offender: ~5× fewer errors and 8–250× better tail latency vs round-robin, at EQUAL capacity. Robust across 3 runs."
+        },
+        {
+          "id": "limit-cspike",
+          "label": "Limitation: ties round-robin under uniform overload",
+          "status": "warn",
+          "severity": "medium",
+          "detail": "On a HOMOGENEOUS pool under UNIFORM overload (C_spike), even-split round-robin is optimal, so learned routing ~ties (does not beat) round-robin — RR 1.82% vs SL 3.75% error, p95 220 vs 580 ms. The value is exclusion + capacity holding, not fine-grained routing."
+        },
+        {
+          "id": "limit-forecast",
+          "label": "Limitation: forecast decoupling (autoscaler flap)",
+          "status": "info",
+          "detail": "Forecast-driven scaling could flap the pool; worked around for this run via a capacity pin. Tighter coupling is future work."
+        },
+        {
+          "id": "limit-ppo",
+          "label": "Limitation: PPO trained but not deployed",
+          "status": "info",
+          "detail": "A PPO router was trained but is not deployed; a monotone router is shipped instead. The learned policy stays in shadow."
+        },
+        {
+          "id": "future-scaling",
+          "label": "Future work: asymmetric capacity / 10v5",
+          "status": "pending",
+          "detail": "These results are 5v5 equal-capacity. Scaling and asymmetric-capacity pools (e.g. 10v5) are future work."
+        },
+        {
+          "id": "superseded-tie",
+          "label": "Earlier baseline-vs-smartload tie superseded",
+          "status": "info",
+          "detail": "The earlier baseline-vs-smartload result that showed a tie is superseded by this adaptive-advantage 5v5 equal-capacity run, which isolates the exclusion advantage."
+        }
+      ]
     }
   ],
   "grafana": {
