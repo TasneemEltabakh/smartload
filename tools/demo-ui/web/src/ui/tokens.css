@@ -12,19 +12,24 @@
    ============================================================================ */
 
 :root {
-  /* ---- type families ---- */
+  /* ---- type families ----
+     Academic pairing: a refined serif for display/headings/figures (gravitas,
+     reads as a rigorous evaluation), a high-legibility sans for body/labels,
+     and a quiet mono reserved for code / provenance. Strong system fallbacks
+     keep it legible offline. */
+  --sl-font-display: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
   --sl-font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --sl-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sl-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* ---- type scale ---- */
-  --sl-text-xs: 10px;
-  --sl-text-sm: 11.5px;
-  --sl-text-base: 13.5px;
-  --sl-text-md: 15px;
-  --sl-text-lg: 17px;
-  --sl-text-xl: 21px;
-  --sl-text-2xl: 28px;
-  --sl-text-3xl: 38px;
+  /* ---- type scale (sized up for projector / large-screen legibility) ---- */
+  --sl-text-xs: 11px;
+  --sl-text-sm: 12.5px;
+  --sl-text-base: 14.5px;
+  --sl-text-md: 16px;
+  --sl-text-lg: 19px;
+  --sl-text-xl: 24px;
+  --sl-text-2xl: 32px;
+  --sl-text-3xl: 44px;
 
   /* ---- spacing (4px rhythm) ---- */
   --sl-space-1: 4px;

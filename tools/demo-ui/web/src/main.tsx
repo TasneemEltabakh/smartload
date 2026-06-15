@@ -7,8 +7,9 @@ import "./ui/tokens.css";
 import "./base.css";
 import { setTheme } from "./ui";
 
-// Dev Console ships with the Mission Control (dark) theme by default.
-setTheme("dark");
+// Presentation surface for a thesis defense: light, high-contrast, projector-
+// legible theme is the default and the primary design target.
+setTheme("light");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -1,0 +1,3067 @@
+{
+  "_comment": "SAMPLE bundle. Demonstrates the FULL contract shape (systems × parameter-configurations × metrics) for an arbitrary, open set of suites. Four suites carry real (stale, pre-VPS) local numbers; the other four are structurally complete but results-pending. This file is for design validation; the ACTIVE default (results.json) renders everything PENDING until the VPS run lands. See ../../RESULTS_INJECTION_GUIDE.md.",
+  "schemaVersion": 2,
+  "provenance": {
+    "runId": "local-sample-6619f7b",
+    "generatedUtc": "2026-06-14T04:34:59Z",
+    "host": "local (sample)",
+    "gitCommit": "6619f7b",
+    "kind": "sample",
+    "note": "Sample: real local numbers for 4 suites; the rest awaiting the VPS run. NOT final."
+  },
+  "groups": [
+    "System comparison",
+    "Routing",
+    "Autoscaling",
+    "Forecasting",
+    "Anomaly detection"
+  ],
+  "suites": [
+    {
+      "id": "baseline-vs-smartload",
+      "group": "System comparison",
+      "label": "SmartLoad vs plain NGINX",
+      "question": "Does SmartLoad's full decision plane beat plain NGINX round-robin on the same hardware, workload, and backend pool?",
+      "summary": "A/B comparison (#148): identical 5-backend pool and Locust load; only the decision plane (forecasting + anomaly-aware routing + autoscaling) is toggled between the two sides, which run serially. Broken down by load phase.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "No committed run yet — awaiting the VPS benchmark."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "smartload",
+      "primaryMetricKey": "p95",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "value": null,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineLabel": "plain NGINX"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineLabel": "plain NGINX"
+        },
+        {
+          "key": "rps",
+          "label": "Throughput",
+          "value": null,
+          "unit": "RPS",
+          "direction": "higher-better",
+          "baselineLabel": "plain NGINX"
+        }
+      ],
+      "systems": [
+        {
+          "id": "smartload",
+          "label": "SmartLoad (full plane)",
+          "role": "subject"
+        },
+        {
+          "id": "baseline",
+          "label": "Plain NGINX round-robin",
+          "role": "floor",
+          "hint": "no decision plane"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "Overall",
+          "isAggregate": true
+        },
+        {
+          "id": "A_ramp",
+          "label": "Ramp",
+          "params": {
+            "phase": "A_ramp"
+          }
+        },
+        {
+          "id": "A_hold",
+          "label": "Hold",
+          "params": {
+            "phase": "A_hold"
+          }
+        },
+        {
+          "id": "B_anomaly",
+          "label": "Anomaly",
+          "params": {
+            "phase": "B_anomaly"
+          }
+        },
+        {
+          "id": "C_sustain",
+          "label": "Sustain",
+          "params": {
+            "phase": "C_sustain"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "p50",
+          "label": "p50 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p99",
+          "label": "p99 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "rps",
+          "label": "Throughput",
+          "unit": "RPS",
+          "direction": "higher-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "p95-by-side",
+          "title": "p95 latency by side",
+          "kind": "bars",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "bars": []
+        },
+        {
+          "key": "p95-by-phase",
+          "title": "p95 latency by load phase",
+          "kind": "lines",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "series": []
+        }
+      ]
+    },
+    {
+      "id": "adaptive-bench",
+      "group": "System comparison",
+      "label": "Adaptive scaling (RQ4)",
+      "question": "Does forecast-driven scale-out keep latency and errors flat as load ramps, spikes, and an anomaly hits?",
+      "summary": "Single-stack demonstration across a five-phase load curve (bootstrap → forecast burst → sustain → anomaly scale-down → steady), measuring how the pool grows ahead of saturation and recovers. One system, broken down by phase.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "No committed run yet — awaiting the VPS benchmark."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "smartload",
+      "primaryMetricKey": "p95",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "value": null,
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "replica_count",
+          "label": "Peak pool size",
+          "value": null,
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "systems": [
+        {
+          "id": "smartload",
+          "label": "SmartLoad (full plane)",
+          "role": "subject"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "Overall",
+          "isAggregate": true
+        },
+        {
+          "id": "A_bootstrap",
+          "label": "Bootstrap",
+          "params": {
+            "phase": "A_bootstrap"
+          }
+        },
+        {
+          "id": "B_forecast_burst",
+          "label": "Forecast burst",
+          "params": {
+            "phase": "B_forecast_burst"
+          }
+        },
+        {
+          "id": "C_sustain",
+          "label": "Sustain",
+          "params": {
+            "phase": "C_sustain"
+          }
+        },
+        {
+          "id": "D_anomaly_scale_down",
+          "label": "Anomaly + scale-down",
+          "params": {
+            "phase": "D_anomaly_scale_down"
+          }
+        },
+        {
+          "id": "E_steady",
+          "label": "Steady",
+          "params": {
+            "phase": "E_steady"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "p50",
+          "label": "p50 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p99",
+          "label": "p99 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "rps",
+          "label": "Throughput",
+          "unit": "RPS",
+          "direction": "higher-better"
+        },
+        {
+          "key": "replica_count",
+          "label": "Pool size",
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "p95-by-phase",
+          "title": "p95 latency by phase",
+          "kind": "lines",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "series": []
+        },
+        {
+          "key": "pool-by-phase",
+          "title": "Pool size by phase",
+          "kind": "lines",
+          "yLabel": "pool size",
+          "yUnit": "",
+          "series": []
+        }
+      ]
+    },
+    {
+      "id": "rl-routing",
+      "group": "Routing",
+      "label": "RL routing (honest null result)",
+      "question": "Does the trained PPO routing policy beat classical load-balancing baselines on tail latency and SLA-violation, across backend scenarios?",
+      "summary": "Closed-loop causal M/G/c simulation, 5 eval seed-bands × 40 episodes × 128 windows. Ranking key is p95 + SLA-violation (lower is better); reward is diagnostic only. Broken down by backend scenario.",
+      "provenance": {
+        "runId": "20260614T045152Z",
+        "generatedUtc": "2026-06-14T04:51:52Z",
+        "host": "local (pre-VPS)",
+        "gitCommit": "6619f7b",
+        "kind": "stale",
+        "note": "experiments/rl-routing-bench/results/20260614T045152Z"
+      },
+      "verdict": {
+        "tone": "warn",
+        "text": "PPO trails the classical baselines on latency and SLA-violation; least-response-time leads. Shadow only."
+      },
+      "subjectId": "policy_shipped",
+      "primaryMetricKey": "p95",
+      "defaultConfigId": "homogeneous",
+      "kpis": [
+        {
+          "key": "slaviol",
+          "label": "SLA-violation rate",
+          "value": 67.5,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineValue": 32.5,
+          "baselineLabel": "round-robin",
+          "hint": "homogeneous load",
+          "tone": "bad"
+        },
+        {
+          "key": "p50",
+          "label": "Median latency",
+          "value": 318,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineValue": 28.4,
+          "baselineLabel": "round-robin",
+          "tone": "bad"
+        },
+        {
+          "key": "hhi",
+          "label": "Routing concentration (HHI)",
+          "value": 0.52,
+          "unit": "",
+          "direction": "lower-better",
+          "baselineValue": 0.28,
+          "baselineLabel": "round-robin",
+          "hint": "0 = uniform, 1 = all-to-one",
+          "tone": "bad"
+        }
+      ],
+      "systems": [
+        {
+          "id": "policy_shipped",
+          "label": "PPO policy",
+          "role": "subject",
+          "hint": "RL, shadow mode"
+        },
+        {
+          "id": "round_robin",
+          "label": "Round-robin",
+          "role": "baseline",
+          "hint": "nginx-native"
+        },
+        {
+          "id": "least_connections",
+          "label": "Least-connections",
+          "role": "baseline",
+          "hint": "nginx-native"
+        },
+        {
+          "id": "least_response_time",
+          "label": "Least-response-time",
+          "role": "baseline",
+          "hint": "classical"
+        },
+        {
+          "id": "random_shadow",
+          "label": "Random",
+          "role": "floor",
+          "hint": "sanity baseline"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "homogeneous",
+          "label": "Homogeneous",
+          "params": {
+            "scenario": "homogeneous"
+          }
+        },
+        {
+          "id": "heterogeneous",
+          "label": "Heterogeneous",
+          "params": {
+            "scenario": "heterogeneous"
+          }
+        },
+        {
+          "id": "degrading",
+          "label": "Degrading",
+          "params": {
+            "scenario": "degrading"
+          }
+        },
+        {
+          "id": "near-idle",
+          "label": "Near-idle",
+          "params": {
+            "scenario": "near-idle"
+          }
+        },
+        {
+          "id": "held_out_dual_degrade",
+          "label": "Held-out dual-degrade",
+          "params": {
+            "scenario": "held_out_dual_degrade"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "unit": "ms",
+          "direction": "lower-better",
+          "hint": "95th-percentile served latency (ranking key)"
+        },
+        {
+          "key": "slaviol",
+          "label": "SLA-violation",
+          "unit": "%",
+          "direction": "lower-better",
+          "hint": "Fraction of windows over the 200 ms SLA"
+        },
+        {
+          "key": "p50",
+          "label": "p50 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "shed",
+          "label": "Load shed",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "hhi",
+          "label": "Concentration (HHI)",
+          "unit": "",
+          "direction": "lower-better"
+        }
+      ],
+      "matrix": {
+        "policy_shipped": {
+          "homogeneous": {
+            "p95": {
+              "value": 453.1,
+              "ci95": 3.7
+            },
+            "slaviol": {
+              "value": 67.5,
+              "ci95": 5.3
+            },
+            "p50": {
+              "value": 318,
+              "ci95": 15.5
+            },
+            "shed": {
+              "value": 20.6,
+              "ci95": 2.1
+            },
+            "hhi": {
+              "value": 0.517
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 736,
+              "ci95": 17.1
+            },
+            "slaviol": {
+              "value": 60.7,
+              "ci95": 6.4
+            },
+            "p50": {
+              "value": 350,
+              "ci95": 45.4
+            },
+            "shed": {
+              "value": 21.2,
+              "ci95": 2.4
+            },
+            "hhi": {
+              "value": 0.517
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 1037.3,
+              "ci95": 51.3
+            },
+            "slaviol": {
+              "value": 61.3,
+              "ci95": 3.9
+            },
+            "p50": {
+              "value": 368.8,
+              "ci95": 25
+            },
+            "shed": {
+              "value": 21.4,
+              "ci95": 2.2
+            },
+            "hhi": {
+              "value": 0.518
+            }
+          },
+          "near-idle": {
+            "p95": {
+              "value": 57.2,
+              "ci95": 4
+            },
+            "slaviol": {
+              "value": 0.8,
+              "ci95": 0.3
+            },
+            "p50": {
+              "value": 25.6,
+              "ci95": 2.8
+            },
+            "shed": {
+              "value": 0.3,
+              "ci95": 0.1
+            },
+            "hhi": {
+              "value": 0.513
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2940,
+              "ci95": 139
+            },
+            "slaviol": {
+              "value": 71.2,
+              "ci95": 5.6
+            },
+            "p50": {
+              "value": 1110.4,
+              "ci95": 77.9
+            },
+            "shed": {
+              "value": 23.8,
+              "ci95": 2
+            },
+            "hhi": {
+              "value": 0.519
+            }
+          }
+        },
+        "round_robin": {
+          "homogeneous": {
+            "p95": {
+              "value": 511.6,
+              "ci95": 6
+            },
+            "slaviol": {
+              "value": 32.5,
+              "ci95": 6.3
+            },
+            "p50": {
+              "value": 28.4,
+              "ci95": 1.7
+            },
+            "shed": {
+              "value": 8.6,
+              "ci95": 1.5
+            },
+            "hhi": {
+              "value": 0.282
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 823.9,
+              "ci95": 57.7
+            },
+            "slaviol": {
+              "value": 40.4,
+              "ci95": 4.8
+            },
+            "p50": {
+              "value": 57.3,
+              "ci95": 17.9
+            },
+            "shed": {
+              "value": 8.9,
+              "ci95": 1.4
+            },
+            "hhi": {
+              "value": 0.289
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 1057.7,
+              "ci95": 47.2
+            },
+            "slaviol": {
+              "value": 44.7,
+              "ci95": 4.8
+            },
+            "p50": {
+              "value": 118.2,
+              "ci95": 89.5
+            },
+            "shed": {
+              "value": 11.3,
+              "ci95": 1.8
+            },
+            "hhi": {
+              "value": 0.297
+            }
+          },
+          "near-idle": {
+            "p95": {
+              "value": 85.4,
+              "ci95": 17.3
+            },
+            "slaviol": {
+              "value": 3,
+              "ci95": 0.4
+            },
+            "p50": {
+              "value": 26.1,
+              "ci95": 1.1
+            },
+            "shed": {
+              "value": 0.1,
+              "ci95": 0
+            },
+            "hhi": {
+              "value": 0.245
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 3023.3,
+              "ci95": 107
+            },
+            "slaviol": {
+              "value": 51,
+              "ci95": 2.7
+            },
+            "p50": {
+              "value": 333.1,
+              "ci95": 226.1
+            },
+            "shed": {
+              "value": 13.8,
+              "ci95": 1.4
+            },
+            "hhi": {
+              "value": 0.304
+            }
+          }
+        },
+        "least_connections": {
+          "homogeneous": {
+            "p95": {
+              "value": 511.6,
+              "ci95": 6
+            },
+            "slaviol": {
+              "value": 32.5,
+              "ci95": 6.3
+            },
+            "p50": {
+              "value": 28.4,
+              "ci95": 1.7
+            },
+            "shed": {
+              "value": 8.6,
+              "ci95": 1.5
+            },
+            "hhi": {
+              "value": 0.282
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 821,
+              "ci95": 53.7
+            },
+            "slaviol": {
+              "value": 42.3,
+              "ci95": 5.3
+            },
+            "p50": {
+              "value": 68,
+              "ci95": 26.4
+            },
+            "shed": {
+              "value": 10.5,
+              "ci95": 1.7
+            },
+            "hhi": {
+              "value": 0.284
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 1045.7,
+              "ci95": 65.8
+            },
+            "slaviol": {
+              "value": 46.6,
+              "ci95": 4.6
+            },
+            "p50": {
+              "value": 152.5,
+              "ci95": 107.4
+            },
+            "shed": {
+              "value": 13.4,
+              "ci95": 1.9
+            },
+            "hhi": {
+              "value": 0.292
+            }
+          },
+          "near-idle": {
+            "p95": {
+              "value": 75,
+              "ci95": 18.5
+            },
+            "slaviol": {
+              "value": 3.2,
+              "ci95": 0.3
+            },
+            "p50": {
+              "value": 25.9,
+              "ci95": 1.2
+            },
+            "shed": {
+              "value": 0.3,
+              "ci95": 0.1
+            },
+            "hhi": {
+              "value": 0.246
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2697.3,
+              "ci95": 57.6
+            },
+            "slaviol": {
+              "value": 50.2,
+              "ci95": 2.2
+            },
+            "p50": {
+              "value": 320.1,
+              "ci95": 254.7
+            },
+            "shed": {
+              "value": 14.8,
+              "ci95": 1.3
+            },
+            "hhi": {
+              "value": 0.296
+            }
+          }
+        },
+        "least_response_time": {
+          "homogeneous": {
+            "p95": {
+              "value": 248,
+              "ci95": 204.8
+            },
+            "slaviol": {
+              "value": 4.8,
+              "ci95": 1.5
+            },
+            "p50": {
+              "value": 23.8,
+              "ci95": 0.6
+            },
+            "shed": {
+              "value": 0.1,
+              "ci95": 0.1
+            },
+            "hhi": {
+              "value": 0.2
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 1061.4,
+              "ci95": 61.8
+            },
+            "slaviol": {
+              "value": 38.4,
+              "ci95": 5.5
+            },
+            "p50": {
+              "value": 32.3,
+              "ci95": 2.5
+            },
+            "shed": {
+              "value": 11.4,
+              "ci95": 1.6
+            },
+            "hhi": {
+              "value": 0.373
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 1081.1,
+              "ci95": 102
+            },
+            "slaviol": {
+              "value": 39.6,
+              "ci95": 5.1
+            },
+            "p50": {
+              "value": 34.2,
+              "ci95": 3.7
+            },
+            "shed": {
+              "value": 13.3,
+              "ci95": 2.1
+            },
+            "hhi": {
+              "value": 0.392
+            }
+          },
+          "near-idle": {
+            "p95": {
+              "value": 31,
+              "ci95": 2.5
+            },
+            "slaviol": {
+              "value": 0.1,
+              "ci95": 0
+            },
+            "p50": {
+              "value": 20.4,
+              "ci95": 0.3
+            },
+            "shed": {
+              "value": 0,
+              "ci95": 0
+            },
+            "hhi": {
+              "value": 0.265
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2665.8,
+              "ci95": 57.8
+            },
+            "slaviol": {
+              "value": 47.2,
+              "ci95": 3.4
+            },
+            "p50": {
+              "value": 263.7,
+              "ci95": 319.1
+            },
+            "shed": {
+              "value": 16.3,
+              "ci95": 1.4
+            },
+            "hhi": {
+              "value": 0.362
+            }
+          }
+        },
+        "random_shadow": {
+          "homogeneous": {
+            "p95": {
+              "value": 648.8,
+              "ci95": 16.4
+            },
+            "slaviol": {
+              "value": 35.3,
+              "ci95": 5.8
+            },
+            "p50": {
+              "value": 30.5,
+              "ci95": 2.8
+            },
+            "shed": {
+              "value": 9.9,
+              "ci95": 1.7
+            },
+            "hhi": {
+              "value": 0.31
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 860.3,
+              "ci95": 52.6
+            },
+            "slaviol": {
+              "value": 41.8,
+              "ci95": 5.1
+            },
+            "p50": {
+              "value": 65.3,
+              "ci95": 24.9
+            },
+            "shed": {
+              "value": 10.6,
+              "ci95": 1.6
+            },
+            "hhi": {
+              "value": 0.313
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 1077.5,
+              "ci95": 59.3
+            },
+            "slaviol": {
+              "value": 46.1,
+              "ci95": 4.3
+            },
+            "p50": {
+              "value": 125.8,
+              "ci95": 94.7
+            },
+            "shed": {
+              "value": 12.9,
+              "ci95": 1.8
+            },
+            "hhi": {
+              "value": 0.32
+            }
+          },
+          "near-idle": {
+            "p95": {
+              "value": 65.7,
+              "ci95": 14.7
+            },
+            "slaviol": {
+              "value": 2.7,
+              "ci95": 0.4
+            },
+            "p50": {
+              "value": 26,
+              "ci95": 1.1
+            },
+            "shed": {
+              "value": 0.2,
+              "ci95": 0
+            },
+            "hhi": {
+              "value": 0.265
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2990.4,
+              "ci95": 116.2
+            },
+            "slaviol": {
+              "value": 52.4,
+              "ci95": 3.1
+            },
+            "p50": {
+              "value": 421.4,
+              "ci95": 278.2
+            },
+            "shed": {
+              "value": 15.4,
+              "ci95": 1.5
+            },
+            "hhi": {
+              "value": 0.33
+            }
+          }
+        }
+      },
+      "charts": [
+        {
+          "key": "p95-by-router",
+          "title": "p95 latency by router (homogeneous)",
+          "kind": "bars",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "bars": [
+            {
+              "label": "PPO (shipped)",
+              "value": 453.1
+            },
+            {
+              "label": "Round-robin",
+              "value": 511.6
+            },
+            {
+              "label": "Least-connections",
+              "value": 511.6
+            },
+            {
+              "label": "Least-response-time",
+              "value": 248,
+              "emphasis": true
+            },
+            {
+              "label": "Random",
+              "value": 648.8
+            }
+          ],
+          "note": "Lower is better. The emphasised bar is the leader — a classical policy, not the PPO router."
+        },
+        {
+          "key": "slaviol-by-router",
+          "title": "SLA-violation by router (homogeneous)",
+          "kind": "bars",
+          "yLabel": "SLA-violation",
+          "yUnit": "%",
+          "direction": "lower-better",
+          "bars": [
+            {
+              "label": "PPO (shipped)",
+              "value": 67.5
+            },
+            {
+              "label": "Round-robin",
+              "value": 32.5
+            },
+            {
+              "label": "Least-connections",
+              "value": 32.5
+            },
+            {
+              "label": "Least-response-time",
+              "value": 4.8,
+              "emphasis": true
+            },
+            {
+              "label": "Random",
+              "value": 35.3
+            }
+          ],
+          "note": "The PPO policy violates the 200 ms SLA roughly twice as often as round-robin — the honest finding behind demoting it to shadow."
+        }
+      ]
+    },
+    {
+      "id": "autoscaler-strategy",
+      "group": "Autoscaling",
+      "label": "Autoscaler strategy",
+      "question": "Does the target controller beat the previous ±1 rule, the naive threshold, and static provisioning, across load shapes?",
+      "summary": "Provisioning strategies on the same per-(profile, seed) demand realisation; every dynamic strategy calls the shipped decide rule, only the controller and signal change. Aggregate plus per-profile breakdown.",
+      "provenance": {
+        "runId": "improved",
+        "generatedUtc": "2026-06-14T04:11:00Z",
+        "host": "local (pre-VPS)",
+        "gitCommit": "6619f7b",
+        "kind": "stale",
+        "note": "experiments/autoscaler-strategy-bench/results/improved"
+      },
+      "verdict": {
+        "tone": "ok",
+        "text": "Target controller lifts SLA 77.2% → 98.3% on the same forecast — past the old oracle (95.5%)."
+      },
+      "subjectId": "C2",
+      "primaryMetricKey": "sla",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "sla",
+          "label": "SLA met",
+          "value": 98.3,
+          "unit": "%",
+          "direction": "higher-better",
+          "baselineValue": 77.2,
+          "baselineLabel": "old ±1 rule",
+          "hint": "same moving-average signal",
+          "tone": "ok"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "value": 5592,
+          "unit": "RPS",
+          "direction": "lower-better",
+          "baselineValue": 29790,
+          "baselineLabel": "old ±1 rule",
+          "tone": "ok"
+        },
+        {
+          "key": "overprov",
+          "label": "Over-provision cost",
+          "value": 2188,
+          "unit": "inst·s",
+          "direction": "lower-better",
+          "baselineValue": 7844,
+          "baselineLabel": "static SLA-optimal",
+          "tone": "ok"
+        }
+      ],
+      "systems": [
+        {
+          "id": "C2",
+          "label": "Target controller + MA forecast",
+          "role": "subject",
+          "hint": "shipped controller"
+        },
+        {
+          "id": "S2",
+          "label": "Old ±1 rule + MA forecast",
+          "role": "baseline",
+          "hint": "previous default"
+        },
+        {
+          "id": "S5",
+          "label": "Naive utilisation threshold",
+          "role": "baseline"
+        },
+        {
+          "id": "C4",
+          "label": "Target controller + trend forecast",
+          "role": "candidate"
+        },
+        {
+          "id": "C1",
+          "label": "Target controller + oracle",
+          "role": "ceiling",
+          "hint": "perfect foresight"
+        },
+        {
+          "id": "S4max",
+          "label": "Static N=max",
+          "role": "reference",
+          "hint": "SLA-optimal, cost-worst"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "steady",
+          "label": "Steady",
+          "params": {
+            "profile": "steady"
+          }
+        },
+        {
+          "id": "diurnal",
+          "label": "Diurnal",
+          "params": {
+            "profile": "diurnal"
+          }
+        },
+        {
+          "id": "ramp",
+          "label": "Ramp",
+          "params": {
+            "profile": "ramp"
+          }
+        },
+        {
+          "id": "spike",
+          "label": "Spike",
+          "params": {
+            "profile": "spike"
+          }
+        },
+        {
+          "id": "sawtooth",
+          "label": "Sawtooth",
+          "params": {
+            "profile": "sawtooth"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "sla",
+          "label": "SLA met",
+          "unit": "%",
+          "direction": "higher-better"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "overprov",
+          "label": "Over-provision",
+          "unit": "inst·s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "actions",
+          "label": "Scale actions",
+          "unit": "",
+          "direction": "lower-better"
+        },
+        {
+          "key": "settling",
+          "label": "Settling time",
+          "unit": "s",
+          "direction": "lower-better"
+        }
+      ],
+      "matrix": {
+        "C2": {
+          "aggregate": {
+            "sla": {
+              "value": 98.3,
+              "ci95": 0.4
+            },
+            "unmet": {
+              "value": 5592,
+              "ci95": 2273
+            },
+            "overprov": {
+              "value": 2188,
+              "ci95": 156
+            },
+            "actions": {
+              "value": 11.1,
+              "ci95": 1.7
+            },
+            "settling": {
+              "value": 0.1,
+              "ci95": 0
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 99.7,
+              "ci95": 0.2
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 98.3,
+              "ci95": 0.3
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 99.9,
+              "ci95": 0.1
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 96.4,
+              "ci95": 0.1
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 98.8,
+              "ci95": 0.2
+            }
+          }
+        },
+        "S2": {
+          "aggregate": {
+            "sla": {
+              "value": 77.2,
+              "ci95": 2.6
+            },
+            "unmet": {
+              "value": 29790,
+              "ci95": 6471
+            },
+            "overprov": {
+              "value": 534,
+              "ci95": 88
+            },
+            "actions": {
+              "value": 14.7,
+              "ci95": 1.7
+            },
+            "settling": {
+              "value": 1,
+              "ci95": 0.1
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 69.3,
+              "ci95": 1.8
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 78.4,
+              "ci95": 0.9
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 81,
+              "ci95": 0.7
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88,
+              "ci95": 0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 62.2,
+              "ci95": 0.3
+            }
+          }
+        },
+        "S5": {
+          "aggregate": {
+            "sla": {
+              "value": 96.4,
+              "ci95": 1.4
+            },
+            "unmet": {
+              "value": 11559,
+              "ci95": 5033
+            },
+            "overprov": {
+              "value": 4182,
+              "ci95": 271
+            },
+            "actions": {
+              "value": 6.8,
+              "ci95": 1.2
+            },
+            "settling": {
+              "value": 0.3,
+              "ci95": 0.1
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 99.6,
+              "ci95": 0.3
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 99.5,
+              "ci95": 0.1
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.5,
+              "ci95": 0.1
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          }
+        },
+        "C4": {
+          "aggregate": {
+            "sla": {
+              "value": 99.2,
+              "ci95": 0.2
+            },
+            "unmet": {
+              "value": 2745,
+              "ci95": 1094
+            },
+            "overprov": {
+              "value": 2404,
+              "ci95": 119
+            },
+            "actions": {
+              "value": 24.5,
+              "ci95": 3.5
+            },
+            "settling": {
+              "value": 0,
+              "ci95": 0
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 99.7,
+              "ci95": 0.2
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 99.4,
+              "ci95": 0.2
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 99.4,
+              "ci95": 0.3
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 98.5,
+              "ci95": 0.4
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 99.8,
+              "ci95": 0.2
+            }
+          }
+        },
+        "C1": {
+          "aggregate": {
+            "sla": {
+              "value": 99.9,
+              "ci95": 0.1
+            },
+            "unmet": {
+              "value": 56,
+              "ci95": 33
+            },
+            "overprov": {
+              "value": 2837,
+              "ci95": 116
+            },
+            "actions": {
+              "value": 9.6,
+              "ci95": 1.9
+            },
+            "settling": {
+              "value": 0,
+              "ci95": 0
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 99.7,
+              "ci95": 0.2
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 99.6,
+              "ci95": 0.1
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          }
+        },
+        "S4max": {
+          "aggregate": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            },
+            "unmet": {
+              "value": 0,
+              "ci95": 0
+            },
+            "overprov": {
+              "value": 7844,
+              "ci95": 764
+            },
+            "actions": {
+              "value": 0,
+              "ci95": 0
+            },
+            "settling": {
+              "value": 0,
+              "ci95": 0
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 100,
+              "ci95": 0
+            }
+          }
+        }
+      },
+      "charts": [
+        {
+          "key": "sla-by-strategy",
+          "title": "SLA% by strategy (all profiles)",
+          "kind": "bars",
+          "yLabel": "SLA met",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "bars": [
+            {
+              "label": "Old ±1 + MA",
+              "value": 77.2
+            },
+            {
+              "label": "Naive threshold",
+              "value": 96.4
+            },
+            {
+              "label": "Controller + MA",
+              "value": 98.3,
+              "emphasis": true
+            },
+            {
+              "label": "Controller + trend",
+              "value": 99.2
+            },
+            {
+              "label": "Controller + oracle",
+              "value": 99.9,
+              "reference": true
+            }
+          ],
+          "note": "Higher is better. The controller, on the same MA signal, clears the old perfect-foresight oracle."
+        },
+        {
+          "key": "sla-by-profile",
+          "title": "SLA% by profile — controller vs old rule",
+          "kind": "lines",
+          "xLabel": "profile",
+          "yLabel": "SLA met",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "series": [
+            {
+              "id": "C2",
+              "label": "Target controller + MA",
+              "emphasis": true,
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 99.7
+                },
+                {
+                  "x": "diurnal",
+                  "y": 98.3
+                },
+                {
+                  "x": "ramp",
+                  "y": 99.9
+                },
+                {
+                  "x": "spike",
+                  "y": 96.4
+                },
+                {
+                  "x": "sawtooth",
+                  "y": 98.8
+                }
+              ]
+            },
+            {
+              "id": "S2",
+              "label": "Old ±1 rule + MA",
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 69.3
+                },
+                {
+                  "x": "diurnal",
+                  "y": 78.4
+                },
+                {
+                  "x": "ramp",
+                  "y": 81
+                },
+                {
+                  "x": "spike",
+                  "y": 88
+                },
+                {
+                  "x": "sawtooth",
+                  "y": 62.2
+                }
+              ]
+            }
+          ],
+          "note": "The lift holds across every load shape."
+        }
+      ]
+    },
+    {
+      "id": "forecasting-engine",
+      "group": "Forecasting",
+      "label": "Forecasting engine",
+      "question": "Does the candidate forecaster beat the shipped moving-average and the persistence floor on next-bucket accuracy, across load shapes?",
+      "summary": "Single-step (next 5-min bucket) forecast accuracy, rolling-origin / walk-forward, 5 seeds × 4 profiles. Every engine is handed the identical history window at each origin. Aggregate plus per-profile.",
+      "provenance": {
+        "runId": "candidate-v1",
+        "generatedUtc": "2026-06-14T04:05:11Z",
+        "host": "local (pre-VPS)",
+        "gitCommit": "6619f7b",
+        "kind": "stale",
+        "note": "experiments/forecasting-engine-bench/results/candidate-v1"
+      },
+      "verdict": {
+        "tone": "ok",
+        "text": "Harmonic-residual wins every error metric (MAPE 5.4% vs 10.5%) and is the only calibrated band."
+      },
+      "subjectId": "harmonic_residual",
+      "primaryMetricKey": "mape",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "mape",
+          "label": "MAPE",
+          "value": 5.4,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineValue": 10.5,
+          "baselineLabel": "shipped moving-average",
+          "hint": "1-step ahead, all profiles",
+          "tone": "ok"
+        },
+        {
+          "key": "coverage",
+          "label": "95% band coverage",
+          "value": 0.955,
+          "unit": "",
+          "direction": "target",
+          "hint": "calibration target 0.95",
+          "tone": "ok"
+        },
+        {
+          "key": "mae",
+          "label": "MAE",
+          "value": 3.47,
+          "unit": "RPS",
+          "direction": "lower-better",
+          "baselineValue": 6.71,
+          "baselineLabel": "shipped moving-average",
+          "tone": "ok"
+        }
+      ],
+      "systems": [
+        {
+          "id": "harmonic_residual",
+          "label": "Harmonic-residual",
+          "role": "subject",
+          "hint": "candidate"
+        },
+        {
+          "id": "moving_average",
+          "label": "Moving-average",
+          "role": "baseline",
+          "hint": "shipped"
+        },
+        {
+          "id": "arima_serving",
+          "label": "ARIMA(2,0,2)",
+          "role": "baseline",
+          "hint": "shipped, out-of-distribution"
+        },
+        {
+          "id": "naive",
+          "label": "Naive (persistence)",
+          "role": "floor",
+          "hint": "not shipped"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "steady",
+          "label": "Steady",
+          "params": {
+            "profile": "steady"
+          }
+        },
+        {
+          "id": "diurnal",
+          "label": "Diurnal",
+          "params": {
+            "profile": "diurnal"
+          }
+        },
+        {
+          "id": "spiky",
+          "label": "Spiky",
+          "params": {
+            "profile": "spiky"
+          }
+        },
+        {
+          "id": "ramp",
+          "label": "Ramp",
+          "params": {
+            "profile": "ramp"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "mape",
+          "label": "MAPE",
+          "unit": "%",
+          "direction": "lower-better",
+          "hint": "Mean absolute % error — headline KPI (gate < 20%)"
+        },
+        {
+          "key": "smape",
+          "label": "sMAPE",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "rmse",
+          "label": "RMSE",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "mae",
+          "label": "MAE",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "coverage",
+          "label": "95% coverage",
+          "unit": "",
+          "direction": "target",
+          "target": 0.95
+        },
+        {
+          "key": "latency",
+          "label": "Forecast latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        }
+      ],
+      "matrix": {
+        "harmonic_residual": {
+          "aggregate": {
+            "mape": {
+              "value": 5.4,
+              "ci95": 1.2
+            },
+            "smape": {
+              "value": 5.4,
+              "ci95": 1.2
+            },
+            "rmse": {
+              "value": 8.29,
+              "ci95": 5.14
+            },
+            "mae": {
+              "value": 3.47,
+              "ci95": 0.69
+            },
+            "coverage": {
+              "value": 0.955,
+              "ci95": 0.005
+            },
+            "latency": {
+              "value": 0.7
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 4.8,
+              "ci95": 0.2
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 7.2,
+              "ci95": 0.4
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 7.8,
+              "ci95": 1.1
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 1.6,
+              "ci95": 0.1
+            }
+          }
+        },
+        "moving_average": {
+          "aggregate": {
+            "mape": {
+              "value": 10.5,
+              "ci95": 3.9
+            },
+            "smape": {
+              "value": 10.2,
+              "ci95": 3.6
+            },
+            "rmse": {
+              "value": 11.52,
+              "ci95": 5.86
+            },
+            "mae": {
+              "value": 6.71,
+              "ci95": 2.09
+            },
+            "coverage": {
+              "value": 0.57,
+              "ci95": 0.09
+            },
+            "latency": {
+              "value": 0.01
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 4.8,
+              "ci95": 0.1
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 18,
+              "ci95": 0.9
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 15.7,
+              "ci95": 13.4
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 3.3,
+              "ci95": 0.1
+            }
+          }
+        },
+        "arima_serving": {
+          "aggregate": {
+            "mape": {
+              "value": 8.9,
+              "ci95": 1.1
+            },
+            "smape": {
+              "value": 9.2,
+              "ci95": 1.1
+            },
+            "rmse": {
+              "value": 13.36,
+              "ci95": 5.61
+            },
+            "mae": {
+              "value": 8.67,
+              "ci95": 3.48
+            },
+            "coverage": {
+              "value": 0.759,
+              "ci95": 0.184
+            },
+            "latency": {
+              "value": 57.12,
+              "ci95": 0.17
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 6.2,
+              "ci95": 0.3
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 8.9,
+              "ci95": 0.6
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 9.9,
+              "ci95": 4.1
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 10.5,
+              "ci95": 0
+            }
+          }
+        },
+        "naive": {
+          "aggregate": {
+            "mape": {
+              "value": 7.5,
+              "ci95": 1.7
+            },
+            "smape": {
+              "value": 7.5,
+              "ci95": 1.7
+            },
+            "rmse": {
+              "value": 10.1,
+              "ci95": 5.7
+            },
+            "mae": {
+              "value": 5.02,
+              "ci95": 1.2
+            },
+            "coverage": {
+              "value": null
+            },
+            "latency": {
+              "value": 0.34
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 6.8,
+              "ci95": 0.5
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 10,
+              "ci95": 0.8
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 10.9,
+              "ci95": 2.6
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 2.3,
+              "ci95": 0.2
+            }
+          }
+        }
+      },
+      "charts": [
+        {
+          "key": "mape-by-engine",
+          "title": "MAPE by engine (all profiles)",
+          "kind": "bars",
+          "yLabel": "MAPE",
+          "yUnit": "%",
+          "direction": "lower-better",
+          "bars": [
+            {
+              "label": "Naive",
+              "value": 7.5
+            },
+            {
+              "label": "Moving-average",
+              "value": 10.5
+            },
+            {
+              "label": "ARIMA",
+              "value": 8.9
+            },
+            {
+              "label": "Harmonic-residual",
+              "value": 5.4,
+              "emphasis": true
+            }
+          ],
+          "note": "Lower is better. Harmonic-residual beats the shipped moving-average and the persistence floor."
+        },
+        {
+          "key": "mape-by-profile",
+          "title": "MAPE by load profile",
+          "kind": "lines",
+          "xLabel": "profile",
+          "yLabel": "MAPE",
+          "yUnit": "%",
+          "direction": "lower-better",
+          "series": [
+            {
+              "id": "harmonic_residual",
+              "label": "Harmonic-residual",
+              "emphasis": true,
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 4.8
+                },
+                {
+                  "x": "diurnal",
+                  "y": 7.2
+                },
+                {
+                  "x": "spiky",
+                  "y": 7.8
+                },
+                {
+                  "x": "ramp",
+                  "y": 1.6
+                }
+              ]
+            },
+            {
+              "id": "moving_average",
+              "label": "Moving-average",
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 4.8
+                },
+                {
+                  "x": "diurnal",
+                  "y": 18
+                },
+                {
+                  "x": "spiky",
+                  "y": 15.7
+                },
+                {
+                  "x": "ramp",
+                  "y": 3.3
+                }
+              ]
+            },
+            {
+              "id": "arima_serving",
+              "label": "ARIMA",
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 6.2
+                },
+                {
+                  "x": "diurnal",
+                  "y": 8.9
+                },
+                {
+                  "x": "spiky",
+                  "y": 9.9
+                },
+                {
+                  "x": "ramp",
+                  "y": 10.5
+                }
+              ]
+            },
+            {
+              "id": "naive",
+              "label": "Naive",
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 6.8
+                },
+                {
+                  "x": "diurnal",
+                  "y": 10
+                },
+                {
+                  "x": "spiky",
+                  "y": 10.9
+                },
+                {
+                  "x": "ramp",
+                  "y": 2.3
+                }
+              ]
+            }
+          ],
+          "note": "Moving-average degrades badly on the diurnal and spiky shapes; harmonic-residual stays low across all four."
+        }
+      ]
+    },
+    {
+      "id": "forecasting-downstream",
+      "group": "Forecasting",
+      "label": "Forecasting downstream",
+      "question": "Does a forward-projecting forecast deliver real end-to-end SLA value over a reactive trailing mean, across load shapes?",
+      "summary": "Each strategy drives the same shipped autoscaler decide rule in the same warm-up-aware loop; only the scalar signal differs, so any SLA gap is the forecast's. Aggregate plus per-profile, 8 seeds × 6 profiles.",
+      "provenance": {
+        "runId": "downstream-8seed",
+        "generatedUtc": "2026-06-14T04:34:59Z",
+        "host": "local (pre-VPS)",
+        "gitCommit": "6619f7b",
+        "kind": "stale",
+        "note": "experiments/forecasting-downstream-bench/results/downstream-8seed"
+      },
+      "verdict": {
+        "tone": "ok",
+        "text": "HR’s 20-second projection adds +6.3 pp SLA over reactive; the moving-average adds nothing."
+      },
+      "subjectId": "hr",
+      "primaryMetricKey": "sla",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "sla",
+          "label": "End-to-end SLA",
+          "value": 83.38,
+          "unit": "%",
+          "direction": "higher-better",
+          "baselineValue": 77.09,
+          "baselineLabel": "reactive / shipped MA",
+          "hint": "+6.3 pp vs reactive",
+          "tone": "ok"
+        },
+        {
+          "key": "gap",
+          "label": "Reactive→oracle gap closed",
+          "value": 34,
+          "unit": "%",
+          "direction": "higher-better",
+          "hint": "of the 18.6 pp headroom",
+          "tone": "ok"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "value": 24362,
+          "unit": "RPS",
+          "direction": "lower-better",
+          "baselineValue": 29766,
+          "baselineLabel": "reactive",
+          "tone": "ok"
+        }
+      ],
+      "systems": [
+        {
+          "id": "hr",
+          "label": "HR-predictive (20s ahead)",
+          "role": "subject",
+          "hint": "harmonic_residual"
+        },
+        {
+          "id": "ma",
+          "label": "MA-predictive",
+          "role": "baseline",
+          "hint": "shipped moving-average"
+        },
+        {
+          "id": "reactive",
+          "label": "Reactive (trailing mean)",
+          "role": "baseline",
+          "hint": "backward-looking floor"
+        },
+        {
+          "id": "oracle",
+          "label": "Perfect-foresight oracle",
+          "role": "ceiling"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "steady",
+          "label": "Steady",
+          "params": {
+            "profile": "steady"
+          }
+        },
+        {
+          "id": "diurnal",
+          "label": "Diurnal",
+          "params": {
+            "profile": "diurnal"
+          }
+        },
+        {
+          "id": "ramp",
+          "label": "Ramp",
+          "params": {
+            "profile": "ramp"
+          }
+        },
+        {
+          "id": "spike",
+          "label": "Spike",
+          "params": {
+            "profile": "spike"
+          }
+        },
+        {
+          "id": "sawtooth",
+          "label": "Sawtooth",
+          "params": {
+            "profile": "sawtooth"
+          }
+        },
+        {
+          "id": "burst",
+          "label": "Burst",
+          "params": {
+            "profile": "burst"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "sla",
+          "label": "SLA met",
+          "unit": "%",
+          "direction": "higher-better"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "overprov",
+          "label": "Over-provision",
+          "unit": "inst·s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "actions",
+          "label": "Scale actions",
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "matrix": {
+        "hr": {
+          "aggregate": {
+            "sla": {
+              "value": 83.38,
+              "ci95": 2.04
+            },
+            "unmet": {
+              "value": 24362,
+              "ci95": 7000
+            },
+            "overprov": {
+              "value": 634,
+              "ci95": 155
+            },
+            "actions": {
+              "value": 16,
+              "ci95": 1.7
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 68.73,
+              "ci95": 1.69
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 84.6,
+              "ci95": 0.61
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 85.85,
+              "ci95": 2.35
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 89.18,
+              "ci95": 1.04
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 83.92,
+              "ci95": 0.42
+            }
+          }
+        },
+        "ma": {
+          "aggregate": {
+            "sla": {
+              "value": 77.09,
+              "ci95": 2.58
+            },
+            "unmet": {
+              "value": 29766,
+              "ci95": 6479
+            },
+            "overprov": {
+              "value": 529,
+              "ci95": 89
+            },
+            "actions": {
+              "value": 14.4,
+              "ci95": 1.6
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 69.01,
+              "ci95": 2.22
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 78.93,
+              "ci95": 0.67
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 80.75,
+              "ci95": 0.53
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 62.44,
+              "ci95": 0.57
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 83.38,
+              "ci95": 0.44
+            }
+          }
+        },
+        "reactive": {
+          "aggregate": {
+            "sla": {
+              "value": 77.09,
+              "ci95": 2.58
+            },
+            "unmet": {
+              "value": 29766,
+              "ci95": 6479
+            },
+            "overprov": {
+              "value": 529,
+              "ci95": 89
+            },
+            "actions": {
+              "value": 14.4,
+              "ci95": 1.6
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 69.01,
+              "ci95": 2.22
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 78.93,
+              "ci95": 0.67
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 80.75,
+              "ci95": 0.53
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 62.44,
+              "ci95": 0.57
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 83.38,
+              "ci95": 0.44
+            }
+          }
+        },
+        "oracle": {
+          "aggregate": {
+            "sla": {
+              "value": 95.67,
+              "ci95": 1.55
+            },
+            "unmet": {
+              "value": 15808,
+              "ci95": 6718
+            },
+            "overprov": {
+              "value": 1016,
+              "ci95": 143
+            },
+            "actions": {
+              "value": 14.5,
+              "ci95": 1.4
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 99.61,
+              "ci95": 0.27
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 99.4,
+              "ci95": 0.2
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 99.07,
+              "ci95": 0.59
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 99.5,
+              "ci95": 0.24
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 88.41,
+              "ci95": 0.15
+            }
+          }
+        }
+      },
+      "charts": [
+        {
+          "key": "sla-by-signal",
+          "title": "End-to-end SLA% by scaling signal (all profiles)",
+          "kind": "bars",
+          "yLabel": "SLA met",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "bars": [
+            {
+              "label": "Reactive",
+              "value": 77.09
+            },
+            {
+              "label": "MA-predictive",
+              "value": 77.09
+            },
+            {
+              "label": "HR-predictive",
+              "value": 83.38,
+              "emphasis": true
+            },
+            {
+              "label": "Oracle",
+              "value": 95.67,
+              "reference": true
+            }
+          ],
+          "note": "Reactive and the shipped moving-average coincide to the digit — the MA carries no forward lead. HR projects ahead and gains."
+        },
+        {
+          "key": "hr-gain-by-profile",
+          "title": "Where forecasting pays — HR SLA gain vs reactive",
+          "kind": "lines",
+          "xLabel": "profile",
+          "yLabel": "Δ SLA",
+          "yUnit": "pp",
+          "direction": "higher-better",
+          "series": [
+            {
+              "id": "delta",
+              "label": "Δ SLA vs reactive (pp)",
+              "emphasis": true,
+              "points": [
+                {
+                  "x": "steady",
+                  "y": -0.28
+                },
+                {
+                  "x": "diurnal",
+                  "y": 5.67
+                },
+                {
+                  "x": "ramp",
+                  "y": 5.1
+                },
+                {
+                  "x": "spike",
+                  "y": 0.01
+                },
+                {
+                  "x": "sawtooth",
+                  "y": 26.74
+                },
+                {
+                  "x": "burst",
+                  "y": 0.53
+                }
+              ]
+            }
+          ],
+          "note": "The forecast pays most on the structured shapes (sawtooth, diurnal, ramp); on near-random spikes there is nothing to lead."
+        }
+      ]
+    },
+    {
+      "id": "anomaly-detection",
+      "group": "Anomaly detection",
+      "label": "Anomaly detection quality",
+      "question": "Which detector best identifies real anomalies (precision / recall / F1), and how much does the stability gate help, across injection profiles?",
+      "summary": "Six detectors scored on identical ground-truth-labelled synthetic traces (latency spikes, error bursts, gradual degradation, clean controls, plus held-out partial-failure and flappy-clean). Broken down by injection profile. Distinct from the engine-agreement bench: this measures detection quality on labelled sequences.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "No committed run yet — awaiting the VPS benchmark."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "trend_rule",
+      "primaryMetricKey": "f1",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "f1",
+          "label": "F1",
+          "value": null,
+          "unit": "",
+          "direction": "higher-better",
+          "baselineLabel": "threshold rule"
+        },
+        {
+          "key": "recall",
+          "label": "Recall",
+          "value": null,
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "fp_rate",
+          "label": "False-positive rate",
+          "value": null,
+          "unit": "",
+          "direction": "lower-better"
+        }
+      ],
+      "systems": [
+        {
+          "id": "trend_rule",
+          "label": "Trend rule",
+          "role": "subject",
+          "hint": "shipped default"
+        },
+        {
+          "id": "threshold",
+          "label": "Threshold rule",
+          "role": "baseline"
+        },
+        {
+          "id": "zscore",
+          "label": "Z-score (3σ)",
+          "role": "baseline"
+        },
+        {
+          "id": "isolation_forest_shipped",
+          "label": "Isolation forest (shipped)",
+          "role": "floor",
+          "hint": "degenerate band"
+        },
+        {
+          "id": "isolation_forest_retrained",
+          "label": "Isolation forest (retrained)",
+          "role": "candidate"
+        },
+        {
+          "id": "trend_forest",
+          "label": "Trend forest",
+          "role": "candidate"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "latency-spike",
+          "label": "Latency spike",
+          "params": {
+            "profile": "latency-spike"
+          }
+        },
+        {
+          "id": "error-burst",
+          "label": "Error burst",
+          "params": {
+            "profile": "error-burst"
+          }
+        },
+        {
+          "id": "gradual-degradation",
+          "label": "Gradual degradation",
+          "params": {
+            "profile": "gradual-degradation"
+          }
+        },
+        {
+          "id": "clean-control",
+          "label": "Clean control",
+          "params": {
+            "profile": "clean-control"
+          }
+        },
+        {
+          "id": "partial-failure",
+          "label": "Partial failure (held-out)",
+          "params": {
+            "profile": "partial-failure"
+          }
+        },
+        {
+          "id": "flappy-clean",
+          "label": "Flappy clean (held-out)",
+          "params": {
+            "profile": "flappy-clean"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "precision",
+          "label": "Precision",
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "recall",
+          "label": "Recall",
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "f1",
+          "label": "F1",
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "fp_rate",
+          "label": "False-positive rate",
+          "unit": "",
+          "direction": "lower-better"
+        },
+        {
+          "key": "detect_latency_s",
+          "label": "Detect latency",
+          "unit": "s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "recover_latency_s",
+          "label": "Recover latency",
+          "unit": "s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "pr_auc",
+          "label": "PR-AUC",
+          "unit": "",
+          "direction": "higher-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "f1-by-engine",
+          "title": "F1 by detector (all profiles)",
+          "kind": "bars",
+          "yLabel": "F1",
+          "yUnit": "",
+          "direction": "higher-better",
+          "bars": []
+        },
+        {
+          "key": "f1-by-profile",
+          "title": "F1 by injection profile",
+          "kind": "lines",
+          "yLabel": "F1",
+          "yUnit": "",
+          "direction": "higher-better",
+          "series": []
+        }
+      ]
+    },
+    {
+      "id": "anomaly-engine",
+      "group": "Anomaly detection",
+      "label": "Engine agreement (decision surface)",
+      "question": "Where does the trained IsolationForest's decision boundary agree with — and diverge from — the simple threshold rule across the feature space?",
+      "summary": "Both engines scored at every cell of a latency × error-rate feature grid. This measures decision-surface agreement, not detection quality — a sanity check on the production scaler and where the model adds or loses signal. Distinct from the detection-quality bench.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "No committed run yet — awaiting the VPS benchmark."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "isolation_forest",
+      "primaryMetricKey": "unhealthy_pct",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "agreement",
+          "label": "Engine agreement",
+          "value": null,
+          "unit": "%",
+          "direction": "higher-better",
+          "hint": "share of grid cells with matching verdicts"
+        },
+        {
+          "key": "cells",
+          "label": "Grid cells swept",
+          "value": null,
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "systems": [
+        {
+          "id": "isolation_forest",
+          "label": "Isolation forest",
+          "role": "subject",
+          "hint": "shipped model"
+        },
+        {
+          "id": "threshold",
+          "label": "Threshold rule",
+          "role": "baseline"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "Full grid",
+          "isAggregate": true
+        }
+      ],
+      "metrics": [
+        {
+          "key": "unhealthy_pct",
+          "label": "Cells flagged unhealthy",
+          "unit": "%",
+          "direction": "neutral"
+        },
+        {
+          "key": "healthy_pct",
+          "label": "Cells flagged healthy",
+          "unit": "%",
+          "direction": "neutral"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "verdict-distribution",
+          "title": "Verdict distribution by engine",
+          "kind": "bars",
+          "yLabel": "% of cells",
+          "yUnit": "%",
+          "bars": []
+        }
+      ]
+    }
+  ],
+  "audit": [
+    {
+      "key": "control-loop-audit",
+      "title": "Control-loop audit & hardening",
+      "summary": "Read-only code audit cross-checked against the live stack and on-disk bench artifacts, plus a fresh before/after benchmark. Each candidate root-cause was handed to an independent reviewer whose job was to refute it.",
+      "provenance": {
+        "runId": "audit-f92632c",
+        "generatedUtc": "2026-06-15T04:33:17Z",
+        "host": "local (pre-VPS)",
+        "gitCommit": "f92632c",
+        "kind": "stale",
+        "note": "audit/REPORT.md — before/after batches 20260615T040536Z → 20260615T043317Z"
+      },
+      "verdict": {
+        "tone": "ok",
+        "text": "A coupled autoscaler-flap + no-recovery-trap drove the storms; five fixes cut errors 54.5% → 0.39% (~140×)."
+      },
+      "kpis": [
+        {
+          "key": "errorrate",
+          "label": "Error rate after fixes",
+          "value": 0.39,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineValue": 54.5,
+          "baselineLabel": "before any fix",
+          "hint": "~140× reduction",
+          "tone": "ok"
+        },
+        {
+          "key": "findings",
+          "label": "Findings confirmed",
+          "value": 45,
+          "unit": "",
+          "direction": "neutral",
+          "hint": "survived adversarial review (10 rejected)",
+          "tone": "muted"
+        },
+        {
+          "key": "fixes",
+          "label": "Critical fixes shipped",
+          "value": 5,
+          "unit": "",
+          "direction": "neutral",
+          "hint": "D1, D2, D3 + spike hardening",
+          "tone": "ok"
+        }
+      ],
+      "stages": [
+        {
+          "label": "Before any fix",
+          "value": 54.5,
+          "unit": "%",
+          "tone": "bad"
+        },
+        {
+          "label": "D1 alone",
+          "value": 60.6,
+          "unit": "%",
+          "tone": "bad",
+          "note": "exposed the coupling — D1 alone made it worse"
+        },
+        {
+          "label": "D1+D2+D3 (max=5 saturation bench)",
+          "value": 44.1,
+          "unit": "%",
+          "tone": "warn",
+          "note": "deliberate saturation design, not a bug"
+        },
+        {
+          "label": "+ headroom (max=10)",
+          "value": 12.3,
+          "unit": "%",
+          "tone": "warn"
+        },
+        {
+          "label": "+ spike hardening",
+          "value": 0.39,
+          "unit": "%",
+          "tone": "ok",
+          "note": "all 3 runs 0.03–0.89%, active pool never below 4"
+        }
+      ],
+      "items": [
+        {
+          "id": "D1",
+          "label": "Autoscaler asymmetric demand signal → pool flap",
+          "status": "fixed",
+          "severity": "high",
+          "ref": "e290b46",
+          "detail": "Scale-out was sized on max(predicted, offered) but scale-in on predicted alone — a permanent 4↔5 flap dead-zone. Both directions now size on the same demand band."
+        },
+        {
+          "id": "D2",
+          "label": "Sidecar no-recovery trap",
+          "status": "fixed",
+          "severity": "critical",
+          "ref": "07f861d",
+          "detail": "A benched backend gets no traffic → emits no metrics → the detector never re-publishes healthy, so it stays benched forever. Recovery is now driven off registry membership."
+        },
+        {
+          "id": "D3",
+          "label": "Detector latency channel over-exclusion",
+          "status": "fixed",
+          "severity": "high",
+          "ref": "018061c",
+          "detail": "A load-driven latency ramp was scored as illness, cascading into pool collapse. A margin-primary peer-suppressor now downgrades a rising-together cohort to advisory."
+        },
+        {
+          "id": "harden",
+          "label": "Spike-transient hardening",
+          "status": "fixed",
+          "severity": "medium",
+          "ref": "671b9f2",
+          "detail": "Exclusion hysteresis + surge suppression keep the active pool from collapsing during a spike."
+        },
+        {
+          "id": "suspect",
+          "label": "Prime suspect: lb-sidecar is the root cause",
+          "status": "info",
+          "detail": "REFUTED — the sidecar holds no Docker lifecycle authority; it is the actuator and recovery bottleneck, not the originator of the storm."
+        },
+        {
+          "id": "k8s",
+          "label": "Kubernetes deferred during the measurement phase",
+          "status": "info",
+          "detail": "HPA / readiness probes would silently replace the very components under study (RL routing, peer-relative exclusion, forecast-band scaling), confounding the experiment."
+        }
+      ]
+    }
+  ],
+  "grafana": {
+    "baseUrl": "http://localhost:3000",
+    "embedQuery": "kiosk&theme=light&refresh=30s",
+    "note": "Live read-only dashboards. Requires the SmartLoad Docker stack to be running (docker compose up). Embedding and anonymous Viewer access are already enabled in docker-compose.yml; no login is needed.",
+    "dashboards": [
+      {
+        "uid": "smartload-overview",
+        "title": "Overview",
+        "description": "Request rate, latency percentiles, error rate, and aggregate backend status."
+      },
+      {
+        "uid": "smartload-anomaly",
+        "title": "Anomaly",
+        "description": "Per-backend health timeline, latency thresholds, error-rate tracking, and detector verdicts."
+      },
+      {
+        "uid": "smartload-forecast",
+        "title": "Forecast",
+        "description": "Predicted vs actual RPS, live forecasting error, and autoscaler decisions."
+      },
+      {
+        "uid": "smartload-scaling",
+        "title": "Scaling",
+        "description": "Throughput with scale events overlaid and the instance-count step series."
+      },
+      {
+        "uid": "smartload-rl-routing",
+        "title": "RL Routing",
+        "description": "Per-backend request share, latency, and error rate under the routing policy."
+      },
+      {
+        "uid": "smartload-redis",
+        "title": "Redis / control bus",
+        "description": "Control-bus health: connected clients, command rate, memory, and pub/sub channels."
+      }
+    ]
+  }
+}

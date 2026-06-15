@@ -1,41 +1,39 @@
 /**
  * tools/demo-ui/web/src/App.tsx
  * ──────────────────────────────
- * Router shell for the SmartLoad Dev Console. The DemoStateProvider hoists
- * polling (state / metrics / services) + SSE + toast so route changes don't
- * reset subscriptions. Each route renders inside the Layout's <Outlet />.
+ * Router shell for the SmartLoad benchmark & audit presentation. Strictly
+ * read-only: the ResultsProvider loads ONE results bundle (see results/load.ts)
+ * and every route renders from it. No run/simulate/mutation routes exist.
  *
- *   /            Dashboard   — stack health + live session metrics
- *   /benchmarks  Benchmarks  — adaptive-bench + baseline results (charts)
- *   /run         Run         — one-click load profiles + live monitor
- *   /controls    Controls    — algorithm / scenarios / manual fault injection
- *   /feed        Live Feed   — SSE decision-plane stream
+ *   /            Overview     — headline KPIs + verdicts across every suite
+ *   /benchmarks  Benchmarks   — systems × parameters comparisons (the centerpiece)
+ *   /audit       Audit        — control-loop audit & test results
+ *   /dashboards  Dashboards   — read-only Grafana embeds
  */
 
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import Layout from "./Layout";
+import Audit from "./pages/Audit";
 import Benchmarks from "./pages/Benchmarks";
-import Controls from "./pages/Controls";
-import Dashboard from "./pages/Dashboard";
-import Feed from "./pages/Feed";
-import Run from "./pages/Run";
-import { DemoStateProvider } from "./state/DemoStateContext";
-
+import Dashboards from "./pages/Dashboards";
+import Overview from "./pages/Overview";
+import { ResultsProvider } from "./state/ResultsContext";
 
 export default function App() {
   return (
-    <DemoStateProvider>
+    <ResultsProvider>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Dashboard />} />
+          <Route index element={<Overview />} />
           <Route path="benchmarks" element={<Benchmarks />} />
-          <Route path="run" element={<Run />} />
-          <Route path="controls" element={<Controls />} />
-          <Route path="feed" element={<Feed />} />
+          {/* legacy path */}
+          <Route path="comparisons" element={<Navigate to="/benchmarks" replace />} />
+          <Route path="audit" element={<Audit />} />
+          <Route path="dashboards" element={<Dashboards />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
-    </DemoStateProvider>
+    </ResultsProvider>
   );
 }
