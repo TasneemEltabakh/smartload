@@ -74,6 +74,27 @@ Read these sources first: `experiments/adaptive-advantage/README.md`,
    measurable advantage is **anomaly-driven exclusion + capacity holding**. (Keep the
    open-loop **PPO ≈ RR** null result wherever stated — it is correct.)
 
+   > ### ⚙️ A+B CONTINGENCY — apply edit #1 in QUALIFY mode ONLY IF the heterogeneous benchmark (#190) returns POSITIVE
+   > **Default = Track A (above): delete the "beats RR" claim.** Do this unless the
+   > heterogeneous-capacity benchmark (issue #190 / `experiments/heterogeneous-bench`) has
+   > been run **and shows learned/capacity-aware routing measurably beating round-robin on
+   > mixed-capacity backends.** If — and only if — that result exists and is positive,
+   > switch to **A+B**: do NOT delete the "beats RR" claim — **QUALIFY it.** The unified
+   > claim becomes a conditional: *routing intelligence helps **iff** backends differ; on
+   > identical (homogeneous) backends, even-split RR is optimal and the win is exclusion.*
+   > Concretely, in A+B mode:
+   > - Edit #1 sites: instead of "ties RR," write **"ties RR on a *homogeneous* pool, and
+   >   beats RR by «X% tail / «Y SLA-pp on a *heterogeneous* pool"** (numbers from #190).
+   > - Edit #3 (results): add a **second results table — heterogeneous capacity — beside
+   >   the equal-capacity one** (the homogeneous *tie* and the heterogeneous *win*, side by
+   >   side). This contrast *is* the A+B contribution.
+   > - **RQ2** may flip from null → "learned routing wins *on heterogeneous load*" (qualify
+   >   it; only if a trained policy actually wins — otherwise keep the monotone heuristic as
+   >   the winner and PPO as the offline null).
+   > - **Abstract / intro / conclusion:** upgrade the one-line claim to the conditional;
+   >   shrink Future Work accordingly (the hetero testbed is now done).
+   > - **Do NOT** invent heterogeneous numbers — if #190 hasn't run, stay in Track A.
+
 2. **★ Retire the `baseline-vs-smartload` bench; make `adaptive-advantage` (5v5
    equal-capacity, RUNS=3) canonical; re-point RQ1 & RQ3.**
    - `04c_impl_testing.tex` harnesses table — mark `baseline-vs-smartload` **superseded**
