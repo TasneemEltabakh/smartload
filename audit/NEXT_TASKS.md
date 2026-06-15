@@ -8,13 +8,28 @@ just launches it correctly (right branch, right file lane, read-the-issue-first)
 **Context (what already landed):** the spike-robustness fix stack + the ablation
 harness are committed in **PR #184** (`fix/anomaly-overload-exclusion`). Audit =
 `audit/REPORT.md`; claim/plan = `audit/THESIS_ROADMAP.md`; benchmark results =
-`experiments/adaptive-advantage/README.md`. The RUNS=2 **ablation** is the last thing
-this session runs — its per-fix contribution table will be posted to **#180** (closed)
-and folded into the benchmark README when it finishes.
+`experiments/adaptive-advantage/README.md`. The RUNS=2 **ablation** completed — its
+per-fix contribution table is in the benchmark README + on **#180** (closed): the
+**anti-concentration clamp is the dominant fix** (removing it costs **+15% C_spike
+errors**), the pin is secondary (+1.8), the `#3` guard/reset are insurance.
 
 **Base branch for all tasks:** `fix/anomaly-overload-exclusion` (PR #184) until it
 merges into `main`, then `main`. Always branch off it; open a PR per task linking its
 issue.
+
+**⚙️ Benchmark tooling — for ANY task that runs or creates a benchmark:** use the
+pre-built **`smartload-locust:latest`** image (Dockerfile:
+`experiments/adaptive-advantage/locust/Dockerfile`, locust **2.44.3** pinned).
+`experiments/adaptive-advantage/run.sh` already auto-builds + uses it. If you write a
+**new** harness, **reuse the same image** with a build-if-missing guard — do **NOT**
+`pip install locust` per side (slow + network-flaky):
+```bash
+LOCUST_IMG=smartload-locust:latest
+docker image inspect "$LOCUST_IMG" >/dev/null 2>&1 || \
+  docker build -q -t "$LOCUST_IMG" experiments/adaptive-advantage/locust
+docker run --rm --network smartload_smartload-net -v "$HERE/locust:/locust:ro" \
+  -v "$out:/out" "$LOCUST_IMG" locust -f /locust/locustfile.py ...   # no pip install
+```
 
 ---
 
@@ -61,7 +76,7 @@ finalize-the-thesis list short:
 ### AFTER the thesis — Future Work (cite as Future Work; **none gate finalizing**)
 
 **#185 · S4 — Clean 10v5 (scaling) benchmark** — *scoped out by D2 (no scaling claim); future work*
-> Work on GitHub issue **#185** (clean 10v5 run). Read the issue first. Run `MAX_BACKENDS=10 MIN_BACKENDS=1 ... RUNS=3 bash experiments/adaptive-advantage/run.sh`, capture per-phase + `scaling_audit.json`, add a clean 10v5 table to `experiments/adaptive-advantage/README.md`, and state plainly whether scale-out helps or the autoscaler flap (#183) churns capacity. **Run after #183 lands.** Touch only the README 10v5 section. Open a PR linking #185.
+> Work on GitHub issue **#185** (clean 10v5 run). Read the issue first. Run `MAX_BACKENDS=10 MIN_BACKENDS=1 ... RUNS=3 bash experiments/adaptive-advantage/run.sh` (it uses the pre-built `smartload-locust` image automatically), capture per-phase + `scaling_audit.json`, add a clean 10v5 table to `experiments/adaptive-advantage/README.md`, and state plainly whether scale-out helps or the autoscaler flap (#183) churns capacity. **Run after #183 lands.** Touch only the README 10v5 section. Open a PR linking #185.
 
 **#182 · T1.3 — Coupled-loop integration test** — *reproducibility insurance, not thesis content*
 > Work on GitHub issue **#182** (spike-invariants integration test). Read the issue first — note `tests/integration/` **already exists** (reuse the `stack_ready` fixture + `_chaos.set_backend_delay` + the `slow` marker; do NOT recreate infra). Branch off `fix/anomaly-overload-exclusion`. Add **only** `tests/integration/test_spike_invariants.py` asserting: no benching cascade (pool ≥ quorum), no stuck-`down` healthy backend, routing skew ≤1.33:1, spike error rate < threshold. Include the teeth check (disable a fix → test fails). Open a PR linking #182.
@@ -78,7 +93,7 @@ finalize-the-thesis list short:
 > Work on GitHub issue **#189** (decision D5 = blend first). Read the issue first. Make the scale signal track live offered-rps so the autoscaler stops flapping; validate with a periodic-load scenario + the 10v5 run (#185); add a rising-load→rising-forecast test. Touch **only** `services/forecasting/**` (+ its tests); coordinate with #183. Open a PR linking #189.
 
 **#190 · T3.2/S5 — Heterogeneous-capacity benchmark** — the honest routing test.
-> Work on GitHub issue **#190**. Read the issue first. Add `experiments/heterogeneous-bench/**` with mixed-`WORKERS` backends (reuse the adaptive-advantage structure); compare RR vs SmartLoad (vs PPO if trained) on p50/p95/p99 + SLO violations; RUNS≥3 with CI. Touch only the new dir + the `test-backend` compose block. Open a PR linking #190.
+> Work on GitHub issue **#190**. Read the issue first. Add `experiments/heterogeneous-bench/**` with mixed-`WORKERS` backends (reuse the adaptive-advantage structure **and the `smartload-locust:latest` image** — build-if-missing, NO per-side `pip install`; see "Benchmark tooling" above); compare RR vs SmartLoad (vs PPO if trained) on p50/p95/p99 + SLO violations; RUNS≥3 with CI. Touch only the new dir + the `test-backend` compose block. Open a PR linking #190.
 
 ---
 
@@ -86,8 +101,8 @@ finalize-the-thesis list short:
 - **T1.4** regression tests per fixed defect · **T1.5** unit-test the hydration fns · **T1.6** fix the `test_runloop.py` basename clash (rename one so the full suite collects in one `pytest`).
 - **T2.2/T2.3** move the SOT-forbidden logic out of the sidecar + one source-of-truth for exclusion state · **T2.5** stop `config/policy.yaml` runtime drift.
 - **T2.4** tune the monotone `cut` config (+ re-run the monotonicity probe).
-- **T3.3** latency-first benchmark · **S6/S7/S8** correlated-failure / open-loop flash-crowd / recover-churn scenarios.
-> One prompt for the batch: *"Pick up roadmap item <Txx> from `audit/THESIS_ROADMAP.md` §<n>; read it for scope, branch off `fix/anomaly-overload-exclusion`, keep to its file lane, open a PR."*
+- **T3.3** latency-first benchmark · **S6/S7/S8** correlated-failure / open-loop flash-crowd / recover-churn scenarios *(any new harness reuses the `smartload-locust:latest` image — see "Benchmark tooling" — never `pip install` per side)*.
+> One prompt for the batch: *"Pick up roadmap item <Txx> from `audit/THESIS_ROADMAP.md` §<n>; read it for scope, branch off `fix/anomaly-overload-exclusion`, keep to its file lane; if it runs/creates a benchmark, use the `smartload-locust:latest` image (build-if-missing) not per-side pip; open a PR."*
 
 ---
 
