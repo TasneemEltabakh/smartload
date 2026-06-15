@@ -189,10 +189,14 @@
 \newcommand{\BManGridCells}{256}                             % fixed 16x16 sweep grid (config, not pending)
 \newcommand{\BMifFone}{\bmtodo{an-if-smd-f1}}            % Isolation Forest SMD held-out F1
 % Routing (rl-routing-bench)
-\newcommand{\BMrlPpoReward}{\bmtodo{rl-ppo-reward}}      % PPO open-loop mean reward
-\newcommand{\BMrlMonoSla}{\bmtodo{rl-monotone-sla-viol}} % monotone closed-loop SLA-violation %
-\newcommand{\BMrlRrSla}{\bmtodo{rl-roundrobin-sla-viol}} % round-robin SLA-violation %
-\newcommand{\BMrlPpoSla}{\bmtodo{rl-ppo-sla-viol}}       % PPO SLA-violation %
+\newcommand{\BMrlPpoReward}{\bmtodo{rl-ppo-reward}}      % PPO open-loop mean reward (still used)
+% RETIRED: the closed-loop SLA-violation comparison below underpinned a "monotone beats
+% round-robin" claim that is false under uniform overload (an even split is provably
+% optimal, so routing ties RR). All usages were removed; do NOT fill these or re-introduce
+% the comparison. The equal-capacity per-phase result lives directly in the results tables.
+\newcommand{\BMrlMonoSla}{\bmtodo{rl-monotone-sla-viol-RETIRED}} % unused; see note above
+\newcommand{\BMrlRrSla}{\bmtodo{rl-roundrobin-sla-viol-RETIRED}} % unused; see note above
+\newcommand{\BMrlPpoSla}{\bmtodo{rl-ppo-sla-viol-RETIRED}}       % unused; see note above
 % Autoscaler (autoscaler-strategy-bench)
 \newcommand{\BMasSlaReactive}{\bmtodo{as-sla-reactive}}  % moving-avg+reactive SLA %
 \newcommand{\BMasSlaTarget}{\bmtodo{as-sla-target}}      % target+moving-avg SLA %

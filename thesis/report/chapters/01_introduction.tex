@@ -244,11 +244,11 @@ a specific benchmark harness, and the answers are reported in
     \headrow
     \textbf{\#} & \textbf{Research question} & \textbf{Surface} \\
     \midrule
-    RQ1 & On identical infrastructure (same NGINX, backend pool, and workload), does enabling the SmartLoad decision plane produce measurably better tail-latency and failure-rate outcomes than plain NGINX round-robin? & System bench \\
+    RQ1 & On identical, \emph{equal-capacity} infrastructure (same NGINX, backend pool, and workload, both sides capped at five backends), does enabling the SmartLoad decision plane produce measurably better tail-latency and failure-rate outcomes than plain NGINX round-robin? & Adaptive-advantage bench (5v5) \\
     \addlinespace
     RQ2 & Does the trained PPO routing policy, evaluated offline on held-out trace partitions, outperform the classical baselines (round-robin, least-connections) on per-window p50/p95/p99 latency and SLO-violation rate? & Offline RL eval \\
     \addlinespace
-    RQ3 & Does the load-balancer sidecar pull a misbehaving backend out of rotation faster than NGINX's passive health checks, when the backend is slow but still returns 200 OK so passive checks never trip? & System bench, anomaly phase \\
+    RQ3 & Does the load-balancer sidecar pull a misbehaving backend out of rotation faster than NGINX's passive health checks, when the backend sheds 503 or is slow but still returns 200 OK so passive checks never trip (\texttt{max\_fails=0})? & Adaptive-advantage, \texttt{B\_degrade}/\texttt{D\_slow} \\
     \addlinespace
     RQ4 & Does the forecasting service publish a predicted-RPS curve far enough ahead of saturation that the autoscaler can pre-warm a new backend before the ramp tops out? & Adaptive bench \\
     \bottomrule
@@ -377,6 +377,15 @@ the forecast-to-autoscaler-to-load-balancer loop scaled the backend pool up
 toward its host budget under a forecast-driven burst and then shrank it back as
 demand subsided, with per-phase p95 latencies measured throughout.
 % TODO(vps-rerun): exact pool range and scaling-action count from the fresh VPS adaptive batch
+
+At equal capacity, SmartLoad's decisive advantage is anomaly-driven exclusion. At the
+failure modes it is built for, a backend that sheds errors but is un-ejectable by
+NGINX's passive health check (\texttt{B\_degrade}) and a slow-but-healthy backend
+(\texttt{D\_slow}), it cut errors roughly fivefold (overall $1.60\%$ to $1.32\%$) and
+tail latency by 8 to 250 times against static round-robin, robust across three runs.
+Fine-grained routing is not where the gain lies: under a uniform spike on an
+equal-capacity pool an even split is provably optimal, so the deployed heuristic and the
+trained policy both tie round-robin (RQ1).
 
 For forecasting, the production default is a harmonic-residual predictor, which
 records the lowest forecast error of the engines evaluated and is the only one

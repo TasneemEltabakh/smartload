@@ -211,6 +211,17 @@ decision arrives, and the autoscaler can grow the pool beyond five. The static
 block is the bootstrap fallback that lets NGINX start before any decision is
 published.
 
+One subtlety matters for the evaluation. The \texttt{max\_fails=3} circuit breaker
+above belongs to the static bootstrap block; the upstream the sidecar renders once it
+takes over, and the configuration the routing benchmark runs, instead set
+\texttt{max\_fails=0}, deliberately disabling NGINX's passive ejection. Backend
+exclusion is the decision plane's job, not the data plane's, and ceding it cleanly is
+what makes the comparison in \cref{ch:impl_testing} meaningful: with \texttt{max\_fails=0}
+a backend that is slow or shedding \texttt{503} but never trips the passive check is
+\emph{un-ejectable} by plain round-robin, which keeps routing a fifth of its traffic
+onto it, while SmartLoad's detector finds it and the sidecar pulls it out. That is the
+exact failure mode the \texttt{B\_degrade} and \texttt{D\_slow} phases isolate.
+
 A second, small detail in the NGINX configuration is a static \texttt{location =
 /health} that returns SmartLoad's canonical \texttt{\{"status":"ok"\}} for the load
 balancer itself, with its own access log suppressed. The exact-match \texttt{=}

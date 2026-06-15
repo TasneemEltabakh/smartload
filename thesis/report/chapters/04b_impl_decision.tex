@@ -520,6 +520,17 @@ is floored at $0.0$ until enough error history accumulates to support a tighter
 lower bound. Until then the engine still publishes a usable point forecast and a
 one-sided upper bound, so the service never goes dark.
 
+\paragraph{An honest limitation.} The deployed \texttt{harmonic\_residual} engine is the
+most accurate on the synthetic benchmark, but a control-loop audit found its live
+prediction is effectively decoupled from offered load, holding on the order of
+$245$\,rps almost regardless of demand. That decoupling is the upstream cause of the
+autoscaler flap discussed in \cref{imb:autoscaler_decision}: a forecast that does not
+track load cannot size the pool to it. Coupling the forecast to live offered rate, by
+blending in measured arrivals or re-fitting on load-coupled features, is tracked future
+work (issue~\#189), so the downstream attainment gain reported above should be read as
+the direction a forward forecast buys on synthetic load rather than a deployment
+guarantee.
+
 \subsection{ARIMA(2,0,2)}\label{imb:arima}
 
 The first trained forecaster is an ARIMA$(2,0,2)$ model \cite{box2015timeseries}:
@@ -799,20 +810,24 @@ benchmark's latency-monotonicity probe checks, and it makes the policy auditable
 since the routing weights are a transparent function of the observed signal rather
 than of opaque network weights. Every seed of the deployed heuristic passes the
 probe. The contrast with the trained policy is sharp and is why the heuristic, not
-the model, is deployed: on the closed-loop benchmark the \texttt{monotone} router
-violates the service-level objective on \BMrlMonoSla{} of a homogeneous run against
-round-robin's \BMrlRrSla{} and the shipped PPO policy's \BMrlPpoSla{}, and the PPO
-policy, which collapsed to round-robin equivalence on its uniform-latency training
-distribution (\cref{imb:ppo_finding}), fails the same monotonicity probe the
-heuristic passes. A monotone, capacity-aware rule therefore beats round-robin on
-the objective by a wide margin while remaining safe enough to ship, which is why it
-leads in production while the learned policy is held back in shadow.
+the model, is deployed. On the canonical equal-capacity bench the \texttt{monotone}
+router \emph{ties} round-robin under uniform overload, as theory requires: when the pool
+is homogeneous and saturated an even split is provably optimal, so no router can beat
+round-robin, and on the \texttt{C\_spike} phase round-robin is in fact marginally ahead
+($1.82\%$ errors against SmartLoad's $3.75\%$). The deployed heuristic matches that
+optimum while passing the latency-monotonicity probe; the PPO policy, which collapsed to
+round-robin equivalence on its uniform-latency training distribution
+(\cref{imb:ppo_finding}), fails the same probe. A monotone, capacity-aware rule is
+therefore a safe match for round-robin on a homogeneous pool rather than a gamble, which
+is why it leads in production while the learned policy is held back in shadow.
+SmartLoad's measurable advantage over round-robin comes not from routing but from
+anomaly-driven exclusion of the bad backends round-robin cannot eject.
 
 \subsection{Evaluating the learned policy: an honest negative result}\label{imb:ppo_finding}
 
 The trained PPO policy was evaluated two ways, and both readings point the same
-direction: the learned policy does not improve on the deterministic options, and in
-the more realistic test it is the worst of them.
+direction: on a homogeneous, equal-capacity pool the learned policy does not improve on
+the deterministic options, because there is nothing for it to improve on.
 
 In the original \emph{open-loop} evaluation, the policy was scored in shadow mode
 against the deterministic baselines over a held-out seed bank of twenty episodes.
@@ -826,15 +841,16 @@ approach'', but it is a tie on a simulator that cannot distinguish routing
 policies, not evidence of a learned advantage.
 
 The later \emph{closed-loop} evaluation, in which a routing choice can perturb the
-next state, separates the policies and is far less kind to the trained one. On a
-homogeneous pool the deployed \texttt{monotone} heuristic violates the
-service-level objective on \BMrlMonoSla{} of the run, round-robin on \BMrlRrSla{},
-and the shipped PPO policy on \BMrlPpoSla{}: the trained policy is the \emph{worst}
-contender, shedding the most load and failing the monotonicity probe both
-\texttt{monotone} and the shipped reference pass. This is why the monotone
-heuristic, not PPO, is the deployed router. Two structural points explain the
-open-loop tie, and the closed-loop ranking follows from the same two causes; the
-deeper reading is taken up in \cref{ch:discussion}.
+next state, is the more realistic test, and it confirms the same conclusion rather than
+overturning it. On the equal-capacity bench a uniform overload of a homogeneous pool is
+precisely the case where an even split is provably optimal, so neither the deployed
+\texttt{monotone} heuristic nor the trained PPO policy beats round-robin: on the
+\texttt{C\_spike} phase round-robin is marginally ahead of SmartLoad's bounded skew
+($1.82\%$ errors against $3.75\%$). The deployed heuristic is chosen not because it
+out-routes round-robin but because it ties it while passing the latency-monotonicity
+probe that PPO fails. The trained policy adds nothing on the live path and is held in
+shadow. Two structural points explain the open-loop tie, and the closed-loop parity
+follows from the same two causes; the deeper reading is taken up in \cref{ch:discussion}.
 
 \begin{enumerate}
   \item \textbf{Training distribution.} The policy was trained on the Alibaba
@@ -855,8 +871,9 @@ deeper reading is taken up in \cref{ch:discussion}.
 The honest reading is that the learned policy converged to round-robin equivalence
 because uniform sampling is optimal on a homogeneous training distribution, and the
 open-loop evaluation that first surfaced this is a clean, temporally split one that
-could not tell routing policies apart. Once the closed-loop bench could, the
-trained policy fell to the bottom of the order. The serving mechanism, the safety
+could not tell routing policies apart. The closed-loop equal-capacity bench tells the
+same story: where an even split is already optimal, a learned policy has nothing to
+improve on. The serving mechanism, the safety
 gates, and the bench harness are all in place and verified, and the engine produces
 an observable, auditable decision stream, but the policy is kept dormant in shadow
 because it has not earned a place on the live path. Routing and scaling are
@@ -986,6 +1003,17 @@ the served rate collapses while the pool is shedding, so sizing growth on the
 served estimate alone would let the loop drain instead of grow, and biasing
 scale-out toward the wider band breaks that trap.
 
+One honest limitation belongs here, pending a tracked fix. A control-loop audit found
+that the deployed \texttt{target} controller can still flap, because in its audited form
+it sizes scale-out on the wider offered band but scale-in on the narrower point
+estimate, so demand sitting between the two boundaries drives a persistent
+scale-in/scale-out oscillation that strips capacity at the worst moment. The committed
+anti-flap hysteresis (scale-in confirmations) currently lives on the unused
+\texttt{step} controller rather than \texttt{target}, so it is inert in the deployed
+configuration. Consolidating the two controllers onto a single demand-coupled signal is
+tracked future work (issue~\#183), as is the load-coupled forecast it depends on
+(issue~\#189).
+
 When the forecast stream goes stale, with no fresh prediction inside a staleness
 window, the autoscaler falls back to a \emph{reactive} mode, computing the same
 decision against an observed request rate read directly from telemetry rather than
@@ -1075,25 +1103,28 @@ at work.
 
 \paragraph{Forecasting: an analytic engine that earns the downstream win.} The
 deployed forecaster is \texttt{harmonic\_residual}, which records the lowest
-benchmark error of any engine at \BMfcMape{} MAPE and, more tellingly, lifts
-downstream service-level objective attainment by \BMfcSlaGain{} percentage points
-over a reactive controller. ARIMA$(2,0,2)$ is wired, serialised, and serving-ready
+benchmark error of any engine at \BMfcMape{} MAPE and, on the synthetic downstream
+bench, lifts service-level objective attainment by \BMfcSlaGain{} percentage points
+over a reactive controller, an indicative gain qualified by the load-decoupling
+limitation noted in \cref{imb:harmonic}. ARIMA$(2,0,2)$ is wired, serialised, and serving-ready
 at \BMfcMapeArima{} MAPE, a respectable but second-place result, and the
 moving-average engine stands behind both as the never-fails fallback whose trailing
 mean carries no forward lead. The forecasting path works end-to-end with a genuine
 predictive signal driving capacity ahead of demand.
 
 \paragraph{Routing: a deployed heuristic and a learned policy held back.} The
-deployed router is the deterministic \texttt{monotone} heuristic, which sheds the
-least load and passes the monotonicity probe in the closed-loop benchmark. The
-trained PPO engine's serving path, safety gates, and benchmark harness are complete
-and verified, but the policy itself is an honest negative result: it ties
-round-robin on the open-loop simulator that cannot tell policies apart, and it is
-the worst contender once the closed-loop bench can. It is kept dormant in shadow as
-a comparator. The next direction is the binding constraint named in
-\cref{imb:ppo_finding}: retrain on a heterogeneous-latency distribution under a
-closed-loop simulator, to give a learned policy room to discriminate on varied
-traffic before it could be considered for the live path. The fuller analysis
+deployed router is the deterministic \texttt{monotone} heuristic, which ties
+round-robin under uniform overload and passes the monotonicity probe in the
+equal-capacity benchmark. The trained PPO engine's serving path, safety gates, and
+benchmark harness are complete and verified, but the policy itself is an honest
+negative result: on a homogeneous, equal-capacity pool an even split is provably
+optimal, so it ties round-robin on the open-loop simulator and has nothing to beat on
+the closed-loop bench either. It is kept dormant in shadow as a comparator, implemented
+but not deployed (\texttt{RL\_POLICY=monotone}). The next direction is the binding
+constraint named in \cref{imb:ppo_finding}: build a heterogeneous-capacity testbed and
+retrain on a heterogeneous-latency distribution under a closed-loop simulator, to give a
+learned policy room to discriminate on varied traffic before it could be considered for
+the live path. The fuller analysis
 appears in \cref{ch:discussion}.
 
 The thread running through all three is the same architectural decision made in

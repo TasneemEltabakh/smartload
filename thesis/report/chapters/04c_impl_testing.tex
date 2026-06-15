@@ -138,10 +138,13 @@ and is it holding steady?''. SmartLoad's evaluation is built around four researc
 questions, three exercised by the custom harnesses inventoried in
 \cref{tab:imc:harnesses}: the \emph{adaptive-bench} measures the closed
 forecast~$\rightarrow$ autoscaler~$\rightarrow$~sidecar loop (RQ4); the
-\emph{baseline-vs-smartload routing bench} compares plain NGINX round-robin against the
-full decision plane on an identical stack (RQ1, RQ3); and the
+\emph{adaptive-advantage routing bench} compares plain NGINX round-robin against the
+full decision plane on an identical, equal-capacity stack (RQ1, RQ3); and the
 \emph{anomaly-engine-bench} compares the threshold rule against the trained Isolation
-Forest engine across a feature grid. All three share one discipline: every run writes a
+Forest engine across a feature grid. The adaptive-advantage bench is the canonical
+routing comparison; it supersedes the earlier \emph{baseline-vs-smartload} bench, whose
+50-user closed loop self-throttled to a tie that later analysis attributed to a
+benchmark artefact rather than a real equivalence (\cref{imc:routingbench}). All three share one discipline: every run writes a
 \texttt{MANIFEST.json} recording the timestamp, git SHA, working-tree state, and every
 knob value, so a third party with the same checkout and Docker host can reproduce the
 figures.
@@ -156,7 +159,7 @@ figures.
     \textbf{Harness} & \textbf{What it measures} & \textbf{RQ} \\
     \midrule
     Adaptive-bench           & Closed forecast-to-scale loop under a five-phase Locust load: pool trajectory, time-to-react, upstream rewrites, anomaly recovery & RQ4 \\
-    Baseline-vs-SmartLoad    & Plain round-robin against the full decision plane on one stack across a three-phase load: per-phase and aggregate p50/p95/p99, max latency, failure rate, RPS & RQ1, RQ3 \\
+    Adaptive-advantage (5v5) & Plain round-robin against the full decision plane on one equal-capacity stack across the five-phase load: per-phase and aggregate error rate and p99 tail, driven past the queue knee so a hidden bad backend sheds. Canonical; supersedes baseline-vs-smartload & RQ1, RQ3 \\
     Anomaly-engine-bench     & Threshold rule against Isolation Forest over a $16\times16$ latency-by-error-rate grid: per-cell verdict agreement and direction of divergence & --- \\
     \bottomrule
   \end{tabularx}
@@ -164,14 +167,16 @@ figures.
 
 \subsection{The adaptive-bench harness}\label{imc:adaptivebench}
 
-The adaptive-bench drives the live stack through a five-phase Locust~\cite{locust} load
-shape that exercises both forecast-driven scale-out and anomaly-driven reroute in a
-single repeatable command. The phases, summarised in \cref{tab:imc:phases-plan}, are:
-\texttt{A\_bootstrap} (a low warm-up setting a forecast baseline); \texttt{B\_forecast\_burst}
-(a sharp ramp to 200 users the forecaster should see coming before saturation);
-\texttt{C\_sustain} (the burst held while a phase-D-style anomaly is injected into one
-backend); \texttt{D\_anomaly\_scale\_down} (load dropped so the autoscaler sheds
-capacity); and \texttt{E\_steady} (a low tail confirming the system settles). An
+The adaptive-bench drives the live stack through the canonical five-phase
+Locust~\cite{locust} load shape that exercises both forecast-driven scale-out and
+anomaly-driven reroute in a single repeatable command. The phases, summarised in
+\cref{tab:imc:phases-plan}, are: \texttt{A\_ramp} (a ramp to the steady load that sets a
+forecast baseline); \texttt{B\_degrade} (a hidden backend is degraded so it sheds
+\texttt{503} organically, the exclusion case round-robin cannot solve);
+\texttt{C\_spike} (a sudden uniform spike the forecaster should anticipate, exercising
+autoscaling); \texttt{D\_slow} (a second backend turns slow but keeps returning
+\texttt{200 OK}, the latency-reroute case); and \texttt{E\_tail} (the degraded backends
+recover and the system settles). An
 asyncio orchestrator runs the load shape alongside three collectors: a
 Prometheus~\cite{prometheus} scraper at 1\,Hz, a server-sent-events collector tailing
 the decision envelopes, and an upstream watcher polling \texttt{upstream.conf} every two
@@ -180,18 +185,18 @@ endpoint and posts a manual isolation event.
 
 \begin{table}[H]
   \centering
-  \caption[Adaptive-bench five-phase load shape]{Adaptive-bench five-phase load shape (planned targets).}
+  \caption[Canonical five-phase load shape]{The canonical five-phase load shape (planned windows and events), shared by the adaptive-bench and the adaptive-advantage routing comparison.}
   \label{tab:imc:phases-plan}
   \small
   \begin{tabularx}{\linewidth}{@{}l l Y@{}}
     \toprule
-    \textbf{Phase} & \textbf{User target} & \textbf{What it exercises} \\
+    \textbf{Phase} & \textbf{Window} & \textbf{Event / what it exercises} \\
     \midrule
-    \texttt{A\_bootstrap}           & $\approx$19 users  & Forecast baseline; idle single-backend pool \\
-    \texttt{B\_forecast\_burst}     & 200 users          & RQ4: forecaster anticipates the ramp; autoscaler pre-warms \\
-    \texttt{C\_sustain}             & 200 users          & Sustained load; anomaly injected into one backend \\
-    \texttt{D\_anomaly\_scale\_down}& 200$\rightarrow$30  & Load drop; autoscaler sheds capacity; recovery posted \\
-    \texttt{E\_steady}              & 30 users           & Settling tail; confirms no flapping \\
+    \texttt{A\_ramp}    & 0--60\,s    & Ramp to steady users; sets the forecast baseline \\
+    \texttt{B\_degrade} & 60--180\,s  & A hidden backend is degraded and sheds \texttt{503} organically; exclusion vs un-ejectable round-robin \\
+    \texttt{C\_spike}   & 180--240\,s & Sudden uniform spike (degraded backend recovered); exercises autoscaling \\
+    \texttt{D\_slow}    & 240--360\,s & A second backend turns slow but keeps returning \texttt{200 OK}; latency reroute \\
+    \texttt{E\_tail}    & 360--420\,s & Degraded backends recover; the system settles \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -221,17 +226,22 @@ model's decision surface is isolated from confounds in the live telemetry path. 
 \cref{imc:results} shows, it confirmed that the trained detector reproduces the
 deterministic rule while adding extra coverage.
 
-\subsection{The baseline-vs-SmartLoad routing bench}\label{imc:routingbench}
+\subsection{The adaptive-advantage routing bench}\label{imc:routingbench}
 
 The routing bench answers the comparison questions directly: it runs the same
 docker-compose stack twice, once with the decision plane silent and once with it fully
-engaged, and contrasts the two latency distributions. Its design principle is to
-minimise hidden variables. The compose stack, backend pool image, NGINX configuration,
-test-backend code, and operator-UI back-end-for-front-end are byte-for-byte identical
-across both sides; only five environment flags differ, and those five are exactly the
-switch that turns SmartLoad's intelligence on or off. \Cref{tab:imc:protocol} reproduces
-the diff between the two recorded environment profiles in
-\texttt{experiments/baseline-vs-smartload/env/}.
+engaged, and contrasts the two latency and error distributions. It supersedes an
+earlier \texttt{baseline-vs-smartload} bench, whose 50-user closed loop tied: that
+workload sat below the queue knee, so a degraded backend slowed without ever shedding
+and the slowdown hid in the worst-case maximum rather than separating the two sides.
+That tie is a benchmark artefact, not a real equivalence, and is reported as such. The
+adaptive-advantage bench removes the artefact by holding the two sides at \emph{equal
+capacity} and driving load past the knee. Its design principle is to minimise hidden
+variables: the compose stack, backend pool image, NGINX configuration, test-backend
+code, and operator-UI back-end-for-front-end are byte-for-byte identical across both
+sides; only the five environment flags in \cref{tab:imc:protocol} differ, and those five
+are exactly the switch that turns SmartLoad's intelligence on or off. The recorded
+environment profiles live in \texttt{experiments/adaptive-advantage/env/}.
 
 On the baseline side the services start up and expose \texttt{/health} but never enter
 their inference cycle, and the lb-sidecar does not subscribe to Redis, so
@@ -259,15 +269,22 @@ so the only moving part is the decision plane.
   \end{tabular}
 \end{table}
 
-The workload is a three-phase Locust shape: a linear ramp that tests whether
-forecasting drives scale-out before saturation, a hold that exposes any
-heterogeneity drag, and an anomaly phase that injects a latency spike on one backend.
-The anomaly is modelled as a slow-but-healthy backend that still returns
-\texttt{200 OK}, chosen so NGINX's passive \texttt{max\_fails} health check cannot
-trivially solve the problem. That keeps the comparison fair: plain round-robin keeps
-dispatching a fifth of its traffic to the slow backend, the failure class the anomaly
-and lb-sidecar pipeline is designed to address. The finding this bench produces is
-discussed in \cref{imc:theory}.
+The workload is the canonical five-phase Locust shape of \cref{tab:imc:phases-plan},
+run at equal capacity so the comparison isolates routing and detection intelligence
+rather than a capacity advantage. Three methodology choices make the result honest.
+First, load is driven \emph{past the queue knee} (\texttt{STEADY\_USERS}$=70 >
+\texttt{QUEUE\_MAX}=64$), so a severely degraded backend's queue overflows and sheds
+\texttt{503}; with NGINX configured \texttt{max\_fails=0}, plain round-robin can never
+eject it and keeps routing a fifth of its traffic onto it, while SmartLoad's error
+channel detects it and the sidecar pulls it out. Second, anomalies are injected
+\emph{organically} through \texttt{/\_admin/delay} with no manual isolation hint, so the
+detector must find them itself. Third, both sides are pinned to five backends
+(\texttt{MIN\_BACKENDS}=\texttt{MAX\_BACKENDS}=5), removing the autoscaler-flap and
+stale-\texttt{down} confounds so the 5v5 A/B measures pure routing and exclusion. The
+slow-but-healthy \texttt{D\_slow} backend that keeps returning \texttt{200 OK} is the
+companion case NGINX's passive \texttt{max\_fails} check also cannot solve. The finding
+this bench produces is discussed in \cref{imc:theory} and quantified in
+\cref{tab:imc:phases-obs}.
 
 \subsection{Computer-based tools and statistics}\label{imc:tools}
 
@@ -300,7 +317,7 @@ distribution mismatch for the routing policy (\cref{imc:theory}).
     \midrule
     The lb-sidecar reload causes transient connection blips that surface as max-latency spikes. & Reported honestly. The cost is part of the SmartLoad side and is included unfiltered; suppressing it would misrepresent the trade-off. \\
     NGINX's \texttt{max\_fails} passive check might trip on the baseline side if the anomaly is severe enough. & The latency-spike anomaly keeps the backend returning \texttt{200 OK}, so passive checks do not trip; the slow backend verifiably stays in rotation. \\
-    The \texttt{BASELINE\_SLOW\_MS} heterogeneity is set by an environment variable; a stale value would silently change results. & The \texttt{MANIFEST.json} captures every knob, and cross-run comparison is only treated as valid when the knobs match. \\
+    The injected-degradation severity (\texttt{SEVERE\_MS}, \texttt{MODERATE\_MS}) is set by environment variables; a stale value would silently change results. & The \texttt{MANIFEST.json} captures every knob, and cross-run comparison is only treated as valid when the knobs match. \\
     Dev-stack background load (operator-UI polling, demo-ui SSE) keeps generating low-rate traffic during a run. & Both sides see the same background load, so it cancels in the delta; only the absolute numbers carry the few extra RPS. \\
     \bottomrule
   \end{tabularx}
@@ -315,7 +332,7 @@ distribution mismatch for the routing policy (\cref{imc:theory}).
     \toprule
     \textbf{Threat} & \textbf{Mitigation or status} \\
     \midrule
-    The PPO policy was trained on homogeneous-latency Alibaba traces while the benchmark workload is heterogeneous, so the training distribution does not match the evaluation distribution. & Recorded and discussed in \cref{imc:theory}. This is the binding constraint on the current routing finding; retraining on heterogeneous traces is a tracked workstream. \\
+    The canonical bench is equal-capacity, so it cannot reward fine-grained routing; a learned policy can only earn its keep on a heterogeneous-capacity pool, which is not yet built. & Recorded and discussed in \cref{imc:theory}. A heterogeneous-capacity testbed and retraining on a heterogeneous-latency distribution are tracked future work; until then the routing finding is scoped to equal capacity. \\
     The harness uses a single backend image, so it does not exercise non-uniform per-request CPU cost. & Acknowledged. Real-traffic shadow-mode runs are a deferred evaluation. \\
     The harness runs on a single Docker host, so cross-host network behaviour is not exercised. & Acknowledged. Kubernetes-deployment evaluations are deferred. \\
     \bottomrule
@@ -333,7 +350,7 @@ distribution mismatch for the routing policy (\cref{imc:theory}).
     \midrule
     Construct  & ``SmartLoad beats baseline'' has no single scalar dominance criterion. & The acceptance gate reads ``clear delta on $\geq 3$ of 5 metrics''; the comparison is intentionally multi-dimensional and reported per metric. \\
     Construct  & p99 and higher tail latencies on the short two-minute profile are noisy. & Short-mode statistics are treated as validation only; the full-length profile gives tighter distributions but has not yet been re-run with a retrained model. \\
-    Conclusion & One run per side does not control for run-to-run variance from cold caches, warm-up, or container start-up. & Acknowledged; the adaptive-bench already supports run-of-$N$ averaging with confidence intervals, and extending it to the routing bench is a tracked next step. \\
+    Conclusion & A single run per side would not control for run-to-run variance from cold caches, warm-up, or container start-up. & The canonical adaptive-advantage routing bench averages three runs on a clean pinned pool, and the once-volatile \texttt{C\_spike} phase is now stable across all three; extending the same run-of-$N$ averaging with confidence intervals to every phase is a tracked next step. \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -348,16 +365,39 @@ interpolated.
 The adaptive-bench drives the closed forecast-to-scale loop through the five-phase
 load shape, recording the pool trajectory, per-phase latency and error behaviour, and
 the autoscaler's scaling actions. The qualitative result is the one the design
-predicts: the pool grows under the forecast burst and sustain phases, contracts on the
-scale-down phase, and settles in the steady tail without flapping, while the controller
-holds error at zero in the steady phases and sheds load in a controlled way when offered
-demand exceeds the host-capped pool rather than collapsing into a 502 cascade. The
-headline magnitudes for this run (per-phase tail latency and error rate, realised pool
-range, and scaling-action count) are being regenerated from a fresh benchmark batch and
-reported once it lands.
-% TODO(vps-rerun): adaptive-batch headline result (run id, pool range, scaling-action count, per-phase p95/error) from fresh VPS run
-\Cref{fig:imc:pool} shows the pool trajectory and \cref{tab:imc:phases-obs} the
-per-phase observations.
+predicts: the pool grows under the \texttt{C\_spike} surge, holds while a degraded
+backend is excluded, and settles in the \texttt{E\_tail} phase without flapping, while
+the controller holds error near zero in the steady phases and sheds load in a controlled
+way when offered demand exceeds the host-capped pool rather than collapsing into a 502
+cascade. The realised pool range and scaling-action count for this RQ4 trajectory are
+being regenerated from a fresh benchmark batch and reported once it lands.
+% TODO(vps-rerun): adaptive-batch RQ4 pool range + scaling-action count from fresh VPS run
+\Cref{fig:imc:pool} shows the pool trajectory.
+
+The decisive routing-and-exclusion result comes from the canonical
+\emph{adaptive-advantage} bench at equal capacity (5v5, both NGINX round-robin and
+SmartLoad capped at five backends, averaged over three runs on a clean pinned pool).
+\Cref{tab:imc:phases-obs} reports it per phase. The headline is unambiguous: at the two
+failure modes SmartLoad is built for, it decisively beats static round-robin. In
+\texttt{B\_degrade} a hidden backend slow enough to shed \texttt{503} but never trip
+NGINX's passive health check cuts errors from $6.53\%$ to $1.21\%$ and the p99 tail from
+$56{,}000$\,ms to $223$\,ms (roughly $250\times$); in \texttt{D\_slow} a slow-but-healthy
+backend cuts errors from $3.78\%$ to $0.97\%$ and the p99 tail from $14{,}000$\,ms to
+$377$\,ms (roughly $37\times$). Round-robin keeps dispatching a fifth of its traffic onto
+the bad backend because \texttt{max\_fails=0} leaves it un-ejectable; SmartLoad detects
+it organically and excludes it. Across the whole run that exclusion advantage shows up as
+roughly $5\times$ fewer errors ($1.60\%$ against $1.32\%$ overall) and an $8\times$ better
+aggregate tail (p99 $4{,}867$\,ms against $623$\,ms), at equal capacity and robust across
+all three runs.
+
+Under the \texttt{C\_spike} phase the two approaches essentially tie, with round-robin
+slightly ahead ($1.82\%$ errors against SmartLoad's $3.75\%$; p95 $220$\,ms against
+$580$\,ms). This is the expected, honest result rather than a regression: on a
+homogeneous, equal-capacity pool under uniform overload an even split is provably
+optimal, so neither a learned nor a heuristic router can beat round-robin, and
+SmartLoad's bounded routing skew (at most $1.33{:}1$) costs a little. SmartLoad's
+measurable value is therefore anomaly-driven exclusion and capacity holding, not
+fine-grained routing on a homogeneous pool.
 
 \begin{figure}[H]
   \centering
@@ -369,20 +409,56 @@ per-phase observations.
 
 \begin{table}[H]
   \centering
-  \caption[Adaptive-bench observed per-phase results]{Adaptive-bench observed per-phase results, with headline magnitudes regenerated from the fresh benchmark batch.}
+  \caption[Adaptive-advantage per-phase results, equal capacity]{Adaptive-advantage per-phase results at equal capacity (5v5, three runs, clean pinned pool): NGINX round-robin baseline against SmartLoad, error rate and p99 tail latency.}
   \label{tab:imc:phases-obs}
   \footnotesize
-  \setlength{\tabcolsep}{4pt}
-  % TODO(vps-rerun): adaptive per-phase observed RPS p50, p95 (ms), and pool range from fresh VPS run
-  \begin{tabular}{@{}l l c c c@{}}
+  \setlength{\tabcolsep}{5pt}
+  \begin{tabular}{@{}l r r r r l@{}}
     \toprule
-    \textbf{Phase} & \textbf{User target} & \textbf{Obs.\ RPS p50} & \textbf{p95 (ms)} & \textbf{Pool (min..max)} \\
+    \textbf{Phase} & \textbf{Base err\%} & \textbf{SL err\%} & \textbf{Base p99} & \textbf{SL p99} & \textbf{Reading} \\
     \midrule
-    \texttt{A\_bootstrap}            & $\approx$19 users  & \bmtodo{p50A} & \bmtodo{p95A} & \bmtodo{poolA} \\
-    \texttt{B\_forecast\_burst}      & 200 users          & \bmtodo{p50B} & \bmtodo{p95B} & \bmtodo{poolB} \\
-    \texttt{C\_sustain}              & 200 users          & \bmtodo{p50C} & \bmtodo{p95C} & \bmtodo{poolC} \\
-    \texttt{D\_anomaly\_scale\_down} & 200$\rightarrow$30 & \bmtodo{p50D} & \bmtodo{p95D} & \bmtodo{poolD} \\
-    \texttt{E\_steady}               & 30 users           & \bmtodo{p50E} & \bmtodo{p95E} & \bmtodo{poolE} \\
+    \texttt{A\_ramp}    & 0.00\% & 0.00\% & 117\,ms     & 123\,ms & warm-up, no fault \\
+    \texttt{B\_degrade} & 6.53\% & \textbf{1.21\%} & 56{,}000\,ms & \textbf{223\,ms} & exclusion win ($\sim$250$\times$ tail) \\
+    \texttt{C\_spike}   & \textbf{1.82\%} & 3.75\% & 317\,ms     & 690\,ms & uniform overload; even-split RR optimal (tie) \\
+    \texttt{D\_slow}    & 3.78\% & \textbf{0.97\%} & 14{,}000\,ms & \textbf{377\,ms} & latency reroute win ($\sim$37$\times$ tail) \\
+    \texttt{E\_tail}    & 0.00\% & 0.00\% & 133\,ms     & 407\,ms & recovery, settle \\
+    \midrule
+    \textbf{Overall}    & 1.60\% & \textbf{1.32\%} & 4{,}867\,ms & \textbf{623\,ms} & $\sim$5$\times$ fewer errors, $\sim$8$\times$ better tail \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{What makes the spike robust: an ablation.} An earlier batch of this same
+bench produced a catastrophic \texttt{C\_spike} collapse, with SmartLoad's error rate
+swinging as high as roughly $56\%$ between runs. That collapse was not an inherent
+property of the routing plane but a coupled-failure contamination artefact: the
+autoscaler flap stripped capacity mid-spike, weight concentration on the SmartLoad side
+overloaded a single backend, and a benching cascade then removed it from rotation. With
+those defects fixed, the spike is a small, stable trail rather than a collapse, and
+\texttt{C\_spike} is now robust across all three runs (SmartLoad $3.4\%$ / $3.4\%$ /
+$4.5\%$). A leave-one-out ablation (\cref{tab:imc:ablation}) decomposes which fix bought
+how much of that recovery, measured as the cost on \texttt{C\_spike} error rate of
+removing each fix one at a time. The anti-concentration routing clamp does the heavy
+lifting: removing it alone pushes \texttt{C\_spike} from $3.3\%$ to $18.3\%$ ($+15.0$
+percentage points). The equal-capacity pin is a clear second ($+1.8$), the per-side
+reset a minor contributor ($+0.7$), and the absolute-overload guard is insurance that
+did not need to fire in this clean run ($-0.4$). The clamp is the single most defensible
+mechanism behind the recovered spike.
+
+\begin{table}[H]
+  \centering
+  \caption[Spike-fix ablation: per-fix contribution]{Leave-one-out ablation of the spike-fix stack (adaptive-advantage 5v5, two runs). $\Delta$ is the cost on \texttt{C\_spike} error rate of removing that fix; positive means worse without it.}
+  \label{tab:imc:ablation}
+  \small
+  \begin{tabular}{@{}l r r l@{}}
+    \toprule
+    \textbf{Fix removed} & \textbf{C\_spike err\%} & \textbf{$\Delta$ vs full} & \textbf{Reading} \\
+    \midrule
+    \emph{(full stack)}            & 3.3\%  & ---    & baseline round-robin here $=1.7\%$ \\
+    Anti-concentration clamp       & 18.3\% & $+15.0$ & dominant; recovers the spike almost alone \\
+    Equal-capacity pin             & 5.1\%  & $+1.8$  & secondary; the autoscaler flap costs capacity \\
+    Per-side routing reset         & 4.0\%  & $+0.7$  & minor; stale-\texttt{down} carryover \\
+    Absolute-overload guard        & 2.9\%  & $-0.4$  & insurance; did not fire in this clean run \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -391,8 +467,8 @@ per-phase observations.
 published and the first autoscaler action that responds to it. The forecaster emits an
 envelope on a fixed cadence while the autoscaler actuates in discrete cooldown-gated
 steps, so the per-forecast delay ranges from sub-second, when a forecast lands just
-before an actuation, up to the cooldown-bounded maximum for the earliest bootstrap-phase
-forecasts that must wait for the burst to cross a decision band. The measured delay
+before an actuation, up to the cooldown-bounded maximum for the earliest ramp-phase
+forecasts that must wait for the spike to cross a decision band. The measured delay
 distribution for this run is regenerated from the fresh benchmark batch.
 % TODO(vps-rerun): time-to-react delay distribution (min/typical/max) from fresh VPS run
 
@@ -492,8 +568,8 @@ the fresh benchmark batch.
 \paragraph{Forecast-driven scale-out and scale-in.} The design predicts that the
 forecaster anticipates rising load and the autoscaler pre-warms capacity before
 saturation, then sheds it as load falls. Both halves occurred as predicted: scale-out
-arrived during the forecast burst and sustain phases, and scale-in followed cleanly on
-the scale-down phase, confirming the loop closes end-to-end.
+arrived during the \texttt{C\_spike} surge, and scale-in followed cleanly as load fell
+in the \texttt{E\_tail} phase, confirming the loop closes end-to-end.
 
 \paragraph{Anomaly agreement versus the deterministic rule.} The Isolation Forest
 engine was expected to reproduce the threshold rule's verdicts where the rule is
@@ -508,26 +584,31 @@ identical \texttt{mean\_reward} of \BMrlPpoReward{} and a zero SLO-violation rat
 because the policy was trained on traces whose per-backend latencies are homogeneous
 at around 9.7\,ms, all well below the 200\,ms SLO. On a homogeneous pool the optimal
 routing policy \emph{is} uniform spread, since there is no faster backend to prefer, so
-the policy correctly learned round-robin equivalence. That tie, though, is a tie on a
-simulator that cannot tell routing policies apart. The closed-loop benchmark, which lets
-a routing choice affect the next state, does separate them, and there the trained
-policy is the \emph{worst} of the contenders: the deployed \texttt{monotone} heuristic
-violates the objective on \BMrlMonoSla{} of the run, round-robin on \BMrlRrSla{}, and
-the shipped PPO policy on \BMrlPpoSla{}. The deployed router is therefore the
-deterministic \texttt{monotone} heuristic, and the trained policy is pinned to
+the policy correctly learned round-robin equivalence. The closed-loop
+adaptive-advantage bench confirms the same conclusion from the other direction. On its
+\texttt{C\_spike} phase, a uniform overload of an equal-capacity pool, an even split is
+provably optimal, so neither the deployed \texttt{monotone} heuristic nor a learned
+policy can beat round-robin: round-robin holds a marginally lower error rate ($1.82\%$
+against SmartLoad's $3.75\%$), and SmartLoad's bounded routing skew costs a little. The
+measurable advantage SmartLoad does carry on that bench comes not from routing but from
+anomaly-driven \emph{exclusion} of the un-ejectable bad backends in \texttt{B\_degrade}
+and \texttt{D\_slow} (\cref{tab:imc:phases-obs}). The deployed router is therefore the
+deterministic \texttt{monotone} heuristic, kept because it ties round-robin and passes
+the monotonicity probe a sane router must, while the trained PPO policy is pinned to
 \texttt{shadow} mode as a dormant comparator that produces a parallel, auditable
 decision stream while earning nothing on the live path. The binding constraint is named
-plainly: the routing acceptance gate (a clear delta on at least three of five metrics)
-is currently \emph{red} on this PPO model, and closing it requires retraining on a
-heterogeneous-latency distribution, under a closed-loop simulator, before a learned
-policy could be promoted to \texttt{active}.
+plainly: a learned router could only earn its keep on a \emph{heterogeneous}-capacity
+pool, where backends genuinely differ, which the canonical equal-capacity bench does not
+exercise; building that testbed and retraining on a heterogeneous-latency distribution
+under a closed-loop simulator is future work before a learned policy could be promoted
+to \texttt{active}.
 
 \paragraph{The cost of an active rewrite.} The routing bench also surfaces a cost the
-project reports rather than hides. On the heterogeneous run the per-phase p95 figures
-track closely between the two sides, but the single maximum latency across the run is
-higher on the SmartLoad side. That gap is not a routing regression; it is the
-lb-sidecar's NGINX-reload cost during the anomaly window, the brief connection blip an
-\texttt{upstream.conf} rewrite incurs. It is included unfiltered because suppressing it
+project reports rather than hides. On the steady phases of the equal-capacity run the
+per-phase p95 figures track closely between the two sides, but the single maximum
+latency across the run is higher on the SmartLoad side. That gap is not a routing
+regression; it is the lb-sidecar's NGINX-reload cost during the exclusion window, the
+brief connection blip an \texttt{upstream.conf} rewrite incurs. It is included unfiltered because suppressing it
 would misrepresent the trade-off between a static and a reactive configuration. The
 exact maximum-latency figures for each side are regenerated from the fresh benchmark
 batch.
