@@ -1,0 +1,1425 @@
+{
+  "_comment": "ACTIVE DEFAULT — every suite/system/parameter/metric renders PENDING. Drop the VPS output here (same shape as results.sample.json) to populate with zero component changes.",
+  "schemaVersion": 2,
+  "provenance": {
+    "runId": "pending",
+    "generatedUtc": null,
+    "host": "—",
+    "gitCommit": null,
+    "kind": "pending",
+    "note": "Awaiting the VPS benchmark re-run."
+  },
+  "groups": [
+    "System comparison",
+    "Routing",
+    "Autoscaling",
+    "Forecasting",
+    "Anomaly detection"
+  ],
+  "suites": [
+    {
+      "id": "baseline-vs-smartload",
+      "group": "System comparison",
+      "label": "SmartLoad vs plain NGINX",
+      "question": "Does SmartLoad's full decision plane beat plain NGINX round-robin on the same hardware, workload, and backend pool?",
+      "summary": "A/B comparison (#148): identical 5-backend pool and Locust load; only the decision plane (forecasting + anomaly-aware routing + autoscaling) is toggled between the two sides, which run serially. Broken down by load phase.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "smartload",
+      "primaryMetricKey": "p95",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "value": null,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineLabel": "plain NGINX"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineLabel": "plain NGINX"
+        },
+        {
+          "key": "rps",
+          "label": "Throughput",
+          "value": null,
+          "unit": "RPS",
+          "direction": "higher-better",
+          "baselineLabel": "plain NGINX"
+        }
+      ],
+      "systems": [
+        {
+          "id": "smartload",
+          "label": "SmartLoad (full plane)",
+          "role": "subject"
+        },
+        {
+          "id": "baseline",
+          "label": "Plain NGINX round-robin",
+          "role": "floor",
+          "hint": "no decision plane"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "Overall",
+          "isAggregate": true
+        },
+        {
+          "id": "A_ramp",
+          "label": "Ramp",
+          "params": {
+            "phase": "A_ramp"
+          }
+        },
+        {
+          "id": "A_hold",
+          "label": "Hold",
+          "params": {
+            "phase": "A_hold"
+          }
+        },
+        {
+          "id": "B_anomaly",
+          "label": "Anomaly",
+          "params": {
+            "phase": "B_anomaly"
+          }
+        },
+        {
+          "id": "C_sustain",
+          "label": "Sustain",
+          "params": {
+            "phase": "C_sustain"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "p50",
+          "label": "p50 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p99",
+          "label": "p99 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "rps",
+          "label": "Throughput",
+          "unit": "RPS",
+          "direction": "higher-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "p95-by-side",
+          "title": "p95 latency by side",
+          "kind": "bars",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "bars": []
+        },
+        {
+          "key": "p95-by-phase",
+          "title": "p95 latency by load phase",
+          "kind": "lines",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "series": []
+        }
+      ]
+    },
+    {
+      "id": "adaptive-bench",
+      "group": "System comparison",
+      "label": "Adaptive scaling (RQ4)",
+      "question": "Does forecast-driven scale-out keep latency and errors flat as load ramps, spikes, and an anomaly hits?",
+      "summary": "Single-stack demonstration across a five-phase load curve (bootstrap → forecast burst → sustain → anomaly scale-down → steady), measuring how the pool grows ahead of saturation and recovers. One system, broken down by phase.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "smartload",
+      "primaryMetricKey": "p95",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "value": null,
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "replica_count",
+          "label": "Peak pool size",
+          "value": null,
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "systems": [
+        {
+          "id": "smartload",
+          "label": "SmartLoad (full plane)",
+          "role": "subject"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "Overall",
+          "isAggregate": true
+        },
+        {
+          "id": "A_bootstrap",
+          "label": "Bootstrap",
+          "params": {
+            "phase": "A_bootstrap"
+          }
+        },
+        {
+          "id": "B_forecast_burst",
+          "label": "Forecast burst",
+          "params": {
+            "phase": "B_forecast_burst"
+          }
+        },
+        {
+          "id": "C_sustain",
+          "label": "Sustain",
+          "params": {
+            "phase": "C_sustain"
+          }
+        },
+        {
+          "id": "D_anomaly_scale_down",
+          "label": "Anomaly + scale-down",
+          "params": {
+            "phase": "D_anomaly_scale_down"
+          }
+        },
+        {
+          "id": "E_steady",
+          "label": "Steady",
+          "params": {
+            "phase": "E_steady"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "p50",
+          "label": "p50 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "p99",
+          "label": "p99 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "error_rate",
+          "label": "Error rate",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "rps",
+          "label": "Throughput",
+          "unit": "RPS",
+          "direction": "higher-better"
+        },
+        {
+          "key": "replica_count",
+          "label": "Pool size",
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "p95-by-phase",
+          "title": "p95 latency by phase",
+          "kind": "lines",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "series": []
+        },
+        {
+          "key": "pool-by-phase",
+          "title": "Pool size by phase",
+          "kind": "lines",
+          "yLabel": "pool size",
+          "yUnit": "",
+          "series": []
+        }
+      ]
+    },
+    {
+      "id": "rl-routing",
+      "group": "Routing",
+      "label": "RL routing (honest null result)",
+      "question": "Does the trained PPO routing policy beat classical load-balancing baselines on tail latency and SLA-violation, across backend scenarios?",
+      "summary": "Closed-loop causal M/G/c simulation, 5 eval seed-bands × 40 episodes × 128 windows. Ranking key is p95 + SLA-violation (lower is better); reward is diagnostic only. Broken down by backend scenario.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "policy_shipped",
+      "primaryMetricKey": "p95",
+      "defaultConfigId": "homogeneous",
+      "kpis": [
+        {
+          "key": "slaviol",
+          "label": "SLA-violation rate",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineLabel": "round-robin",
+          "hint": "homogeneous load"
+        },
+        {
+          "key": "p50",
+          "label": "Median latency",
+          "value": null,
+          "unit": "ms",
+          "direction": "lower-better",
+          "baselineLabel": "round-robin"
+        },
+        {
+          "key": "hhi",
+          "label": "Routing concentration (HHI)",
+          "value": null,
+          "unit": "",
+          "direction": "lower-better",
+          "baselineLabel": "round-robin",
+          "hint": "0 = uniform, 1 = all-to-one"
+        }
+      ],
+      "systems": [
+        {
+          "id": "policy_shipped",
+          "label": "PPO policy",
+          "role": "subject",
+          "hint": "RL, shadow mode"
+        },
+        {
+          "id": "round_robin",
+          "label": "Round-robin",
+          "role": "baseline",
+          "hint": "nginx-native"
+        },
+        {
+          "id": "least_connections",
+          "label": "Least-connections",
+          "role": "baseline",
+          "hint": "nginx-native"
+        },
+        {
+          "id": "least_response_time",
+          "label": "Least-response-time",
+          "role": "baseline",
+          "hint": "classical"
+        },
+        {
+          "id": "random_shadow",
+          "label": "Random",
+          "role": "floor",
+          "hint": "sanity baseline"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "homogeneous",
+          "label": "Homogeneous",
+          "params": {
+            "scenario": "homogeneous"
+          }
+        },
+        {
+          "id": "heterogeneous",
+          "label": "Heterogeneous",
+          "params": {
+            "scenario": "heterogeneous"
+          }
+        },
+        {
+          "id": "degrading",
+          "label": "Degrading",
+          "params": {
+            "scenario": "degrading"
+          }
+        },
+        {
+          "id": "near-idle",
+          "label": "Near-idle",
+          "params": {
+            "scenario": "near-idle"
+          }
+        },
+        {
+          "id": "held_out_dual_degrade",
+          "label": "Held-out dual-degrade",
+          "params": {
+            "scenario": "held_out_dual_degrade"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "p95",
+          "label": "p95 latency",
+          "unit": "ms",
+          "direction": "lower-better",
+          "hint": "95th-percentile served latency (ranking key)"
+        },
+        {
+          "key": "slaviol",
+          "label": "SLA-violation",
+          "unit": "%",
+          "direction": "lower-better",
+          "hint": "Fraction of windows over the 200 ms SLA"
+        },
+        {
+          "key": "p50",
+          "label": "p50 latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        },
+        {
+          "key": "shed",
+          "label": "Load shed",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "hhi",
+          "label": "Concentration (HHI)",
+          "unit": "",
+          "direction": "lower-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "p95-by-router",
+          "title": "p95 latency by router (homogeneous)",
+          "kind": "bars",
+          "yLabel": "p95 latency",
+          "yUnit": "ms",
+          "direction": "lower-better",
+          "bars": [],
+          "note": "Lower is better. The emphasised bar is the leader — a classical policy, not the PPO router."
+        },
+        {
+          "key": "slaviol-by-router",
+          "title": "SLA-violation by router (homogeneous)",
+          "kind": "bars",
+          "yLabel": "SLA-violation",
+          "yUnit": "%",
+          "direction": "lower-better",
+          "bars": [],
+          "note": "The PPO policy violates the 200 ms SLA roughly twice as often as round-robin — the honest finding behind demoting it to shadow."
+        }
+      ]
+    },
+    {
+      "id": "autoscaler-strategy",
+      "group": "Autoscaling",
+      "label": "Autoscaler strategy",
+      "question": "Does the target controller beat the previous ±1 rule, the naive threshold, and static provisioning, across load shapes?",
+      "summary": "Provisioning strategies on the same per-(profile, seed) demand realisation; every dynamic strategy calls the shipped decide rule, only the controller and signal change. Aggregate plus per-profile breakdown.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "C2",
+      "primaryMetricKey": "sla",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "sla",
+          "label": "SLA met",
+          "value": null,
+          "unit": "%",
+          "direction": "higher-better",
+          "baselineLabel": "old ±1 rule",
+          "hint": "same moving-average signal"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "value": null,
+          "unit": "RPS",
+          "direction": "lower-better",
+          "baselineLabel": "old ±1 rule"
+        },
+        {
+          "key": "overprov",
+          "label": "Over-provision cost",
+          "value": null,
+          "unit": "inst·s",
+          "direction": "lower-better",
+          "baselineLabel": "static SLA-optimal"
+        }
+      ],
+      "systems": [
+        {
+          "id": "C2",
+          "label": "Target controller + MA forecast",
+          "role": "subject",
+          "hint": "shipped controller"
+        },
+        {
+          "id": "S2",
+          "label": "Old ±1 rule + MA forecast",
+          "role": "baseline",
+          "hint": "previous default"
+        },
+        {
+          "id": "S5",
+          "label": "Naive utilisation threshold",
+          "role": "baseline"
+        },
+        {
+          "id": "C4",
+          "label": "Target controller + trend forecast",
+          "role": "candidate"
+        },
+        {
+          "id": "C1",
+          "label": "Target controller + oracle",
+          "role": "ceiling",
+          "hint": "perfect foresight"
+        },
+        {
+          "id": "S4max",
+          "label": "Static N=max",
+          "role": "reference",
+          "hint": "SLA-optimal, cost-worst"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "steady",
+          "label": "Steady",
+          "params": {
+            "profile": "steady"
+          }
+        },
+        {
+          "id": "diurnal",
+          "label": "Diurnal",
+          "params": {
+            "profile": "diurnal"
+          }
+        },
+        {
+          "id": "ramp",
+          "label": "Ramp",
+          "params": {
+            "profile": "ramp"
+          }
+        },
+        {
+          "id": "spike",
+          "label": "Spike",
+          "params": {
+            "profile": "spike"
+          }
+        },
+        {
+          "id": "sawtooth",
+          "label": "Sawtooth",
+          "params": {
+            "profile": "sawtooth"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "sla",
+          "label": "SLA met",
+          "unit": "%",
+          "direction": "higher-better"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "overprov",
+          "label": "Over-provision",
+          "unit": "inst·s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "actions",
+          "label": "Scale actions",
+          "unit": "",
+          "direction": "lower-better"
+        },
+        {
+          "key": "settling",
+          "label": "Settling time",
+          "unit": "s",
+          "direction": "lower-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "sla-by-strategy",
+          "title": "SLA% by strategy (all profiles)",
+          "kind": "bars",
+          "yLabel": "SLA met",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "bars": [],
+          "note": "Higher is better. The controller, on the same MA signal, clears the old perfect-foresight oracle."
+        },
+        {
+          "key": "sla-by-profile",
+          "title": "SLA% by profile — controller vs old rule",
+          "kind": "lines",
+          "xLabel": "profile",
+          "yLabel": "SLA met",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "series": [],
+          "note": "The lift holds across every load shape."
+        }
+      ]
+    },
+    {
+      "id": "forecasting-engine",
+      "group": "Forecasting",
+      "label": "Forecasting engine",
+      "question": "Does the candidate forecaster beat the shipped moving-average and the persistence floor on next-bucket accuracy, across load shapes?",
+      "summary": "Single-step (next 5-min bucket) forecast accuracy, rolling-origin / walk-forward, 5 seeds × 4 profiles. Every engine is handed the identical history window at each origin. Aggregate plus per-profile.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "harmonic_residual",
+      "primaryMetricKey": "mape",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "mape",
+          "label": "MAPE",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineLabel": "shipped moving-average",
+          "hint": "1-step ahead, all profiles"
+        },
+        {
+          "key": "coverage",
+          "label": "95% band coverage",
+          "value": null,
+          "unit": "",
+          "direction": "target",
+          "hint": "calibration target 0.95"
+        },
+        {
+          "key": "mae",
+          "label": "MAE",
+          "value": null,
+          "unit": "RPS",
+          "direction": "lower-better",
+          "baselineLabel": "shipped moving-average"
+        }
+      ],
+      "systems": [
+        {
+          "id": "harmonic_residual",
+          "label": "Harmonic-residual",
+          "role": "subject",
+          "hint": "candidate"
+        },
+        {
+          "id": "moving_average",
+          "label": "Moving-average",
+          "role": "baseline",
+          "hint": "shipped"
+        },
+        {
+          "id": "arima_serving",
+          "label": "ARIMA(2,0,2)",
+          "role": "baseline",
+          "hint": "shipped, out-of-distribution"
+        },
+        {
+          "id": "naive",
+          "label": "Naive (persistence)",
+          "role": "floor",
+          "hint": "not shipped"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "steady",
+          "label": "Steady",
+          "params": {
+            "profile": "steady"
+          }
+        },
+        {
+          "id": "diurnal",
+          "label": "Diurnal",
+          "params": {
+            "profile": "diurnal"
+          }
+        },
+        {
+          "id": "spiky",
+          "label": "Spiky",
+          "params": {
+            "profile": "spiky"
+          }
+        },
+        {
+          "id": "ramp",
+          "label": "Ramp",
+          "params": {
+            "profile": "ramp"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "mape",
+          "label": "MAPE",
+          "unit": "%",
+          "direction": "lower-better",
+          "hint": "Mean absolute % error — headline KPI (gate < 20%)"
+        },
+        {
+          "key": "smape",
+          "label": "sMAPE",
+          "unit": "%",
+          "direction": "lower-better"
+        },
+        {
+          "key": "rmse",
+          "label": "RMSE",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "mae",
+          "label": "MAE",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "coverage",
+          "label": "95% coverage",
+          "unit": "",
+          "direction": "target",
+          "target": 0.95
+        },
+        {
+          "key": "latency",
+          "label": "Forecast latency",
+          "unit": "ms",
+          "direction": "lower-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "mape-by-engine",
+          "title": "MAPE by engine (all profiles)",
+          "kind": "bars",
+          "yLabel": "MAPE",
+          "yUnit": "%",
+          "direction": "lower-better",
+          "bars": [],
+          "note": "Lower is better. Harmonic-residual beats the shipped moving-average and the persistence floor."
+        },
+        {
+          "key": "mape-by-profile",
+          "title": "MAPE by load profile",
+          "kind": "lines",
+          "xLabel": "profile",
+          "yLabel": "MAPE",
+          "yUnit": "%",
+          "direction": "lower-better",
+          "series": [],
+          "note": "Moving-average degrades badly on the diurnal and spiky shapes; harmonic-residual stays low across all four."
+        }
+      ]
+    },
+    {
+      "id": "forecasting-downstream",
+      "group": "Forecasting",
+      "label": "Forecasting downstream",
+      "question": "Does a forward-projecting forecast deliver real end-to-end SLA value over a reactive trailing mean, across load shapes?",
+      "summary": "Each strategy drives the same shipped autoscaler decide rule in the same warm-up-aware loop; only the scalar signal differs, so any SLA gap is the forecast's. Aggregate plus per-profile, 8 seeds × 6 profiles.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "hr",
+      "primaryMetricKey": "sla",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "sla",
+          "label": "End-to-end SLA",
+          "value": null,
+          "unit": "%",
+          "direction": "higher-better",
+          "baselineLabel": "reactive / shipped MA",
+          "hint": "+6.3 pp vs reactive"
+        },
+        {
+          "key": "gap",
+          "label": "Reactive→oracle gap closed",
+          "value": null,
+          "unit": "%",
+          "direction": "higher-better",
+          "hint": "of the 18.6 pp headroom"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "value": null,
+          "unit": "RPS",
+          "direction": "lower-better",
+          "baselineLabel": "reactive"
+        }
+      ],
+      "systems": [
+        {
+          "id": "hr",
+          "label": "HR-predictive (20s ahead)",
+          "role": "subject",
+          "hint": "harmonic_residual"
+        },
+        {
+          "id": "ma",
+          "label": "MA-predictive",
+          "role": "baseline",
+          "hint": "shipped moving-average"
+        },
+        {
+          "id": "reactive",
+          "label": "Reactive (trailing mean)",
+          "role": "baseline",
+          "hint": "backward-looking floor"
+        },
+        {
+          "id": "oracle",
+          "label": "Perfect-foresight oracle",
+          "role": "ceiling"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "steady",
+          "label": "Steady",
+          "params": {
+            "profile": "steady"
+          }
+        },
+        {
+          "id": "diurnal",
+          "label": "Diurnal",
+          "params": {
+            "profile": "diurnal"
+          }
+        },
+        {
+          "id": "ramp",
+          "label": "Ramp",
+          "params": {
+            "profile": "ramp"
+          }
+        },
+        {
+          "id": "spike",
+          "label": "Spike",
+          "params": {
+            "profile": "spike"
+          }
+        },
+        {
+          "id": "sawtooth",
+          "label": "Sawtooth",
+          "params": {
+            "profile": "sawtooth"
+          }
+        },
+        {
+          "id": "burst",
+          "label": "Burst",
+          "params": {
+            "profile": "burst"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "sla",
+          "label": "SLA met",
+          "unit": "%",
+          "direction": "higher-better"
+        },
+        {
+          "key": "unmet",
+          "label": "Unmet RPS",
+          "unit": "RPS",
+          "direction": "lower-better"
+        },
+        {
+          "key": "overprov",
+          "label": "Over-provision",
+          "unit": "inst·s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "actions",
+          "label": "Scale actions",
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "sla-by-signal",
+          "title": "End-to-end SLA% by scaling signal (all profiles)",
+          "kind": "bars",
+          "yLabel": "SLA met",
+          "yUnit": "%",
+          "direction": "higher-better",
+          "bars": [],
+          "note": "Reactive and the shipped moving-average coincide to the digit — the MA carries no forward lead. HR projects ahead and gains."
+        },
+        {
+          "key": "hr-gain-by-profile",
+          "title": "Where forecasting pays — HR SLA gain vs reactive",
+          "kind": "lines",
+          "xLabel": "profile",
+          "yLabel": "Δ SLA",
+          "yUnit": "pp",
+          "direction": "higher-better",
+          "series": [],
+          "note": "The forecast pays most on the structured shapes (sawtooth, diurnal, ramp); on near-random spikes there is nothing to lead."
+        }
+      ]
+    },
+    {
+      "id": "anomaly-detection",
+      "group": "Anomaly detection",
+      "label": "Anomaly detection quality",
+      "question": "Which detector best identifies real anomalies (precision / recall / F1), and how much does the stability gate help, across injection profiles?",
+      "summary": "Six detectors scored on identical ground-truth-labelled synthetic traces (latency spikes, error bursts, gradual degradation, clean controls, plus held-out partial-failure and flappy-clean). Broken down by injection profile. Distinct from the engine-agreement bench: this measures detection quality on labelled sequences.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "trend_rule",
+      "primaryMetricKey": "f1",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "f1",
+          "label": "F1",
+          "value": null,
+          "unit": "",
+          "direction": "higher-better",
+          "baselineLabel": "threshold rule"
+        },
+        {
+          "key": "recall",
+          "label": "Recall",
+          "value": null,
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "fp_rate",
+          "label": "False-positive rate",
+          "value": null,
+          "unit": "",
+          "direction": "lower-better"
+        }
+      ],
+      "systems": [
+        {
+          "id": "trend_rule",
+          "label": "Trend rule",
+          "role": "subject",
+          "hint": "shipped default"
+        },
+        {
+          "id": "threshold",
+          "label": "Threshold rule",
+          "role": "baseline"
+        },
+        {
+          "id": "zscore",
+          "label": "Z-score (3σ)",
+          "role": "baseline"
+        },
+        {
+          "id": "isolation_forest_shipped",
+          "label": "Isolation forest (shipped)",
+          "role": "floor",
+          "hint": "degenerate band"
+        },
+        {
+          "id": "isolation_forest_retrained",
+          "label": "Isolation forest (retrained)",
+          "role": "candidate"
+        },
+        {
+          "id": "trend_forest",
+          "label": "Trend forest",
+          "role": "candidate"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "All profiles",
+          "isAggregate": true
+        },
+        {
+          "id": "latency-spike",
+          "label": "Latency spike",
+          "params": {
+            "profile": "latency-spike"
+          }
+        },
+        {
+          "id": "error-burst",
+          "label": "Error burst",
+          "params": {
+            "profile": "error-burst"
+          }
+        },
+        {
+          "id": "gradual-degradation",
+          "label": "Gradual degradation",
+          "params": {
+            "profile": "gradual-degradation"
+          }
+        },
+        {
+          "id": "clean-control",
+          "label": "Clean control",
+          "params": {
+            "profile": "clean-control"
+          }
+        },
+        {
+          "id": "partial-failure",
+          "label": "Partial failure (held-out)",
+          "params": {
+            "profile": "partial-failure"
+          }
+        },
+        {
+          "id": "flappy-clean",
+          "label": "Flappy clean (held-out)",
+          "params": {
+            "profile": "flappy-clean"
+          }
+        }
+      ],
+      "metrics": [
+        {
+          "key": "precision",
+          "label": "Precision",
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "recall",
+          "label": "Recall",
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "f1",
+          "label": "F1",
+          "unit": "",
+          "direction": "higher-better"
+        },
+        {
+          "key": "fp_rate",
+          "label": "False-positive rate",
+          "unit": "",
+          "direction": "lower-better"
+        },
+        {
+          "key": "detect_latency_s",
+          "label": "Detect latency",
+          "unit": "s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "recover_latency_s",
+          "label": "Recover latency",
+          "unit": "s",
+          "direction": "lower-better"
+        },
+        {
+          "key": "pr_auc",
+          "label": "PR-AUC",
+          "unit": "",
+          "direction": "higher-better"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "f1-by-engine",
+          "title": "F1 by detector (all profiles)",
+          "kind": "bars",
+          "yLabel": "F1",
+          "yUnit": "",
+          "direction": "higher-better",
+          "bars": []
+        },
+        {
+          "key": "f1-by-profile",
+          "title": "F1 by injection profile",
+          "kind": "lines",
+          "yLabel": "F1",
+          "yUnit": "",
+          "direction": "higher-better",
+          "series": []
+        }
+      ]
+    },
+    {
+      "id": "anomaly-engine",
+      "group": "Anomaly detection",
+      "label": "Engine agreement (decision surface)",
+      "question": "Where does the trained IsolationForest's decision boundary agree with — and diverge from — the simple threshold rule across the feature space?",
+      "summary": "Both engines scored at every cell of a latency × error-rate feature grid. This measures decision-surface agreement, not detection quality — a sanity check on the production scaler and where the model adds or loses signal. Distinct from the detection-quality bench.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the benchmark run."
+      },
+      "subjectId": "isolation_forest",
+      "primaryMetricKey": "unhealthy_pct",
+      "defaultConfigId": "aggregate",
+      "kpis": [
+        {
+          "key": "agreement",
+          "label": "Engine agreement",
+          "value": null,
+          "unit": "%",
+          "direction": "higher-better",
+          "hint": "share of grid cells with matching verdicts"
+        },
+        {
+          "key": "cells",
+          "label": "Grid cells swept",
+          "value": null,
+          "unit": "",
+          "direction": "neutral"
+        }
+      ],
+      "systems": [
+        {
+          "id": "isolation_forest",
+          "label": "Isolation forest",
+          "role": "subject",
+          "hint": "shipped model"
+        },
+        {
+          "id": "threshold",
+          "label": "Threshold rule",
+          "role": "baseline"
+        }
+      ],
+      "configurations": [
+        {
+          "id": "aggregate",
+          "label": "Full grid",
+          "isAggregate": true
+        }
+      ],
+      "metrics": [
+        {
+          "key": "unhealthy_pct",
+          "label": "Cells flagged unhealthy",
+          "unit": "%",
+          "direction": "neutral"
+        },
+        {
+          "key": "healthy_pct",
+          "label": "Cells flagged healthy",
+          "unit": "%",
+          "direction": "neutral"
+        }
+      ],
+      "matrix": {},
+      "charts": [
+        {
+          "key": "verdict-distribution",
+          "title": "Verdict distribution by engine",
+          "kind": "bars",
+          "yLabel": "% of cells",
+          "yUnit": "%",
+          "bars": []
+        }
+      ]
+    }
+  ],
+  "audit": [
+    {
+      "key": "control-loop-audit",
+      "title": "Control-loop audit & hardening",
+      "summary": "Read-only code audit cross-checked against the live stack and on-disk bench artifacts, plus a fresh before/after benchmark. Each candidate root-cause was handed to an independent reviewer whose job was to refute it.",
+      "provenance": {
+        "runId": "pending",
+        "generatedUtc": null,
+        "host": "—",
+        "gitCommit": null,
+        "kind": "pending",
+        "note": "Awaiting the VPS benchmark re-run."
+      },
+      "verdict": {
+        "tone": "muted",
+        "text": "Awaiting the audit re-run."
+      },
+      "kpis": [
+        {
+          "key": "errorrate",
+          "label": "Error rate after fixes",
+          "value": null,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineLabel": "before any fix",
+          "hint": "~140× reduction"
+        },
+        {
+          "key": "findings",
+          "label": "Findings confirmed",
+          "value": null,
+          "unit": "",
+          "direction": "neutral",
+          "hint": "survived adversarial review (10 rejected)"
+        },
+        {
+          "key": "fixes",
+          "label": "Critical fixes shipped",
+          "value": null,
+          "unit": "",
+          "direction": "neutral",
+          "hint": "D1, D2, D3 + spike hardening"
+        }
+      ],
+      "stages": [
+        {
+          "label": "Before any fix",
+          "value": null,
+          "unit": "%",
+          "tone": "bad"
+        },
+        {
+          "label": "D1 alone",
+          "value": null,
+          "unit": "%",
+          "tone": "bad",
+          "note": "exposed the coupling — D1 alone made it worse"
+        },
+        {
+          "label": "D1+D2+D3 (max=5 saturation bench)",
+          "value": null,
+          "unit": "%",
+          "tone": "warn",
+          "note": "deliberate saturation design, not a bug"
+        },
+        {
+          "label": "+ headroom (max=10)",
+          "value": null,
+          "unit": "%",
+          "tone": "warn"
+        },
+        {
+          "label": "+ spike hardening",
+          "value": null,
+          "unit": "%",
+          "tone": "ok",
+          "note": "all 3 runs 0.03–0.89%, active pool never below 4"
+        }
+      ],
+      "items": []
+    }
+  ],
+  "grafana": {
+    "baseUrl": "http://localhost:3000",
+    "embedQuery": "kiosk&theme=light&refresh=30s",
+    "note": "Live read-only dashboards. Requires the SmartLoad Docker stack to be running (docker compose up). Embedding and anonymous Viewer access are already enabled in docker-compose.yml; no login is needed.",
+    "dashboards": [
+      {
+        "uid": "smartload-overview",
+        "title": "Overview",
+        "description": "Request rate, latency percentiles, error rate, and aggregate backend status."
+      },
+      {
+        "uid": "smartload-anomaly",
+        "title": "Anomaly",
+        "description": "Per-backend health timeline, latency thresholds, error-rate tracking, and detector verdicts."
+      },
+      {
+        "uid": "smartload-forecast",
+        "title": "Forecast",
+        "description": "Predicted vs actual RPS, live forecasting error, and autoscaler decisions."
+      },
+      {
+        "uid": "smartload-scaling",
+        "title": "Scaling",
+        "description": "Throughput with scale events overlaid and the instance-count step series."
+      },
+      {
+        "uid": "smartload-rl-routing",
+        "title": "RL Routing",
+        "description": "Per-backend request share, latency, and error rate under the routing policy."
+      },
+      {
+        "uid": "smartload-redis",
+        "title": "Redis / control bus",
+        "description": "Control-bus health: connected clients, command rate, memory, and pub/sub channels."
+      }
+    ]
+  }
+}
