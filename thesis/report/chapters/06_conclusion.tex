@@ -267,9 +267,9 @@ baseline-versus-SmartLoad comparison would produce per-phase deltas with confide
 intervals in place of the single committed runs. Paired with Helm templates and raw
 Kubernetes manifests, it unlocks a multi-host evaluation surface and the K8s
 HPA-versus-SmartLoad autoscaling comparison \cite{k8shpa} against the cloud-native
-baseline. \Cref{fig:conc:k8s} sketches the target topology, which is not the deployment
-the system runs on today: the evaluated stack runs under Docker Compose on a single host,
-as recorded in \cref{tab:conc:limitations}. In the planned layout each service becomes
+baseline. The target topology is not the deployment the system runs on today: the
+evaluated stack runs under Docker Compose on a single host, as recorded in
+\cref{tab:conc:limitations}. In the planned layout each service becomes
 its own Deployment, stateful components move to StatefulSets or managed equivalents, and a
 Kubernetes Horizontal Pod Autoscaler stands in for the SmartLoad autoscaler so the two
 strategies can be measured side by side.
@@ -285,12 +285,11 @@ refreshed and re-evaluated against their deterministic counterparts.
 middleware into a managed offering: per-tenant isolation, tenant API keys and RBAC,
 operator-UI authentication, rate limiting, and an outbound webhook dispatcher. These
 build on the current architecture and open the path from middleware to a hosted product.
-Because the shipped system is single-tenant, the two designs that follow describe target
-behaviour rather than implemented features. \Cref{fig:conc:mt} shows the proposed
-isolation model, in which tenant identity is resolved once at the API edge and carried
-through every storage write and event channel, and \cref{fig:conc:webhook} shows the
-proposed webhook delivery path for customers who cannot subscribe to the internal Redis
-bus directly.
+Because the shipped system is single-tenant, these designs describe target behaviour
+rather than implemented features. The proposed isolation model resolves tenant identity
+once at the API edge and carries it through every storage write and event channel, and a
+proposed webhook delivery path serves customers who cannot subscribe to the internal
+Redis bus directly.
 
 \paragraph{Explore additional learned anomaly models.} For temporal patterns that are
 only abnormal relative to their context, an LSTM-autoencoder anomaly engine
@@ -331,32 +330,6 @@ work into four themes, each extending the current architecture rather than rewor
     \bottomrule
   \end{tabularx}
 \end{table}
-
-The two diagrams below detail the multi-tenant SaaS theme from \cref{tab:conc:roadmap},
-and a third its packaging theme. All three depict the target Phase-2 design, not the
-system evaluated in this report, which remains single-tenant on a single Docker Compose
-host.
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{mt_isolation}
-  \caption[Planned multi-tenant isolation (Phase 2)]{Planned multi-tenant isolation (Phase~2), not implemented in the single-tenant system evaluated in this report.}
-  \label{fig:conc:mt}
-\end{figure}
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{webhook}
-  \caption[Planned webhook delivery (Phase 2)]{Planned webhook delivery (Phase~2), not yet built, delivering signed outbound HTTP POSTs to customers who cannot subscribe to Redis.}
-  \label{fig:conc:webhook}
-\end{figure}
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{k8s}
-  \caption[Planned Helm and Kubernetes topology (Phase 2)]{Planned Helm and Kubernetes topology (Phase~2), not the single-host Docker Compose deployment used for the results in this report.}
-  \label{fig:conc:k8s}
-\end{figure}
 
 \Cref{fig:conc:roadmap} places these directions on a forward-looking timeline, distinct
 from the retrospective work breakdown structure in \cref{fig:imc:wbs}: where that chart

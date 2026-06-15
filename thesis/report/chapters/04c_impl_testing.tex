@@ -1,26 +1,24 @@
 \section{Testing and Evaluation}\label{ch:impl_testing}
 
-Software that makes its own decisions about live traffic has to be checked
-carefully. A bad routing or scaling choice is not a small visual bug; left
-unchecked, it can take a service down. For that reason, SmartLoad treats its tests and benchmarks as
-real engineering work, not an afterthought. A fast, deterministic check guards
-every engine on its own, a slower live-stack check guards every pair of services on
-a running cluster, and a small set of end-to-end checks guard each feature a
-customer actually uses. This section lays out that test pyramid and then turns to
-the two custom benchmark harnesses that answer the project's research questions,
-together with the results they produced.
+Software that decides about live traffic has to be checked carefully, because a bad
+routing or scaling choice is not a cosmetic bug and can take a service down. SmartLoad
+therefore treats its tests and benchmarks as engineering work: a fast deterministic
+check guards every engine on its own, a slower live-stack check guards every pair of
+services on a running cluster, and a small set of end-to-end checks guard each feature
+a customer uses. This section lays out that test pyramid, then turns to the custom
+benchmark harnesses that answer the project's research questions and the results they
+produced.
 
 \subsection{Test strategy: a layered pyramid}\label{imc:pyramid}
 
-The repository organises its checks as a classic test pyramid, plus three
-structural lints that protect the repository's own conventions. The shape is
-bottom-heavy on purpose. Most of the checks are fast, pure-Python unit tests that
-need no Docker and no network, so the inner development loop stays in seconds. The
-expensive live-stack tests are kept for the contracts that genuinely cannot be
-exercised without a running cluster. \Cref{fig:imc:pyramid} draws the shape
-qualitatively, and \cref{tab:imc:layers} reports the per-module unit-suite counts
-collected at the audited commit, which is the layer the bulk of the testing
-lives in.
+The repository organises its checks as a classic test pyramid plus three structural
+lints that protect its own conventions. The shape is bottom-heavy on purpose: most
+checks are fast, pure-Python unit tests that need no Docker and no network, so the
+inner development loop stays in seconds, while expensive live-stack tests are reserved
+for contracts that cannot be exercised without a running cluster. \Cref{fig:imc:pyramid}
+draws the shape qualitatively, and \cref{tab:imc:layers} reports the per-module
+unit-suite counts at the audited commit, the layer where the bulk of the testing
+lives.
 
 \begin{figure}[H]
   \centering
@@ -73,41 +71,37 @@ lives in.
   \end{tabular}
 \end{table}
 
-\paragraph{Unit layer.} Each decision engine is a pure function of its
-inputs. The threshold rule, the Isolation Forest scorer, the moving-average and
-ARIMA forecasters, the PPO argmax-dominant weighting, and the autoscaler's
-dead-band arithmetic all reduce to deterministic transforms, so each one can be
-checked against a hand-computed expectation. These tests run with \texttt{pytest
-tests/unit/} in a few seconds and gate every commit, so a change that shifts a
-verdict boundary fails right away and in plain sight.
+\paragraph{Unit layer.} Each decision engine is a pure function of its inputs. The
+threshold rule, the Isolation Forest scorer, the moving-average and ARIMA forecasters,
+the PPO argmax-dominant weighting, and the autoscaler's dead-band arithmetic all reduce
+to deterministic transforms, so each can be checked against a hand-computed
+expectation. These tests run with \texttt{pytest tests/unit/} in a few seconds and gate
+every commit, so a change that shifts a verdict boundary fails right away.
 
-\paragraph{Integration layer.} These tests assume \texttt{docker compose up
--d} and check the contract between a pair of services on the wire. A
-\texttt{stack\_ready} fixture in \texttt{tests/integration/conftest.py} blocks until
-every service reports \texttt{/health} before any test runs. They cover the
-telemetry OTLP ingress and database persistence, per-request latency fidelity on
-live traffic (\texttt{STDDEV(latency) > 0}), the autoscaler's cooldown and reactive
-fallback, the dynamic-pool \texttt{provision()}/\texttt{decommission()} lifecycle
-against the live Docker daemon, and the four-channel closed-loop dispatch.
+\paragraph{Integration layer.} These tests assume \texttt{docker compose up -d} and
+check the contract between a pair of services on the wire. A \texttt{stack\_ready}
+fixture in \texttt{tests/integration/conftest.py} blocks until every service reports
+\texttt{/health} before any test runs. They cover telemetry OTLP ingress and database
+persistence, per-request latency fidelity on live traffic (\texttt{STDDEV(latency) >
+0}), the autoscaler's cooldown and reactive fallback, the dynamic-pool
+\texttt{provision()}/\texttt{decommission()} lifecycle against the live Docker daemon,
+and the four-channel closed-loop dispatch.
 
-\paragraph{End-to-end layer.} The end-to-end tests drive a whole feature
-through the customer-facing SDK rather than an internal seam. The adaptive-bench
-compressed run, for example, drives the five-phase load shape under a 60-second CI
-budget and checks that all eight raw artefacts come out with the correct schema.
+\paragraph{End-to-end layer.} These tests drive a whole feature through the
+customer-facing SDK rather than an internal seam. The adaptive-bench compressed run,
+for example, drives the five-phase load shape under a 60-second CI budget and checks
+that all eight raw artefacts emerge with the correct schema.
 
 \paragraph{Conformance and structural lints.} A single conformance suite
 (\texttt{tests/\allowbreak conformance/\allowbreak lb\_\allowbreak adapter/}) pins the load-balancer adapter
-interface. At present it exercises only the implemented \texttt{NginxAdapter}
-together with an in-test mock; the ALB, Envoy, and HAProxy adapters are declared
-stubs that raise \texttt{NotImplementedError} and are not yet exercised. The
-suite therefore fixes the contract a future adapter would have to satisfy, rather
-than demonstrating that a second back end already meets it. Three structural lints
+interface. It currently exercises only the implemented \texttt{NginxAdapter} with an
+in-test mock; the ALB, Envoy, and HAProxy adapters are stubs that raise
+\texttt{NotImplementedError}, so the suite fixes the contract a future adapter would
+have to satisfy rather than demonstrating that a second back end already meets it.
+Three structural lints
 (\texttt{scripts/\allowbreak lint-\allowbreak structure.py}, \texttt{lint-\allowbreak redis-\allowbreak channels.py},
-\texttt{lint-\allowbreak openapi.py}) protect the repository's conventions rather than its
-behaviour: they flag a feature document without a matching end-to-end test
-directory, a Redis channel published but never subscribed, and an HTTP route absent
-from the OpenAPI contract. \Cref{tab:imc:lints} states what each lint enforces and
-where the drift would otherwise hide.
+\texttt{lint-\allowbreak openapi.py}) protect conventions rather than behaviour.
+\Cref{tab:imc:lints} states what each enforces and where drift would otherwise hide.
 
 \begin{table}[H]
   \centering
@@ -125,31 +119,30 @@ where the drift would otherwise hide.
   \end{tabularx}
 \end{table}
 
-\paragraph{Slow tests and the acceptance pattern.} A few live-stack tests have
-natural multi-minute runtimes, such as a forecast-to-scale-out cycle or a
-model-calibrated detector reaching its verdict, and so they carry
-\texttt{@pytest.mark.slow}, so the continuous-integration \texttt{compose-test} job
-filters them out by default and operators run them on demand. Beyond the layering,
-every product task ships \emph{two} test artefacts: one pure-Python unit test and
-one live-stack acceptance test whose module docstring cites the specification
-section it maps to. That citation is the link between the executable test and the
-written contract, so a reviewer reading an acceptance test can jump straight to the
-clause it enforces.
+\paragraph{Slow tests and the acceptance pattern.} A few live-stack tests have natural
+multi-minute runtimes, such as a forecast-to-scale-out cycle or a model-calibrated
+detector reaching its verdict, so they carry \texttt{@pytest.mark.slow}: the
+continuous-integration \texttt{compose-test} job filters them out by default and
+operators run them on demand. Beyond the layering, every product task ships \emph{two}
+test artefacts, a pure-Python unit test and a live-stack acceptance test whose module
+docstring cites the specification section it maps to. That citation links the
+executable test to the written contract, so a reviewer can jump straight to the clause
+it enforces.
 
 \section{Evaluation Methodology}\label{imc:methodology}
 
-The test suite answers ``does the feature work?''. The benchmarks answer ``how well
-does it work, and is it holding steady over time?''. SmartLoad's evaluation is built
-around four research questions, three of which are exercised by the custom harnesses
-inventoried in \cref{tab:imc:harnesses}. The \emph{adaptive-bench} measures the
-closed forecast~$\rightarrow$ autoscaler~$\rightarrow$~sidecar loop (RQ4); the
-\emph{baseline-vs-smartload routing bench} compares plain NGINX round-robin against
-the full decision plane on an identical stack (RQ1, RQ3); and the
-\emph{anomaly-engine-bench} compares the deterministic threshold rule against the
-trained Isolation Forest engine across a feature grid. All three follow the same
-discipline: every run writes a \texttt{MANIFEST.json} recording the timestamp, the
-git SHA, the working-tree state, and every knob value, so a third party with the same
-checkout and Docker host can reproduce the figures.
+The test suite answers ``does the feature work?''; the benchmarks answer ``how well,
+and is it holding steady?''. SmartLoad's evaluation is built around four research
+questions, three exercised by the custom harnesses inventoried in
+\cref{tab:imc:harnesses}: the \emph{adaptive-bench} measures the closed
+forecast~$\rightarrow$ autoscaler~$\rightarrow$~sidecar loop (RQ4); the
+\emph{baseline-vs-smartload routing bench} compares plain NGINX round-robin against the
+full decision plane on an identical stack (RQ1, RQ3); and the
+\emph{anomaly-engine-bench} compares the threshold rule against the trained Isolation
+Forest engine across a feature grid. All three share one discipline: every run writes a
+\texttt{MANIFEST.json} recording the timestamp, git SHA, working-tree state, and every
+knob value, so a third party with the same checkout and Docker host can reproduce the
+figures.
 
 \begin{table}[H]
   \centering
@@ -169,20 +162,19 @@ checkout and Docker host can reproduce the figures.
 
 \subsection{The adaptive-bench harness}\label{imc:adaptivebench}
 
-The adaptive-bench drives the live stack through a five-phase Locust~\cite{locust}
-load shape, built to exercise both forecast-driven scale-out and anomaly-driven
-reroute in a single repeatable command. The phases, summarised in
-\cref{tab:imc:phases-plan}, are: \texttt{A\_bootstrap} (a low steady warm-up that
-sets a forecast baseline); \texttt{B\_forecast\_burst} (a sharp ramp to 200 users
-that the forecaster should see coming before saturation); \texttt{C\_sustain} (the
-burst held while a phase-D-style anomaly is injected into one backend);
-\texttt{D\_anomaly\_scale\_down} (load dropped so the autoscaler should shed
-capacity); and \texttt{E\_steady} (a low steady tail that confirms the system
-settles). An asyncio orchestrator runs the load shape alongside three collectors,
-namely a Prometheus~\cite{prometheus} scraper at 1\,Hz, a server-sent-events collector
-tailing the decision envelopes, and an upstream watcher polling \texttt{upstream.conf}
-every two seconds. A phase-D injector then drives a target backend's
-\texttt{/\_admin/delay} endpoint and posts a manual isolation event.
+The adaptive-bench drives the live stack through a five-phase Locust~\cite{locust} load
+shape that exercises both forecast-driven scale-out and anomaly-driven reroute in a
+single repeatable command. The phases, summarised in \cref{tab:imc:phases-plan}, are:
+\texttt{A\_bootstrap} (a low warm-up setting a forecast baseline); \texttt{B\_forecast\_burst}
+(a sharp ramp to 200 users the forecaster should see coming before saturation);
+\texttt{C\_sustain} (the burst held while a phase-D-style anomaly is injected into one
+backend); \texttt{D\_anomaly\_scale\_down} (load dropped so the autoscaler sheds
+capacity); and \texttt{E\_steady} (a low tail confirming the system settles). An
+asyncio orchestrator runs the load shape alongside three collectors: a
+Prometheus~\cite{prometheus} scraper at 1\,Hz, a server-sent-events collector tailing
+the decision envelopes, and an upstream watcher polling \texttt{upstream.conf} every two
+seconds. A phase-D injector then drives a target backend's \texttt{/\_admin/delay}
+endpoint and posts a manual isolation event.
 
 \begin{table}[H]
   \centering
@@ -203,43 +195,49 @@ every two seconds. A phase-D injector then drives a target backend's
 \end{table}
 
 The join pipeline (\texttt{join\_run.py}) fuses the eight raw artefacts into a
-per-second timeline (\texttt{run.parquet} plus per-channel parquets), and the
-plotter (\texttt{plot\_results.py}) renders the four figures presented in
-\cref{imc:results}. To move from single-run point estimates to publishable
-statistics, the harness accepts a \texttt{-{}-runs N} flag (default five) that
-launches $N$ independently seeded runs; a shared \texttt{aggregate\_runs.py} then
-computes, for each phase and each metric, the mean and a 95\% confidence interval
-using Student's $t$ distribution with $N-1$ degrees of freedom, drawing confidence
-bands on the plots. The seed fixes only the load-generation jitter, so the leftover
-run-to-run variance from cold caches, just-in-time warm-up, and container start-up is
-exactly what the interval measures.
+per-second timeline (\texttt{run.parquet} plus per-channel parquets), and the plotter
+(\texttt{plot\_results.py}) renders the four figures in \cref{imc:results}. To move
+from single-run point estimates to publishable statistics, the harness accepts a
+\texttt{-{}-runs N} flag (default five) that launches $N$ independently seeded runs; a
+shared \texttt{aggregate\_runs.py} then computes, per phase and metric, the mean and a
+95\% confidence interval using Student's $t$ distribution with $N-1$ degrees of
+freedom, drawing confidence bands on the plots. The seed fixes only the
+load-generation jitter, so the leftover run-to-run variance from cold caches,
+just-in-time warm-up, and container start-up is exactly what the interval measures.
 
 \subsection{The anomaly-engine-bench harness}\label{imc:anomalybench}
 
-The anomaly-engine-bench is an investigation tool rather than a load test. It sweeps
-a two-dimensional feature grid, with per-request latency across $[10, 600]\,\text{ms}$
-and error rate across $[0, 0.2]$, and at each grid cell asks both the threshold
-rule and the Isolation Forest engine for a verdict. The output is an agreement
-matrix: a heatmap showing where the two engines concur and where they diverge,
-together with the direction of any divergence (whether the model is more cautious
-than the simple rule, or whether the rule is catching something the model treats as
-normal). This harness is deliberately decoupled from the running cluster, since it
-calls the engines as pure functions over synthetic features, isolating the model's
-decision surface from any confounds in the live telemetry path. As shown in
-\cref{imc:results}, this harness is what confirmed that the trained detector reproduces
-the deterministic rule while adding extra coverage.
+The anomaly-engine-bench is an investigation tool rather than a load test. It sweeps a
+two-dimensional feature grid, with per-request latency across $[10, 600]\,\text{ms}$
+and error rate across $[0, 0.2]$, asking both the threshold rule and the Isolation
+Forest engine for a verdict at each cell. The output is an agreement matrix: a heatmap
+of where the two engines concur and where they diverge, with the direction of any
+divergence (whether the model is more cautious than the rule, or the rule catches
+something the model treats as normal). The harness is deliberately decoupled from the
+running cluster, calling the engines as pure functions over synthetic features so the
+model's decision surface is isolated from confounds in the live telemetry path. As
+\cref{imc:results} shows, it confirmed that the trained detector reproduces the
+deterministic rule while adding extra coverage.
 
 \subsection{The baseline-vs-SmartLoad routing bench}\label{imc:routingbench}
 
 The routing bench answers the comparison questions directly: it runs the same
-docker-compose stack twice, once with the decision plane silent and once with it
-fully engaged, and contrasts the two latency distributions. Its central design
-principle is to minimise hidden variables. The compose stack, the backend pool image,
-the NGINX configuration, the test-backend code, and the operator-UI back-end-for-front-end
-are byte-for-byte identical across the two sides. Only five environment flags differ,
-and those five are exactly the switch that turns SmartLoad's intelligence on or off.
-\Cref{tab:imc:protocol} reproduces the diff between the two recorded environment
-profiles in \texttt{experiments/baseline-vs-smartload/env/}.
+docker-compose stack twice, once with the decision plane silent and once with it fully
+engaged, and contrasts the two latency distributions. Its design principle is to
+minimise hidden variables. The compose stack, backend pool image, NGINX configuration,
+test-backend code, and operator-UI back-end-for-front-end are byte-for-byte identical
+across both sides; only five environment flags differ, and those five are exactly the
+switch that turns SmartLoad's intelligence on or off. \Cref{tab:imc:protocol} reproduces
+the diff between the two recorded environment profiles in
+\texttt{experiments/baseline-vs-smartload/env/}.
+
+On the baseline side the services start up and expose \texttt{/health} but never enter
+their inference cycle, and the lb-sidecar does not subscribe to Redis, so
+\texttt{upstream.conf} stays at the static round-robin configuration. On the SmartLoad
+side the same services run their full inference cycle and the sidecar rewrites
+\texttt{upstream.conf} and reloads NGINX in response to the published envelopes. The
+load-balancer container does not read these flags and is not restarted between sides,
+so the only moving part is the decision plane.
 
 \begin{table}[H]
   \centering
@@ -259,44 +257,35 @@ profiles in \texttt{experiments/baseline-vs-smartload/env/}.
   \end{tabular}
 \end{table}
 
-On the baseline side the decision plane is silent: the services start up and expose
-\texttt{/health} but never enter their inference cycle, and the lb-sidecar does not
-subscribe to Redis, so \texttt{upstream.conf} stays at the static round-robin
-configuration. On the SmartLoad side the same services run their full inference cycle
-and the sidecar rewrites \texttt{upstream.conf} and reloads NGINX in response to the
-published envelopes. The load-balancer container itself does not read these flags and
-is not restarted between sides, so the only moving part is the decision plane.
-
 The workload is a three-phase Locust shape: a linear ramp that tests whether
 forecasting drives scale-out before saturation, a hold that exposes any
 heterogeneity drag, and an anomaly phase that injects a latency spike on one backend.
 The anomaly is modelled as a slow-but-healthy backend that still returns
-\texttt{200 OK}, chosen precisely so NGINX's passive \texttt{max\_fails} health check
-cannot trivially solve the problem. That keeps the comparison fair: plain round-robin
-keeps dispatching a fifth of its traffic to the slow backend, which is the failure
-class the anomaly and lb-sidecar pipeline is designed to address. The honest finding
-this bench produces is discussed in \cref{imc:theory}.
+\texttt{200 OK}, chosen so NGINX's passive \texttt{max\_fails} health check cannot
+trivially solve the problem. That keeps the comparison fair: plain round-robin keeps
+dispatching a fifth of its traffic to the slow backend, the failure class the anomaly
+and lb-sidecar pipeline is designed to address. The finding this bench produces is
+discussed in \cref{imc:theory}.
 
 \subsection{Computer-based tools and statistics}\label{imc:tools}
 
-The evaluation leans on standard, reproducible tooling rather than bespoke
-measurement. Load is driven by Locust~\cite{locust}; system state is scraped from
-Prometheus~\cite{prometheus} exposition endpoints; raw frames are stored as columnar
-Parquet and joined with the \texttt{pandas}/\texttt{pyarrow} stack; plots are
-rendered with \texttt{matplotlib}. Statistical reporting uses the Student's $t$
-confidence interval described above for the multi-run case, and the anomaly-engine
-comparison reports an agreement rate as a simple proportion over a fully enumerated
-grid (so the whole population, not a sample, is measured, leaving no sampling
-error to bound).
+The evaluation leans on standard, reproducible tooling. Load is driven by
+Locust~\cite{locust}; system state is scraped from Prometheus~\cite{prometheus}
+exposition endpoints; raw frames are stored as columnar Parquet and joined with the
+\texttt{pandas}/\texttt{pyarrow} stack; plots are rendered with \texttt{matplotlib}.
+Statistical reporting uses the Student's $t$ confidence interval described above for
+the multi-run case, and the anomaly-engine comparison reports agreement as a simple
+proportion over a fully enumerated grid, so the whole population rather than a sample
+is measured and no sampling error remains to bound.
 
 \subsection{Threats to validity}\label{imc:threats}
 
-Threats to validity are documented up front rather than after the fact, so a reader
-can weight the results accordingly. They fall into the four standard classes, set out
-in \crefrange{tab:imc:threats-internal}{tab:imc:threats-cc}. The two most material are
+Threats to validity are documented up front so a reader can weight the results
+accordingly. They fall into the four standard classes, set out in
+\crefrange{tab:imc:threats-internal}{tab:imc:threats-cc}. The two most material are
 the load-balancer reload cost, a brief connection blip during an \texttt{upstream.conf}
 rewrite that the project reports rather than filters out, and the train-versus-serve
-distribution mismatch for the routing policy, discussed in \cref{imc:theory}.
+distribution mismatch for the routing policy (\cref{imc:theory}).
 
 \begin{table}[H]
   \centering
@@ -349,22 +338,21 @@ distribution mismatch for the routing policy, discussed in \cref{imc:theory}.
 
 \section{Results}\label{imc:results}
 
-This section reports the measured behaviour of the harnesses. All numbers are
-lifted straight from the frozen run artefacts; nothing is interpolated.
+All numbers below are lifted straight from the frozen run artefacts, with nothing
+interpolated.
 
 \subsection{Adaptive-bench: the closed loop under load}\label{imc:results_adaptive}
 
 The adaptive-bench drives the closed forecast-to-scale loop through the five-phase
-load shape and records the pool trajectory, the per-phase latency and error
-behaviour, and the scaling actions the autoscaler takes. The qualitative result is
-the one the design predicts: the pool grows under the forecast burst and sustain
-phases, contracts on the scale-down phase, and settles in the steady tail without
-flapping, while the controller holds error at zero in the steady phases and sheds
-load in a controlled way when offered demand exceeds the host-capped pool rather
-than collapsing into a 502 cascade. The headline magnitudes for this run, namely
-the per-phase tail latency and error rate, the realised pool range, and the count
-of scaling actions, are being regenerated from a fresh benchmark batch and are
-reported once that batch lands.
+load shape, recording the pool trajectory, per-phase latency and error behaviour, and
+the autoscaler's scaling actions. The qualitative result is the one the design
+predicts: the pool grows under the forecast burst and sustain phases, contracts on the
+scale-down phase, and settles in the steady tail without flapping, while the controller
+holds error at zero in the steady phases and sheds load in a controlled way when offered
+demand exceeds the host-capped pool rather than collapsing into a 502 cascade. The
+headline magnitudes for this run (per-phase tail latency and error rate, realised pool
+range, and scaling-action count) are being regenerated from a fresh benchmark batch and
+reported once it lands.
 % TODO(vps-rerun): adaptive-batch headline result (run id, pool range, scaling-action count, per-phase p95/error) from fresh VPS run
 \Cref{fig:imc:pool} shows the pool trajectory and \cref{tab:imc:phases-obs} the
 per-phase observations.
@@ -398,13 +386,12 @@ per-phase observations.
 \end{table}
 
 \Cref{fig:imc:react} plots the time-to-react: the delay between a forecast being
-published and the first autoscaler action that responds to it. The forecaster emits
-an envelope on a fixed cadence while the autoscaler actuates in discrete steps
-gated by a cooldown, so the delay for any single forecast ranges from sub-second,
-when the forecast lands just before an actuation, up to the cooldown-bounded
-maximum for the earliest bootstrap-phase forecasts that must wait for the burst to
-cross a decision band. The measured delay distribution for this run is regenerated
-from the fresh benchmark batch.
+published and the first autoscaler action that responds to it. The forecaster emits an
+envelope on a fixed cadence while the autoscaler actuates in discrete cooldown-gated
+steps, so the per-forecast delay ranges from sub-second, when a forecast lands just
+before an actuation, up to the cooldown-bounded maximum for the earliest bootstrap-phase
+forecasts that must wait for the burst to cross a decision band. The measured delay
+distribution for this run is regenerated from the fresh benchmark batch.
 % TODO(vps-rerun): time-to-react delay distribution (min/typical/max) from fresh VPS run
 
 \begin{figure}[H]
@@ -415,11 +402,10 @@ from the fresh benchmark batch.
 \end{figure}
 
 \Cref{fig:imc:upstream} shows the upstream timeline, the watcher's view of
-\texttt{upstream.conf} over the run, and \cref{fig:imc:recovery} shows the
-anomaly-recovery window, in which a target backend was given an injected delay at
-the start of phase~D and recovered after a 60-second window. Both the anomaly POST
-and the recovery POST returned \texttt{200}, confirming the injection and recovery
-path end-to-end.
+\texttt{upstream.conf} over the run, and \cref{fig:imc:recovery} the anomaly-recovery
+window, in which a target backend was given an injected delay at the start of phase~D
+and recovered after 60 seconds. Both the anomaly POST and the recovery POST returned
+\texttt{200}, confirming the injection and recovery path end-to-end.
 
 \begin{figure}[H]
   \centering
@@ -438,24 +424,21 @@ path end-to-end.
 \subsection{Anomaly engine: the trained detector tracks the rule}\label{imc:results_anomaly}
 
 The anomaly-engine-bench compares the trained Isolation Forest engine against the
-deterministic threshold rule across a fully enumerated feature grid. This sweep
-sets the trained detector against the stateless reference rule; it is not the
-deployed-engine selection, since the production default is the stateful
-\texttt{trend\_rule} (\cref{imb:threshold}), and the threshold rule here is the
-calibration reference rather than a shipped default. The Isolation Forest model
-was trained on the Server Machine Dataset~\cite{su2019omnianomaly} and scores
-F1\,$=$\,\BMifFone{} on the held-out split, clearing the project's $>0.80$
-acceptance target. On the agreement sweep it covers a $16 \times 16 = 256$-cell
-grid and measures a \BManAgree{} agreement rate (\BManAgreeCells{} of \BManGridCells{}), after the model
+deterministic threshold rule across a fully enumerated feature grid. The sweep is a
+calibration check, not the deployed-engine selection: the production default is the
+stateful \texttt{trend\_rule} (\cref{imb:threshold}), and the threshold rule here is a
+reference rather than a shipped default. The Isolation Forest model was
+trained on the Server Machine Dataset~\cite{su2019omnianomaly} and scores
+F1\,$=$\,\BMifFone{} on the held-out split, clearing the project's $>0.80$ acceptance
+target. On the agreement sweep it covers a $16 \times 16 = 256$-cell grid and measures
+a \BManAgree{} agreement rate (\BManAgreeCells{} of \BManGridCells{}) after the model
 was re-calibrated in production-shape feature space. The per-engine verdict
-distribution and the direction of the disagreements are reported in
-\cref{tab:imc:anomaly}. The remaining disagreements are \emph{all} in the value-add
-direction: cells where the threshold rule says \texttt{healthy} but the model says
-\texttt{unhealthy}, catching latency-variance and error-rate compounding that the
-simple static cut-off misses, with no under-reactions, that is, no cells
-where the model relaxes a verdict the rule marks unhealthy. The trained detector
-therefore reproduces the rule's caution everywhere it matters and adds extra coverage
-on top. \Cref{fig:imc:heatpost} renders the agreement matrix.
+distribution and the direction of the disagreements appear in \cref{tab:imc:anomaly}.
+The remaining disagreements are \emph{all} in the value-add direction: cells where the
+threshold rule says \texttt{healthy} but the model says \texttt{unhealthy}, catching
+latency-variance and error-rate compounding that the static cut-off misses, with no
+under-reactions, that is, no cells where the model relaxes a verdict the rule marks
+unhealthy. \Cref{fig:imc:heatpost} renders the agreement matrix.
 
 \begin{table}[H]
   \centering
@@ -487,87 +470,83 @@ on top. \Cref{fig:imc:heatpost} renders the agreement matrix.
 
 \section{Comparison to Theoretical Predictions}\label{imc:theory}
 
-A benchmark is only as valuable as the prediction it tests. This section sets the
-measured behaviours against the analytic expectations from the design chapters. In
-each case the system behaved as the design predicted, including where that prediction
-is that a learned policy ties its classical baseline.
+This section sets the measured behaviours against the analytic expectations from the
+design chapters. In each case the system behaved as predicted, including where the
+prediction is that a learned policy ties its classical baseline.
 
 \paragraph{Pool size versus the capacity model.} The autoscaler's design predicts a
 target instance count of $n = \lceil \hat{r} / c \rceil$, where $\hat{r}$ is the
 predicted request rate and $c$ the per-backend capacity, with a dead band
-$[(n{-}1)c,\, nc]$ damping oscillation around the boundary, and the pool is hard
-capped at the policy's \texttt{max\_backends}. The observed trajectory matches this
-prediction in shape: the pool grows as the forecast burst pushes $\hat{r}$ across
-successive band ceilings, saturates at the configured cap when offered demand
-exceeds what the capped pool can serve, and contracts symmetrically as load falls
-(\cref{fig:imc:pool}). The scaling actions line up with band crossings rather than
-flapping, so the dead band and cooldown do their job. The match is structural, not
-coincidental: the autoscaler is a direct implementation of the ceiling rule. The
-realised pool range and scaling-action count for this run are regenerated from the
-fresh benchmark batch.
+$[(n{-}1)c,\, nc]$ damping oscillation around the boundary and a hard cap at the
+policy's \texttt{max\_backends}. The observed trajectory matches this shape: the pool
+grows as the forecast burst pushes $\hat{r}$ across successive band ceilings, saturates
+at the cap, and contracts symmetrically as load falls (\cref{fig:imc:pool}), with
+scaling actions landing on band crossings rather than flapping. The match is structural
+rather than coincidental, since the autoscaler is a direct implementation of the ceiling
+rule. The realised pool range and scaling-action count for this run are regenerated from
+the fresh benchmark batch.
 % TODO(vps-rerun): pool range + scaling-action count tying capacity model to observed trajectory, from fresh VPS run
 
 \paragraph{Forecast-driven scale-out and scale-in.} The design predicts that the
-forecaster anticipates a rising load and the autoscaler pre-warms capacity before
-saturation, then sheds it as load falls. Both halves occurred exactly as predicted.
-The scale-out arrived during the forecast burst and sustain phases, and the scale-in
-followed cleanly on the scale-down phase, settling without flapping in the steady
-tail. The closed loop behaved end-to-end the way the design said it would.
+forecaster anticipates rising load and the autoscaler pre-warms capacity before
+saturation, then sheds it as load falls. Both halves occurred as predicted: scale-out
+arrived during the forecast burst and sustain phases, and scale-in followed cleanly on
+the scale-down phase, confirming the loop closes end-to-end.
 
 \paragraph{Anomaly agreement versus the deterministic rule.} The Isolation Forest
-engine was expected to reproduce the threshold rule's verdicts on the cells where the
-rule is clearly right, while adding sensitivity on the cells where a single static
-cut-off is too blunt. The \BManAgree{} agreement with zero relaxed verdicts is exactly that
-prediction realised: the model is a strict superset of the threshold rule's caution,
-and the residual disagreements all lie in the direction of catching additional signal.
+engine was expected to reproduce the threshold rule's verdicts where the rule is
+clearly right, while adding sensitivity where a single static cut-off is too blunt.
+The \BManAgree{} agreement with zero relaxed verdicts is that prediction realised: the
+model is a strict superset of the threshold rule's caution, and the residual
+disagreements all lie in the direction of catching additional signal.
 
 \paragraph{Learned routing versus round-robin.} On the \emph{open-loop} evaluation
 the trained PPO routing policy \emph{matches} NGINX round-robin: both record an
-identical \texttt{mean\_reward} of \BMrlPpoReward{} and a zero SLO-violation rate, because
-the policy was trained on traces whose per-backend latencies are homogeneous at around
-9.7\,ms, all well below the 200\,ms SLO. On a homogeneous pool the optimal routing
-policy \emph{is} uniform spread, since there is no faster backend to prefer, so the
-policy correctly learned round-robin equivalence. That tie, though, is a tie on a
-simulator that cannot tell routing policies apart. The closed-loop benchmark, which
-lets a routing choice affect the next state, does separate them, and there the
-trained policy is the \emph{worst} of the contenders: the deployed \texttt{monotone}
-heuristic violates the objective on \BMrlMonoSla{} of the run, round-robin on \BMrlRrSla{}, and
-the shipped PPO policy on \BMrlPpoSla{}. For that reason the deployed router is the
+identical \texttt{mean\_reward} of \BMrlPpoReward{} and a zero SLO-violation rate,
+because the policy was trained on traces whose per-backend latencies are homogeneous
+at around 9.7\,ms, all well below the 200\,ms SLO. On a homogeneous pool the optimal
+routing policy \emph{is} uniform spread, since there is no faster backend to prefer, so
+the policy correctly learned round-robin equivalence. That tie, though, is a tie on a
+simulator that cannot tell routing policies apart. The closed-loop benchmark, which lets
+a routing choice affect the next state, does separate them, and there the trained
+policy is the \emph{worst} of the contenders: the deployed \texttt{monotone} heuristic
+violates the objective on \BMrlMonoSla{} of the run, round-robin on \BMrlRrSla{}, and
+the shipped PPO policy on \BMrlPpoSla{}. The deployed router is therefore the
 deterministic \texttt{monotone} heuristic, and the trained policy is pinned to
 \texttt{shadow} mode as a dormant comparator that produces a parallel, auditable
-decision stream while it earns nothing on the live path. The binding constraint is
-named plainly: the routing acceptance gate (a clear delta on at least three of five
-metrics) is currently \emph{red} on this PPO model, and closing it requires retraining
-on a heterogeneous-latency distribution, under a closed-loop simulator, before a
-learned policy could be considered for promotion to \texttt{active}.
+decision stream while earning nothing on the live path. The binding constraint is named
+plainly: the routing acceptance gate (a clear delta on at least three of five metrics)
+is currently \emph{red} on this PPO model, and closing it requires retraining on a
+heterogeneous-latency distribution, under a closed-loop simulator, before a learned
+policy could be promoted to \texttt{active}.
 
-\paragraph{The cost of an active rewrite.} The routing bench also surfaces a cost
-that the project reports rather than hides. On the heterogeneous run the per-phase
-p95 figures track closely between the two sides, but the single maximum latency across
-the run is higher on the SmartLoad side than on the baseline side. That gap is not a
-routing regression; it is the lb-sidecar's NGINX-reload cost during the anomaly
-window, the brief connection blip an \texttt{upstream.conf} rewrite incurs. It is
-included unfiltered because suppressing it would misrepresent the trade-off between a
-static configuration and a reactive one. The exact maximum-latency figures for each
-side are regenerated from the fresh benchmark batch.
+\paragraph{The cost of an active rewrite.} The routing bench also surfaces a cost the
+project reports rather than hides. On the heterogeneous run the per-phase p95 figures
+track closely between the two sides, but the single maximum latency across the run is
+higher on the SmartLoad side. That gap is not a routing regression; it is the
+lb-sidecar's NGINX-reload cost during the anomaly window, the brief connection blip an
+\texttt{upstream.conf} rewrite incurs. It is included unfiltered because suppressing it
+would misrepresent the trade-off between a static and a reactive configuration. The
+exact maximum-latency figures for each side are regenerated from the fresh benchmark
+batch.
 % TODO(vps-rerun): baseline vs SmartLoad max-latency figures (reload-cost spike) from fresh VPS run
 
-\paragraph{A broader head-to-head.} A planned, broader head-to-head benchmark would
-compare SmartLoad against plain round-robin across additional, more heterogeneous
-workloads, quantifying end-to-end latency and failure-rate behaviour at full run
-length with 95\% confidence intervals. This is a deliberate next step on the roadmap,
-building on the harness and statistics already in place.
+\paragraph{A broader head-to-head.} A planned, broader benchmark would compare
+SmartLoad against plain round-robin across additional, more heterogeneous workloads,
+quantifying end-to-end latency and failure-rate behaviour at full run length with 95\%
+confidence intervals. This is a deliberate next step, building on the harness and
+statistics already in place.
 
 \section{Implementation Timeline and Work Breakdown Structure}\label{imc:wbs}
 
 The project ran across the 2025--2026 academic year. \Cref{fig:imc:wbs} renders the
 work breakdown structure as a Gantt chart over six development phases, and
-\cref{tab:imc:wbs} summarises each task with its status. The first four phases,
-covering requirements and architecture, the data plane and telemetry spine, the
-decision-plane engines, and the control plane with the operator console, are
-complete. The benchmarking and evaluation phase is largely complete: the harnesses
-are shipped and have produced committed results, with the broader head-to-head set
-as a planned next step. The hardening and writing phase is in progress.
+\cref{tab:imc:wbs} summarises each task with its status. The first four phases, from
+requirements and architecture through the decision-plane engines to the control plane
+and operator console, are complete. The benchmarking and evaluation phase is largely
+complete, with the harnesses shipped and producing committed results and the broader
+head-to-head set as a planned next step. The hardening and writing phase is in
+progress.
 
 \begin{sidewaysfigure}
   \centering
@@ -629,43 +608,38 @@ as a planned next step. The hardening and writing phase is in progress.
 \section{Standards and Best Practices in the Implementation}\label{imc:standards}
 
 SmartLoad's engineering rests on widely adopted standards rather than bespoke
-conventions, both to keep the system interoperable and to keep its claims auditable.
-The most concrete evidence is the following.
+conventions, to keep the system interoperable and its claims auditable.
 
 \begin{itemize}
   \item \textbf{OpenAPI-linted HTTP contract.} Every service's REST surface is
-        described in an OpenAPI~\cite{openapi} document, and a structural lint
-        (\texttt{lint-openapi.py}) fails the build when a route exists in code but
-        not in the contract, so the published interface and the running interface
-        cannot quietly drift apart.
+        described in an OpenAPI~\cite{openapi} document, and \texttt{lint-openapi.py}
+        fails the build when a route exists in code but not in the contract, so the
+        published and running interfaces cannot quietly drift apart.
   \item \textbf{OTLP telemetry.} The load-balancer shipper emits per-request
         telemetry as OpenTelemetry~\cite{opentelemetry} OTLP/HTTP-JSON through a
-        collector, the vendor-neutral standard for observability data, rather than a
+        collector, the vendor-neutral observability standard, rather than a
         proprietary wire format.
   \item \textbf{Prometheus exposition.} Every service exposes a Prometheus
         \cite{prometheus} \texttt{/metrics} endpoint in the standard exposition
-        format, which the benchmark collectors and the operator dashboards both
-        scrape without service-specific adapters.
+        format, which the benchmark collectors and operator dashboards scrape without
+        service-specific adapters.
   \item \textbf{The engine-authoring contract.} New decision engines implement a
         single documented interface (the pluggable-engine pattern of
-        \cref{ch:impl_decision}), so a threshold rule, an Isolation Forest, or a
-        future model are interchangeable behind the same contract, while the
-        conformance suite pins the load-balancer-adapter interface against the
-        implemented NGINX adapter and a mock.
-  \item \textbf{The per-task acceptance-test pattern.} Each task ships a unit test
-        and a live-stack acceptance test whose docstring cites the specification
-        clause it enforces, making the spec-to-test link explicit and reviewable.
+        \cref{ch:impl_decision}), so a threshold rule, an Isolation Forest, or a future
+        model are interchangeable behind the same contract.
+  \item \textbf{The per-task acceptance-test pattern.} Each task ships a unit test and
+        a live-stack acceptance test whose docstring cites the specification clause it
+        enforces, making the spec-to-test link explicit.
   \item \textbf{Structural CI lints.} Three lints protect the repository's own
         invariants, namely feature-to-test coverage, Redis channel publish/subscribe
-        symmetry, and OpenAPI completeness, catching documentation and contract
-        drift mechanically rather than relying on reviewer vigilance.
-  \item \textbf{Semantic versioning.} Releases follow a disciplined version cadence
-        with a per-work-unit suffix bump, and each release row in the project's
-        source of truth records its commit SHA, so any reported number is traceable
-        to the exact code that produced it.
+        symmetry, and OpenAPI completeness, catching documentation and contract drift
+        mechanically rather than by reviewer vigilance.
+  \item \textbf{Semantic versioning.} Releases follow a disciplined cadence with a
+        per-work-unit suffix bump, and each release row in the project's source of
+        truth records its commit SHA, so any reported number traces to the exact code
+        that produced it.
 \end{itemize}
 
-Taken together, these practices mean that SmartLoad's results are not just measured
-but \emph{reproducible}: a reader with the recorded git SHA, the same Docker host,
-and the verbatim environment profiles can re-run a harness and get the same figures,
-which is the standard the project holds itself to.
+Taken together, these practices make SmartLoad's results not just measured but
+\emph{reproducible}: a reader with the recorded git SHA, the same Docker host, and the
+verbatim environment profiles can re-run a harness and get the same figures.
