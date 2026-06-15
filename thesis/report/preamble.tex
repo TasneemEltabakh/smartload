@@ -31,9 +31,10 @@
 \usepackage{setspace}
 \onehalfspacing
 
-% ---- Paragraph shape: open spacing between paragraphs for readability --
-\setlength{\parskip}{6pt plus 2pt minus 1pt}
-\setlength{\parindent}{0pt}
+% ---- Paragraph shape: template-strict (indented first line, NO extra
+%      vertical spacing between paragraphs). -----------------------------
+\setlength{\parskip}{0pt}
+\setlength{\parindent}{1.8em}
 
 % ---- Line breaking: let long monospace tokens (file paths, Redis channel
 %      names, identifiers) move to the next line instead of running into the
@@ -65,6 +66,7 @@
 % ---- Graphics + figure search paths -----------------------------------
 \usepackage{graphicx}
 \usepackage{float}
+\usepackage{rotating}   % sidewaysfigure for tall internal-logic flowcharts
 \graphicspath{{figures/}{figures/ui/}{figures/bench/}{figures/anomaly/}{figures/diagrams/}}
 
 % ---- Colour + brand accents (SmartLoad mint / muted) ------------------

@@ -50,12 +50,7 @@ actuation sidecar, which is the only writer of the NGINX upstream configuration.
 \begin{figure}[p]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{system_design}
-\caption[The full stack grouped by plane]{The full stack grouped by plane: the
-SmartLoad services together with the infrastructure containers, with ports
-matching docker-compose. The LB sidecar is the only writer of the NGINX upstream
-configuration; NGINX reloads gracefully. The lb-otel-shipper tails the NGINX JSON
-access log over a shared volume and emits one OTLP data point per request, never
-on the request path.}
+\caption[The full stack grouped by plane]{The full stack grouped by plane: the SmartLoad services together with the infrastructure containers, with ports matching docker-compose.}
 \label{fig:ima:stack}
 \end{figure}
 
@@ -71,7 +66,7 @@ small Node.js service.
 
 \begin{table}[t]
 \centering
-\caption{The deployed services, by plane, language, and responsibility.}
+\caption[The deployed services by plane and language]{The deployed services, by plane, language, and responsibility.}
 \label{tab:ima:services}
 \small
 \begin{tabularx}{\linewidth}{@{}l l l Y@{}}
@@ -80,12 +75,13 @@ small Node.js service.
 \midrule
 load-balancer    & Data    & NGINX conf & Terminates client traffic, proxies to the backend pool \\
 lb-otel-shipper  & Data    & Python     & Tails the NGINX access log, ships per-request metrics as OTLP \\
+resource-collector & Data  & Python     & Ships per-container CPU and memory telemetry to the metrics store \\
 otel-collector   & Data    & (collector)& Receives OTLP and forwards to the telemetry service \\
 telemetry        & Data    & Python     & Parses OTLP, writes the \texttt{metrics} hypertable, serves a read API \\
 test-backend     & Data    & Node.js    & The backend pool being routed across (load-test target) \\
 anomaly-detector & Decision& Python     & Classifies each backend healthy / degraded / unhealthy \\
 forecasting      & Decision& Python     & Predicts short-horizon request rate for the autoscaler \\
-rl-engine        & Decision& Python     & Ranks backends for routing (shadow or active) \\
+rl-engine        & Decision& Python     & Ranks backends for routing via the deployed monotone heuristic (shadow or active) \\
 autoscaler       & Decision& Python     & Grows / shrinks the backend pool via the Docker daemon \\
 policy-manager   & Control & Python     & Owns the operating policy, audits changes, publishes them \\
 lb-sidecar       & Control & Python     & Applies routing / exclusion / scale decisions to NGINX \\
@@ -129,9 +125,7 @@ services, not stack-level infrastructure.
 
 \begin{table}[t]
 \centering
-\caption{Third-party infrastructure the deployment depends on, with the pinned
-image and the role each plays. SmartLoad configures these components rather than
-modifying them.}
+\caption[Third-party infrastructure dependencies]{Third-party infrastructure the deployment depends on, with the pinned image and the role each plays.}
 \label{tab:ima:thirdparty}
 \small
 \begin{tabularx}{\linewidth}{@{}l l Y@{}}
@@ -143,7 +137,7 @@ Redis          & \texttt{redis:7-alpine}                    & Pub/sub control bu
 redis-exporter & \texttt{oliver006/redis\_exporter:v1.62.0-alpine} & Exposes control-bus health to Prometheus \\
 OTel Collector & \texttt{otel/opentelemetry-collector-contrib} & Receives OTLP from the log shipper, forwards to telemetry \\
 Prometheus     & \texttt{prom/prometheus}                   & Scrapes the per-service \texttt{/metrics} surfaces and exporters \\
-Grafana        & \texttt{grafana/grafana}                   & Renders the six operational dashboards \\
+Grafana        & \texttt{grafana/grafana}                   & Renders the operational overview dashboard (others planned) \\
 NGINX          & custom build over \texttt{nginx}           & The data-plane load balancer (configured, not forked) \\
 Docker Compose & (engine)                                   & Single-host orchestration of the whole stack \\
 \bottomrule
@@ -165,8 +159,7 @@ or diagnostic plane that can fail without affecting a single request.
 
 \begin{table}[t]
 \centering
-\caption{Published external surfaces of the deployment. Only \texttt{:8080}
-carries client traffic; the rest are control, observability, or tooling planes.}
+\caption[Published external surfaces of the deployment]{Published external surfaces of the deployment, where only \texttt{:8080} carries client traffic.}
 \label{tab:ima:ports}
 \small
 \begin{tabularx}{\linewidth}{@{}l l Y@{}}
@@ -303,12 +296,7 @@ live telemetry.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{schema}
-\caption[The persistence schema and its writers]{The five TimescaleDB
-hypertables plus the \texttt{metrics\_1min} continuous aggregate. Each base table
-has exactly one authoritative writer. The \texttt{metrics} table uses a
-wide-narrow shape, one row per reading, so new metric kinds need no schema
-change; \texttt{metrics\_1min} is materialised every minute for cheap
-minute-resolution queries.}
+\caption[The persistence schema and its writers]{The five TimescaleDB hypertables plus the \texttt{metrics\_1min} continuous aggregate, each base table having exactly one authoritative writer.}
 \label{fig:ima:schema}
 \end{figure}
 
@@ -345,11 +333,7 @@ pipeline can slow a client response.
   \draw[slflow] (tele) -- node[font=\scriptsize,right]{METRICS\_INSERT} (db);
   \draw[slflow] (db) -- (dp);
 \end{tikzpicture}
-\caption[The request and telemetry dataflow]{The request path (top, synchronous,
-on the critical path) and the telemetry path (bottom, asynchronous and
-lossy-by-design). One access-log line per request becomes three per-request
-metrics; the decision plane reads the resulting rows out of TimescaleDB rather
-than touching live traffic.}
+\caption[The request and telemetry dataflow]{The synchronous request path and the asynchronous, lossy-by-design telemetry path, with the decision plane reading rows from TimescaleDB rather than live traffic.}
 \label{fig:ima:dataflow}
 \end{figure}
 
@@ -366,11 +350,7 @@ system happens to be.
 \begin{figure}[p]
 \centering
 \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{request_seq}
-\caption[The request sequence in three regions]{The request sequence in three
-regions: the data plane (per request, under 5\,ms overhead) ends by appending one
-JSON line to the shared log; the telemetry pipeline is fire-and-forget and
-entirely off the request path; the control-plane engine cycle, every 5 to 60
-seconds, reloads NGINX without blocking in-flight requests.}
+\caption[The request sequence in three regions]{The request sequence across the data plane, the fire-and-forget telemetry pipeline, and the control-plane engine cycle that reloads NGINX without blocking.}
 \label{fig:ima:request_seq}
 \end{figure}
 
@@ -405,9 +385,7 @@ signal that tells an operator whether the engines themselves are alive.
 
 \begin{table}[t]
 \centering
-\caption{The two observability paths that run side by side. Workload telemetry
-answers ``what is the traffic doing''; service own-metrics answer ``are the
-services and engines themselves healthy''.}
+\caption[The two observability paths side by side]{The two observability paths that run side by side: workload telemetry and service own-metrics.}
 \label{tab:ima:observability}
 \small
 \begin{tabularx}{\linewidth}{@{}l Y Y@{}}
@@ -518,7 +496,7 @@ layer never appears in the upstream block.
 
 \begin{table}[t]
 \centering
-\caption{The four control channels the lb-sidecar subscribes to.}
+\caption[The four control channels the lb-sidecar subscribes to]{The four control channels the lb-sidecar subscribes to.}
 \label{tab:ima:channels}
 \small
 \begin{tabularx}{\linewidth}{@{}l l Y@{}}
@@ -545,14 +523,7 @@ autoscaler action into a regenerated equal-weight map and a live reload.
 \begin{figure}[p]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{lb_dispatch}
-\caption[The lb-sidecar four-channel dispatch]{The lb-sidecar dispatch. Each of
-the four control channels maps to one pure handler, and every handler reads the
-live backend set re-queried from the Docker daemon before it runs, which closes
-the loop over the real container set. The handlers feed a single NGINX file
-adapter that rewrites \texttt{upstream.conf} and is idempotent on an unchanged
-map. The \texttt{smartload.scale} channel completes the autoscaling path: an
-autoscaler action becomes an equal-weight upstream map and a graceful NGINX
-reload.}
+\caption[The lb-sidecar four-channel dispatch]{The lb-sidecar dispatch, where each of the four control channels maps to one pure handler feeding a single idempotent NGINX file adapter.}
 \label{fig:ima:dispatch}
 \end{figure}
 
@@ -612,10 +583,7 @@ shown in \crefrange{fig:ima:ui-home}{fig:ima:ui-engines}.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{operator_ui_bff}
-\caption[Operator UI traffic through the BFF]{Operator UI traffic. The browser
-reaches the backend-for-frontend, which reaches the rest of the stack; there is
-no direct browser-to-service connection, so authentication, CORS, and rate
-limiting are consolidated in one place.}
+\caption[Operator UI traffic through the BFF]{Operator UI traffic, where the browser reaches only the backend-for-frontend so that authentication, CORS, and rate limiting are consolidated in one place.}
 \label{fig:ima:operator_ui_bff}
 \end{figure}
 
@@ -629,9 +597,7 @@ operator sees at a glance whether everything is up.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.85\linewidth]{Home.png}
-\caption[Operator UI: Home page]{The Home page: a service-health overview, one
-pill per service, driven by the BFF's parallel health fan-out and the
-consolidated \texttt{/api/v1/status} aggregator.}
+\caption[Operator UI: Home page]{The Home page: a service-health overview, one pill per service, driven by the BFF's parallel health fan-out.}
 \label{fig:ima:ui-home}
 \end{figure}
 
@@ -643,9 +609,7 @@ what turns a blind POST into a reviewed change.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.85\linewidth]{Policy.png}
-\caption[Operator UI: Policy editor]{The Policy page: read, edit, and commit the
-operating policy with a live field-level diff preview before the change is
-written.}
+\caption[Operator UI: Policy editor]{The Policy page: read, edit, and commit the operating policy with a live field-level diff preview before the change is written.}
 \label{fig:ima:ui-policy}
 \end{figure}
 
@@ -658,9 +622,7 @@ operations.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.85\linewidth]{Audit_page.png}
-\caption[Operator UI: Audit page]{The Audit page: policy-change and scaling-event
-history unified at the UI layer, with filters by kind, actor, action, and time
-range.}
+\caption[Operator UI: Audit page]{The Audit page: policy-change and scaling-event history unified at the UI layer, with filters by kind, actor, action, and time range.}
 \label{fig:ima:ui-audit}
 \end{figure}
 
@@ -675,9 +637,7 @@ automated behaviour after the fact.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.85\linewidth]{Actions.png}
-\caption[Operator UI: Actions page]{The Actions page: manual scale-to-target and
-backend isolate, plus a force-weights override. Each manual action is audited
-with a \texttt{manual:<actor>:} prefix.}
+\caption[Operator UI: Actions page]{The Actions page: manual scale-to-target and backend isolate, plus a force-weights override, each audited with a \texttt{manual:<actor>:} prefix.}
 \label{fig:ima:ui-actions}
 \end{figure}
 
@@ -690,9 +650,7 @@ the container logs'' with one always-on page.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.85\linewidth]{Engines.png}
-\caption[Operator UI: Live Engines page]{The Live Engines page: per-engine tiles
-(``what just happened'' plus the active policy) beside a colour-coded,
-real-time activity feed of control-bus events, with per-channel filter chips.}
+\caption[Operator UI: Live Engines page]{The Live Engines page: per-engine tiles beside a colour-coded, real-time activity feed of control-bus events.}
 \label{fig:ima:ui-engines}
 \end{figure}
 

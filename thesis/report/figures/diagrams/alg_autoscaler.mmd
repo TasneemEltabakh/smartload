@@ -1,0 +1,30 @@
+flowchart TD
+    IN["Forecast in<br/>predicted_rps (served point)<br/>offered_rps (upper band)"] --> POOL["Read current pool<br/>N = backend count"]
+    POOL --> POL["Load policy<br/>c = per_instance_capacity_rps<br/>N_min, N_max,<br/>headroom, deadband,<br/>cooldowns"]
+
+    POL --> TOUT["out_rps = max(predicted, offered)<br/>out_target = ceil(out_rps*(1+headroom)/c)"]
+    TOUT --> TIN["target = ceil(predicted*(1+headroom)/c)"]
+    TIN --> CLAMP["Clamp both to<br/>[N_min, N_max]"]
+
+    CLAMP --> DOUT{"out_target<br/>&gt; N ?<br/>(grow)"}
+    DOUT -- "yes" --> COUT{"scale-out<br/>cooldown<br/>elapsed?"}
+    COUT -- "no" --> HOLD["NoOp: hold N<br/>(out cooldown active)"]
+    COUT -- "yes" --> EMITOUT["ScaleEvent scale_out<br/>jump toward out_target<br/>(<= max_step_out)"]
+
+    DOUT -- "no" --> DIN{"target<br/>&lt; N ?<br/>(shrink)"}
+    DIN -- "no" --> NOOP["NoOp: hold N<br/>(target == N, dead-band)"]
+    DIN -- "yes" --> DBAND{"(N-1)*c >=<br/>predicted*(1+headroom<br/>+deadband)?"}
+    DBAND -- "no" --> HOLD2["NoOp: hold N<br/>(deadband breached)"]
+    DBAND -- "yes" --> CIN{"scale-in<br/>cooldown<br/>elapsed?"}
+    CIN -- "no" --> HOLD3["NoOp: hold N<br/>(in cooldown active)"]
+    CIN -- "yes" --> EMITIN["ScaleEvent scale_in<br/>shed <= max_step_in<br/>(drain one)"]
+
+    classDef normal fill:#EFF3F6,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef compute fill:#DCEFE4,color:#0E1116,stroke:#2E8B57,stroke-width:1.5px;
+    classDef data fill:#DCE7EE,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef hold fill:#F1F3F5,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+
+    class IN normal;
+    class POOL,POL data;
+    class TOUT,TIN,CLAMP,DOUT,COUT,DIN,DBAND,CIN,EMITOUT,EMITIN compute;
+    class HOLD,HOLD2,HOLD3,NOOP hold;

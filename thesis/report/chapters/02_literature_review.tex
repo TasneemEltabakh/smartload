@@ -59,10 +59,8 @@ surface for an external controller to drive.
 
 \begin{table}[ht]
 \centering
-\caption{Classical load-balancing scheduling rules as published by NGINX
-\cite{nginx}, HAProxy \cite{haproxy}, and Envoy \cite{envoy}. Every rule
-decides from in-memory state; none consumes an external telemetry feedback
-loop.}
+\caption[Classical load-balancing scheduling rules]{Classical load-balancing scheduling rules as published by NGINX
+\cite{nginx}, HAProxy \cite{haproxy}, and Envoy \cite{envoy}, each deciding from in-memory state alone.}
 \label{lit:tab:classical-lb}
 \small
 \begin{tabularx}{\linewidth}{@{}lXX@{}}
@@ -166,9 +164,7 @@ prediction cannot inform the per-request scheduler.
 
 \begin{table}[ht]
 \centering
-\caption{Production autoscaler shapes. The trigger is reactive in every case
-except AWS predictive scaling, and the reactive lag is structurally bounded
-below by container start plus warm-up (commonly 30 to 90 seconds).}
+\caption[Production autoscaler shapes and their triggers]{Production autoscaler shapes, where the trigger is reactive in every case except AWS predictive scaling.}
 \label{lit:tab:autoscalers}
 \small
 \begin{tabularx}{\linewidth}{@{}lXlc@{}}
@@ -245,13 +241,14 @@ across the axes that matter for predictive load management. NGINX alone is the
 deterministic data plane SmartLoad builds on, Kubernetes HPA is the dominant
 reactive autoscaler, and a service mesh represents the heavyweight, policy-rich
 routing fabric. SmartLoad is the only column that combines predictive scaling
-and learned routing with a deterministic fallback and an operator override, and
-it does so at a far lower operational weight than a mesh.
+and adaptive, capacity-aware routing with a deterministic fallback and an
+operator override, and it does so at a far lower operational weight than a mesh.
+Its routing is a monotone capacity-aware heuristic, with a learned PPO variant
+evaluated in shadow rather than promoted to live traffic.
 
 \begin{table}[ht]
 \centering
-\caption{SmartLoad compared with the closest alternatives across the axes
-relevant to predictive, safety-bounded load management.}
+\caption[SmartLoad against the closest alternatives]{SmartLoad compared with the closest alternatives across the axes relevant to predictive, safety-bounded load management.}
 \label{lit:tab:market}
 \small
 \begin{tabularx}{\linewidth}{@{}Y *{4}{>{\centering\arraybackslash}X}@{}}
@@ -259,7 +256,7 @@ relevant to predictive, safety-bounded load management.}
 \headrow \textbf{Capability} & \textbf{SmartLoad} & \textbf{NGINX alone} & \textbf{K8s HPA} & \textbf{Service mesh} \\
 \midrule
 Predictive (forecast-driven) scaling & Yes & No & Reactive only & No \\
-Learned (adaptive) routing            & Yes & No & No & Policy-driven, not learned \\
+Adaptive (capacity-aware) routing     & Yes (heuristic; learned variant in shadow) & No & No & Policy-driven, not adaptive \\
 Deterministic fallback                & Yes (first-class) & Yes (only mode) & N/A & Partial \\
 Operator override / kill switch       & Yes (per decision) & Config edit & Manual & Config edit \\
 Operational weight                    & Low to moderate & Low & Moderate & High \\
@@ -287,9 +284,7 @@ from it. The remaining subsections expand each row in turn.
 
 \begin{table}[ht]
 \centering
-\caption{Related-work lineage: the research foundations grouped by the
-SmartLoad engine each informs, with the canonical reference and what SmartLoad
-adopts from it.}
+\caption[Related-work lineage by SmartLoad engine]{Related-work lineage: the research foundations grouped by the SmartLoad engine each informs.}
 \label{lit:tab:lineage}
 \small
 \begin{tabularx}{\linewidth}{@{}llX@{}}
@@ -304,8 +299,9 @@ dependable default. \\
 \addlinespace
 Time-series forecasting &
 \cite{box2015timeseries, hyndman2021forecasting} &
-ARIMA as the reference baseline; a simple model with uncertainty intervals and
-a moving-average floor. \\
+ARIMA as the field's classical reference baseline; the principle of a simple
+model with uncertainty intervals over a moving-average floor, realised in
+SmartLoad by a harmonic-residual default. \\
 \addlinespace
 Anomaly detection &
 \cite{liu2008isolationforest, su2019omnianomaly} &
@@ -314,8 +310,9 @@ for an F1 gate. \\
 \addlinespace
 RL for systems &
 \cite{sutton2018rl, schulman2017ppo, raffin2021sb3} &
-Policy-gradient routing with a clipped objective and action masking as a hard
-safety property. \\
+Policy-gradient routing with a clipped objective, evaluated as a shadow
+comparator; the hard action-masking safety property is realised by the deployed
+monotone policy and anomaly filtering, not the dormant PPO. \\
 \addlinespace
 Autonomic computing &
 \cite{kephart2003autonomic, ibm2005mapek} &
@@ -360,11 +357,12 @@ Hyndman and Athanasopoulos \cite{hyndman2021forecasting} sets out the
 principles SmartLoad's forecasting design follows: prefer a simple model with
 clear uncertainty intervals, always keep a naive or moving-average baseline as
 a floor, and evaluate on held-out data with a scale-free error metric. The key
-finding the field offers is that, at short horizons, a well-specified ARIMA or
-even a moving-average predictor is often competitive with much heavier sequence
-models. That finding is why SmartLoad ships a moving-average baseline as a
-first-class engine and an ARIMA bundle as the upgrade, rather than reaching
-straight for a deep model.
+finding the field offers is that, at short horizons, a well-specified classical
+or even a moving-average predictor is often competitive with much heavier
+sequence models. That finding is why SmartLoad deploys a lightweight
+harmonic-residual predictor as its default forecaster, keeps a moving-average
+baseline as the never-fails fallback floor, and offers an ARIMA model as an
+optional classical alternative, rather than reaching straight for a deep model.
 
 \subsection{Anomaly detection}
 \label{lit:sec:research-anomaly}
@@ -385,8 +383,10 @@ per-timestep ground-truth labels. SmartLoad uses that labelled dataset not for
 training but to check detector quality against a fixed F1 gate. The field's
 finding is a trade-off SmartLoad takes seriously. Point-based detectors are
 cheap and explainable but blind to context, while sequence models are accurate
-but expensive to train and serve, which is why the threshold rule is the
-shipping baseline and the heavier detector is a guarded upgrade path.
+but expensive to train and serve, which is why SmartLoad ships an interpretable
+trend-rule detector as its default, keeps a static threshold rule as the
+dependency-free fallback floor, and treats the heavier Isolation Forest model as
+a guarded opt-in upgrade.
 
 \subsection{Reinforcement learning for routing and resource management}
 \label{lit:sec:research-rl}
@@ -608,9 +608,10 @@ provably safe.
 
 From this, SmartLoad's technical approach follows. It runs a proven classical
 data plane (NGINX, behind a pluggable adapter) and adds an out-of-band decision
-plane covering anomaly detection, forecasting, and learned routing, coordinated
-over a Redis control bus and grounded in a conventional, standards-based
-observability stack. The decision plane is composed with the data plane through
+plane covering anomaly detection, forecasting, and adaptive capacity-aware
+routing (a monotone heuristic, with a learned PPO variant evaluated in shadow
+rather than promoted), coordinated over a Redis control bus and grounded in a
+conventional, standards-based observability stack. The decision plane is composed with the data plane through
 a strict safety hierarchy and an operator kill switch, so adaptiveness is only
 ever exercised inside bounds the operator can revoke.
 

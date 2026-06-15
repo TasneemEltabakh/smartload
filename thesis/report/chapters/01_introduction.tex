@@ -97,9 +97,9 @@ and then. Right-sizing compute, scaling the pool \emph{down} when demand recedes
 and not only up when it rises, returns that idle capacity, and capacity that is
 switched off is energy that is not wasted.
 
-SmartLoad's autoscaler is bidirectional by design for this reason. In our
-prototype run it grew the backend pool under a forecast burst and then shrank it
-again as the burst subsided, rather than leaving the enlarged pool running. At
+SmartLoad's autoscaler is bidirectional by design for this reason. It grows the
+backend pool under a forecast-driven burst and shrinks it again as demand
+subsides, rather than leaving the enlarged pool running. At
 the scale of one small deployment the saving is modest. As a default behaviour
 across many deployments, scaling idle capacity down becomes a meaningful lever on
 the energy footprint of everyday computing.
@@ -198,7 +198,7 @@ to end rather than spreading thinly across a wide feature set.
 
 \begin{table}[ht]
   \centering
-  \caption{What the current single-tenant phase delivers, and what is deferred to the Phase~2 managed, multi-customer offering.}
+  \caption[Single-tenant scope versus Phase 2 deferrals]{What the current single-tenant phase delivers, and what is deferred to the Phase~2 managed offering.}
   \label{tab:intro:scope}
   \small
   \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.46\linewidth}Y@{}}
@@ -237,7 +237,7 @@ a specific benchmark harness, and the answers are reported in
 
 \begin{table}[ht]
   \centering
-  \caption{The four research questions and the evaluation surface that answers each. Wording follows the project specification.}
+  \caption[The four research questions and their evaluation surfaces]{The four research questions and the evaluation surface that answers each.}
   \label{tab:intro:rqs}
   \small
   \begin{tabularx}{\linewidth}{@{}l Y l@{}}
@@ -308,7 +308,7 @@ architecture is the subject of \cref{ch:design_solution}.
   % closing the loop: act feeds back into the next observation
   \draw[slbus] (act.south) -- ++(0,-9mm) -| node[pos=0.25,below,font=\footnotesize]{feedback: observe the result} (obs.south);
 \end{tikzpicture}
-\caption{The SmartLoad control loop. Telemetry is observed, demand is predicted, routing and scaling are decided by learned components each backed by a deterministic fallback, and the decisions are applied to the NGINX data plane. The act step feeds the next observation, closing a MAPE-K-style loop.}
+\caption[The SmartLoad observe-predict-decide-act control loop]{The SmartLoad control loop: telemetry is observed, demand predicted, routing and scaling decided by learned components with deterministic fallback, then applied to the NGINX data plane.}
 \label{fig:intro:loop}
 \end{figure}
 
@@ -323,9 +323,9 @@ the whole system to at any moment.
 \centering
 \begin{tikzpicture}[node distance=7mm and 8mm]
   % The three learned pillars
-  \node[slnode] (p1) {\textbf{Anomaly-aware}\\\textbf{routing}\\Isolation Forest\\flags sick\\backends out};
+  \node[slnode] (p1) {\textbf{Anomaly-aware}\\\textbf{routing}\\trend-rule health\\detector flags\\sick backends out};
   \node[slnode,right=of p1] (p2) {\textbf{Forecast-driven}\\\textbf{autoscaling}\\predict demand,\\grow / shrink\\the pool ahead};
-  \node[slnode,right=of p2] (p3) {\textbf{Learned (shadow)}\\\textbf{routing}\\PPO ranks\\backends;\\sidecar ignores\\until promoted};
+  \node[slnode,right=of p2] (p3) {\textbf{Capacity-aware}\\\textbf{routing}\\monotone heuristic\\ranks backends;\\PPO shadow runs\\alongside};
   \node[slplane,fit=(p1)(p2)(p3),label={[font=\footnotesize\bfseries]above:LEARNED DECISION PLANE (off the request path)}] (learned) {};
 
   % The deterministic safety floor underneath
@@ -341,7 +341,7 @@ the whole system to at any moment.
   \draw[slflow] (p2.south) -- (floor.north);
   \draw[slflow] (p3.south) -- (p3.south |- floor.north);
 \end{tikzpicture}
-\caption{The three learned pillars of SmartLoad and the deterministic floor beneath them. Anomaly-aware routing, forecast-driven autoscaling, and a shadow-mode learned router all run off the request path; each degrades onto a simple, predictable baseline, and the \texttt{safe\_mode} switch pins the whole system to that floor on demand. This expresses the central discipline that routing may learn while safety does not.}
+\caption[The three learned pillars and the deterministic floor]{The three learned pillars of SmartLoad and the deterministic floor beneath them, with the \texttt{safe\_mode} switch that pins the whole system to that floor on demand.}
 \label{fig:intro:pillars}
 \end{figure}
 
@@ -357,11 +357,15 @@ carries decision envelopes between services. Four decision services (an anomaly
 detector, a demand forecaster, a learned routing engine, and an autoscaler) run
 off the request path, alongside a policy manager and an operator user interface.
 
-The intelligence is built with the standard Python scientific stack: scikit-learn
-and an Isolation Forest model \cite{liu2008isolationforest} for anomaly detection,
-statsmodels with an ARIMA model \cite{box2015timeseries} for forecasting, and
-Stable-Baselines3 \cite{raffin2021sb3} with a PPO policy \cite{schulman2017ppo}
-for learned routing. Operational visibility comes through Prometheus
+The deployed intelligence runs on interpretable, deterministic defaults: a
+trend-rule health detector for anomaly detection, a harmonic-residual predictor
+for forecasting, and a monotone capacity-aware router for routing. Each of these
+has a heavier learned counterpart available as an opt-in or comparison engine,
+built with the standard Python scientific stack: scikit-learn and an Isolation
+Forest model \cite{liu2008isolationforest} as an alternative anomaly detector,
+statsmodels with an ARIMA model \cite{box2015timeseries} as an optional
+forecaster, and Stable-Baselines3 \cite{raffin2021sb3} with a PPO policy
+\cite{schulman2017ppo} as a shadow routing comparator. Operational visibility comes through Prometheus
 \cite{prometheus} and Grafana \cite{grafana}, and load is exercised with Locust
 \cite{locust}.
 
@@ -370,17 +374,23 @@ deterministic-fallback design keeps the whole system safe while the learned
 components continue to improve.
 
 Closed-loop proactive autoscaling is demonstrated. In a committed benchmark run,
-the forecast-to-autoscaler-to-load-balancer loop scaled the backend pool from one
-instance to six under a forecast-driven burst and then shrank it back as demand
-subsided, across roughly twelve scaling actions, with per-phase p95 latencies
-measured throughout.
+the forecast-to-autoscaler-to-load-balancer loop scaled the backend pool up
+toward its host budget under a forecast-driven burst and then shrank it back as
+demand subsided, with per-phase p95 latencies measured throughout.
+% TODO(vps-rerun): exact pool range and scaling-action count from the fresh VPS adaptive batch
 
-For forecasting, the production default is a reliable moving-average predictor
-that drives this autoscaling loop, with a trained ARIMA model available as an
-optional advanced predictor under continued tuning. For anomaly detection, the
-production default is a deterministic threshold detector chosen for guaranteed
-stability; a trained Isolation Forest model agrees with this rule about 91.4\% of
-the time while catching extra variance, and ships as an enhanced opt-in mode.
+For forecasting, the production default is a harmonic-residual predictor, which
+records the lowest forecast error of the engines evaluated and is the only one
+that converts that accuracy into a measurable downstream SLA gain. A
+moving-average predictor is the never-fails fallback that drives the loop when
+the default is unavailable, and an ARIMA model is an optional alternative. For
+anomaly detection, the production default is the interpretable trend-rule
+detector, which lifts gradual-degradation F1 from 0 to 0.845 where stateless
+threshold and Isolation Forest detectors score essentially 0. An Isolation Forest
+detector ships as an opt-in alternative; in a separate decision-surface sweep
+that compares a static threshold against Isolation Forest (and does not involve
+the deployed trend-rule engine), the two agree about 91.4\% of the time, with the
+disagreements being cases where Isolation Forest over-reacts.
 
 The learned PPO router performs on par with the strong, industry-standard
 round-robin baseline in shadow mode. The deterministic fallback and operator

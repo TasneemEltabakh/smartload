@@ -1,0 +1,35 @@
+flowchart TD
+    IN["Per-backend telemetry in<br/>latency_ms, queue_depth,<br/>health flag<br/>(sorted by backend_id,<br/>first N_MAX slots)"] --> ELIG{"any eligible<br/>backend?<br/>(healthy or<br/>degraded)"}
+
+    ELIG -- "no" --> SHADOW["Empty shadow action<br/>(no rankings emitted)"]
+    ELIG -- "yes" --> MASK["Build eligibility mask:<br/>healthy / degraded kept,<br/>unhealthy / unknown excluded"]
+
+    MASK --> CAP["Update running-min latency<br/>per eligible backend<br/>(capacity estimate,<br/>floored at cap_floor_ms)"]
+    CAP --> BASE["base = running-min<br/>(past latencies only),<br/>cap = 1 / base"]
+    BASE --> SCORE["Score each backend<br/>score = cap / (lat/base)^degr_pow<br/>(monotone transform:<br/>falls as current lat rises)"]
+
+    SCORE --> CUT{"lat &gt;<br/>cut x min<br/>eligible lat?"}
+    CUT -- "yes" --> DAMP_S["Demote far-outlier:<br/>score x 1e-3"]
+    CUT -- "no" --> NORM["Normalise masked scores<br/>into target weights<br/>(excluded set to 0,<br/>sum = 1)"]
+    DAMP_S --> NORM
+
+    NORM --> LOAD{"total queue_depth<br/>&lt; idle_load?"}
+    LOAD -- "yes" --> SNAP["a = 1.0<br/>(snap to target)"]
+    LOAD -- "no" --> SMOOTH["a = alpha<br/>(damped update)"]
+
+    SNAP --> EMA["EMA weight update<br/>w = (1 - a)*w + a*target,<br/>renormalise over mask"]
+    SMOOTH --> EMA
+    EMA --> EMIT["Emit routing weight vector<br/>rankings for eligible w &gt; 0"]
+    EMIT --> MODE{"operating_mode<br/>= hybrid?"}
+    MODE -- "no (default)" --> PUBSH["Publish in shadow<br/>(observe-only,<br/>smartload.routing)"]
+    MODE -- "yes" --> PUBACT["Publish active<br/>(sidecar may apply)"]
+
+    classDef normal fill:#EFF3F6,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef compute fill:#DCEFE4,color:#0E1116,stroke:#2E8B57,stroke-width:1.5px;
+    classDef data fill:#DCE7EE,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef alert fill:#F7E3E6,color:#0E1116,stroke:#B00020,stroke-width:1px;
+
+    class IN,EMIT,PUBSH,PUBACT normal;
+    class ELIG,CUT,LOAD,MODE compute;
+    class MASK,CAP,BASE,SCORE,NORM,SNAP,SMOOTH,EMA data;
+    class SHADOW,DAMP_S alert;

@@ -91,13 +91,7 @@ out to do.
   \node[font=\scriptsize\itshape,tbdred,align=center,text width=3.2cm]
     at (6.6,1.9) {spike served as\\ user-visible latency\\ during the lag};
 \end{tikzpicture}
-\caption{The structural lag in reactive scaling. An autoscaler can act only after a
-metric crosses its threshold, and the requested instance becomes useful only after
-container start and cache warm-up. The interval between the breach and useful
-capacity, bounded below by start-plus-warm-up at roughly 30 to 90 seconds
-for typical web workloads \cite{verma2015borg}, is exactly the interval over which
-the spike is absorbed as degraded service. This is the gap a forecast-driven scaler
-is designed to close by committing capacity before the threshold is crossed.}
+\caption[The structural lag in reactive scaling]{The structural lag in reactive scaling: the interval between a threshold breach and useful capacity is absorbed as degraded service.}
 \label{dsa:fig:lag}
 \end{figure}
 
@@ -173,11 +167,7 @@ the stateless path as the first bounding assumption of \cref{dsa:sec:problem-sco
   \draw[link] (c) -- (p3);
   \draw[link] (c) -- (p4);
 \end{tikzpicture}
-\caption{The four design principles that make an adaptive decision safe to place in
-the request path. They are mutually supporting: a deterministic floor and a stateless
-path together make rerouting on failure free, a uniform plugin contract makes the
-floor swappable for a learned upgrade, and the three together yield graceful
-degradation. Each principle is traced to a concrete requirement later in the chapter.}
+\caption[Four design principles for a safe adaptive path]{The four mutually supporting design principles that make an adaptive decision safe to place in the request path.}
 \label{dsa:fig:principles}
 \end{figure}
 
@@ -195,9 +185,7 @@ the prototype solves from what it deliberately defers.
 
 \begin{table}[ht]
 \centering
-\caption{Project scope. The right-hand column lists deliberate Phase~2 deferrals,
-which are scope decisions oriented toward a future managed, multi-customer
-offering rather than unfinished work within the present phase.}
+\caption[Project scope and Phase 2 deferrals]{Project scope, where the right-hand column lists deliberate Phase~2 deferrals rather than unfinished work.}
 \label{dsa:tab:scope}
 \small
 \begin{tabular}{@{}p{0.46\linewidth}p{0.46\linewidth}@{}}
@@ -252,8 +240,7 @@ that follow expand on the load-bearing cases.
 
 \begin{table}[ht]
 \centering
-\caption{Standards and conventions adopted, and the concrete design artefact that
-incorporates each.}
+\caption[Standards adopted and their design artefacts]{Standards and conventions adopted, and the concrete design artefact that incorporates each.}
 \label{dsa:tab:standards}
 \small
 \begin{tabular}{@{}p{0.30\linewidth}p{0.30\linewidth}p{0.32\linewidth}@{}}
@@ -441,8 +428,7 @@ separate concern.
 
 \begin{table}[ht]
 \centering
-\caption{Functional requirements. Each derives from the problem statement and names
-the deterministic baseline it must degrade to.}
+\caption[Functional requirements and their fallback baselines]{Functional requirements, each naming the deterministic baseline it must degrade to.}
 \label{dsa:tab:fr}
 \small
 \renewcommand{\arraystretch}{1.25}
@@ -558,13 +544,7 @@ serving.
   \draw[arr] (b1) -- (b2);
   \draw[arr] (b2) -- (b3);
 \end{tikzpicture}
-\caption{Two backend-degradation mechanisms that a blind round-robin scheduler and
-NGINX's passive health check both miss, because in each case the backend keeps
-returning \texttt{200~OK} while only its latency degrades. (a)~A persistent latency
-penalty keeps a backend in rotation and lifts the pool's tail latency. (b)~A latency
-spike that still returns success never trips the \texttt{max\_fails} counter. FR-2
-exists to detect both from latency and error-rate telemetry and exclude the degraded
-backend that the classical data plane would otherwise keep serving.}
+\caption[Two latency-only degradations the data plane misses]{Two backend-degradation mechanisms that round-robin and NGINX passive health checks both miss, since the backend keeps returning \texttt{200~OK} while only its latency degrades.}
 \label{dsa:fig:failclass}
 \end{figure}
 
@@ -580,8 +560,7 @@ the quality of \emph{performing well}, and the architecture of
 
 \begin{table}[ht]
 \centering
-\caption{Non-functional requirements. Safety (NFR-1) is the dominant quality; the
-remainder follow from the problem statement and the contextual concerns.}
+\caption[Non-functional requirements, led by safety]{Non-functional requirements, where safety (NFR-1) is the dominant quality.}
 \label{dsa:tab:nfr}
 \small
 \renewcommand{\arraystretch}{1.25}
@@ -601,7 +580,8 @@ NFR-3 & Hot reconfiguration & Routing and capacity changes are applied to the li
 data plane without dropping in-flight connections (NGINX upstream rewrite plus
 reload), and a reconfiguration must never empty the pool. \\
 NFR-4 & Observability & Every service emits structured logs, per-process metrics in a
-standard format, and a uniform \texttt{/health} endpoint; every adaptive decision is
+standard format, and a uniform \texttt{/health} endpoint (a control-plane liveness
+signal, not a data-plane serviceability guarantee); every adaptive decision is
 attributable and every actuated action is audited. \\
 NFR-5 & Testability & Every engine ships with a baseline requiring no model artifact,
 decision logic is unit-testable in isolation, and per-request fidelity is verifiable
@@ -646,8 +626,7 @@ safety) and those \emph{imposed by the chosen tools}.
 
 \begin{table}[ht]
 \centering
-\caption{Project constraints, mapped onto the accreditation constraint vocabulary
-\cite{abet2025criteria}.}
+\caption[Project constraints by accreditation category]{Project constraints, mapped onto the accreditation constraint vocabulary \cite{abet2025criteria}.}
 \label{dsa:tab:constraints}
 \small
 \begin{tabular}{@{}p{0.22\linewidth}p{0.72\linewidth}@{}}
@@ -715,9 +694,7 @@ demonstration of the safety thesis in action.
 
 \begin{table}[ht]
 \centering
-\caption{Principal project risks and their mitigations. Each risk is paired with a
-mitigation that is built into the design, so that every entry reads as foresight the
-architecture already answers rather than a problem left open.}
+\caption[Principal project risks and their mitigations]{Principal project risks, each paired with a mitigation built into the design.}
 \label{dsa:tab:risks}
 \small
 \renewcommand{\arraystretch}{1.25}
