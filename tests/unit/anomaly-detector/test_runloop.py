@@ -38,6 +38,7 @@ from runloop import (                                  # noqa: E402
     apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
+    peer_suppress_verdicts,
     policy_from_payload,
     recovery_reinclude_silent,
     score_to_event_payload,
@@ -611,3 +612,98 @@ def test_recovery_reinclude_silent_noop_when_not_excluded():
     out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=999.0)
     assert out is None
     assert state.excluded_since_monotonic is None
+
+
+# ── peer_suppress_verdicts (Fix A + D3 outlier margin: busy-vs-broken) ─────────
+
+
+def _feat(bid, *, latency_mean, error_rate, latency_max=None):
+    lm = latency_max if latency_max is not None else latency_mean
+    return BackendFeatures(
+        backend_id=bid, latency_ms=lm, latency_rolling_mean_ms=latency_mean,
+        error_rate=error_rate, sample_count=100,
+    )
+
+
+def test_peer_suppress_downgrades_uniform_overload():
+    # 4 backends all `unhealthy` with near-identical (evenly overloaded) latency
+    # and error: nobody is > 50% worse than the median pack, so ALL are downgraded
+    # to healthy — scale-out is the right response, not benching the whole pool.
+    # (Pre-D3, the strict ">median" test leaked ~half of these through.)
+    policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
+                          overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.31), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.29), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=510, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert [s.status for s in out] == ["healthy", "healthy", "healthy", "healthy"]
+
+
+def test_peer_suppress_keeps_genuine_outlier_under_overload():
+    # 4 unhealthy backends; b4 is a genuine outlier (~3x the cohort latency, well
+    # past the 50% margin) -> it KEEPS its exclusion while the evenly-loaded pack
+    # is downgraded. A single bad apple among an overloaded pool is still caught.
+    policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
+                          overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1600, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    statuses = {s.backend_id: s.status for s in out}
+    assert statuses["b4"] == "unhealthy"            # outlier kept
+    assert statuses["b1"] == statuses["b2"] == statuses["b3"] == "healthy"
+
+
+def test_peer_suppress_uses_typical_not_max_latency():
+    # b1 has a transient MAX spike (latency_ms=4000) but a normal rolling MEAN
+    # (500, same as the pack). The suppressor must judge on the typical mean, so
+    # the spike does NOT mark it an outlier -> downgraded with the pack (D9 fix).
+    policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
+                          overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=500, error_rate=0.30, latency_max=4000), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=510, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b1"] == "healthy"
+
+
+def test_peer_suppress_keeps_lone_fault_among_healthy():
+    # A single badly-broken backend among healthy peers is far past the margin
+    # (2000ms vs a ~50ms cohort), so it KEEPS its exclusion. The margin is the
+    # discriminator — no pool-fraction gate is needed for this.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=2000, error_rate=0.9), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=50, error_rate=0.0), AnomalyScore("b2", "healthy", 0.0)),
+        (_feat("b3", latency_mean=50, error_rate=0.0), AnomalyScore("b3", "healthy", 0.0)),
+        (_feat("b4", latency_mean=50, error_rate=0.0), AnomalyScore("b4", "healthy", 0.0)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b1"] == "unhealthy"
+
+
+def test_peer_suppress_engages_below_half_when_within_margin():
+    # Cascade fix: with just 1 of 5 backends tripping unhealthy, if it is within
+    # the margin of the cohort (the whole pool is similarly loaded, it just crossed
+    # its own per-backend threshold first), it is suppressed -> kept serving. The
+    # suppressor no longer waits for half the pool to fail before engaging — that
+    # delay is what let the pool cascade down to ~3 active under load.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=510, error_rate=0.06), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=500, error_rate=0.04), AnomalyScore("b2", "healthy", 0.0)),
+        (_feat("b3", latency_mean=490, error_rate=0.04), AnomalyScore("b3", "healthy", 0.0)),
+        (_feat("b4", latency_mean=505, error_rate=0.04), AnomalyScore("b4", "healthy", 0.0)),
+        (_feat("b5", latency_mean=495, error_rate=0.04), AnomalyScore("b5", "healthy", 0.0)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b1"] == "healthy"

@@ -57,6 +57,13 @@ DEFAULT_OVERLOAD_PEER_FRACTION = 0.5
 # an outlier from the pack with 1-2 samples), so suppression does not engage and
 # the raw verdict stands — preserving the pre-fix behavior for tiny pools.
 DEFAULT_OVERLOAD_MIN_PEERS = 3
+# ── Fix D (D3): outlier margin for the busy-vs-broken suppressor ──────────────
+# Under uniform overload ~half the pool sits above the cohort MEDIAN by
+# construction, so a strict "> median" outlier test leaks that half through as
+# false outliers and collapses the pool. A backend must instead be worse than the
+# cohort median by THIS fractional margin on the tripping dimension before it
+# counts as a genuine outlier. 0.5 ⇒ "must be > 50% worse than the median pack".
+DEFAULT_OVERLOAD_OUTLIER_MARGIN = 0.5
 
 
 @dataclass
@@ -87,6 +94,10 @@ class EnginePolicy:
     # See DEFAULT_OVERLOAD_* above. Not engine constructor params.
     overload_peer_fraction: float = DEFAULT_OVERLOAD_PEER_FRACTION
     overload_min_peers: int = DEFAULT_OVERLOAD_MIN_PEERS
+    # Fix D (D3): a backend must be worse than the cohort median by this fraction
+    # to count as a true outlier under pool-wide overload (stops the median-split
+    # leak that collapsed the pool). Not an engine constructor param.
+    overload_outlier_margin: float = DEFAULT_OVERLOAD_OUTLIER_MARGIN
 
     def engine_kwargs(self) -> dict:
         return {
@@ -125,6 +136,7 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         recovery_window_seconds=_float("anomaly_recovery_window_seconds", fallback.recovery_window_seconds),
         overload_peer_fraction=_float("anomaly_overload_peer_fraction", fallback.overload_peer_fraction),
         overload_min_peers=_int("anomaly_overload_min_peers", fallback.overload_min_peers),
+        overload_outlier_margin=_float("anomaly_overload_outlier_margin", fallback.overload_outlier_margin),
     )
 
 
@@ -377,20 +389,18 @@ def peer_suppress_verdicts(
     backends — with 1-2 backends you cannot tell an outlier from the pack, so
     the raw verdicts stand):
 
-      1. Count how many backends carry an excludable verdict (unhealthy or
-         degraded) this cycle. If that count / live-count >= the configured
-         ``overload_peer_fraction``, the whole pool is degrading *together* —
-         a system-wide overload / scale-out signal, not a single fault.
-      2. In that regime, a backend is only a genuine outlier if it is
-         *meaningfully worse* than its peers. We compare its error_rate and
-         latency against the cohort medians; a backend that is no worse than
-         the median pack is downgraded to "healthy" (it gets to keep its
-         traffic). A backend that IS clearly worse than the median keeps its
-         exclusion — a real single bad apple among an overloaded pool still
-         gets flagged.
-
-    When the degraded fraction is below the threshold, nothing is suppressed:
-    a lone bad backend among healthy peers is still excluded as before.
+    A backend is a genuine fault only if it is *meaningfully worse* than its
+    peers on the dimension that tripped it: we compare its error_rate and its
+    typical (rolling-mean) latency against the cohort medians, with a margin. A
+    backend within ``(1 + overload_outlier_margin)`` of the median pack is
+    downgraded to "healthy" (it keeps its traffic — pool-wide overload is a
+    scale-out signal, not a fault); a backend clearly past the margin keeps its
+    exclusion (a real single bad apple among an overloaded pool is still
+    flagged). This runs from the FIRST backend to trip — there is no
+    pool-fraction gate, because waiting for half the pool to be excludable let
+    exclusions CASCADE the pool down to ~half before the suppressor ever engaged.
+    A lone fault among healthy peers is far past the margin, so it is still
+    excluded exactly as before.
 
     Returns a NEW list of AnomalyScore (input scores are not mutated). Order
     matches the input. Inputs whose verdict is left unchanged are returned
@@ -408,27 +418,44 @@ def peer_suppress_verdicts(
     if not excludable_idx:
         return out
 
-    # Pool-wide degradation? Only then do we suppress anything.
-    if (len(excludable_idx) / live) < policy.overload_peer_fraction:
-        return out
+    # NO pool-fraction gate. The previous "only suppress once >=
+    # overload_peer_fraction of the pool is excludable" rule let exclusions
+    # CASCADE: backends trip one at a time, each is excluded (and drops out of the
+    # metrics query) BEFORE enough peers are also tripping to reach the threshold,
+    # so the pool collapsed to ~half before the suppressor ever engaged. The
+    # per-backend MARGIN below is the correct overload-vs-fault discriminator on
+    # its own — a lone fault stands out from a healthy cohort (kept excluded),
+    # while an evenly-loaded pool is within-margin together (kept serving) — so we
+    # evaluate every excludable backend immediately, from the first one to trip.
+    # (`overload_peer_fraction` is retained in the policy for back-compat but no
+    # longer gates suppression.)
 
-    # Cohort baselines across ALL live backends this cycle.
+    # Cohort baselines across ALL live backends this cycle. Use the typical
+    # (rolling-mean) latency, NOT the window MAX, so one transient spike on an
+    # otherwise-normal backend doesn't make it look like an outlier (D9/D3).
     err_median = _median([f.error_rate for f, _s in scored])
-    lat_median = _median([f.latency_ms for f, _s in scored])
+    lat_median = _median([f.latency_rolling_mean_ms for f, _s in scored])
+
+    # A true outlier must be worse than the cohort median by a MARGIN, not merely
+    # strictly above it. Under uniform overload ~half the pool is above its own
+    # median by construction; a strict "> median" test leaks that half through as
+    # false outliers and collapses the pool (the median-split leak, D3). Requiring
+    # a margin suppresses the whole evenly-overloaded pack (scale-out is the right
+    # response) while a genuinely bad backend, well above the pack, still exceeds
+    # the bar and keeps its exclusion.
+    margin = 1.0 + max(0.0, policy.overload_outlier_margin)
+    err_bar = err_median * margin
+    lat_bar = lat_median * margin
 
     for i in excludable_idx:
         feats, score = scored[i]
-        # A backend is a true outlier only if it is meaningfully worse than the
-        # pack on the dimension that tripped it. "Meaningfully worse" = strictly
-        # above the cohort median (a backend at or below the median is, by
-        # definition, part of the degraded majority, not its outlier).
-        worse_on_errors = feats.error_rate > err_median
-        worse_on_latency = feats.latency_ms > lat_median
+        worse_on_errors = feats.error_rate > err_bar
+        worse_on_latency = feats.latency_rolling_mean_ms > lat_bar
         if worse_on_errors or worse_on_latency:
             continue  # genuine outlier — keep its exclusion verdict
-        # Not worse than the pack ⇒ this is pool-wide overload, not a fault.
-        # Downgrade to healthy so the sidecar keeps routing to it (scale-out
-        # is the right response, handled elsewhere). Drop the stale evidence.
+        # Not meaningfully worse than the pack ⇒ pool-wide overload, not a fault.
+        # Downgrade to healthy so the sidecar keeps routing to it (scale-out is the
+        # right response, handled by the autoscaler). Drop the stale evidence.
         out[i] = AnomalyScore(score.backend_id, "healthy", 0.0)
     return out
 
