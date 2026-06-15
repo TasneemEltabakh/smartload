@@ -392,21 +392,20 @@ Routing engine
   & \texttt{monotone} heuristic (deployed); MaskablePPO \cite{schulman2017ppo,raffin2021sb3} retained as a foil
   & \texttt{round\_\allowbreak robin} (floor; and \texttt{least\_\allowbreak connections})
   & \texttt{monotone}/\allowbreak\texttt{candidate\_\allowbreak mono} (shadow router)
-  & PPO ties round-robin on the open-loop eval (both mean reward \BMrlPpoReward{}); on the equal-capacity bench an even split is optimal so no router beats round-robin (the win is anomaly-driven exclusion, not routing). PPO is implemented but not deployed; the shipped router is the deterministic monotone heuristic \\
+  & PPO ties round-robin on the open-loop eval (round-robin-equivalent reward); on the equal-capacity bench an even split is optimal so no router beats round-robin (the win is anomaly-driven exclusion, not routing). PPO is implemented but not deployed; the shipped router is the deterministic monotone heuristic \\
 \addlinespace
 Autoscaler
   & none (deterministic controller)
   & threshold controller on forecasted RPS
   & \texttt{target} controller
   & scales toward the single-host budget ($\texttt{max\_backends}=5$; an $8$-backend probe OOM'd the host); the deployed \texttt{target} controller still flaps and the anti-flap sits on the unused \texttt{step} controller (\#183) \\
-% TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
 \bottomrule
 \end{tabularx}
 
 \medskip
 \begin{minipage}{\linewidth}
 \footnotesize
-\textsuperscript{$\dagger$}\,The \BManAgree{} threshold-vs-IsolationForest sweep
+\textsuperscript{$\dagger$}\,The threshold-vs-IsolationForest sweep
 agreement and the SMD-holdout figure characterise the IsolationForest comparison
 only; they exclude the deployed \texttt{trend\_rule} engine and are not its
 selection metric.

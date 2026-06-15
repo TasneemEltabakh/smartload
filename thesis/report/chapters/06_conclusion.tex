@@ -62,12 +62,12 @@ learned engine sit in the live path safely. The detailed reading is in
   \item \textbf{The deployed anomaly engine closes the gradual-degradation gap.} The
         shipped \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
         $0.000$, the score of every stateless detector on that pattern, to \BManFone{}
-        (recall \BManRecall{}, precision \BManPrecision{}). Slow, sustained drift is exactly the
+        (recall \BManRecall{}). Slow, sustained drift is exactly the
         failure mode a point-based rule misses. The threshold rule remains the
         deterministic fallback beneath the default, and an Isolation Forest engine
         \cite{liu2008isolationforest} is a selectable alternative. A separate
         threshold-versus-Isolation-Forest sweep, which does not involve the deployed
-        detector, shows about \BManAgree{} cell agreement, with the Isolation Forest the more
+        detector, shows broad cell agreement, with the Isolation Forest the more
         aggressive of the two.
   \item \textbf{The deterministic router matches round-robin; routing is not where the
         advantage lies.} On the canonical equal-capacity bench the deployed monotone
@@ -76,8 +76,8 @@ learned engine sit in the live path safely. The detailed reading is in
         optimal, so no router can beat round-robin (round-robin is in fact marginally
         ahead on the \texttt{C\_spike} phase). The trained PPO policy
         \cite{schulman2017ppo,raffin2021sb3} is an honest null result:
-        round-robin-equivalent on the open-loop evaluation (mean-reward gap
-        \BMrlPpoReward{}), with nothing to beat on the closed-loop bench either,
+        round-robin-equivalent on the open-loop evaluation, with nothing to beat on the
+        closed-loop bench either,
         implemented but not deployed (\texttt{RL\_POLICY=monotone}) and kept dormant in
         shadow. The routing layer's live value is parity with the classical scheduler at
         no extra risk, while the measurable gains come from exclusion and capacity holding.

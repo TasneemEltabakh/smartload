@@ -354,8 +354,8 @@ close to the rolling mean), error rate at or below the baseline's boundary, and 
 characteristic variance band. The threshold rule served as the reference signal,
 and the decision thresholds were searched empirically against a bench sweep of
 $(\text{latency}, \text{error rate})$ cells spanning the operating range. The
-trained engine agrees with the threshold baseline on \BManAgree{} of cells
-(\BManAgreeCells{} of \BManGridCells{}), and every remaining disagreement is in
+trained engine agrees with the threshold baseline across most of the cells,
+and every remaining disagreement is in
 the value-adding direction: the threshold rule says \texttt{healthy} but the model
 catches a variance or spike pattern the rule misses. One example is the live-stack
 400\,ms latency injection, whose measured feature vector $(\text{max}=406,
@@ -831,11 +831,10 @@ the deterministic options, because there is nothing for it to improve on.
 
 In the original \emph{open-loop} evaluation, the policy was scored in shadow mode
 against the deterministic baselines over a held-out seed bank of twenty episodes.
-There the trained policy \emph{tied} NGINX round-robin: the two shared a mean
-reward of \BMrlPpoReward{} and were joint-best, while the policy beat
-\texttt{least\_connections} by $4.8\times10^{-2}$ in mean reward. The SLO-violation
-rate was $0$ for \emph{every} policy, because the trace backend latencies (around
-$9.7$\,ms) sit uniformly below the $200$\,ms objective, so no routing choice can
+There the trained policy \emph{tied} NGINX round-robin: the two shared a
+round-robin-equivalent reward and were joint-best among the deterministic options. The
+SLO-violation rate was $0$ for \emph{every} policy, because the trace backend latencies
+(around $9.7$\,ms) sit uniformly below the $200$\,ms objective, so no routing choice can
 violate it. Taken alone, that tie reads as ``at least as good as the established
 approach'', but it is a tie on a simulator that cannot distinguish routing
 policies, not evidence of a learned advantage.
@@ -1089,7 +1088,7 @@ engines were built is itself a result.
 \paragraph{Anomaly detection: choosing the engine for the failure mode that
 matters.} The Isolation Forest engine cleared its $F_1 =$~\BMifFone{} validation
 gate on the first attempt, and calibrating it against the threshold rule in one
-shared coordinate system brought bench agreement to \BManAgree{}, with every
+shared coordinate system brought the two into broad bench agreement, with every
 remaining disagreement in the value-adding direction. But the decisive benchmark
 was the gradual-degradation case, the failure mode this service most needs to
 catch, where the stateful \texttt{trend\_rule} reaches $F_1 =$~\BManFone{} while
