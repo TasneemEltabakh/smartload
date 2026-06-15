@@ -50,9 +50,11 @@ neither classical scheduler can: correlated slowdowns, backends with different
 capacity, anticipatory shifting. The trade-offs differ. The trained policy needs
 offline training, its behaviour is harder to explain, and a badly trained or stale
 policy could route traffic poorly; in practice the trained PPO policy proved
-round-robin-equivalent on the open-loop eval and the worst contender on the
-closed-loop bench, so the \emph{shipped} learned router is the deterministic
-monotone heuristic and the trained policy is retained only as a comparison foil. A
+round-robin-equivalent on the open-loop eval, and on the equal-capacity closed-loop
+bench it has nothing to beat either, because under uniform overload an even split is
+provably optimal. The \emph{shipped} learned router is therefore the deterministic
+monotone heuristic, and the trained policy is implemented but not deployed
+(\texttt{RL\_POLICY=monotone}), retained only as a comparison foil. A
 learned policy that is allowed to authorise routing on its own does not fit the
 degradation rule, whichever form it takes.
 
@@ -64,8 +66,10 @@ over whenever the ranker is disabled, warming up, stale, or overridden. The rank
 proposes; deterministic logic disposes. This keeps the upside of (c), adaptivity,
 while structurally bounding the downside, because the worst case degrades to (a).
 This is the design SmartLoad adopts; the ranker it ships is the deterministic
-monotone heuristic, and \cref{dsb:sec-decision} shows in numbers why the bounded
-hybrid is the clear winner.
+monotone heuristic, and \cref{dsb:sec-decision} shows why the bounded hybrid is the
+right choice: it captures the anomaly-driven exclusion advantage safely while degrading
+to a proven classical floor, rather than relying on a fine-grained routing edge that an
+equal-capacity pool does not provide.
 
 \subsection{Where Routing Decisions Live}
 \label{dsb:alt-locus}
@@ -116,9 +120,11 @@ no forward lead.
 \textbf{(b) A residual-harmonic forecaster (chosen default).} The deployed engine
 fits a harmonic-plus-residual model that is refit online and ships no offline
 artefact, capturing the short-horizon shape a flat mean cannot. On the all-profile
-benchmark it reaches \BMfcMape{} MAPE (against \BMfcMapeMA{} for the moving average) and a
-\BMfcSlaGain{}\,pp downstream SLA gain over reactive provisioning, which is why it is the
-production default. A classical Box--Jenkins ARIMA model
+benchmark it reaches \BMfcMape{} MAPE (against \BMfcMapeMA{} for the moving average) and an
+indicative \BMfcSlaGain{}\,pp downstream SLA gain over reactive provisioning on synthetic
+load, which is why it is the production default. That gain is qualified by a known
+limitation: the live forecast is effectively load-decoupled, which couples into the
+autoscaler flap and is tracked future work (\#189). A classical Box--Jenkins ARIMA model
 \cite{box2015timeseries,hyndman2021forecasting} of order $(2,0,2)$ is provided as a
 selectable, superseded option; it gives a principled prediction interval but trails
 the harmonic-residual engine on these synthetic series (\BMfcMapeArima{} MAPE) and was not
@@ -380,19 +386,19 @@ Forecaster
   & \texttt{harmonic\_\allowbreak residual} (refit, artefact-free)
   & \texttt{moving\_\allowbreak average} (windowed mean $\pm\,\sigma$, fallback)
   & \texttt{harmonic\_\allowbreak residual} (\BMfcMape{} MAPE)
-  & \BMfcMape{} MAPE all-profile, \BMfcSlaGain{}\,pp downstream SLA vs.\ reactive; ARIMA$(2,0,2)$ is a selectable, superseded option \\
+  & \BMfcMape{} MAPE all-profile; \BMfcSlaGain{}\,pp downstream SLA vs.\ reactive on the synthetic bench (indicative: the live forecast is load-decoupled, \#189); ARIMA$(2,0,2)$ is a selectable, superseded option \\
 \addlinespace
 Routing engine
   & \texttt{monotone} heuristic (deployed); MaskablePPO \cite{schulman2017ppo,raffin2021sb3} retained as a foil
   & \texttt{round\_\allowbreak robin} (floor; and \texttt{least\_\allowbreak connections})
   & \texttt{monotone}/\allowbreak\texttt{candidate\_\allowbreak mono} (shadow router)
-  & PPO ties round-robin on the open-loop eval (both mean reward \BMrlPpoReward{}) but is the worst contender on the closed-loop SLA bench; the shipped learned router is the deterministic monotone heuristic, not trained RL \\
+  & PPO ties round-robin on the open-loop eval (both mean reward \BMrlPpoReward{}); on the equal-capacity bench an even split is optimal so no router beats round-robin (the win is anomaly-driven exclusion, not routing). PPO is implemented but not deployed; the shipped router is the deterministic monotone heuristic \\
 \addlinespace
 Autoscaler
   & none (deterministic controller)
   & threshold controller on forecasted RPS
   & \texttt{target} controller
-  & scales toward the single-host budget ($\texttt{max\_backends}=5$; an $8$-backend probe OOM'd the host) \\
+  & scales toward the single-host budget ($\texttt{max\_backends}=5$; an $8$-backend probe OOM'd the host); the deployed \texttt{target} controller still flaps and the anti-flap sits on the unused \texttt{step} controller (\#183) \\
 % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
 \bottomrule
 \end{tabularx}

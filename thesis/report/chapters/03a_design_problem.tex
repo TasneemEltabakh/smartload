@@ -732,20 +732,26 @@ Confidence bounds accompany every forecast (FR-3); the reactive sliding-window f
 \end{tabular}
 \end{table}
 
-\paragraph{Routing risk: a learned policy may not beat a strong baseline everywhere.}
-The most consequential routing risk is that a learned policy will not improve on a
-strong deterministic baseline on every workload; on a heterogeneous mix, plain
-round-robin is already a tough opponent. The design answers this risk by construction
-rather than by hope. Because FR-9 guarantees a deterministic fallback and FR-5 pins
-the learned router in shadow mode by default, the learned policy runs behind a proven
-classical scheduler and a fallback at all times. The classical scheduler carries
-traffic; the learned policy observes and records what it would have done; and an
-operator promotes it to active only once it demonstrates a clear benefit on the target
-workload. Routing is therefore always at least as good as the established approach
-while the learned policy is refined, which is exactly the guarantee the safety
-thesis sets out to provide. The full quantitative comparison of the learned router
-against the classical baselines is reported in \cref{ch:discussion}; the modelling
-choices behind the policy are discussed in \cref{ch:litreview}.
+\paragraph{Routing risk: a learned policy cannot beat round-robin on a homogeneous pool.}
+The most consequential routing risk is the mirror image of the usual intuition. On a
+\emph{homogeneous}, equal-capacity pool under uniform overload an even split is provably
+optimal, so plain round-robin is not merely a tough opponent but an unbeatable one: with
+no faster backend to prefer, no learned or heuristic router can do better. A learned
+router could only earn its keep on a \emph{heterogeneous}-capacity pool, where backends
+genuinely differ in service time, which is future work rather than the present scope. The
+design answers this by construction rather than by hope. Because FR-9 guarantees a
+deterministic fallback and FR-5 pins the learned router in shadow mode by default, the
+learned policy runs behind a proven classical scheduler and a fallback at all times. The
+classical scheduler carries traffic; the learned policy observes and records what it
+would have done; and an operator promotes it to active only once it demonstrates a clear
+benefit on the target workload. Routing is therefore always at least as good as the
+established approach while the learned policy is refined, which is exactly the guarantee
+the safety thesis sets out to provide. On the present equal-capacity scope SmartLoad's
+measurable advantage comes not from fine-grained routing but from anomaly-driven
+exclusion of the bad backends round-robin cannot eject and from holding capacity. The
+full quantitative comparison of the learned router against the classical baselines is
+reported in \cref{ch:discussion}; the modelling choices behind the policy are discussed
+in \cref{ch:litreview}.
 
 \paragraph{Exclusion risk: keeping an over-reacting engine from emptying the pool.}
 The second routing risk is sharper because its impact is high: an anomaly engine that

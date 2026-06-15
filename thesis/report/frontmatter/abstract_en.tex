@@ -28,11 +28,15 @@ the backend pool grew automatically up to its capacity ceiling, then shrank
 again as demand fell, with the deterministic fallback ready on every step.
 % TODO(vps-rerun): pool range + scaling-action count from fresh VPS adaptive batch
 The deployed gradual-degradation detector closes a failure mode that point-based
-rules miss, lifting its detection score from zero to \BManFone{} on slow drift. For
-routing, the deployed deterministic capacity-aware heuristic holds SLA
-violations well below the round-robin baseline; a trained policy is kept dormant
-in shadow mode, where it proves round-robin-equivalent and so is reported as an
-honest null result rather than a learned-routing win.
+rules miss, lifting its detection score from zero to \BManFone{} on slow drift.
+SmartLoad's decisive advantage comes from anomaly-driven exclusion at equal capacity:
+at the failure modes it targets, a failing backend that sheds errors but is
+un-ejectable by passive health checks and a slow-but-healthy backend, it cut errors
+roughly fivefold and tail latency by 8 to 250 times against static round-robin, robust
+across three runs. Fine-grained routing is not where the gain lies: the deployed
+heuristic ties round-robin under uniform overload, where an even split is provably
+optimal, and a trained policy kept dormant in shadow mode proves round-robin-equivalent,
+reported as an honest null result rather than a learned-routing win.
 
 We conclude that an integrated, safety-first decision loop is a practical
 foundation for adaptive load management: the closed loop works end to end, the
