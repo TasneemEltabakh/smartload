@@ -35,17 +35,34 @@ The merged work touches only NON-thesis files (`audit/*.md`,
   cut-rule, L4 PPO implemented-but-undeployed (→#188), L5 autoscaler flap worked-around
   (→#183) — each with its Future-Work mapping.
 
-### 3. Fill the result NUMBERS with statistical rigor (the point of #181)
-`compare.py` now reports **mean ± 95% CI**. Run it on the canonical 3-run batch and use
-those values when filling the placeholder macros (`\BM…` in `preamble.tex`) and the
-per-phase results tables — **report mean ± 95% CI, not bare means**:
+### 3. Fill the `[BENCH:…]` placeholder macros from committed artifacts (NO invention)
+The thesis prints loud red `[BENCH:<metric>]` markers (the `\bmtodo{}` macros in
+`preamble.tex`) wherever a real measured number is missing. **Fill them from the committed
+benchmark reports — do not invent any number.** Map each macro family to its source:
+
+| Macro family | Source (committed) |
+|---|---|
+| **adaptive-advantage** per-phase + overall | `compare.py` on the 3-run batch (below) — report **mean ± 95% CI** (#181) |
+| `an-trendrule-*` (`\BManFone`, `\BManRecall`, `\BManPrecision`, `\BMifFone`) | `experiments/anomaly-detection-bench/REPORT.md` (gradual F1 **0.000→0.845**, recall **0.791**, spike/held-out F1, IF baseline) |
+| `fc-*` (`\BMfcMape`, `\BMfcMapeNaive/MA/Arima`, `\BMfcCiCov`, `\BMfcSlaGain`) | `experiments/forecasting-engine-bench/` + `forecasting-downstream-bench/` (REPORT + `results/*/SUMMARY.md`) |
+| `rl-*` (`\BMrlPpoReward`, `\BMrl{Monotone,Ppo,Roundrobin}SlaViol`) | `experiments/rl-routing-bench/REPORT.md` — **reconcile framing per edit #1**: offline/open-loop figures, NOT a "monotone beats RR closed-loop" claim |
+| `as-*` (`\BMasSlaReactive`, `\BMasSlaTarget`) | `experiments/autoscaler-strategy-bench/REPORT.md` (**77.2% → 98.3%**) |
+
+For the adaptive-advantage numbers, run and use **mean ± 95% CI** (this is #181's payoff):
 ```
 python3 experiments/adaptive-advantage/compare.py \
         experiments/adaptive-advantage/results/20260615T124519Z
 ```
-(The `results/` dir is git-ignored and lives on the benchmark host; if it isn't present in
-your environment, the mean values are already in `experiments/adaptive-advantage/README.md`
-— add the CIs once the batch is available or re-run the 5v5 RUNS=3 benchmark.)
+(`results/` is git-ignored / on the benchmark host; if absent, the means are in
+`experiments/adaptive-advantage/README.md` — add CIs once the batch is available.)
+
+**TWO families have NO committed data — do NOT fill them; mark Future Work / cut the numeric
+claim** (the same two suites the demo-ui left pending):
+- `ad-*` (`\BMadPoolHi/Lo`, `\BMadRunId`, `\BMadScaleActions`) — the **RQ4 adaptive-scaling**
+  run has no committed metrics; RQ4 is Future Work under the equal-capacity scope.
+- `an-agreement-*` (`\BManAgree`, `\BManAgreeCells`, `an-if-threshold-agreement`) — the
+  **engine-agreement %** isn't committed (`anomaly-engine-bench` ships only a README; its
+  `F1=0.8012` is a *training* metric, not the agreement number). Reframe or drop; don't fabricate.
 
 ### 4. A+B contingency
 Read the **A+B CONTINGENCY** callout in `audit/THESIS_UPDATE_PROMPT.md` (edit #1). Stay
