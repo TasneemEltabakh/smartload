@@ -231,10 +231,20 @@ deterministic rule while adding extra coverage.
 The routing bench answers the comparison questions directly: it runs the same
 docker-compose stack twice, once with the decision plane silent and once with it fully
 engaged, and contrasts the two latency and error distributions. It supersedes an
-earlier \texttt{baseline-vs-smartload} bench, whose 50-user closed loop tied: that
-workload sat below the queue knee, so a degraded backend slowed without ever shedding
-and the slowdown hid in the worst-case maximum rather than separating the two sides.
-That tie is a benchmark artefact, not a real equivalence, and is reported as such. The
+earlier \texttt{baseline-vs-smartload} bench, whose 50-user closed loop tied for a
+reason worth stating, because the same trap can silently void any load comparison. A
+closed-loop generator holds a fixed population of virtual users, each issuing one
+request, waiting for the response, then pausing briefly before the next, so the number
+of requests in flight is capped by the user count; Locust drives exactly this model.
+When a backend slows, every user routed to it blocks on the slow response and stops
+generating new load, so the offered rate falls on its own and the slowdown converts into
+queue-wait latency without the in-flight count ever exceeding the user population. At
+50 users that population sat below the per-backend queue depth, so a degraded backend
+could only add latency and could never overflow its queue; the slowdown hid in the
+worst-case maximum rather than separating the two sides, and the systems tied not because
+they are equivalent but because the load profile concealed the one failure mode where
+they differ. That tie is a closed-loop self-throttle artefact, not a real equivalence,
+and is reported as such. The
 adaptive-advantage bench removes the artefact by holding the two sides at \emph{equal
 capacity} and driving load past the knee. Its design principle is to minimise hidden
 variables: the compose stack, backend pool image, NGINX configuration, test-backend
@@ -276,15 +286,42 @@ First, load is driven \emph{past the queue knee} (\texttt{STEADY\_USERS}$=70 >
 \texttt{QUEUE\_MAX}=64$), so a severely degraded backend's queue overflows and sheds
 \texttt{503}; with NGINX configured \texttt{max\_fails=0}, plain round-robin can never
 eject it and keeps routing a fifth of its traffic onto it, while SmartLoad's error
-channel detects it and the sidecar pulls it out. Second, anomalies are injected
+channel detects it and the sidecar pulls it out. The \texttt{max\_fails=0} setting is a
+deliberate, audited choice rather than a handicap planted to flatter SmartLoad: it
+disables NGINX's passive ejection so the degraded backend keeps emitting honest
+\texttt{503} backpressure instead of cascading into passive-ejection \texttt{502}s, which
+isolates the variable under study, namely detection-and-exclusion intelligence against a
+policy that structurally cannot exclude. Second, anomalies are injected
 \emph{organically} through \texttt{/\_admin/delay} with no manual isolation hint, so the
 detector must find them itself. Third, both sides are pinned to five backends
 (\texttt{MIN\_BACKENDS}=\texttt{MAX\_BACKENDS}=5), removing the autoscaler-flap and
-stale-\texttt{down} confounds so the 5v5 A/B measures pure routing and exclusion. The
-slow-but-healthy \texttt{D\_slow} backend that keeps returning \texttt{200 OK} is the
-companion case NGINX's passive \texttt{max\_fails} check also cannot solve. The finding
-this bench produces is discussed in \cref{imc:theory} and quantified in
-\cref{tab:imc:phases-obs}.
+stale-\texttt{down} confounds so the 5v5 A/B measures pure routing and exclusion; between
+the two sides the orchestrator also rewrites the upstream to a clean, all-up five-backend
+pool before the decision plane is recreated, so a backend left \texttt{down} by the prior
+side cannot carry into the next as lost capacity. This equal-capacity configuration is
+the scenario the headline claim rests on, because no win can be attributed to extra
+hardware; a companion full-system scenario (\texttt{MAX\_BACKENDS}=10 against a static
+five) instead lets SmartLoad scale out and measures total real-world value, adaptation
+plus elastic capacity, exercising the autoscaling path the pinned run deliberately holds
+constant. The slow-but-healthy \texttt{D\_slow} backend that keeps returning
+\texttt{200 OK} is the companion case NGINX's passive \texttt{max\_fails} check also
+cannot solve. The finding this bench produces is discussed in \cref{imc:theory} and
+quantified in \cref{tab:imc:phases-obs}.
+
+\paragraph{The queue-knee arithmetic.} The threshold the workload must cross is set by
+the test backend itself, which is not a constant-delay echo server but a small bounded
+finite-server queue (an M/G/c model in queueing terms). Two parameters define it: two
+concurrent service slots (\texttt{WORKERS}$=2$) and a bounded admission queue of depth
+\texttt{QUEUE\_MAX}$=64$, so the per-backend admission ceiling is
+$\texttt{WORKERS}+\texttt{QUEUE\_MAX}=66$ simultaneous requests, and the next arrival to
+find the queue full is shed immediately with \texttt{503}. Under closed-loop load a
+severely degraded backend holds each request far longer, so by Little's law its standing
+in-flight count climbs as residence time grows; with the user population held above the
+queue depth ($\texttt{STEADY\_USERS}=70>\texttt{QUEUE\_MAX}=64$) that backend accumulates
+enough in-flight requests for its queue to overflow and shed organically, whereas below
+the knee, in the old 50-user regime, the population is smaller than the queue and it can
+never fill no matter how slow the backend gets. Driving the load just past the knee is
+the single change that turns the decisive failure mode from invisible into measurable.
 
 \subsection{Computer-based tools and statistics}\label{imc:tools}
 
@@ -295,7 +332,13 @@ exposition endpoints; raw frames are stored as columnar Parquet and joined with 
 Statistical reporting uses the Student's $t$ confidence interval described above for
 the multi-run case, and the anomaly-engine comparison reports agreement as a simple
 proportion over a fully enumerated grid, so the whole population rather than a sample
-is measured and no sampling error remains to bound.
+is measured and no sampling error remains to bound. The routing comparison is seeded for
+reproducibility: the load stream is deterministic for a given seed and both sides of a
+run share that seed, so the A/B faces an identical request stream, while successive runs
+in a batch step the seed so a three-run batch exercises three independent streams. At
+least three runs are reported because a single run proved able to mislead entirely; an
+early batch showed a healthy first run and a collapsed second, which is why no single run
+is treated as reportable.
 
 \subsection{Threats to validity}\label{imc:threats}
 

@@ -236,6 +236,41 @@ base.
         in-distribution demand curves, before it could compete with the deployed
         \texttt{harmonic\_residual} forecaster. \\
     \addlinespace
+    Control loop
+      & The \texttt{harmonic\_residual} forecast follows a learned periodic shape more than
+        the live offered load, predicting a roughly fixed rate across very different demand,
+        so every adaptive-scaling claim rests on a controller working around a signal it
+        cannot fully trust rather than on a sound forward predictor.
+      & Blend the point forecast with live offered-rps and a headroom factor, re-fit it on
+        load-coupled features, or replace it with a defensible EWMA-plus-trend predictor,
+        validated on a diurnal scenario so the scaling decisions track demand. \\
+    \addlinespace
+    Control loop
+      & The autoscaler ships two controllers and deploys the one without anti-flap logic;
+        the structural pool flap it produced was pinned out of the benchmark
+        (\texttt{MIN\_BACKENDS}) rather than removed at the design level, leaving the safe
+        controller inert.
+      & Consolidate to a single controller carrying the scale-in confirmation and
+        hysteresis, with a regression test asserting an alternating demand signal does not
+        reopen the flap. \\
+    \addlinespace
+    Control loop
+      & Exclusion state lived across four stores (sidecar memory, detector clocks, the
+        on-disk upstream, and the health table) that could desynchronise across a process
+        restart and strand a recovered backend as \texttt{down}; this was closed this
+        iteration but is not yet written down as a single-authority contract.
+      & Formalise the health record as the sole authority for exclusion state, derive the
+        rest from it and reconcile on startup, and add a compose-based coupled-loop
+        integration test that asserts no healthy backend is left excluded. \\
+    \addlinespace
+    Routing
+      & The monotone policy's hard cut near-zeroes any backend slower than three times the
+        fastest, concentrating weight onto the quickest few; this is the upstream cause of
+        the concentration the downstream skew clamp only bounds as a symptom.
+      & Soften the cut at the source (a higher or load-aware threshold) and re-run the
+        latency-monotonicity probe to confirm the policy still satisfies its monotonicity
+        property. \\
+    \addlinespace
     Evaluation
       & The canonical equal-capacity routing comparison (adaptive-advantage) reports three
         runs, but the closed-loop RQ4 magnitudes still come from single committed runs
@@ -262,6 +297,19 @@ base.
   \end{tabularx}
 \end{table}
 
+\paragraph{The coupling property behind these limitations.} Several of these items trace
+to one structural property rather than to separate defects: SmartLoad's control loop is a
+set of independent services whose decisions couple, so the system's behaviour is emergent
+from that coupling rather than resident in any single component. The forecast feeds the
+autoscaler, the routing policy feeds the detector that can bench the backends it
+concentrates load onto, and exclusion state is shared across stores that must agree. The
+benchmark made this concrete: no single-component fix moved the aggregate error rate, and
+a detector-only change once regressed it because the autoscaler flapped underneath. The
+honest framing is that the contribution is a \emph{coupled}
+anomaly-exclusion-and-scaling loop with a characterised operating envelope, and the items
+above are the path from a loop that works and is understood to one that is also proven and
+guarded against regression.
+
 \section{Future Directions}
 \label{conc:future}
 
@@ -286,6 +334,19 @@ forecaster currently reads an upper-band proxy for request arrivals rather than 
 arrivals signal, and the data plane has no first-class health-check surface. Wiring a
 genuine arrivals feed and data-plane health checks would harden the loop against
 conditions a single benchmark host does not exercise.
+
+\paragraph{Consolidate the control loop into a single coherent path.} Three internal
+clean-ups would turn the worked-around behaviours into designed ones. The autoscaler
+should keep exactly one controller, carrying the scale-in confirmation and hysteresis, so
+the safe path is the deployed path rather than inert code beside it. Exclusion state
+should derive from a single authority, the backend-health record, with the on-disk
+upstream and the in-memory sets reconciled from it on startup, closing the restart
+deadlock as a contract rather than a one-off fix. And the monotone router's cut should be
+softened at the source so it stops manufacturing the weight concentration the downstream
+clamp now only bounds. A compose-based coupled-loop integration test that drives the
+spike and asserts the invariants unit tests structurally cannot reach, namely no benching
+cascade, the pool at or above quorum, and no healthy backend stuck excluded, would guard
+all three against regression.
 
 \paragraph{Extend the equal-capacity comparison, build a heterogeneous testbed, and
 finish the K8s/Helm packaging.} The canonical adaptive-advantage bench already reports
