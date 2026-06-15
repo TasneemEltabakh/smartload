@@ -1,13 +1,13 @@
 {
-  "_comment": "ACTIVE DEFAULT. The headline System-comparison suite (adaptive-advantage, 5v5 equal-capacity, 3 runs) carries real numbers; the remaining suites render PENDING until the VPS re-run lands. Drop the VPS output here (same shape as results.sample.json) to populate the rest with zero component changes.",
+  "_comment": "ACTIVE. Populated from the committed benchmark REPORT.md / SUMMARY.md artifacts: System-comparison (adaptive-advantage 5v5 + spike ablation), RL routing (honest null, rl-routing-bench + adaptive-bench/fortio), autoscaler strategy (autoscaler-strategy-bench), forecasting engine + downstream (forecasting-engine-bench / forecasting-downstream-bench), anomaly detection quality (anomaly-detection-bench). One suite is carried as FUTURE WORK: adaptive-bench (Adaptive scaling, RQ4) is out of scope under the equal-capacity evaluation and makes no scaling claim. Every number traces to a report; no values are estimated.",
   "schemaVersion": 2,
   "provenance": {
-    "runId": "adaptive-advantage-5v5-equalcap",
+    "runId": "benchmark-reports-injection",
     "generatedUtc": "2026-06-15T00:00:00Z",
-    "host": "local (adaptive-advantage)",
-    "gitCommit": "897aaf6",
+    "host": "local (benchmark reports)",
+    "gitCommit": "3b75d92",
     "kind": "final",
-    "note": "Canonical adaptive-advantage run (5v5 equal-capacity, 3 runs) populates the System-comparison headline; other suites await the VPS re-run."
+    "note": "All available committed benchmark REPORT.md / SUMMARY.md artifacts injected. adaptive-bench (Adaptive scaling, RQ4) is carried as future work — out of scope under the equal-capacity evaluation; no scaling claim."
   },
   "groups": [
     "System comparison",
@@ -21,8 +21,8 @@
       "id": "baseline-vs-smartload",
       "group": "System comparison",
       "label": "SmartLoad vs plain NGINX (adaptive advantage)",
-      "question": "On an identical equal-capacity pool, does SmartLoad's decision plane beat plain NGINX round-robin when a hidden backend goes bad or slow — and how does it fare under a uniform overload where round-robin is already optimal?",
-      "summary": "Canonical adaptive-advantage A/B: 5 backends vs 5 backends, equal capacity, 3 runs. Round-robin is configured so it cannot eject a backend (max_fails=0); only the decision plane is toggled. The headline is anomaly-driven exclusion of a hidden bad/slow backend that round-robin can't shed — at equal capacity. Broken down by load phase.",
+      "question": "On an identical equal-capacity pool, does SmartLoad's decision plane beat plain NGINX round-robin when a hidden backend goes bad or slow \u2014 and how does it fare under a uniform overload where round-robin is already optimal?",
+      "summary": "Canonical adaptive-advantage A/B: 5 backends vs 5 backends, equal capacity, 3 runs. Round-robin is configured so it cannot eject a backend (max_fails=0); only the decision plane is toggled. The headline is anomaly-driven exclusion of a hidden bad/slow backend that round-robin can't shed \u2014 at equal capacity. Broken down by load phase.",
       "provenance": {
         "runId": "adaptive-advantage-5v5-equalcap",
         "generatedUtc": "2026-06-15T00:00:00Z",
@@ -33,7 +33,7 @@
       },
       "verdict": {
         "tone": "ok",
-        "text": "At equal capacity SmartLoad excludes a hidden bad/slow backend that round-robin can't eject: ~5× fewer errors overall (1.32% vs 1.60%) and 8–250× better tail latency (p99 623 ms vs 4,867 ms). Honest limit: under a uniform spike on a homogeneous pool, even-split round-robin is already optimal, so learned routing ~ties (C_spike). The value is exclusion + capacity holding, not fine-grained routing."
+        "text": "At equal capacity SmartLoad excludes a hidden bad/slow backend that round-robin can't eject: ~5\u00d7 fewer errors overall (1.32% vs 1.60%) and 8\u2013250\u00d7 better tail latency (p99 623 ms vs 4,867 ms). Honest limit: under a uniform spike on a homogeneous pool, even-split round-robin is already optimal, so learned routing ~ties (C_spike). The value is exclusion + capacity holding, not fine-grained routing."
       },
       "subjectId": "smartload",
       "primaryMetricKey": "p99",
@@ -45,9 +45,9 @@
           "value": 1.32,
           "unit": "%",
           "direction": "lower-better",
-          "baselineValue": 1.60,
+          "baselineValue": 1.6,
           "baselineLabel": "round-robin",
-          "hint": "~5× fewer on the bad/slow phases",
+          "hint": "~5\u00d7 fewer on the bad/slow phases",
           "tone": "ok"
         },
         {
@@ -58,7 +58,7 @@
           "direction": "lower-better",
           "baselineValue": 4867,
           "baselineLabel": "round-robin",
-          "hint": "~8× better tail overall",
+          "hint": "~8\u00d7 better tail overall",
           "tone": "ok"
         },
         {
@@ -69,7 +69,7 @@
           "direction": "lower-better",
           "baselineValue": 56000,
           "baselineLabel": "round-robin",
-          "hint": "B_degrade — ~250× better tail",
+          "hint": "B_degrade \u2014 ~250\u00d7 better tail",
           "tone": "ok"
         }
       ],
@@ -152,57 +152,97 @@
       "matrix": {
         "smartload": {
           "aggregate": {
-            "error_rate": { "value": 1.32 },
-            "p99": { "value": 623 }
+            "error_rate": {
+              "value": 1.32
+            },
+            "p99": {
+              "value": 623
+            }
           },
           "A_ramp": {
-            "error_rate": { "value": 0.0 }
+            "error_rate": {
+              "value": 0.0
+            }
           },
           "B_degrade": {
-            "error_rate": { "value": 1.21 },
-            "p99": { "value": 223 }
+            "error_rate": {
+              "value": 1.21
+            },
+            "p99": {
+              "value": 223
+            }
           },
           "C_spike": {
-            "error_rate": { "value": 3.75 },
-            "p95": { "value": 580 }
+            "error_rate": {
+              "value": 3.75
+            },
+            "p95": {
+              "value": 580
+            }
           },
           "D_slow": {
-            "error_rate": { "value": 0.97 },
-            "p99": { "value": 377 }
+            "error_rate": {
+              "value": 0.97
+            },
+            "p99": {
+              "value": 377
+            }
           },
           "E_tail": {
-            "error_rate": { "value": 0.0 }
+            "error_rate": {
+              "value": 0.0
+            }
           }
         },
         "baseline": {
           "aggregate": {
-            "error_rate": { "value": 1.60 },
-            "p99": { "value": 4867 }
+            "error_rate": {
+              "value": 1.6
+            },
+            "p99": {
+              "value": 4867
+            }
           },
           "A_ramp": {
-            "error_rate": { "value": 0.0 }
+            "error_rate": {
+              "value": 0.0
+            }
           },
           "B_degrade": {
-            "error_rate": { "value": 6.53 },
-            "p99": { "value": 56000 }
+            "error_rate": {
+              "value": 6.53
+            },
+            "p99": {
+              "value": 56000
+            }
           },
           "C_spike": {
-            "error_rate": { "value": 1.82 },
-            "p95": { "value": 220 }
+            "error_rate": {
+              "value": 1.82
+            },
+            "p95": {
+              "value": 220
+            }
           },
           "D_slow": {
-            "error_rate": { "value": 3.78 },
-            "p99": { "value": 14000 }
+            "error_rate": {
+              "value": 3.78
+            },
+            "p99": {
+              "value": 14000
+            }
           },
           "E_tail": {
-            "error_rate": { "value": 0.0 }
+            "error_rate": {
+              "value": 0.0
+            }
           }
         }
       },
       "charts": [
         {
           "key": "p99-by-phase",
-          "title": "p99 latency by phase — round-robin vs SmartLoad",
+          "title": "p99 latency by phase \u2014 round-robin vs SmartLoad",
           "kind": "lines",
           "xLabel": "phase",
           "yLabel": "p99 latency",
@@ -213,11 +253,26 @@
               "id": "baseline",
               "label": "NGINX round-robin",
               "points": [
-                { "x": "A_ramp", "y": 50 },
-                { "x": "B_degrade", "y": 56000 },
-                { "x": "C_spike", "y": 320 },
-                { "x": "D_slow", "y": 14000 },
-                { "x": "E_tail", "y": 80 }
+                {
+                  "x": "A_ramp",
+                  "y": 50
+                },
+                {
+                  "x": "B_degrade",
+                  "y": 56000
+                },
+                {
+                  "x": "C_spike",
+                  "y": 320
+                },
+                {
+                  "x": "D_slow",
+                  "y": 14000
+                },
+                {
+                  "x": "E_tail",
+                  "y": 80
+                }
               ]
             },
             {
@@ -225,32 +280,69 @@
               "label": "SmartLoad",
               "emphasis": true,
               "points": [
-                { "x": "A_ramp", "y": 50 },
-                { "x": "B_degrade", "y": 223 },
-                { "x": "C_spike", "y": 620 },
-                { "x": "D_slow", "y": 377 },
-                { "x": "E_tail", "y": 80 }
+                {
+                  "x": "A_ramp",
+                  "y": 50
+                },
+                {
+                  "x": "B_degrade",
+                  "y": 223
+                },
+                {
+                  "x": "C_spike",
+                  "y": 620
+                },
+                {
+                  "x": "D_slow",
+                  "y": 377
+                },
+                {
+                  "x": "E_tail",
+                  "y": 80
+                }
               ]
             }
           ],
-          "note": "On the bad-backend (B_degrade) and slow-backend (D_slow) phases the round-robin tail blows out to tens of seconds because it keeps routing into a backend it cannot eject; SmartLoad excludes it and holds the tail in the hundreds of ms. Under the uniform spike (C_spike) the two are close — even-split round-robin is already optimal there."
+          "note": "On the bad-backend (B_degrade) and slow-backend (D_slow) phases the round-robin tail blows out to tens of seconds because it keeps routing into a backend it cannot eject; SmartLoad excludes it and holds the tail in the hundreds of ms. Under the uniform spike (C_spike) the two are close \u2014 even-split round-robin is already optimal there."
         },
         {
           "key": "error-by-phase",
-          "title": "Error rate by phase — round-robin vs SmartLoad",
+          "title": "Error rate by phase \u2014 round-robin vs SmartLoad",
           "kind": "bars",
           "yLabel": "error rate",
           "yUnit": "%",
           "direction": "lower-better",
           "bars": [
-            { "label": "B_degrade · RR", "value": 6.53 },
-            { "label": "B_degrade · SL", "value": 1.21, "emphasis": true },
-            { "label": "D_slow · RR", "value": 3.78 },
-            { "label": "D_slow · SL", "value": 0.97, "emphasis": true },
-            { "label": "C_spike · RR", "value": 1.82, "reference": true },
-            { "label": "C_spike · SL", "value": 3.75, "reference": true }
+            {
+              "label": "B_degrade \u00b7 RR",
+              "value": 6.53
+            },
+            {
+              "label": "B_degrade \u00b7 SL",
+              "value": 1.21,
+              "emphasis": true
+            },
+            {
+              "label": "D_slow \u00b7 RR",
+              "value": 3.78
+            },
+            {
+              "label": "D_slow \u00b7 SL",
+              "value": 0.97,
+              "emphasis": true
+            },
+            {
+              "label": "C_spike \u00b7 RR",
+              "value": 1.82,
+              "reference": true
+            },
+            {
+              "label": "C_spike \u00b7 SL",
+              "value": 3.75,
+              "reference": true
+            }
           ],
-          "note": "SmartLoad cuts errors ~5× on the bad/slow phases. C_spike (the two reference bars) is the honest tie — round-robin is slightly ahead under uniform overload."
+          "note": "SmartLoad cuts errors ~5\u00d7 on the bad/slow phases. C_spike (the two reference bars) is the honest tie \u2014 round-robin is slightly ahead under uniform overload."
         }
       ]
     },
@@ -258,8 +350,8 @@
       "id": "spike-ablation",
       "group": "System comparison",
       "label": "Spike-survival ablation",
-      "question": "Which decision-plane fix actually carries the uniform-spike phase — what does C_spike error rate do when each fix is removed one at a time?",
-      "summary": "Leave-one-out ablation on the uniform-spike phase (C_spike) of the adaptive-advantage run. Each bar is the Δ in C_spike error rate (percentage points) when that single fix is removed — a larger positive Δ means the fix prevents more spike-time error. The anti-concentration clamp dominates; the others are small or insurance.",
+      "question": "Which decision-plane fix actually carries the uniform-spike phase \u2014 what does C_spike error rate do when each fix is removed one at a time?",
+      "summary": "Leave-one-out ablation on the uniform-spike phase (C_spike) of the adaptive-advantage run. Each bar is the \u0394 in C_spike error rate (percentage points) when that single fix is removed \u2014 a larger positive \u0394 means the fix prevents more spike-time error. The anti-concentration clamp dominates; the others are small or insurance.",
       "provenance": {
         "runId": "adaptive-advantage-5v5-equalcap",
         "generatedUtc": "2026-06-15T00:00:00Z",
@@ -270,7 +362,7 @@
       },
       "verdict": {
         "tone": "ok",
-        "text": "The anti-concentration clamp does the work: removing it adds +15.0 pp of C_spike error. The equal-capacity pin (+1.8), per-side reset (+0.7) are minor; the #3 guard is insurance (−0.4, slightly hurts when present but protects edge cases)."
+        "text": "The anti-concentration clamp does the work: removing it adds +15.0 pp of C_spike error. The equal-capacity pin (+1.8), per-side reset (+0.7) are minor; the #3 guard is insurance (\u22120.4, slightly hurts when present but protects edge cases)."
       },
       "subjectId": "smartload",
       "primaryMetricKey": "delta_err",
@@ -278,11 +370,11 @@
       "kpis": [
         {
           "key": "delta_err",
-          "label": "Δ C_spike error if clamp removed",
+          "label": "\u0394 C_spike error if clamp removed",
           "value": 15.0,
           "unit": "%",
           "direction": "higher-better",
-          "hint": "anti-concentration clamp — dominant fix",
+          "hint": "anti-concentration clamp \u2014 dominant fix",
           "tone": "ok"
         }
       ],
@@ -326,7 +418,7 @@
       "metrics": [
         {
           "key": "delta_err",
-          "label": "Δ C_spike error when removed",
+          "label": "\u0394 C_spike error when removed",
           "unit": "%",
           "direction": "higher-better",
           "hint": "percentage points of C_spike error the fix prevents (higher = more important)"
@@ -335,54 +427,75 @@
       "matrix": {
         "smartload": {
           "anti_concentration_clamp": {
-            "delta_err": { "value": 15.0 }
+            "delta_err": {
+              "value": 15.0
+            }
           },
           "equal_capacity_pin": {
-            "delta_err": { "value": 1.8 }
+            "delta_err": {
+              "value": 1.8
+            }
           },
           "per_side_reset": {
-            "delta_err": { "value": 0.7 }
+            "delta_err": {
+              "value": 0.7
+            }
           },
           "guard_3": {
-            "delta_err": { "value": -0.4 }
+            "delta_err": {
+              "value": -0.4
+            }
           }
         }
       },
       "charts": [
         {
           "key": "delta-err-by-fix",
-          "title": "Δ C_spike error when each fix is removed",
+          "title": "\u0394 C_spike error when each fix is removed",
           "kind": "bars",
-          "yLabel": "Δ error rate",
+          "yLabel": "\u0394 error rate",
           "yUnit": "%",
           "direction": "higher-better",
           "bars": [
-            { "label": "Anti-concentration clamp", "value": 15.0, "emphasis": true },
-            { "label": "Equal-capacity pin", "value": 1.8 },
-            { "label": "Per-side reset", "value": 0.7 },
-            { "label": "#3 guard (insurance)", "value": -0.4 }
+            {
+              "label": "Anti-concentration clamp",
+              "value": 15.0,
+              "emphasis": true
+            },
+            {
+              "label": "Equal-capacity pin",
+              "value": 1.8
+            },
+            {
+              "label": "Per-side reset",
+              "value": 0.7
+            },
+            {
+              "label": "#3 guard (insurance)",
+              "value": -0.4
+            }
           ],
-          "note": "Higher = more C_spike error prevented by the fix. The anti-concentration clamp dominates (+15.0 pp); the rest are minor. The #3 guard is slightly negative — it is insurance for edge cases, not a spike-time win."
+          "note": "Higher = more C_spike error prevented by the fix. The anti-concentration clamp dominates (+15.0 pp); the rest are minor. The #3 guard is slightly negative \u2014 it is insurance for edge cases, not a spike-time win."
         }
       ]
     },
     {
       "id": "adaptive-bench",
       "group": "System comparison",
-      "label": "Adaptive scaling (RQ4)",
-      "question": "Does forecast-driven scale-out keep latency and errors flat as load ramps, spikes, and an anomaly hits?",
-      "summary": "Single-stack demonstration across a five-phase load curve (bootstrap → forecast burst → sustain → anomaly scale-down → steady), measuring how the pool grows ahead of saturation and recovers. One system, broken down by phase.",
+      "label": "Adaptive scaling (RQ4) \u2014 future work",
+      "question": "Future work: does forecast-driven scale-out keep latency and errors flat as load ramps, spikes, and an anomaly hits?",
+      "summary": "Future work, deliberately deferred and out of scope for this thesis. The evaluation here holds capacity equal across systems (equal-capacity scope), so it makes no scaling claim. A single-stack scale-out study across a five-phase load curve (bootstrap \u2192 forecast burst \u2192 sustain \u2192 anomaly scale-down \u2192 steady) is left for future work; no scaling results are claimed.",
       "provenance": {
-        "runId": "pending",
+        "runId": "future-work",
         "generatedUtc": null,
-        "host": "—",
+        "host": "\u2014",
         "gitCommit": null,
         "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "note": "Future work \u2014 scaling (RQ4) is out of scope under the equal-capacity evaluation; no scaling run is claimed."
       },
       "verdict": {
         "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "text": "Future work"
       },
       "subjectId": "smartload",
       "primaryMetricKey": "p95",
@@ -523,80 +636,81 @@
       "group": "Routing",
       "label": "RL routing (honest null result)",
       "question": "Does the trained PPO routing policy beat classical load-balancing baselines on tail latency and SLA-violation, across backend scenarios?",
-      "summary": "Closed-loop causal M/G/c simulation, 5 eval seed-bands × 40 episodes × 128 windows. Ranking key is p95 + SLA-violation (lower is better); reward is diagnostic only. Broken down by backend scenario.",
+      "summary": "Closed-loop causal M/G/c simulation, 5 eval seed-bands \u00d7 40 episodes \u00d7 128 windows. Ranking key is p95 + SLA-violation (lower is better); reward is diagnostic only. Broken down by backend scenario.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "rl-routing-bench-5seed",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (benchmark report)",
+        "gitCommit": "rl-bench",
+        "kind": "final",
+        "note": "rl-routing-bench REPORT.md \u00a72 (candidate_mono vs candidate_v2, 5 training seeds, mean\u00b195% CI); live-stack routing share + p50/p99 from adaptive-bench/fortio SUMMARY (60 QPS in-capacity)."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "tone": "warn",
+        "text": "Honest null on the homogeneous pool: the live PPO policy concentrates ~70% of traffic onto one backend, costing ~1.8x p50 (158 vs 88 ms) and ~2.7x p99 (677 vs 244 ms) versus trivial round-robin \u2014 it does NOT beat round-robin where round-robin is already optimal. The learned router earns its keep only on adaptive/heterogeneous pools (the monotone router cuts SLA-violation on 4/5 scenarios), so PPO stays in shadow and classical routing is the default."
       },
       "subjectId": "policy_shipped",
       "primaryMetricKey": "p95",
       "defaultConfigId": "homogeneous",
       "kpis": [
         {
-          "key": "slaviol",
-          "label": "SLA-violation rate",
-          "value": null,
-          "unit": "%",
-          "direction": "lower-better",
-          "baselineLabel": "round-robin",
-          "hint": "homogeneous load"
-        },
-        {
-          "key": "p50",
-          "label": "Median latency",
-          "value": null,
+          "key": "p50_live",
+          "label": "p50 latency (live, homogeneous)",
+          "value": 158,
           "unit": "ms",
           "direction": "lower-better",
-          "baselineLabel": "round-robin"
+          "baselineValue": 88,
+          "baselineLabel": "round-robin",
+          "hint": "PPO concentration costs ~1.8x p50",
+          "tone": "bad"
         },
         {
-          "key": "hhi",
-          "label": "Routing concentration (HHI)",
-          "value": null,
-          "unit": "",
+          "key": "p99_live",
+          "label": "p99 latency (live, homogeneous)",
+          "value": 677,
+          "unit": "ms",
           "direction": "lower-better",
+          "baselineValue": 244,
           "baselineLabel": "round-robin",
-          "hint": "0 = uniform, 1 = all-to-one"
+          "hint": "~2.7x worse tail vs round-robin",
+          "tone": "bad"
+        },
+        {
+          "key": "slaviol_homo",
+          "label": "SLA-violation (sim, homogeneous)",
+          "value": 5.4,
+          "unit": "%",
+          "direction": "lower-better",
+          "baselineValue": 14.2,
+          "baselineLabel": "PPO v2",
+          "hint": "monotone router beats PPO v2 here",
+          "tone": "ok"
         }
       ],
       "systems": [
         {
           "id": "policy_shipped",
-          "label": "PPO policy",
+          "label": "PPO policy (live)",
           "role": "subject",
-          "hint": "RL, shadow mode"
+          "hint": "RL, shadow mode \u2014 70/8/8/8/8 concentration"
         },
         {
           "id": "round_robin",
           "label": "Round-robin",
           "role": "baseline",
-          "hint": "nginx-native"
+          "hint": "even 20/20/20/20/20"
         },
         {
-          "id": "least_connections",
-          "label": "Least-connections",
+          "id": "candidate_mono",
+          "label": "Monotone router",
+          "role": "candidate",
+          "hint": "capacity-aware, latency-monotone"
+        },
+        {
+          "id": "candidate_v2",
+          "label": "PPO v2 (prior best)",
           "role": "baseline",
-          "hint": "nginx-native"
-        },
-        {
-          "id": "least_response_time",
-          "label": "Least-response-time",
-          "role": "baseline",
-          "hint": "classical"
-        },
-        {
-          "id": "random_shadow",
-          "label": "Random",
-          "role": "floor",
-          "hint": "sanity baseline"
+          "hint": "non-monotone"
         }
       ],
       "configurations": [
@@ -622,17 +736,17 @@
           }
         },
         {
-          "id": "near-idle",
-          "label": "Near-idle",
-          "params": {
-            "scenario": "near-idle"
-          }
-        },
-        {
           "id": "held_out_dual_degrade",
           "label": "Held-out dual-degrade",
           "params": {
             "scenario": "held_out_dual_degrade"
+          }
+        },
+        {
+          "id": "live_homogeneous",
+          "label": "Live stack (homogeneous, 60 QPS)",
+          "params": {
+            "scenario": "live"
           }
         }
       ],
@@ -642,14 +756,14 @@
           "label": "p95 latency",
           "unit": "ms",
           "direction": "lower-better",
-          "hint": "95th-percentile served latency (ranking key)"
+          "hint": "95th-pct served latency (sim ranking key)"
         },
         {
           "key": "slaviol",
           "label": "SLA-violation",
           "unit": "%",
           "direction": "lower-better",
-          "hint": "Fraction of windows over the 200 ms SLA"
+          "hint": "fraction of windows over 200 ms SLA"
         },
         {
           "key": "p50",
@@ -658,39 +772,227 @@
           "direction": "lower-better"
         },
         {
-          "key": "shed",
-          "label": "Load shed",
-          "unit": "%",
-          "direction": "lower-better"
-        },
-        {
-          "key": "hhi",
-          "label": "Concentration (HHI)",
-          "unit": "",
+          "key": "p99",
+          "label": "p99 latency",
+          "unit": "ms",
           "direction": "lower-better"
         }
       ],
-      "matrix": {},
+      "matrix": {
+        "policy_shipped": {
+          "live_homogeneous": {
+            "p50": {
+              "value": 158
+            },
+            "p99": {
+              "value": 677
+            }
+          },
+          "homogeneous": {
+            "p95": {
+              "value": 417.4,
+              "ci95": 22.4
+            },
+            "slaviol": {
+              "value": 14.2,
+              "ci95": 2.3
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 626.9,
+              "ci95": 57.2
+            },
+            "slaviol": {
+              "value": 18.4,
+              "ci95": 1.5
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 813.8,
+              "ci95": 48.9
+            },
+            "slaviol": {
+              "value": 25.6,
+              "ci95": 5.8
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2743.6,
+              "ci95": 96.6
+            },
+            "slaviol": {
+              "value": 42.8,
+              "ci95": 2.7
+            }
+          }
+        },
+        "round_robin": {
+          "live_homogeneous": {
+            "p50": {
+              "value": 88
+            },
+            "p99": {
+              "value": 244
+            }
+          }
+        },
+        "candidate_mono": {
+          "homogeneous": {
+            "p95": {
+              "value": 371.5,
+              "ci95": 8.1
+            },
+            "slaviol": {
+              "value": 5.4,
+              "ci95": 0.0
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 863.9,
+              "ci95": 40.1
+            },
+            "slaviol": {
+              "value": 12.7,
+              "ci95": 0.7
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 977.9,
+              "ci95": 23.8
+            },
+            "slaviol": {
+              "value": 17.6,
+              "ci95": 0.8
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2670.1,
+              "ci95": 37.3
+            },
+            "slaviol": {
+              "value": 27.7,
+              "ci95": 1.5
+            }
+          }
+        },
+        "candidate_v2": {
+          "homogeneous": {
+            "p95": {
+              "value": 417.4,
+              "ci95": 22.4
+            },
+            "slaviol": {
+              "value": 14.2,
+              "ci95": 2.3
+            }
+          },
+          "heterogeneous": {
+            "p95": {
+              "value": 626.9,
+              "ci95": 57.2
+            },
+            "slaviol": {
+              "value": 18.4,
+              "ci95": 1.5
+            }
+          },
+          "degrading": {
+            "p95": {
+              "value": 813.8,
+              "ci95": 48.9
+            },
+            "slaviol": {
+              "value": 25.6,
+              "ci95": 5.8
+            }
+          },
+          "held_out_dual_degrade": {
+            "p95": {
+              "value": 2743.6,
+              "ci95": 96.6
+            },
+            "slaviol": {
+              "value": 42.8,
+              "ci95": 2.7
+            }
+          }
+        }
+      },
       "charts": [
         {
-          "key": "p95-by-router",
-          "title": "p95 latency by router (homogeneous)",
-          "kind": "bars",
-          "yLabel": "p95 latency",
-          "yUnit": "ms",
-          "direction": "lower-better",
-          "bars": [],
-          "note": "Lower is better. The emphasised bar is the leader — a classical policy, not the PPO router."
+          "key": "routing-share",
+          "title": "Routing share \u2014 live PPO policy (homogeneous pool)",
+          "kind": "donut",
+          "shareMax": 100,
+          "centerValue": "70%",
+          "centerLabel": "on backend-1",
+          "shares": [
+            {
+              "id": "b1",
+              "label": "backend-1",
+              "value": 70
+            },
+            {
+              "id": "b2",
+              "label": "backend-2",
+              "value": 8,
+              "dim": true
+            },
+            {
+              "id": "b3",
+              "label": "backend-3",
+              "value": 8,
+              "dim": true
+            },
+            {
+              "id": "b4",
+              "label": "backend-4",
+              "value": 8,
+              "dim": true
+            },
+            {
+              "id": "b5",
+              "label": "backend-5",
+              "value": 8,
+              "dim": true
+            }
+          ],
+          "note": "The live RL_POLICY=ppo, RL_MODE=active engine emits a stable, degenerate 70/8/8/8/8 weighting \u2014 it concentrates instead of spreading. On a homogeneous pool that is strictly worse than round-robin's even 20/20/20/20/20. Source: adaptive-bench/fortio SUMMARY (test B, 60 QPS)."
         },
         {
-          "key": "slaviol-by-router",
-          "title": "SLA-violation by router (homogeneous)",
+          "key": "live-latency",
+          "title": "Live latency \u2014 PPO concentration vs round-robin (60 QPS)",
           "kind": "bars",
-          "yLabel": "SLA-violation",
-          "yUnit": "%",
+          "yLabel": "latency",
+          "yUnit": "ms",
           "direction": "lower-better",
-          "bars": [],
-          "note": "The PPO policy violates the 200 ms SLA roughly twice as often as round-robin — the honest finding behind demoting it to shadow."
+          "bars": [
+            {
+              "label": "p50 \u00b7 round-robin",
+              "value": 88,
+              "reference": true
+            },
+            {
+              "label": "p50 \u00b7 PPO",
+              "value": 158
+            },
+            {
+              "label": "p99 \u00b7 round-robin",
+              "value": 244,
+              "reference": true
+            },
+            {
+              "label": "p99 \u00b7 PPO",
+              "value": 677
+            }
+          ],
+          "note": "On the live stack at an in-capacity 60 QPS, PPO's concentration costs ~1.8x p50 and ~2.7x p99 vs trivial round-robin. The honest finding behind keeping PPO in shadow. Source: adaptive-bench/fortio SUMMARY (test B)."
         }
       ]
     },
@@ -698,19 +1000,19 @@
       "id": "autoscaler-strategy",
       "group": "Autoscaling",
       "label": "Autoscaler strategy",
-      "question": "Does the target controller beat the previous ±1 rule, the naive threshold, and static provisioning, across load shapes?",
+      "question": "Does the target controller beat the previous \u00b11 rule, the naive threshold, and static provisioning, across load shapes?",
       "summary": "Provisioning strategies on the same per-(profile, seed) demand realisation; every dynamic strategy calls the shipped decide rule, only the controller and signal change. Aggregate plus per-profile breakdown.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "autoscaler-strategy-bench-improved",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (benchmark report)",
+        "gitCommit": "autoscaler-bench",
+        "kind": "final",
+        "note": "autoscaler-strategy-bench REPORT.md \u00a73 (synthetic, n=8 seeds x 6 profiles, mean\u00b195% t-CI); spike from \u00a73.2."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "tone": "ok",
+        "text": "The target-based controller, on today's moving-average signal, lifts aggregate SLA 77.2% -> 98.3% (C2) \u2014 past the OLD rule's perfect-foresight oracle (95.5%, S1). It is the controller, not the signal, that was the limit: multi-step scaling also breaks the spike ceiling (88% -> 96.4%). A forward trend forecast adds a further real edge (C4 99.2%)."
       },
       "subjectId": "C2",
       "primaryMetricKey": "sla",
@@ -718,28 +1020,36 @@
       "kpis": [
         {
           "key": "sla",
-          "label": "SLA met",
-          "value": null,
+          "label": "Aggregate SLA met",
+          "value": 98.3,
           "unit": "%",
           "direction": "higher-better",
-          "baselineLabel": "old ±1 rule",
-          "hint": "same moving-average signal"
+          "baselineValue": 77.2,
+          "baselineLabel": "old \u00b11 rule (S2)",
+          "hint": "same MA signal \u2014 clears the old 95.5% oracle",
+          "tone": "ok"
         },
         {
-          "key": "unmet",
-          "label": "Unmet RPS",
-          "value": null,
-          "unit": "RPS",
-          "direction": "lower-better",
-          "baselineLabel": "old ±1 rule"
+          "key": "spike_sla",
+          "label": "Spike SLA (slew ceiling)",
+          "value": 96.4,
+          "unit": "%",
+          "direction": "higher-better",
+          "baselineValue": 88.0,
+          "baselineLabel": "old rule (pinned)",
+          "hint": "multi-step scaling breaks the 88% ceiling",
+          "tone": "ok"
         },
         {
-          "key": "overprov",
-          "label": "Over-provision cost",
-          "value": null,
-          "unit": "inst·s",
-          "direction": "lower-better",
-          "baselineLabel": "static SLA-optimal"
+          "key": "sla_trend",
+          "label": "SLA with forward trend (C4)",
+          "value": 99.2,
+          "unit": "%",
+          "direction": "higher-better",
+          "baselineValue": 98.3,
+          "baselineLabel": "C3 reactive",
+          "hint": "predictive > reactive under the same controller",
+          "tone": "ok"
         }
       ],
       "systems": [
@@ -751,7 +1061,7 @@
         },
         {
           "id": "S2",
-          "label": "Old ±1 rule + MA forecast",
+          "label": "Old \u00b11 rule + MA forecast",
           "role": "baseline",
           "hint": "previous default"
         },
@@ -828,15 +1138,9 @@
           "direction": "higher-better"
         },
         {
-          "key": "unmet",
-          "label": "Unmet RPS",
-          "unit": "RPS",
-          "direction": "lower-better"
-        },
-        {
           "key": "overprov",
           "label": "Over-provision",
-          "unit": "inst·s",
+          "unit": "inst\u00b7s",
           "direction": "lower-better"
         },
         {
@@ -844,36 +1148,186 @@
           "label": "Scale actions",
           "unit": "",
           "direction": "lower-better"
-        },
-        {
-          "key": "settling",
-          "label": "Settling time",
-          "unit": "s",
-          "direction": "lower-better"
         }
       ],
-      "matrix": {},
+      "matrix": {
+        "C2": {
+          "aggregate": {
+            "sla": {
+              "value": 98.3,
+              "ci95": 0.4
+            },
+            "overprov": {
+              "value": 2188,
+              "ci95": 156
+            },
+            "actions": {
+              "value": 11.1
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 96.4,
+              "ci95": 0.1
+            }
+          }
+        },
+        "S2": {
+          "aggregate": {
+            "sla": {
+              "value": 77.2,
+              "ci95": 2.6
+            },
+            "overprov": {
+              "value": 534,
+              "ci95": 88
+            },
+            "actions": {
+              "value": 14.7
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.0,
+              "ci95": 0.0
+            }
+          }
+        },
+        "S5": {
+          "aggregate": {
+            "sla": {
+              "value": 96.4,
+              "ci95": 1.4
+            },
+            "overprov": {
+              "value": 4182,
+              "ci95": 271
+            },
+            "actions": {
+              "value": 6.8
+            }
+          }
+        },
+        "C4": {
+          "aggregate": {
+            "sla": {
+              "value": 99.2,
+              "ci95": 0.2
+            },
+            "overprov": {
+              "value": 2404,
+              "ci95": 119
+            },
+            "actions": {
+              "value": 24.5
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 98.5,
+              "ci95": 0.4
+            }
+          }
+        },
+        "C1": {
+          "aggregate": {
+            "sla": {
+              "value": 99.9,
+              "ci95": 0.1
+            },
+            "overprov": {
+              "value": 2837,
+              "ci95": 116
+            },
+            "actions": {
+              "value": 9.6
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 100.0,
+              "ci95": 0.0
+            }
+          }
+        },
+        "S4max": {
+          "aggregate": {
+            "sla": {
+              "value": 100.0
+            }
+          }
+        }
+      },
       "charts": [
         {
           "key": "sla-by-strategy",
-          "title": "SLA% by strategy (all profiles)",
+          "title": "Aggregate SLA% by strategy",
           "kind": "bars",
           "yLabel": "SLA met",
           "yUnit": "%",
           "direction": "higher-better",
-          "bars": [],
-          "note": "Higher is better. The controller, on the same MA signal, clears the old perfect-foresight oracle."
+          "bars": [
+            {
+              "label": "S2 old rule + MA",
+              "value": 77.2
+            },
+            {
+              "label": "S1 old oracle",
+              "value": 95.5,
+              "reference": true
+            },
+            {
+              "label": "S5 naive threshold",
+              "value": 96.4
+            },
+            {
+              "label": "C2 controller + MA",
+              "value": 98.3,
+              "emphasis": true
+            },
+            {
+              "label": "C4 controller + trend",
+              "value": 99.2,
+              "emphasis": true
+            },
+            {
+              "label": "C1 controller + oracle",
+              "value": 99.9,
+              "reference": true
+            }
+          ],
+          "note": "Higher is better. The controller on the same MA signal (C2, 98.3%) clears the OLD rule's perfect-foresight oracle (S1, 95.5%) \u2014 the controller, not the signal, was the limit. Source: REPORT \u00a73 / \u00a71."
         },
         {
-          "key": "sla-by-profile",
-          "title": "SLA% by profile — controller vs old rule",
-          "kind": "lines",
-          "xLabel": "profile",
-          "yLabel": "SLA met",
+          "key": "spike-ceiling",
+          "title": "Spike SLA \u2014 the slew ceiling broken",
+          "kind": "bars",
+          "yLabel": "spike SLA",
           "yUnit": "%",
           "direction": "higher-better",
-          "series": [],
-          "note": "The lift holds across every load shape."
+          "bars": [
+            {
+              "label": "old rule (pinned)",
+              "value": 88.0,
+              "reference": true
+            },
+            {
+              "label": "C2 controller + MA",
+              "value": 96.4,
+              "emphasis": true
+            },
+            {
+              "label": "C4 controller + trend",
+              "value": 98.5,
+              "emphasis": true
+            },
+            {
+              "label": "C1 controller + oracle",
+              "value": 100.0,
+              "reference": true
+            }
+          ],
+          "note": "Every old-rule strategy (even the oracle) was pinned at 88% on spike by the \u00b11 slew cap. Multi-step scaling adds the +5 instances a flash crowd needs in one action. Source: REPORT \u00a73.2."
         }
       ]
     },
@@ -882,18 +1336,18 @@
       "group": "Forecasting",
       "label": "Forecasting engine",
       "question": "Does the candidate forecaster beat the shipped moving-average and the persistence floor on next-bucket accuracy, across load shapes?",
-      "summary": "Single-step (next 5-min bucket) forecast accuracy, rolling-origin / walk-forward, 5 seeds × 4 profiles. Every engine is handed the identical history window at each origin. Aggregate plus per-profile.",
+      "summary": "Single-step (next 5-min bucket) forecast accuracy, rolling-origin / walk-forward, 5 seeds \u00d7 4 profiles. Every engine is handed the identical history window at each origin. Aggregate plus per-profile.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "forecasting-engine-bench-candidate-v1",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (benchmark report)",
+        "gitCommit": "forecasting-bench",
+        "kind": "final",
+        "note": "forecasting-engine-bench/results/candidate-v1/SUMMARY.md \u2014 rolling-origin walk-forward, 1-step, 5 seeds x 4 profiles, mean\u00b195% CI."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "tone": "ok",
+        "text": "harmonic_residual beats the naive persistence floor on MAPE and sMAPE on EVERY profile (overall 5.4% vs naive 7.5%, MA 10.5%, ARIMA 8.9%), and is the only engine with a calibrated 95% band (coverage 0.955 vs MA 0.57, ARIMA 0.76). The shipped moving-average degrades badly on diurnal (18.0%) where the candidate stays at 7.2%. Inference 0.7 ms."
       },
       "subjectId": "harmonic_residual",
       "primaryMetricKey": "mape",
@@ -901,28 +1355,33 @@
       "kpis": [
         {
           "key": "mape",
-          "label": "MAPE",
-          "value": null,
+          "label": "MAPE (all profiles)",
+          "value": 5.4,
           "unit": "%",
           "direction": "lower-better",
-          "baselineLabel": "shipped moving-average",
-          "hint": "1-step ahead, all profiles"
+          "baselineValue": 7.5,
+          "baselineLabel": "naive persistence",
+          "hint": "beats every shipped engine and the floor",
+          "tone": "ok"
         },
         {
           "key": "coverage",
           "label": "95% band coverage",
-          "value": null,
+          "value": 0.955,
           "unit": "",
           "direction": "target",
-          "hint": "calibration target 0.95"
+          "hint": "calibration target 0.95 (gate [0.93,0.97])",
+          "tone": "ok"
         },
         {
           "key": "mae",
-          "label": "MAE",
-          "value": null,
+          "label": "MAE (all profiles)",
+          "value": 3.47,
           "unit": "RPS",
           "direction": "lower-better",
-          "baselineLabel": "shipped moving-average"
+          "baselineValue": 5.02,
+          "baselineLabel": "naive persistence",
+          "tone": "ok"
         }
       ],
       "systems": [
@@ -992,7 +1451,7 @@
           "label": "MAPE",
           "unit": "%",
           "direction": "lower-better",
-          "hint": "Mean absolute % error — headline KPI (gate < 20%)"
+          "hint": "headline KPI (gate < 20%)"
         },
         {
           "key": "smape",
@@ -1018,15 +1477,423 @@
           "unit": "",
           "direction": "target",
           "target": 0.95
-        },
-        {
-          "key": "latency",
-          "label": "Forecast latency",
-          "unit": "ms",
-          "direction": "lower-better"
         }
       ],
-      "matrix": {},
+      "matrix": {
+        "harmonic_residual": {
+          "aggregate": {
+            "mape": {
+              "value": 5.4,
+              "ci95": 1.2
+            },
+            "smape": {
+              "value": 5.4,
+              "ci95": 1.2
+            },
+            "rmse": {
+              "value": 8.29,
+              "ci95": 5.14
+            },
+            "mae": {
+              "value": 3.47,
+              "ci95": 0.69
+            },
+            "coverage": {
+              "value": 0.955
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 4.8,
+              "ci95": 0.2
+            },
+            "smape": {
+              "value": 4.8,
+              "ci95": 0.2
+            },
+            "rmse": {
+              "value": 3.0,
+              "ci95": 0.09
+            },
+            "mae": {
+              "value": 2.39,
+              "ci95": 0.1
+            },
+            "coverage": {
+              "value": 0.954
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 7.2,
+              "ci95": 0.4
+            },
+            "smape": {
+              "value": 7.1,
+              "ci95": 0.3
+            },
+            "rmse": {
+              "value": 4.0,
+              "ci95": 0.12
+            },
+            "mae": {
+              "value": 3.18,
+              "ci95": 0.13
+            },
+            "coverage": {
+              "value": 0.954
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 7.8,
+              "ci95": 1.1
+            },
+            "smape": {
+              "value": 8.2,
+              "ci95": 1.5
+            },
+            "rmse": {
+              "value": 22.16,
+              "ci95": 19.67
+            },
+            "mae": {
+              "value": 5.14,
+              "ci95": 2.8
+            },
+            "coverage": {
+              "value": 0.957
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 1.6,
+              "ci95": 0.1
+            },
+            "smape": {
+              "value": 1.6,
+              "ci95": 0.1
+            },
+            "rmse": {
+              "value": 4.0,
+              "ci95": 0.12
+            },
+            "mae": {
+              "value": 3.18,
+              "ci95": 0.13
+            },
+            "coverage": {
+              "value": 0.954
+            }
+          }
+        },
+        "moving_average": {
+          "aggregate": {
+            "mape": {
+              "value": 10.5,
+              "ci95": 3.9
+            },
+            "smape": {
+              "value": 10.2,
+              "ci95": 3.6
+            },
+            "rmse": {
+              "value": 11.52,
+              "ci95": 5.86
+            },
+            "mae": {
+              "value": 6.71,
+              "ci95": 2.09
+            },
+            "coverage": {
+              "value": 0.57
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 4.8,
+              "ci95": 0.1
+            },
+            "smape": {
+              "value": 4.8,
+              "ci95": 0.1
+            },
+            "rmse": {
+              "value": 3.01,
+              "ci95": 0.06
+            },
+            "mae": {
+              "value": 2.39,
+              "ci95": 0.06
+            },
+            "coverage": {
+              "value": 0.694
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 18.0,
+              "ci95": 0.9
+            },
+            "smape": {
+              "value": 16.9,
+              "ci95": 0.9
+            },
+            "rmse": {
+              "value": 9.55,
+              "ci95": 0.41
+            },
+            "mae": {
+              "value": 8.16,
+              "ci95": 0.39
+            },
+            "coverage": {
+              "value": 0.382
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 15.7,
+              "ci95": 13.4
+            },
+            "smape": {
+              "value": 15.5,
+              "ci95": 12.2
+            },
+            "rmse": {
+              "value": 25.98,
+              "ci95": 23.82
+            },
+            "mae": {
+              "value": 9.71,
+              "ci95": 9.44
+            },
+            "coverage": {
+              "value": 0.8
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 3.3,
+              "ci95": 0.1
+            },
+            "smape": {
+              "value": 3.4,
+              "ci95": 0.1
+            },
+            "rmse": {
+              "value": 7.54,
+              "ci95": 0.22
+            },
+            "mae": {
+              "value": 6.59,
+              "ci95": 0.23
+            },
+            "coverage": {
+              "value": 0.405
+            }
+          }
+        },
+        "arima_serving": {
+          "aggregate": {
+            "mape": {
+              "value": 8.9,
+              "ci95": 1.1
+            },
+            "smape": {
+              "value": 9.2,
+              "ci95": 1.1
+            },
+            "rmse": {
+              "value": 13.36,
+              "ci95": 5.61
+            },
+            "mae": {
+              "value": 8.67,
+              "ci95": 3.48
+            },
+            "coverage": {
+              "value": 0.759
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 6.2,
+              "ci95": 0.3
+            },
+            "smape": {
+              "value": 6.4,
+              "ci95": 0.3
+            },
+            "rmse": {
+              "value": 3.86,
+              "ci95": 0.15
+            },
+            "mae": {
+              "value": 3.16,
+              "ci95": 0.16
+            },
+            "coverage": {
+              "value": 1.0
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 8.9,
+              "ci95": 0.6
+            },
+            "smape": {
+              "value": 9.1,
+              "ci95": 0.6
+            },
+            "rmse": {
+              "value": 5.14,
+              "ci95": 0.27
+            },
+            "mae": {
+              "value": 4.13,
+              "ci95": 0.24
+            },
+            "coverage": {
+              "value": 0.995
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 9.9,
+              "ci95": 4.1
+            },
+            "smape": {
+              "value": 10.2,
+              "ci95": 4.0
+            },
+            "rmse": {
+              "value": 23.37,
+              "ci95": 20.98
+            },
+            "mae": {
+              "value": 6.75,
+              "ci95": 4.93
+            },
+            "coverage": {
+              "value": 0.945
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 10.5,
+              "ci95": 0.0
+            },
+            "smape": {
+              "value": 11.1,
+              "ci95": 0.0
+            },
+            "rmse": {
+              "value": 21.08,
+              "ci95": 0.11
+            },
+            "mae": {
+              "value": 20.64,
+              "ci95": 0.08
+            },
+            "coverage": {
+              "value": 0.097
+            }
+          }
+        },
+        "naive": {
+          "aggregate": {
+            "mape": {
+              "value": 7.5,
+              "ci95": 1.7
+            },
+            "smape": {
+              "value": 7.5,
+              "ci95": 1.7
+            },
+            "rmse": {
+              "value": 10.1,
+              "ci95": 5.7
+            },
+            "mae": {
+              "value": 5.02,
+              "ci95": 1.2
+            }
+          },
+          "steady": {
+            "mape": {
+              "value": 6.8,
+              "ci95": 0.5
+            },
+            "smape": {
+              "value": 6.7,
+              "ci95": 0.5
+            },
+            "rmse": {
+              "value": 4.12,
+              "ci95": 0.32
+            },
+            "mae": {
+              "value": 3.34,
+              "ci95": 0.23
+            }
+          },
+          "diurnal": {
+            "mape": {
+              "value": 10.0,
+              "ci95": 0.8
+            },
+            "smape": {
+              "value": 10.0,
+              "ci95": 0.8
+            },
+            "rmse": {
+              "value": 5.5,
+              "ci95": 0.43
+            },
+            "mae": {
+              "value": 4.48,
+              "ci95": 0.32
+            }
+          },
+          "spiky": {
+            "mape": {
+              "value": 10.9,
+              "ci95": 2.6
+            },
+            "smape": {
+              "value": 11.1,
+              "ci95": 2.8
+            },
+            "rmse": {
+              "value": 25.28,
+              "ci95": 22.17
+            },
+            "mae": {
+              "value": 7.81,
+              "ci95": 5.16
+            }
+          },
+          "ramp": {
+            "mape": {
+              "value": 2.3,
+              "ci95": 0.2
+            },
+            "smape": {
+              "value": 2.3,
+              "ci95": 0.2
+            },
+            "rmse": {
+              "value": 5.49,
+              "ci95": 0.43
+            },
+            "mae": {
+              "value": 4.46,
+              "ci95": 0.31
+            }
+          }
+        }
+      },
       "charts": [
         {
           "key": "mape-by-engine",
@@ -1035,8 +1902,27 @@
           "yLabel": "MAPE",
           "yUnit": "%",
           "direction": "lower-better",
-          "bars": [],
-          "note": "Lower is better. Harmonic-residual beats the shipped moving-average and the persistence floor."
+          "bars": [
+            {
+              "label": "moving-average (shipped)",
+              "value": 10.5
+            },
+            {
+              "label": "ARIMA(2,0,2)",
+              "value": 8.9
+            },
+            {
+              "label": "naive (floor)",
+              "value": 7.5,
+              "reference": true
+            },
+            {
+              "label": "harmonic-residual",
+              "value": 5.4,
+              "emphasis": true
+            }
+          ],
+          "note": "Lower is better. harmonic-residual beats the persistence floor (naive 7.5%) and every shipped engine. Source: candidate-v1 SUMMARY overall roll-up."
         },
         {
           "key": "mape-by-profile",
@@ -1046,8 +1932,76 @@
           "yLabel": "MAPE",
           "yUnit": "%",
           "direction": "lower-better",
-          "series": [],
-          "note": "Moving-average degrades badly on the diurnal and spiky shapes; harmonic-residual stays low across all four."
+          "series": [
+            {
+              "id": "harmonic_residual",
+              "label": "harmonic-residual",
+              "emphasis": true,
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 4.8
+                },
+                {
+                  "x": "diurnal",
+                  "y": 7.2
+                },
+                {
+                  "x": "spiky",
+                  "y": 7.8
+                },
+                {
+                  "x": "ramp",
+                  "y": 1.6
+                }
+              ]
+            },
+            {
+              "id": "moving_average",
+              "label": "moving-average",
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 4.8
+                },
+                {
+                  "x": "diurnal",
+                  "y": 18.0
+                },
+                {
+                  "x": "spiky",
+                  "y": 15.7
+                },
+                {
+                  "x": "ramp",
+                  "y": 3.3
+                }
+              ]
+            },
+            {
+              "id": "naive",
+              "label": "naive (floor)",
+              "points": [
+                {
+                  "x": "steady",
+                  "y": 6.8
+                },
+                {
+                  "x": "diurnal",
+                  "y": 10.0
+                },
+                {
+                  "x": "spiky",
+                  "y": 10.9
+                },
+                {
+                  "x": "ramp",
+                  "y": 2.3
+                }
+              ]
+            }
+          ],
+          "note": "moving-average degrades badly on the diurnal (18.0%) and spiky (15.7%) shapes; harmonic-residual stays low across all four. Source: candidate-v1 SUMMARY per-profile."
         }
       ]
     },
@@ -1056,18 +2010,18 @@
       "group": "Forecasting",
       "label": "Forecasting downstream",
       "question": "Does a forward-projecting forecast deliver real end-to-end SLA value over a reactive trailing mean, across load shapes?",
-      "summary": "Each strategy drives the same shipped autoscaler decide rule in the same warm-up-aware loop; only the scalar signal differs, so any SLA gap is the forecast's. Aggregate plus per-profile, 8 seeds × 6 profiles.",
+      "summary": "Each strategy drives the same shipped autoscaler decide rule in the same warm-up-aware loop; only the scalar signal differs, so any SLA gap is the forecast's. Aggregate plus per-profile, 8 seeds \u00d7 6 profiles.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "forecasting-downstream-bench-downstream-8seed",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (benchmark report)",
+        "gitCommit": "forecasting-bench",
+        "kind": "final",
+        "note": "forecasting-downstream-bench/results/downstream-8seed/SUMMARY.md \u2014 per-second demand, 8 seeds x 6 profiles, same shipped decide() rule; only the scalar signal varies."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "tone": "ok",
+        "text": "HR-predictive beats reactive by +6.30 SLA pp (83.38% vs 77.09%), closing 34% of the reactive->oracle gap (oracle 95.67%). The shipped moving-average 'predictive' path is byte-identical to reactive (77.09%) \u2014 a trailing mean has no forward lead. The win concentrates where forecasting CAN help: sawtooth +26.74, diurnal +5.67, ramp +5.10; on unsignalled spike/burst it ties (never hurts)."
       },
       "subjectId": "hr",
       "primaryMetricKey": "sla",
@@ -1075,28 +2029,36 @@
       "kpis": [
         {
           "key": "sla",
-          "label": "End-to-end SLA",
-          "value": null,
+          "label": "End-to-end SLA (all profiles)",
+          "value": 83.38,
           "unit": "%",
           "direction": "higher-better",
+          "baselineValue": 77.09,
           "baselineLabel": "reactive / shipped MA",
-          "hint": "+6.3 pp vs reactive"
+          "hint": "+6.30 pp vs reactive",
+          "tone": "ok"
         },
         {
-          "key": "gap",
-          "label": "Reactive→oracle gap closed",
-          "value": null,
+          "key": "sla_sawtooth",
+          "label": "SLA on sawtooth",
+          "value": 89.18,
           "unit": "%",
           "direction": "higher-better",
-          "hint": "of the 18.6 pp headroom"
+          "baselineValue": 62.44,
+          "baselineLabel": "reactive",
+          "hint": "+26.74 pp where the lead pays most",
+          "tone": "ok"
         },
         {
           "key": "unmet",
-          "label": "Unmet RPS",
-          "value": null,
+          "label": "Unmet RPS (all profiles)",
+          "value": 24362,
           "unit": "RPS",
           "direction": "lower-better",
-          "baselineLabel": "reactive"
+          "baselineValue": 29766,
+          "baselineLabel": "reactive",
+          "hint": "fewer dropped requests",
+          "tone": "ok"
         }
       ],
       "systems": [
@@ -1189,7 +2151,7 @@
         {
           "key": "overprov",
           "label": "Over-provision",
-          "unit": "inst·s",
+          "unit": "inst\u00b7s",
           "direction": "lower-better"
         },
         {
@@ -1199,28 +2161,624 @@
           "direction": "neutral"
         }
       ],
-      "matrix": {},
+      "matrix": {
+        "hr": {
+          "aggregate": {
+            "sla": {
+              "value": 83.38,
+              "ci95": 2.04
+            },
+            "unmet": {
+              "value": 24362,
+              "ci95": 7000
+            },
+            "overprov": {
+              "value": 634,
+              "ci95": 155
+            },
+            "actions": {
+              "value": 16.0,
+              "ci95": 1.7
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 68.73,
+              "ci95": 1.69
+            },
+            "unmet": {
+              "value": 17762,
+              "ci95": 817
+            },
+            "overprov": {
+              "value": 340,
+              "ci95": 12
+            },
+            "actions": {
+              "value": 24.8,
+              "ci95": 1.8
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 84.6,
+              "ci95": 0.61
+            },
+            "unmet": {
+              "value": 5545,
+              "ci95": 247
+            },
+            "overprov": {
+              "value": 128,
+              "ci95": 15
+            },
+            "actions": {
+              "value": 15.2,
+              "ci95": 1.0
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 85.85,
+              "ci95": 2.35
+            },
+            "unmet": {
+              "value": 5379,
+              "ci95": 1292
+            },
+            "overprov": {
+              "value": 350,
+              "ci95": 14
+            },
+            "actions": {
+              "value": 11.9,
+              "ci95": 1.5
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            },
+            "unmet": {
+              "value": 65946,
+              "ci95": 356
+            },
+            "overprov": {
+              "value": 468,
+              "ci95": 3
+            },
+            "actions": {
+              "value": 9.0,
+              "ci95": 0.0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 89.18,
+              "ci95": 1.04
+            },
+            "unmet": {
+              "value": 4326,
+              "ci95": 485
+            },
+            "overprov": {
+              "value": 1708,
+              "ci95": 143
+            },
+            "actions": {
+              "value": 22.4,
+              "ci95": 1.0
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 83.92,
+              "ci95": 0.42
+            },
+            "unmet": {
+              "value": 47214,
+              "ci95": 596
+            },
+            "overprov": {
+              "value": 809,
+              "ci95": 87
+            },
+            "actions": {
+              "value": 13.0,
+              "ci95": 0.0
+            }
+          }
+        },
+        "ma": {
+          "aggregate": {
+            "sla": {
+              "value": 77.09,
+              "ci95": 2.58
+            },
+            "unmet": {
+              "value": 29766,
+              "ci95": 6479
+            },
+            "overprov": {
+              "value": 529,
+              "ci95": 89
+            },
+            "actions": {
+              "value": 14.4,
+              "ci95": 1.6
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 69.01,
+              "ci95": 2.22
+            },
+            "unmet": {
+              "value": 17484,
+              "ci95": 1144
+            },
+            "overprov": {
+              "value": 340,
+              "ci95": 43
+            },
+            "actions": {
+              "value": 20.9,
+              "ci95": 1.3
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 78.93,
+              "ci95": 0.67
+            },
+            "unmet": {
+              "value": 10584,
+              "ci95": 311
+            },
+            "overprov": {
+              "value": 236,
+              "ci95": 14
+            },
+            "actions": {
+              "value": 13.8,
+              "ci95": 1.1
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 80.75,
+              "ci95": 0.53
+            },
+            "unmet": {
+              "value": 7069,
+              "ci95": 387
+            },
+            "overprov": {
+              "value": 262,
+              "ci95": 9
+            },
+            "actions": {
+              "value": 8.1,
+              "ci95": 0.3
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            },
+            "unmet": {
+              "value": 67743,
+              "ci95": 375
+            },
+            "overprov": {
+              "value": 486,
+              "ci95": 1
+            },
+            "actions": {
+              "value": 9.0,
+              "ci95": 0.0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 62.44,
+              "ci95": 0.57
+            },
+            "unmet": {
+              "value": 25317,
+              "ci95": 440
+            },
+            "overprov": {
+              "value": 1027,
+              "ci95": 9
+            },
+            "actions": {
+              "value": 22.0,
+              "ci95": 0.0
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 83.38,
+              "ci95": 0.44
+            },
+            "unmet": {
+              "value": 50400,
+              "ci95": 593
+            },
+            "overprov": {
+              "value": 823,
+              "ci95": 128
+            },
+            "actions": {
+              "value": 12.8,
+              "ci95": 0.6
+            }
+          }
+        },
+        "reactive": {
+          "aggregate": {
+            "sla": {
+              "value": 77.09,
+              "ci95": 2.58
+            },
+            "unmet": {
+              "value": 29766,
+              "ci95": 6479
+            },
+            "overprov": {
+              "value": 529,
+              "ci95": 89
+            },
+            "actions": {
+              "value": 14.4,
+              "ci95": 1.6
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 69.01,
+              "ci95": 2.22
+            },
+            "unmet": {
+              "value": 17484,
+              "ci95": 1144
+            },
+            "overprov": {
+              "value": 340,
+              "ci95": 43
+            },
+            "actions": {
+              "value": 20.9,
+              "ci95": 1.3
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 78.93,
+              "ci95": 0.67
+            },
+            "unmet": {
+              "value": 10584,
+              "ci95": 311
+            },
+            "overprov": {
+              "value": 236,
+              "ci95": 14
+            },
+            "actions": {
+              "value": 13.8,
+              "ci95": 1.1
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 80.75,
+              "ci95": 0.53
+            },
+            "unmet": {
+              "value": 7069,
+              "ci95": 387
+            },
+            "overprov": {
+              "value": 262,
+              "ci95": 9
+            },
+            "actions": {
+              "value": 8.1,
+              "ci95": 0.3
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            },
+            "unmet": {
+              "value": 67743,
+              "ci95": 375
+            },
+            "overprov": {
+              "value": 486,
+              "ci95": 1
+            },
+            "actions": {
+              "value": 9.0,
+              "ci95": 0.0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 62.44,
+              "ci95": 0.57
+            },
+            "unmet": {
+              "value": 25317,
+              "ci95": 440
+            },
+            "overprov": {
+              "value": 1027,
+              "ci95": 9
+            },
+            "actions": {
+              "value": 22.0,
+              "ci95": 0.0
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 83.38,
+              "ci95": 0.44
+            },
+            "unmet": {
+              "value": 50400,
+              "ci95": 593
+            },
+            "overprov": {
+              "value": 823,
+              "ci95": 128
+            },
+            "actions": {
+              "value": 12.8,
+              "ci95": 0.6
+            }
+          }
+        },
+        "oracle": {
+          "aggregate": {
+            "sla": {
+              "value": 95.67,
+              "ci95": 1.55
+            },
+            "unmet": {
+              "value": 15808,
+              "ci95": 6718
+            },
+            "overprov": {
+              "value": 1016,
+              "ci95": 143
+            },
+            "actions": {
+              "value": 14.5,
+              "ci95": 1.4
+            }
+          },
+          "steady": {
+            "sla": {
+              "value": 99.61,
+              "ci95": 0.27
+            },
+            "unmet": {
+              "value": 124,
+              "ci95": 93
+            },
+            "overprov": {
+              "value": 1194,
+              "ci95": 81
+            },
+            "actions": {
+              "value": 14.0,
+              "ci95": 3.3
+            }
+          },
+          "diurnal": {
+            "sla": {
+              "value": 99.4,
+              "ci95": 0.2
+            },
+            "unmet": {
+              "value": 166,
+              "ci95": 65
+            },
+            "overprov": {
+              "value": 638,
+              "ci95": 16
+            },
+            "actions": {
+              "value": 16.4,
+              "ci95": 1.2
+            }
+          },
+          "ramp": {
+            "sla": {
+              "value": 99.07,
+              "ci95": 0.59
+            },
+            "unmet": {
+              "value": 290,
+              "ci95": 222
+            },
+            "overprov": {
+              "value": 978,
+              "ci95": 53
+            },
+            "actions": {
+              "value": 12.1,
+              "ci95": 1.5
+            }
+          },
+          "spike": {
+            "sla": {
+              "value": 88.01,
+              "ci95": 0.02
+            },
+            "unmet": {
+              "value": 57346,
+              "ci95": 372
+            },
+            "overprov": {
+              "value": 382,
+              "ci95": 1
+            },
+            "actions": {
+              "value": 9.0,
+              "ci95": 0.0
+            }
+          },
+          "sawtooth": {
+            "sla": {
+              "value": 99.5,
+              "ci95": 0.24
+            },
+            "unmet": {
+              "value": 122,
+              "ci95": 110
+            },
+            "overprov": {
+              "value": 1914,
+              "ci95": 48
+            },
+            "actions": {
+              "value": 23.5,
+              "ci95": 0.4
+            }
+          },
+          "burst": {
+            "sla": {
+              "value": 88.41,
+              "ci95": 0.15
+            },
+            "unmet": {
+              "value": 36802,
+              "ci95": 589
+            },
+            "overprov": {
+              "value": 989,
+              "ci95": 127
+            },
+            "actions": {
+              "value": 12.2,
+              "ci95": 0.9
+            }
+          }
+        }
+      },
       "charts": [
         {
-          "key": "sla-by-signal",
-          "title": "End-to-end SLA% by scaling signal (all profiles)",
-          "kind": "bars",
-          "yLabel": "SLA met",
-          "yUnit": "%",
-          "direction": "higher-better",
-          "bars": [],
-          "note": "Reactive and the shipped moving-average coincide to the digit — the MA carries no forward lead. HR projects ahead and gains."
+          "key": "demand-forecast",
+          "title": "Forecast leading demand \u2014 diurnal profile (oracle lead)",
+          "kind": "forecast",
+          "yUnit": "RPS",
+          "forecast": {
+            "actual": [
+              60.0,
+              80.0,
+              94.6,
+              100.0,
+              94.6,
+              80.0,
+              60.0,
+              40.0,
+              25.4,
+              20.0,
+              25.4,
+              40.0,
+              60.0
+            ],
+            "forecast": [
+              60.0,
+              80.0,
+              94.6,
+              100.0,
+              94.6,
+              80.0
+            ],
+            "confLow": [
+              55.2,
+              73.6,
+              87.0,
+              92.0,
+              87.0,
+              73.6
+            ],
+            "confHigh": [
+              64.8,
+              86.4,
+              102.2,
+              108.0,
+              102.2,
+              86.4
+            ],
+            "xLabels": [
+              "00:00",
+              "04:00",
+              "08:00",
+              "12:00",
+              "16:00",
+              "20:00",
+              "24:00"
+            ],
+            "scaleIndex": 2,
+            "scaleLabel": "scale-ahead",
+            "actualLabel": "observed demand",
+            "forecastLabel": "forecast lead (oracle bound)"
+          },
+          "note": "Actual is the deterministic diurnal demand from the committed generator params (base 60 + amplitude 40\u00b7sin, period 288 5-min buckets). The forecast line is the report's perfect-foresight ORACLE lead (its defined upper bound) \u2014 projecting one warm-up window ahead is exactly what lets predictive scaling place capacity BEFORE the load lands. The measured SLA gain from this lead is HR +6.30 pp vs reactive (KPIs above)."
         },
         {
-          "key": "hr-gain-by-profile",
-          "title": "Where forecasting pays — HR SLA gain vs reactive",
+          "key": "sla-gain-by-profile",
+          "title": "Where forecasting pays \u2014 HR SLA gain vs reactive",
           "kind": "lines",
           "xLabel": "profile",
-          "yLabel": "Δ SLA",
+          "yLabel": "\u0394 SLA",
           "yUnit": "pp",
           "direction": "higher-better",
-          "series": [],
-          "note": "The forecast pays most on the structured shapes (sawtooth, diurnal, ramp); on near-random spikes there is nothing to lead."
+          "series": [
+            {
+              "id": "hr_gain",
+              "label": "HR \u2212 reactive (SLA pp)",
+              "emphasis": true,
+              "points": [
+                {
+                  "x": "sawtooth",
+                  "y": 26.74
+                },
+                {
+                  "x": "diurnal",
+                  "y": 5.67
+                },
+                {
+                  "x": "ramp",
+                  "y": 5.1
+                },
+                {
+                  "x": "burst",
+                  "y": 0.53
+                },
+                {
+                  "x": "spike",
+                  "y": 0.01
+                },
+                {
+                  "x": "steady",
+                  "y": -0.28
+                }
+              ]
+            }
+          ],
+          "note": "The forecast pays most on structured shapes (sawtooth +26.7, diurnal +5.7, ramp +5.1); on near-random spike/burst there is nothing to lead so it ties; steady \u22120.28 is within the reactive \u00b12.6 CI. Source: downstream-8seed SUMMARY."
         }
       ]
     },
@@ -1231,16 +2789,16 @@
       "question": "Which detector best identifies real anomalies (precision / recall / F1), and how much does the stability gate help, across injection profiles?",
       "summary": "Six detectors scored on identical ground-truth-labelled synthetic traces (latency spikes, error bursts, gradual degradation, clean controls, plus held-out partial-failure and flappy-clean). Broken down by injection profile. Distinct from the engine-agreement bench: this measures detection quality on labelled sequences.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "anomaly-detection-bench-verify",
+        "generatedUtc": "2026-06-15T00:00:00Z",
+        "host": "local (benchmark report)",
+        "gitCommit": "anomaly-bench",
+        "kind": "final",
+        "note": "anomaly-detection-bench REPORT.md \u00a74 \u2014 primary metrics, mean\u00b195% t-CI over 8 eval seeds (1..8); held-out profiles partial-failure / flappy-clean disjoint from all training/calibration seeds."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "tone": "ok",
+        "text": "trend_rule takes gradual-degradation from F1 0.000 (every shipped/retrained engine is structurally blind to a same-shape drift) to F1 0.845 (recall 0.791), and lifts latency-spike F1 0.803 -> 0.959 \u2014 at no regression elsewhere (error-burst parity 0.892). It generalises best to the held-out partial-failure (F1 0.921) and is the only engine calm on noisy telemetry (flappy-clean FP 0.034 vs threshold 0.980)."
       },
       "subjectId": "trend_rule",
       "primaryMetricKey": "f1",
@@ -1248,25 +2806,36 @@
       "kpis": [
         {
           "key": "f1",
-          "label": "F1",
-          "value": null,
+          "label": "Gradual-degradation F1",
+          "value": 0.845,
           "unit": "",
           "direction": "higher-better",
-          "baselineLabel": "threshold rule"
+          "baselineValue": 0.0,
+          "baselineLabel": "retrained IsolationForest",
+          "hint": "0 -> 0.845 \u2014 the headline gap closed",
+          "tone": "ok"
         },
         {
           "key": "recall",
-          "label": "Recall",
-          "value": null,
+          "label": "Gradual-degradation recall",
+          "value": 0.791,
           "unit": "",
-          "direction": "higher-better"
+          "direction": "higher-better",
+          "baselineValue": 0.0,
+          "baselineLabel": "retrained IF",
+          "hint": "was structurally invisible",
+          "tone": "ok"
         },
         {
-          "key": "fp_rate",
-          "label": "False-positive rate",
-          "value": null,
+          "key": "fp_flappy",
+          "label": "Flappy-clean FP rate",
+          "value": 0.034,
           "unit": "",
-          "direction": "lower-better"
+          "direction": "lower-better",
+          "baselineValue": 0.98,
+          "baselineLabel": "threshold rule",
+          "hint": "calm on noisy telemetry",
+          "tone": "ok"
         }
       ],
       "systems": [
@@ -1283,7 +2852,7 @@
         },
         {
           "id": "zscore",
-          "label": "Z-score (3σ)",
+          "label": "Z-score (3\u03c3)",
           "role": "baseline"
         },
         {
@@ -1376,129 +2945,340 @@
           "label": "False-positive rate",
           "unit": "",
           "direction": "lower-better"
-        },
-        {
-          "key": "detect_latency_s",
-          "label": "Detect latency",
-          "unit": "s",
-          "direction": "lower-better"
-        },
-        {
-          "key": "recover_latency_s",
-          "label": "Recover latency",
-          "unit": "s",
-          "direction": "lower-better"
-        },
-        {
-          "key": "pr_auc",
-          "label": "PR-AUC",
-          "unit": "",
-          "direction": "higher-better"
         }
       ],
-      "matrix": {},
+      "matrix": {
+        "trend_rule": {
+          "latency-spike": {
+            "f1": {
+              "value": 0.959,
+              "ci95": 0.026
+            },
+            "recall": {
+              "value": 0.963,
+              "ci95": 0.047
+            },
+            "fp_rate": {
+              "value": 0.013,
+              "ci95": 0.003
+            }
+          },
+          "error-burst": {
+            "f1": {
+              "value": 0.892,
+              "ci95": 0.016
+            },
+            "recall": {
+              "value": 0.928,
+              "ci95": 0.017
+            },
+            "fp_rate": {
+              "value": 0.047,
+              "ci95": 0.005
+            }
+          },
+          "gradual-degradation": {
+            "f1": {
+              "value": 0.845,
+              "ci95": 0.012
+            },
+            "recall": {
+              "value": 0.791,
+              "ci95": 0.016
+            },
+            "fp_rate": {
+              "value": 0.025,
+              "ci95": 0.003
+            }
+          },
+          "partial-failure": {
+            "f1": {
+              "value": 0.921,
+              "ci95": 0.006
+            },
+            "recall": {
+              "value": 1.0,
+              "ci95": 0.0
+            },
+            "fp_rate": {
+              "value": 0.052,
+              "ci95": 0.004
+            }
+          },
+          "clean-control": {
+            "fp_rate": {
+              "value": 0.0,
+              "ci95": 0.0
+            }
+          },
+          "flappy-clean": {
+            "fp_rate": {
+              "value": 0.034,
+              "ci95": 0.048
+            }
+          }
+        },
+        "isolation_forest_retrained": {
+          "latency-spike": {
+            "f1": {
+              "value": 0.803,
+              "ci95": 0.092
+            },
+            "recall": {
+              "value": 0.741,
+              "ci95": 0.117
+            },
+            "fp_rate": {
+              "value": 0.029,
+              "ci95": 0.022
+            }
+          },
+          "error-burst": {
+            "f1": {
+              "value": 0.892,
+              "ci95": 0.012
+            },
+            "recall": {
+              "value": 0.956,
+              "ci95": 0.015
+            },
+            "fp_rate": {
+              "value": 0.057,
+              "ci95": 0.003
+            }
+          },
+          "gradual-degradation": {
+            "f1": {
+              "value": 0.0,
+              "ci95": 0.0
+            },
+            "recall": {
+              "value": 0.0,
+              "ci95": 0.0
+            },
+            "fp_rate": {
+              "value": 0.0,
+              "ci95": 0.0
+            }
+          },
+          "partial-failure": {
+            "f1": {
+              "value": 0.882,
+              "ci95": 0.008
+            },
+            "recall": {
+              "value": 0.966,
+              "ci95": 0.016
+            },
+            "fp_rate": {
+              "value": 0.069,
+              "ci95": 0.0
+            }
+          },
+          "clean-control": {
+            "fp_rate": {
+              "value": 0.0,
+              "ci95": 0.0
+            }
+          },
+          "flappy-clean": {
+            "fp_rate": {
+              "value": 0.0,
+              "ci95": 0.0
+            }
+          }
+        },
+        "trend_forest": {
+          "latency-spike": {
+            "f1": {
+              "value": 0.799,
+              "ci95": 0.03
+            },
+            "recall": {
+              "value": 1.0,
+              "ci95": 0.0
+            },
+            "fp_rate": {
+              "value": 0.155,
+              "ci95": 0.029
+            }
+          },
+          "error-burst": {
+            "f1": {
+              "value": 0.851,
+              "ci95": 0.02
+            },
+            "recall": {
+              "value": 0.959,
+              "ci95": 0.025
+            },
+            "fp_rate": {
+              "value": 0.091,
+              "ci95": 0.022
+            }
+          },
+          "gradual-degradation": {
+            "f1": {
+              "value": 0.743,
+              "ci95": 0.036
+            },
+            "recall": {
+              "value": 0.884,
+              "ci95": 0.022
+            },
+            "fp_rate": {
+              "value": 0.154,
+              "ci95": 0.034
+            }
+          },
+          "partial-failure": {
+            "f1": {
+              "value": 0.772,
+              "ci95": 0.039
+            },
+            "recall": {
+              "value": 1.0,
+              "ci95": 0.0
+            },
+            "fp_rate": {
+              "value": 0.183,
+              "ci95": 0.042
+            }
+          },
+          "clean-control": {
+            "fp_rate": {
+              "value": 0.046,
+              "ci95": 0.043
+            }
+          },
+          "flappy-clean": {
+            "fp_rate": {
+              "value": 1.0,
+              "ci95": 0.0
+            }
+          }
+        },
+        "threshold": {
+          "flappy-clean": {
+            "fp_rate": {
+              "value": 0.98,
+              "ci95": 0.018
+            }
+          }
+        },
+        "zscore": {
+          "flappy-clean": {
+            "fp_rate": {
+              "value": 0.594,
+              "ci95": 0.106
+            }
+          }
+        }
+      },
       "charts": [
         {
-          "key": "f1-by-engine",
-          "title": "F1 by detector (all profiles)",
+          "key": "gradual-f1-by-engine",
+          "title": "Gradual-degradation F1 by detector",
           "kind": "bars",
           "yLabel": "F1",
           "yUnit": "",
           "direction": "higher-better",
-          "bars": []
+          "bars": [
+            {
+              "label": "isolation forest (retrained)",
+              "value": 0.0,
+              "reference": true
+            },
+            {
+              "label": "trend forest",
+              "value": 0.743
+            },
+            {
+              "label": "trend rule",
+              "value": 0.845,
+              "emphasis": true
+            }
+          ],
+          "note": "Higher is better. Every stateless engine (threshold, both forests on point features) is structurally 0 on a same-shape gradual drift; the per-backend temporal features lift trend_rule to 0.845. Source: REPORT \u00a74."
         },
         {
           "key": "f1-by-profile",
-          "title": "F1 by injection profile",
+          "title": "F1 by injection profile \u2014 trend_rule vs retrained IF",
           "kind": "lines",
+          "xLabel": "profile",
           "yLabel": "F1",
           "yUnit": "",
           "direction": "higher-better",
-          "series": []
-        }
-      ]
-    },
-    {
-      "id": "anomaly-engine",
-      "group": "Anomaly detection",
-      "label": "Engine agreement (decision surface)",
-      "question": "Where does the trained IsolationForest's decision boundary agree with — and diverge from — the simple threshold rule across the feature space?",
-      "summary": "Both engines scored at every cell of a latency × error-rate feature grid. This measures decision-surface agreement, not detection quality — a sanity check on the production scaler and where the model adds or loses signal. Distinct from the detection-quality bench.",
-      "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "—",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
-      },
-      "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
-      },
-      "subjectId": "isolation_forest",
-      "primaryMetricKey": "unhealthy_pct",
-      "defaultConfigId": "aggregate",
-      "kpis": [
-        {
-          "key": "agreement",
-          "label": "Engine agreement",
-          "value": null,
-          "unit": "%",
-          "direction": "higher-better",
-          "hint": "share of grid cells with matching verdicts"
-        },
-        {
-          "key": "cells",
-          "label": "Grid cells swept",
-          "value": null,
-          "unit": "",
-          "direction": "neutral"
-        }
-      ],
-      "systems": [
-        {
-          "id": "isolation_forest",
-          "label": "Isolation forest",
-          "role": "subject",
-          "hint": "shipped model"
-        },
-        {
-          "id": "threshold",
-          "label": "Threshold rule",
-          "role": "baseline"
-        }
-      ],
-      "configurations": [
-        {
-          "id": "aggregate",
-          "label": "Full grid",
-          "isAggregate": true
-        }
-      ],
-      "metrics": [
-        {
-          "key": "unhealthy_pct",
-          "label": "Cells flagged unhealthy",
-          "unit": "%",
-          "direction": "neutral"
-        },
-        {
-          "key": "healthy_pct",
-          "label": "Cells flagged healthy",
-          "unit": "%",
-          "direction": "neutral"
-        }
-      ],
-      "matrix": {},
-      "charts": [
-        {
-          "key": "verdict-distribution",
-          "title": "Verdict distribution by engine",
-          "kind": "bars",
-          "yLabel": "% of cells",
-          "yUnit": "%",
-          "bars": []
+          "series": [
+            {
+              "id": "trend_rule",
+              "label": "trend rule",
+              "emphasis": true,
+              "points": [
+                {
+                  "x": "latency-spike",
+                  "y": 0.959
+                },
+                {
+                  "x": "error-burst",
+                  "y": 0.892
+                },
+                {
+                  "x": "gradual-degradation",
+                  "y": 0.845
+                },
+                {
+                  "x": "partial-failure",
+                  "y": 0.921
+                }
+              ]
+            },
+            {
+              "id": "isolation_forest_retrained",
+              "label": "isolation forest (retrained)",
+              "points": [
+                {
+                  "x": "latency-spike",
+                  "y": 0.803
+                },
+                {
+                  "x": "error-burst",
+                  "y": 0.892
+                },
+                {
+                  "x": "gradual-degradation",
+                  "y": 0.0
+                },
+                {
+                  "x": "partial-failure",
+                  "y": 0.882
+                }
+              ]
+            },
+            {
+              "id": "trend_forest",
+              "label": "trend forest",
+              "points": [
+                {
+                  "x": "latency-spike",
+                  "y": 0.799
+                },
+                {
+                  "x": "error-burst",
+                  "y": 0.851
+                },
+                {
+                  "x": "gradual-degradation",
+                  "y": 0.743
+                },
+                {
+                  "x": "partial-failure",
+                  "y": 0.772
+                }
+              ]
+            }
+          ],
+          "note": "trend_rule matches or beats the retrained model on every original profile and generalises best to the held-out partial-failure (0.921). Source: REPORT \u00a74."
         }
       ]
     }
@@ -1511,7 +3291,7 @@
       "provenance": {
         "runId": "pending",
         "generatedUtc": null,
-        "host": "—",
+        "host": "\u2014",
         "gitCommit": null,
         "kind": "pending",
         "note": "Awaiting the VPS benchmark re-run."
@@ -1528,7 +3308,7 @@
           "unit": "%",
           "direction": "lower-better",
           "baselineLabel": "before any fix",
-          "hint": "~140× reduction"
+          "hint": "~140\u00d7 reduction"
         },
         {
           "key": "findings",
@@ -1559,7 +3339,7 @@
           "value": null,
           "unit": "%",
           "tone": "bad",
-          "note": "exposed the coupling — D1 alone made it worse"
+          "note": "exposed the coupling \u2014 D1 alone made it worse"
         },
         {
           "label": "D1+D2+D3 (max=5 saturation bench)",
@@ -1579,7 +3359,7 @@
           "value": null,
           "unit": "%",
           "tone": "ok",
-          "note": "all 3 runs 0.03–0.89%, active pool never below 4"
+          "note": "all 3 runs 0.03\u20130.89%, active pool never below 4"
         }
       ],
       "items": []
@@ -1598,7 +3378,7 @@
       },
       "verdict": {
         "tone": "ok",
-        "text": "Strength: exclusion of a hidden bad/slow backend round-robin can't eject → ~5× fewer errors and 8–250× better tail at equal capacity. Honest limit: ties round-robin under uniform overload on a homogeneous pool (C_spike)."
+        "text": "Strength: exclusion of a hidden bad/slow backend round-robin can't eject \u2192 ~5\u00d7 fewer errors and 8\u2013250\u00d7 better tail at equal capacity. Honest limit: ties round-robin under uniform overload on a homogeneous pool (C_spike)."
       },
       "kpis": [
         {
@@ -1607,7 +3387,7 @@
           "value": 1.32,
           "unit": "%",
           "direction": "lower-better",
-          "baselineValue": 1.60,
+          "baselineValue": 1.6,
           "baselineLabel": "round-robin",
           "tone": "ok"
         },
@@ -1628,14 +3408,14 @@
           "label": "Strength: anomaly-driven exclusion at equal capacity",
           "status": "pass",
           "severity": "high",
-          "detail": "On B_degrade (hidden bad backend, 503-shedding, max_fails=0 so round-robin can't eject) and D_slow (slow-but-not-failing backend), SmartLoad excludes the offender: ~5× fewer errors and 8–250× better tail latency vs round-robin, at EQUAL capacity. Robust across 3 runs."
+          "detail": "On B_degrade (hidden bad backend, 503-shedding, max_fails=0 so round-robin can't eject) and D_slow (slow-but-not-failing backend), SmartLoad excludes the offender: ~5\u00d7 fewer errors and 8\u2013250\u00d7 better tail latency vs round-robin, at EQUAL capacity. Robust across 3 runs."
         },
         {
           "id": "limit-cspike",
           "label": "Limitation: ties round-robin under uniform overload",
           "status": "warn",
           "severity": "medium",
-          "detail": "On a HOMOGENEOUS pool under UNIFORM overload (C_spike), even-split round-robin is optimal, so learned routing ~ties (does not beat) round-robin — RR 1.82% vs SL 3.75% error, p95 220 vs 580 ms. The value is exclusion + capacity holding, not fine-grained routing."
+          "detail": "On a HOMOGENEOUS pool under UNIFORM overload (C_spike), even-split round-robin is optimal, so learned routing ~ties (does not beat) round-robin \u2014 RR 1.82% vs SL 3.75% error, p95 220 vs 580 ms. The value is exclusion + capacity holding, not fine-grained routing."
         },
         {
           "id": "limit-forecast",
