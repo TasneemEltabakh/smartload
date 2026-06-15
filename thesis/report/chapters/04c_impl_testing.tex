@@ -22,6 +22,7 @@ lives.
 
 \begin{figure}[H]
   \centering
+  \resizebox{0.95\linewidth}{!}{%
   \begin{tikzpicture}[
     font=\footnotesize,
     layer/.style={draw, align=center, inner sep=3pt, minimum height=9mm},
@@ -45,7 +46,8 @@ lives.
       {slower,\\higher\\fidelity} (6.9,1.0);
     \draw[slflow] (-6.9,1.0) -- node[left, font=\scriptsize, align=right]
       {faster,\\more\\numerous} (-6.9,-4.0);
-  \end{tikzpicture}
+  \end{tikzpicture}%
+  }
   \caption[The SmartLoad test pyramid]{The SmartLoad test pyramid, from a broad base of pure-function unit tests up to a single load-balancer-adapter conformance suite at the apex.}
   \label{fig:imc:pyramid}
 \end{figure}
@@ -539,52 +541,13 @@ statistics already in place.
 
 \section{Implementation Timeline and Work Breakdown Structure}\label{imc:wbs}
 
-The project ran across the 2025--2026 academic year. \Cref{fig:imc:wbs} renders the
-work breakdown structure as a Gantt chart over six development phases, and
-\cref{tab:imc:wbs} summarises each task with its status. The first four phases, from
+The project ran across the 2025--2026 academic year over six development phases.
+\Cref{tab:imc:wbs} summarises each task with its status. The first four phases, from
 requirements and architecture through the decision-plane engines to the control plane
 and operator console, are complete. The benchmarking and evaluation phase is largely
 complete, with the harnesses shipped and producing committed results and the broader
 head-to-head set as a planned next step. The hardening and writing phase is in
 progress.
-
-\begin{sidewaysfigure}
-  \centering
-  \resizebox{0.9\textheight}{!}{%
-  \begin{ganttchart}[
-    hgrid, vgrid,
-    bar/.style={fill=slmint!40, draw=slmint!70},
-    bar height=0.5,
-    bar incomplete/.style={fill=slmint!12, draw=slmint!40},
-    group/.style={fill=slmuted, draw=slmuted},
-    milestone/.style={fill=tbdred, draw=tbdred},
-    title height=1,
-    y unit chart=0.55cm,
-    y unit title=0.6cm,
-    time slot format=isodate-yearmonth,
-  ]{2025-09}{2026-06}
-    \gantttitlecalendar{year, month=shortname} \\
-    \ganttgroup{Requirements \& architecture}{2025-09}{2025-10} \\
-    \ganttbar{Problem analysis \& research questions}{2025-09}{2025-10} \\
-    \ganttgroup{Data plane \& telemetry}{2025-10}{2025-12} \\
-    \ganttbar{Load balancer + OTel shipper}{2025-10}{2025-11} \\
-    \ganttbar{Telemetry ingest + TimescaleDB}{2025-11}{2025-12} \\
-    \ganttgroup{Decision-plane engines}{2025-12}{2026-03} \\
-    \ganttbar{Anomaly + forecast engines}{2025-12}{2026-02} \\
-    \ganttbar{PPO routing + autoscaler}{2026-01}{2026-03} \\
-    \ganttgroup{Control plane \& operator UI}{2026-02}{2026-04} \\
-    \ganttbar{Policy manager + lb-sidecar}{2026-02}{2026-03} \\
-    \ganttbar{Operator console / Dev Console}{2026-03}{2026-04} \\
-    \ganttgroup{Benchmarks \& evaluation}{2026-04}{2026-06} \\
-    \ganttbar{Adaptive + anomaly-engine benches}{2026-04}{2026-06} \\
-    \ganttbar[progress=70]{Full-length head-to-head comparison}{2026-05}{2026-06} \\
-    \ganttgroup{Hardening \& writing}{2026-05}{2026-06} \\
-    \ganttbar[progress=60]{Hardening, calibration, report}{2026-05}{2026-06}
-  \end{ganttchart}%
-  }
-  \caption[Work breakdown structure over the academic year]{Work breakdown structure over the academic year, where solid bars are complete and partially filled bars are in progress.}
-  \label{fig:imc:wbs}
-\end{sidewaysfigure}
 
 \begin{table}[H]
   \centering

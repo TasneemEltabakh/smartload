@@ -320,62 +320,6 @@ original $502$ outage until the end-to-end probe caught it, so the bounded-failu
 guarantee is only as strong as the data-plane probes behind it. Naming these keeps the
 readiness picture honest.
 
-\subsection{The judgment behind the defaults}
-\label{disc:judgment}
-
-A flashier picture would quietly make the sophisticated engines the defaults and
-report their best-case numbers. The project chose a steadier discipline, and that
-choice is itself an engineering result: a trained model becomes the default only once
-it has clearly earned the place, and until then the deterministic baseline carries
-production. The shipped defaults reflect this directly: the monotone heuristic routes
-production traffic while the trained policy stays in shadow, the \texttt{trend\_rule} is
-the anomaly default because it wins on the failure that matters, and even the strongest
-forecaster is gated behind the safety floor so a missing or stale artefact degrades to a
-dependable fallback. A complete loss of the learned layer therefore reduces the system
-to dependable classical infrastructure, never to an outage. Read whole, the evaluation
-shows a sound mechanism, a precise account of which learned parts are ready today, and a
-fallback architecture that makes the difference safe either way.
-
-The same honesty governs how the project reports its completeness. Rather than a single
-headline percentage, maturity is assessed through three diverging lenses, rendered in
-\cref{fig:disc:completeness}. Implementation sits high, at $88$ to $90\%$, because the
-mechanism is built and wired; production maturity is lower, at $70\%$, because
-hardening, packaging, and multi-host operation are in progress; and publishable
-evidence is lowest, at about $58\%$, because the routing acceptance gate is red and
-several benchmark stories need a second independent run. The gap is the point: reporting
-only the implementation figure would overstate readiness, while stating all three keeps
-the account honest about what is built, what is operable, and what is proven.
-
-\begin{figure}[H]
-  \centering
-  \begin{tikzpicture}[font=\footnotesize]
-    % geometry
-    \def\barh{0.55}      % bar height
-    \def\barsep{0.95}    % vertical spacing between bars
-    \def\fullw{8.0}      % width at 100%
-    % gridline at 100%
-    \draw[slmuted,dashed] (\fullw,0.2) -- (\fullw,3.1)
-      node[above,font=\scriptsize,slmuted] {$100\%$};
-    % bars: y, value (0-1), label, percent text
-    % Implementation 89%
-    \fill[slmint!55] (0,2.55) rectangle ({0.89*\fullw},{2.55+\barh});
-    \node[left] at (0,{2.55+0.5*\barh}) {Implementation};
-    \node[right,font=\scriptsize] at ({0.89*\fullw},{2.55+0.5*\barh}) {$88\text{--}90\%$};
-    % Production maturity 70%
-    \fill[slmint!38] (0,1.60) rectangle ({0.70*\fullw},{1.60+\barh});
-    \node[left] at (0,{1.60+0.5*\barh}) {Production maturity};
-    \node[right,font=\scriptsize] at ({0.70*\fullw},{1.60+0.5*\barh}) {$70\%$};
-    % Publishable evidence 58%
-    \fill[slmuted!55] (0,0.65) rectangle ({0.58*\fullw},{0.65+\barh});
-    \node[left] at (0,{0.65+0.5*\barh}) {Publishable evidence};
-    \node[right,font=\scriptsize] at ({0.58*\fullw},{0.65+0.5*\barh}) {$\sim\!58\%$};
-    % baseline axis
-    \draw[slbase] (0,0.45) -- (0,3.1);
-  \end{tikzpicture}
-  \caption[Completeness assessed through three lenses]{Completeness assessed through three lenses, separating what is built from what is operable and from what is proven.}
-  \label{fig:disc:completeness}
-\end{figure}
-
 \section{Economic Impact and Sustainability}
 \label{disc:economic}
 

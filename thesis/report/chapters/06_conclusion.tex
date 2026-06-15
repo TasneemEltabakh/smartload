@@ -331,43 +331,6 @@ work into four themes, each extending the current architecture rather than rewor
   \end{tabularx}
 \end{table}
 
-\Cref{fig:conc:roadmap} places these directions on a forward-looking timeline, distinct
-from the retrospective work breakdown structure in \cref{fig:imc:wbs}: where that chart
-records how the system was built across the academic year, this one marks the delivered
-phases against the planned hardening, production, and SaaS increments that follow.
-
-\begin{sidewaysfigure}
-  \centering
-  \resizebox{0.9\textheight}{!}{%
-  \begin{ganttchart}[
-    hgrid, vgrid,
-    bar/.style={fill=slmint!40, draw=slmint!70},
-    bar height=0.5,
-    bar incomplete/.style={fill=slmint!12, draw=slmint!40},
-    group/.style={fill=slmuted, draw=slmuted},
-    milestone/.style={fill=tbdred, draw=tbdred},
-    title height=1,
-    y unit chart=0.55cm,
-    y unit title=0.6cm,
-    time slot format=isodate-yearmonth,
-  ]{2026-02}{2026-09}
-    \gantttitlecalendar{year, month=shortname} \\
-    \ganttgroup{Delivered}{2026-02}{2026-06} \\
-    \ganttbar{Phase 0: integration foundation}{2026-02}{2026-04} \\
-    \ganttbar{Phase 1A: skeleton decision plane}{2026-04}{2026-05} \\
-    \ganttbar{Phase 1B: skeleton control plane}{2026-05}{2026-05} \\
-    \ganttbar{Phase 2: real ML engines}{2026-05}{2026-06} \\
-    \ganttbar{Phase 3A: tests \& benchmarks}{2026-06}{2026-06} \\
-    \ganttgroup{In progress \& planned}{2026-06}{2026-09} \\
-    \ganttbar[progress=40]{Phase 3B: hardening \& release}{2026-06}{2026-07} \\
-    \ganttbar[progress=20]{Phase 3C: report \& presentation}{2026-06}{2026-07} \\
-    \ganttbar{Kubernetes \& Helm packaging}{2026-07}{2026-08} \\
-    \ganttbar{Phase-2 multi-tenant SaaS}{2026-08}{2026-09}
-  \end{ganttchart}%
-  }
-  \caption[Forward-looking roadmap timeline]{Forward-looking roadmap timeline, where solid bars are delivered phases and later bars are planned increments.}
-  \label{fig:conc:roadmap}
-\end{sidewaysfigure}
 
 \section{Closing Remarks}
 \label{conc:closing}
