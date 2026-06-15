@@ -336,12 +336,14 @@ def test_non_positive_capacity_refuses_to_scale():
     assert d.target_count == 4
 
 
-# ── decide_target: offered-rate (upper band) scale-out sizing ────────────────
+# ── decide_target: offered-rate (upper band) unified demand sizing ───────────
 #
-# A1 / shed-feedback trap: in a closed loop the point predicted_rps tracks the
-# *served* rate, which collapses while the pool sheds. Sizing scale-OUT on the
-# offered/upper-band signal lets the loop grow out of the trap; scale-IN must
-# stay on the served point estimate so the conservative drain is unchanged.
+# A1 / shed-feedback trap + flap fix: in a closed loop the point predicted_rps
+# tracks the *served* rate, which collapses while the pool sheds. BOTH scale-out
+# and scale-in size on max(predicted, offered): sizing growth on the served rate
+# alone drains the loop, and sizing shrink on it alone sheds capacity the offered
+# demand still needs — the two-signal gap is a permanent flap dead-zone. One
+# demand signal for both directions closes it.
 
 
 def test_offered_rps_sizes_scale_out_when_served_is_depressed():
@@ -377,15 +379,13 @@ def test_offered_rps_none_reproduces_point_estimate_contract():
     assert d.target_count == 10
 
 
-def test_offered_rps_does_not_force_scale_in_smaller():
-    # Offered band sizing must never shrink the pool: max(predicted, offered)
-    # can only raise the out target. With a high band the out branch never
-    # triggers a scale-in, so a depressed served estimate cannot drain via the
-    # offered path. Here served=50 sizes scale-in to 1, but the offered band
-    # (900) keeps the out target at/above current, so scale-IN still proceeds on
-    # the served estimate only — offered_rps must not change the scale-in target.
+def test_offered_at_or_below_served_leaves_scale_in_unchanged():
+    # When the offered band is at or below the served point estimate, the unified
+    # demand max(predicted, offered) == predicted, so scale-in sizes exactly as
+    # the point estimate dictates. served=50 sizes to 1; from 10 the controller
+    # sheds one (deadband clear, no cooldown).
     policy = _headroom_policy(scale_in_cooldown_s=0.0, max_step_in=1)
-    with_band = decide_target(
+    d = decide_target(
         predicted_rps=50.0,
         current_count=10,
         policy=policy,
@@ -393,10 +393,30 @@ def test_offered_rps_does_not_force_scale_in_smaller():
         seconds_since_scale_in=None,
         offered_rps=50.0,
     )
-    # Served estimate of 50 sizes to 1; from 10 the controller sheds one
-    # (deadband clear, no cooldown) regardless of the band.
-    assert with_band.action == ACTION_SCALE_IN
-    assert with_band.target_count == 9
+    assert d.action == ACTION_SCALE_IN
+    assert d.target_count == 9
+
+
+def test_offered_band_above_served_blocks_premature_scale_in():
+    # Anti-flap (the core fix): under overload the served point estimate is
+    # DEPRESSED (the pool is shedding) to 250 rps, which alone sizes to 3 and
+    # would shed from 5 — the old flap. The offered/upper band (540 rps, real
+    # arrivals) is unchanged, so the unified demand sizes to max_backends and the
+    # controller HOLDS instead of shedding. This is exactly the 5<->4 oscillation
+    # the deployed target controller exhibited live (predicted 250 / offered 540).
+    policy = _headroom_policy(
+        min_backends=1, max_backends=5, scale_in_cooldown_s=0.0, max_step_in=1,
+    )
+    d = decide_target(
+        predicted_rps=250.0,
+        current_count=5,
+        policy=policy,
+        seconds_since_scale_out=None,
+        seconds_since_scale_in=None,
+        offered_rps=540.0,
+    )
+    assert d.action == ACTION_NOOP
+    assert d.target_count == 5
 
 
 def test_offered_below_served_falls_back_to_served_for_scale_out():
