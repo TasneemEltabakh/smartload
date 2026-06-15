@@ -1,0 +1,152 @@
+\section{Harmonic-residual forecaster}\label{bm:alg:harmonic}
+
+The deployed forecaster, \texttt{harmonic\_residual}, is a robust dynamic
+harmonic-regression model with a first-order autoregressive residual correction
+and a split-conformal confidence band. At each call it fits, on the most recent
+\texttt{fit\_window} samples of the supplied history, a linear model in time that
+combines a level, a linear trend, and a small bank of daily harmonic terms; it
+then corrects the one-step structural prediction with the lag-one autocorrelation
+of its own residuals, projects the result \texttt{lead\_steps} buckets ahead, and
+wraps it in an interval calibrated to the engine's realised in-sample errors. The
+implementation is pure NumPy, deterministic, and carries no model artefact, so it
+degrades gracefully to a mean-of-history forecast whenever the history is too
+short to identify the model. The full forecasting routine is reproduced in
+\cref{bm:lst:harmonic}, the underlying model in
+\crefrange{bm:eq:harmonic}{bm:eq:band}, and the parameters in
+\cref{bm:tab:harmonic}.
+
+\paragraph{Model.}
+On a trailing window of $n$ samples indexed by $t = 0,\dots,n-1$, the structural
+fit is the harmonic regression
+
+\begin{equation}\label{bm:eq:harmonic}
+  \mu(t) = a_0 + a_1\,\tilde{t}
+  + \sum_{k=1}^{K}\!\left[ b_k \sin\!\frac{2\pi k t}{P}
+  + c_k \cos\!\frac{2\pi k t}{P} \right],
+  \qquad \tilde{t} = \frac{t - \bar{t}}{\sigma_t},
+\end{equation}
+
+where $K$ is the number of daily harmonics (\texttt{n\_harmonics}), $P$ the daily
+seasonal period inferred from the timestamp cadence as $P=\operatorname{round}(86\,400 / \widetilde{\Delta t})$
+with $\widetilde{\Delta t}$ the median inter-sample interval in seconds, and
+$\tilde{t}$ the centred and scaled time index used for numerical conditioning.
+The coefficients are estimated by iteratively reweighted least squares so that
+large residuals are downweighted; in the deployed \texttt{downward} mode only the
+points the fit sits \emph{above} (noise dips) are downweighted, while upward
+excursions keep full weight, so a rising flash crowd lifts the baseline rather
+than being robustified away. The residual series is $e_t = y_t - \mu(t)$, and its
+lag-one persistence is captured by the autoregressive coefficient
+
+\begin{equation}\label{bm:eq:phi}
+  \varphi = \operatorname{clip}\!\left(
+  \frac{\sum_{t} e_{t-1} e_t}{\sum_{t} e_{t-1}^2},\; 0,\; 0.95 \right).
+\end{equation}
+
+The point forecast $\ell$ buckets ahead evaluates the structural component at the
+true future index and decays the residual correction geometrically,
+
+\begin{equation}\label{bm:eq:point}
+  \hat{y}_{n-1+\ell} = \mu_w(n-1+\ell) + \varphi^{\,\ell}\, e_{n-1},
+  \qquad \hat{y} \leftarrow \max(\hat{y}, 0),
+\end{equation}
+
+where $\mu_w$ is the structural component with its \emph{trend} term scaled by a
+significance weight: a slope indistinguishable from residual noise (flat demand)
+is shrunk out over the lead so it does not drive spurious scale churn, while a
+strongly significant slope (a real ramp) is projected in full. The shrink uses an
+approximate $t$-statistic of the slope, $\text{shrink}=t^2/(t^2+C)$ with $C\approx4$.
+The interval is split-conformal: the model's own one-step in-sample errors
+$\varepsilon_i = y_i - \big(\mu(i) + \varphi\,e_{i-1}\big)$ are collected and their
+empirical quantiles offset the point forecast,
+
+\begin{equation}\label{bm:eq:band}
+  \big[\,\hat{y} + q_{\alpha/2},\; \hat{y} + q_{1-\alpha/2}\,\big],
+\end{equation}
+
+with the lower bound floored at zero. When fewer than twenty in-sample errors are
+available to quantile, the band falls back to a symmetric Gaussian interval of
+half-width $z_{0.975}\,\sigma_e$. This is the cold-start behaviour: a short or
+near-flat history yields $q_{\alpha/2}$ at or below zero, so the floored
+\texttt{confidence\_lower} sits at $0.0$ until enough error history accumulates to
+calibrate a tighter lower bound.
+
+\begin{lstlisting}[language=Python,caption={Harmonic-residual forecast routine (faithful abridgement of \texttt{HarmonicResidualEngine}).},label={bm:lst:harmonic}]
+def forecast_ahead(history, steps):
+    finite = finite_values(history.request_rates)
+    if finite.size == 0:
+        return Forecast(horizon, 0.0, 0.0, 0.0)
+    if finite.size < min_history:
+        return mean_of_history(finite)          # graceful fallback
+
+    # Daily period from the timestamp cadence: P = round(86400 / median dt).
+    period = infer_period(history.timestamps, finite.size)
+
+    # Trailing fit window; widen to >= 3 cycles only if the season is present.
+    window = fit_window
+    if window and period and finite.size >= 2 * period:
+        window = max(window, 3 * period)
+    y = finite if window is None else finite[-window:]
+    n = y.size
+
+    # Seasonal basis only when >= 2 full periods are observed.
+    nharm = n_harmonics if (period and n >= 2 * period) else 0
+    t = arange(n)
+    t_mean, t_std = t.mean(), max(t.std(), 1.0)
+    X = design(t, t_mean, t_std, period, nharm)   # [1, trend, sin/cos pairs]
+
+    # Robust fit: IRLS bisquare; 'downward' keeps upward spikes at full weight.
+    coef = robust_lstsq(X, y, irls_iters, robust_mode)
+    struct = X @ coef
+    resid = y - struct
+
+    # AR(1) residual persistence, clamped to [0, 0.95].
+    r0, r1 = resid[:-1], resid[1:]
+    phi = clip(dot(r0, r1) / dot(r0, r0), 0.0, 0.95) if dot(r0, r0) > 1e-9 else 0.0
+
+    # Project 'steps' ahead; damp the trend by its statistical significance.
+    x_next = design([n + steps - 1], t_mean, t_std, period, nharm)
+    shrink = trend_shrink(X[:, 1], coef[1], resid)        # t^2 / (t^2 + C)
+    weight = shrink + (1.0 - shrink) * (trend_damping ** (steps - 1))
+    x_next[0, 1] = weight * (((n - 1) - t_mean) / t_std + steps / t_std)
+    point = max(float(x_next @ coef) + phi ** steps * resid[-1], 0.0)
+
+    # Split-conformal band from in-sample one-step errors (Gaussian if < 20).
+    pred_in = struct[1:] + phi * resid[:-1]
+    err = finite_values(y[1:] - pred_in)
+    if err.size >= 20:
+        q_lo, q_hi = quantile(err, alpha / 2), quantile(err, 1 - alpha / 2)
+    else:
+        sigma = std(resid) if resid.size >= 2 else 0.0
+        q_lo, q_hi = -1.959964 * sigma, 1.959964 * sigma
+    lower = max(point + q_lo, 0.0)        # cold start: floors at 0.0
+    upper = max(point + q_hi, point)
+    return Forecast(horizon, point, lower, upper)
+\end{lstlisting}
+
+\Cref{bm:tab:harmonic} lists the parameters with their meanings and the values in
+effect. The defaults shown are the deployed scaler preset from
+\texttt{docker-compose.yml}, which overrides the looser library defaults of the
+engine constructor.
+
+\begin{table}[ht]
+  \centering
+  \caption[Harmonic-residual forecaster parameters]{Harmonic-residual forecaster parameters (deployed values).}
+  \label{bm:tab:harmonic}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l l Y@{}}
+    \toprule
+    \headrow
+    \textbf{Parameter} & \textbf{Symbol} & \textbf{Default} & \textbf{Meaning} \\
+    \midrule
+    \texttt{fit\_window}    & --      & $120$ & Most-recent samples fit each call; bounds cost and keeps the fit local to recent drift. \\
+    \texttt{lead\_steps}    & $\ell$  & $5$   & Buckets projected ahead, giving a true forward look-ahead rather than a trailing mean. \\
+    \texttt{n\_harmonics}   & $K$     & $3$   & Daily harmonics in the seasonal basis: the fundamental swing plus two overtones. \\
+    period                  & $P$     & inferred & Daily seasonal period $\operatorname{round}(86\,400/\widetilde{\Delta t})$; $288$ at 5-min buckets. \\
+    \texttt{robust\_mode}   & --      & \texttt{downward} & IRLS asymmetry: downweight noise dips only, keep upward spikes at full weight. \\
+    \texttt{irls\_iters}    & --      & $2$   & Robust reweighting passes ($0$ is ordinary least squares). \\
+    \texttt{alpha}          & $\alpha$ & $0.05$ & Miscoverage of the band, so a $95\%$ confidence interval. \\
+    \texttt{trend\_damping} & $\rho$  & $0.8$ & Ramp controlling how fast an insignificant trend is shrunk over a multi-step lead. \\
+    \texttt{min\_history}   & --      & $12$  & Below this many finite samples, fall back to a mean-of-history forecast. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}

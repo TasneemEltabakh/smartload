@@ -1,0 +1,37 @@
+flowchart TD
+    IN["Telemetry window in<br/>request_rates, timestamps"]:::data
+    GUARD{"enough finite<br/>samples?"}:::normal
+    FB["Mean-of-history<br/>fallback Forecast"]:::compute
+    PERIOD["Infer daily period P<br/>P = round(86400 / median dt)"]:::compute
+    WIN["Take trailing fit_window<br/>(widen to 3P if >= 2 cycles)"]:::compute
+    SEAS{"history >= 2P ?<br/>(season identifiable)"}:::normal
+    DM_S["Design matrix:<br/>intercept + trend<br/>+ n_harmonics sin/cos pairs"]:::compute
+    DM_T["Design matrix:<br/>intercept + trend only"]:::compute
+    FIT["Robust fit (IRLS)<br/>downward downweights dips,<br/>keeps upward spikes"]:::compute
+    STRUCT["Structural component<br/>level + trend + season"]:::data
+    RESID["Residual series<br/>e = y - structural"]:::data
+    AR["AR(1) on residuals<br/>phi = clip(lag-1, 0, 0.95)"]:::compute
+    PROJ["Project lead_steps ahead:<br/>structural(t+L) + phi^L * e_last<br/>trend damped by slope SNR"]:::compute
+    BAND["Split-conformal band<br/>point + empirical error quantiles<br/>(Gaussian if < 20 errors)"]:::compute
+    OUT["Forecast out<br/>predicted_rps,<br/>confidence_lower / upper"]:::data
+
+    IN --> GUARD
+    GUARD -- no --> FB
+    GUARD -- yes --> PERIOD
+    PERIOD --> WIN
+    WIN --> SEAS
+    SEAS -- yes --> DM_S
+    SEAS -- no --> DM_T
+    DM_S --> FIT
+    DM_T --> FIT
+    FIT --> STRUCT
+    STRUCT --> RESID
+    RESID --> AR
+    AR --> PROJ
+    PROJ --> BAND
+    BAND --> OUT
+    FB --> OUT
+
+    classDef normal fill:#EFF3F6,color:#0E1116,stroke:#5B6472,stroke-width:1px
+    classDef compute fill:#DCEFE4,color:#0E1116,stroke:#2E8B57,stroke-width:1.5px
+    classDef data fill:#DCE7EE,color:#0E1116,stroke:#5B6472,stroke-width:1px

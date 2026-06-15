@@ -1,0 +1,173 @@
+\section{Trend-rule anomaly engine}\label{bm:alg:trend-rule}
+
+The deployed anomaly engine, \texttt{trend\_rule}, is a stateful temporal rule
+that classifies each backend every cycle from a short window of latency and
+error-rate telemetry. Unlike the stateless engines it ships beside, it carries a
+small per-backend memory across cycles (a contamination-guarded baseline of the
+backend's own normal latency plus a one-sided CUSUM accumulator), which is what
+lets it catch a gradual degradation that no single window reveals. This appendix
+gives the full algorithm and its tunable parameters.
+
+\Cref{bm:lst:trend-rule} lists the per-cycle logic in two parts: the temporal
+feature extractor that advances the per-backend state and derives the
+backend-relative signals, and the rule engine that turns those signals into a
+three-state verdict. The flip-confirmation debounce (a verdict must persist for
+\texttt{flip\_confirmation\_cycles} before the run loop flips a backend's
+published state) is applied by the surrounding run-loop stability gate, not by
+the engine itself, and is shown at the end for completeness.
+
+\begin{lstlisting}[language=Python,caption={The deployed \texttt{trend\_rule} anomaly engine: per-backend temporal feature extraction, the three-channel decision rule, and the run-loop flip-confirmation debounce.},label={bm:lst:trend-rule}]
+# ---- Part 1: per-backend temporal feature extraction (features/trend.py) ----
+# One TrendState per backend_id, advanced once per cycle in time order.
+
+def update(state, max_ms, mean_ms, std_ms):
+    state.recent_means.append(mean_ms)
+
+    # Cold start: seed the baselines from the first observed window.
+    if state.n_seen == 0:
+        state.baseline_mean = mean_ms
+        state.baseline_max  = max_ms
+        state.dev_scale     = max(scale_floor_frac * mean_ms, 1e-9)
+
+    base_mean = state.baseline_mean
+    base_max  = state.baseline_max
+
+    # Backend-relative deviations: current window vs the backend's OWN normal.
+    mean_dev = (mean_ms - base_mean) / base_mean   # headline gradual-drift signal
+    max_dev  = (max_ms  - base_max)  / base_max    # latency-spike signal
+
+    # Robust deviation scale (EWMA of |mean - baseline|, floored), then the
+    # standardised deviation that feeds the CUSUM.
+    scale        = max(state.dev_scale, scale_floor_frac * base_mean, 1e-9)
+    standardised = (mean_ms - base_mean) / scale
+
+    # One-sided positive CUSUM with slack k: accumulates small persistent upward
+    # shifts, bleeds off via the slack, floored at 0 and capped so one spike
+    # cannot run it away. A slow ramp trips this long before any window looks bad.
+    state.cusum_pos = min(cusum_cap,
+                          max(0.0, state.cusum_pos + standardised - cusum_k))
+    # Fast reset on return to control: once the deviation is back near baseline,
+    # hard-drain the accumulator so the post-anomaly tail clears quickly.
+    if abs(mean_dev) < recovery_dev:
+        state.cusum_pos *= recovery_decay
+
+    warming_up = state.n_seen < warmup_steps
+
+    # Contamination-guarded baseline update. Two guards multiply: an
+    # instantaneous one on the current deviation, and a CUSUM one that freezes
+    # the baseline once persistent drift is detected. Both are 1 in the normal
+    # regime and fall toward 0 as an anomaly asserts itself, so the baseline is
+    # never dragged up to meet an ongoing anomaly (which would erase the signal).
+    guard_inst  = max(0.0, 1.0 - max(0.0, abs(mean_dev) - guard_dev) / guard_dev)
+    guard_cusum = max(0.0, 1.0 - max(0.0, state.cusum_pos - freeze_cusum) / freeze_cusum)
+    guard       = min(guard_inst, guard_cusum)
+    a = baseline_alpha * guard
+    state.baseline_mean = (1 - a) * state.baseline_mean + a * mean_ms
+    state.baseline_max  = (1 - a) * state.baseline_max  + a * max_ms
+    a_s = scale_alpha * guard
+    state.dev_scale = (1 - a_s) * state.dev_scale + a_s * abs(mean_ms - base_mean)
+
+    state.n_seen += 1
+    slope = ols_slope(state.recent_means, slope_window) / base_mean  # frac/step
+
+    if warming_up:
+        return TrendFeatures(mean_dev=0, max_dev=0, cusum_pos=0, slope=0,
+                             warming_up=True)
+    return TrendFeatures(mean_dev, max_dev, state.cusum_pos, slope,
+                         warming_up=False)
+
+
+# ---- Part 2: the rule engine (engines/trend_rule/engine.py) ----
+
+def score(features):
+    # Always advance temporal state, even on a low-sample window, so the
+    # baseline and CUSUM stay aligned with wall-clock cycles.
+    tf  = extractor.update(features.backend_id, features.latency_ms,
+                           features.latency_rolling_mean_ms,
+                           features.latency_rolling_std_ms)
+    err = features.error_rate
+
+    # Data-quality gate: too few samples to judge -> healthy (state still moved).
+    if features.sample_count < min_sample_count:
+        return AnomalyScore(features.backend_id, "healthy", 0.0)
+
+    # Error channel -- always live, no history needed (hardest safety signal).
+    if err > error_rate_threshold:
+        return AnomalyScore(features.backend_id, "unhealthy", severity)
+
+    # Latency channels need a trusted baseline. Suppress during warmup, and
+    # suppress while the backend is clearly recovering (latency falling steeply),
+    # so the tail of a just-ended anomaly does not keep paging.
+    recovering = tf.slope <= -recovery_slope
+    if not tf.warming_up and not recovering:
+        # unhealthy tier: strong spike, large sustained lift, or saturated drift.
+        if tf.max_dev   >= max_dev_unhealthy:  return unhealthy("latency_max_dev")
+        if tf.mean_dev  >= mean_dev_unhealthy: return unhealthy("latency_mean_dev")
+        if tf.cusum_pos >= cusum_unhealthy:    return unhealthy("latency_cusum")
+        # degraded tier: emerging spike or accumulating drift.
+        if tf.cusum_pos >= cusum_degraded:     return degraded("latency_cusum")
+        if tf.max_dev   >= max_dev_degraded:   return degraded("latency_max_dev")
+        if tf.mean_dev  >= mean_dev_degraded:  return degraded("latency_mean_dev")
+
+    return AnomalyScore(features.backend_id, "healthy", 0.0)
+
+
+# ---- Part 3: run-loop flip-confirmation debounce (around the engine) ----
+# A new verdict must persist for flip_confirmation_cycles consecutive cycles
+# before the published state flips, which suppresses single-cycle flapping.
+def confirm(backend_state, new_status):
+    if new_status == backend_state.published_status:
+        backend_state.pending = None
+        return backend_state.published_status
+    backend_state.pending_count = (backend_state.pending_count + 1
+                                   if backend_state.pending == new_status else 1)
+    backend_state.pending = new_status
+    if backend_state.pending_count >= flip_confirmation_cycles:
+        backend_state.published_status = new_status
+    return backend_state.published_status
+\end{lstlisting}
+
+\Cref{bm:tab:trend-rule-params} lists every tunable with its meaning and
+default. The engine thresholds and the extractor configuration are the output of
+an offline calibration on production-shaped streams at seeds disjoint from the
+evaluation set; the flip-confirmation count is a deployment parameter set in the
+service configuration.
+
+\begin{table}[htbp]
+  \centering
+  \caption[Tunable parameters of the trend\_rule engine]{Tunable parameters of the \texttt{trend\_rule} engine and its trend extractor, with defaults.}
+  \label{bm:tab:trend-rule-params}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Default} & \textbf{Meaning} \\
+    \midrule
+    \multicolumn{3}{@{}l}{\emph{Engine: gates and channels}} \\
+    \texttt{error\_rate\_threshold} & $0.05$ & Error fraction above which the error channel reports \texttt{unhealthy}. \\
+    \texttt{min\_sample\_count}     & $10$   & Minimum window samples before any latency verdict is trusted. \\
+    \texttt{cusum\_degraded}        & $2.0$  & CUSUM level entering \texttt{degraded} (accumulating drift). \\
+    \texttt{cusum\_unhealthy}       & $25.0$ & CUSUM level entering \texttt{unhealthy} (saturated drift). \\
+    \texttt{max\_dev\_degraded}     & $0.50$ & Window-max deviation from baseline entering \texttt{degraded}. \\
+    \texttt{max\_dev\_unhealthy}    & $0.863$ & Window-max deviation entering \texttt{unhealthy} (sharp spike). \\
+    \texttt{mean\_dev\_degraded}    & $0.12$ & Window-mean deviation from baseline entering \texttt{degraded}. \\
+    \texttt{mean\_dev\_unhealthy}   & $0.72$ & Window-mean deviation entering \texttt{unhealthy} (large lift). \\
+    \texttt{recovery\_slope}        & $0.02$ & Falling-slope fraction per step below which a backend is treated as recovering and latency alarms are suppressed. \\
+    \addlinespace
+    \multicolumn{3}{@{}l}{\emph{Trend extractor: baseline, scale, and CUSUM}} \\
+    \texttt{warmup\_steps}     & $12$   & Windows observed before trend signals are trusted (warmup suppresses them). \\
+    \texttt{baseline\_alpha}   & $0.08$ & EWMA weight for the slow per-backend baseline (about a 12-step memory). \\
+    \texttt{guard\_dev}        & $0.12$ & Deviation above which the instantaneous baseline guard begins damping the update. \\
+    \texttt{freeze\_cusum}     & $3.0$  & CUSUM level above which the baseline is frozen (drift suspected). \\
+    \texttt{slope\_window}     & $10$   & Windows used for the OLS slope fit. \\
+    \texttt{cusum\_k}          & $0.5$  & CUSUM slack in scale units; drift must exceed this to accumulate. \\
+    \texttt{cusum\_cap}        & $25.0$ & Ceiling on the CUSUM accumulator so a single spike cannot run it unbounded. \\
+    \texttt{recovery\_dev}     & $0.08$ & Deviation below which the backend is back in control and the CUSUM is hard-drained. \\
+    \texttt{recovery\_decay}   & $0.40$ & Multiplicative CUSUM decay per in-control window (fast recovery). \\
+    \texttt{scale\_alpha}      & $0.08$ & EWMA weight for the robust deviation scale. \\
+    \texttt{scale\_floor\_frac}& $0.05$ & Deviation-scale floor as a fraction of the baseline (avoids division by zero on flat streams). \\
+    \addlinespace
+    \multicolumn{3}{@{}l}{\emph{Run-loop stability gate}} \\
+    \texttt{flip\_confirmation\_cycles} & $2$ & Consecutive cycles a new verdict must persist before the published state flips. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}

@@ -1,0 +1,39 @@
+flowchart TD
+    IN["Window in<br/>max, mean, std,<br/>error rate,<br/>sample count"] --> UPD["Advance trend state<br/>(per backend)"]
+
+    UPD --> BL["Update guarded EWMA<br/>baseline of mean and max"]
+    BL --> DEV["mean_dev, max_dev<br/>vs own baseline"]
+    DEV --> CU["CUSUM of standardised<br/>mean_dev (slack k, capped)"]
+    CU --> SL["OLS slope of<br/>recent means"]
+
+    SL --> GATE{"sample_count<br/>&lt; min?"}
+    GATE -- "yes" --> HEALTH["healthy / 0.0<br/>(state still advanced)"]
+    GATE -- "no" --> ERR{"error_rate<br/>&gt; tau ?"}
+
+    ERR -- "yes" --> UNH["unhealthy<br/>(error channel)"]
+    ERR -- "no" --> WARM{"warming up<br/>or recovering<br/>(slope falling)?"}
+
+    WARM -- "yes" --> HEALTH
+    WARM -- "no" --> UTIER{"max_dev, mean_dev,<br/>or cusum_pos over<br/>unhealthy gate?"}
+
+    UTIER -- "yes" --> UNH2["unhealthy<br/>(spike or drift)"]
+    UTIER -- "no" --> DTIER{"cusum_pos, max_dev,<br/>or mean_dev over<br/>degraded gate?"}
+
+    DTIER -- "yes" --> DEG["degraded<br/>(emerging spike<br/>or drift)"]
+    DTIER -- "no" --> HEALTH
+
+    UNH --> CONF["Run-loop stability gate:<br/>hold over<br/>flip_confirmation_cycles"]
+    UNH2 --> CONF
+    DEG --> CONF
+    HEALTH --> CONF
+    CONF --> OUT["Confirmed verdict out<br/>(smartload.anomaly)"]
+
+    classDef normal fill:#EFF3F6,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef decision fill:#DCEFE4,color:#0E1116,stroke:#2E8B57,stroke-width:1.5px;
+    classDef data fill:#DCE7EE,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+    classDef alert fill:#F7E3E6,color:#0E1116,stroke:#B00020,stroke-width:1px;
+
+    class IN,HEALTH,OUT normal;
+    class GATE,ERR,WARM,UTIER,DTIER decision;
+    class UPD,BL,DEV,CU,SL,CONF data;
+    class UNH,UNH2,DEG alert;

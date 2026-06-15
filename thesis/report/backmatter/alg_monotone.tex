@@ -1,0 +1,214 @@
+% =====================================================================
+%  Back-matter section: the deployed monotone capacity-aware router.
+%  Input from backmatter/appendices.tex (or directly). Uses \section so it
+%  nests under whatever appendix \chapter precedes it; label bm:alg:monotone.
+% =====================================================================
+\section{Monotone capacity-aware router}
+\label{bm:alg:monotone}
+
+This appendix gives the full logic of \texttt{monotone} (the
+\texttt{candidate\_mono} policy), the deterministic router that the
+\texttt{rl-engine} deploys by default. The body of the chapter argues why this
+heuristic, rather than the trained policy, is the engine on the routing path
+(\cref{imb:ppo_finding}); here we record the algorithm itself: how it estimates
+per-backend capacity, how it scores and weights backends, the monotone transform
+that gives the policy its name, and the exclusion handling for unhealthy
+backends. The implementation is small and stateful: one instance per serving
+session carries an online capacity estimate (a running-minimum latency) and a
+damped weight vector, and it is kept byte-for-byte equivalent between training
+and serving so the benchmark and the live engine agree.
+
+\Cref{bm:lst:monotone} reproduces the per-cycle ranking loop. The policy takes
+the per-backend telemetry triple (current latency, a queue-depth proxy, and an
+anomaly-derived health flag), sorts the pool by backend identifier into a fixed
+slot order, and excludes any slot that is not \texttt{healthy} or
+\texttt{degraded}. It then updates a per-backend running-minimum latency, which
+serves as an online estimate of each backend's best-case (uncongested)
+capacity, and scores each backend by how far its current latency has degraded
+above that floor. A normalisation step turns the scores into a weight vector,
+and an exponential-moving-average damping step smooths the vector across cycles
+so a single noisy window cannot swing the routing weights.
+
+\begin{lstlisting}[language=Python,caption={Monotone capacity-aware router: per-cycle ranking loop (faithful to the deployed \texttt{candidate\_mono} policy).},label={bm:lst:monotone}]
+def act(state):
+    # Fixed slot order; cap at the production pool size N_MAX.
+    ss = sorted(state, key=lambda s: s.backend_id)
+    n  = min(len(ss), N_MAX_BACKENDS)
+    if n == 0:
+        return RoutingAction("shadow", [])
+
+    # Exclusion: only healthy / degraded backends are eligible.
+    mask = [is_eligible(s.health) for s in ss[:n]]
+    if not any(mask):
+        return RoutingAction("shadow", [])   # nothing safe to route to
+
+    lat = array([s.latency_ms for s in ss[:n]])
+
+    # Online capacity estimate: per-backend running-minimum latency,
+    # floored at cap_floor_ms. Updated from ELIGIBLE backends only, and
+    # carried across cycles, so it depends on PAST/current latency, never
+    # on a future one.
+    for i in range(n):
+        if mask[i] and isfinite(lat[i]):
+            minlat[i] = min(minlat[i], max(lat[i], cap_floor_ms))
+    base = where(isfinite(minlat[:n]), minlat[:n], lat)
+    base = clip(base, cap_floor_ms, None)        # best-case latency floor
+    cap  = 1.0 / base                            # higher cap == faster backend
+
+    # Score: capacity divided by the degradation ratio (current latency
+    # over the backend's own best-case). degr_pow sharpens the penalty.
+    lat_c = clip(where(mask, lat, inf), 1e-3, None)
+    score = cap / power(lat_c / base, degr_pow)
+
+    # Hard cut: a backend running far slower than the fastest eligible one
+    # is demoted by 1e-3 so it is all but removed from the rotation.
+    lmin  = min(lat_c[mask])
+    score = where(mask & (lat_c > cut * lmin), score * 1e-3, score)
+
+    # Normalise masked scores into a weight vector (excluded weight == 0).
+    target = normalize(where(mask, score, 0.0), mask, n)
+
+    # EMA damping. When the pool is idle (total queue depth below
+    # idle_load) snap straight to target (a = 1); otherwise blend with the
+    # previous weights using a = alpha to suppress per-cycle jitter.
+    load_total = sum(s.queue_depth for s in eligible(ss[:n]))
+    a = 1.0 if load_total < idle_load else alpha
+    if w is None or len(w) != n:
+        w = target
+    else:
+        w = normalize((1.0 - a) * w + a * target, mask, n)
+
+    rankings = [Ranking(ss[i].backend_id, float(w[i]))
+                for i in range(n) if mask[i] and w[i] > 0]
+    mode = "active" if operating_mode == "hybrid" else "shadow"
+    return RoutingAction(mode, rankings)
+
+
+def normalize(w, mask, n):
+    # Excluded slots forced to zero; renormalise to a probability vector.
+    # If no positive mass survives, fall back to uniform over the mask.
+    w = where(mask, clip(w, 0.0, None), 0.0)
+    t = w.sum()
+    if t <= 0:
+        w = mask.astype(float)
+        return w / w.sum() if w.sum() else ones(n) / n
+    return w / t
+\end{lstlisting}
+
+\paragraph{Scoring map.} Let $\ell_i$ be backend $i$'s current latency and let
+$b_i$ be its online best-case estimate, the running minimum of its eligible
+latencies floored at $\texttt{cap\_floor\_ms}$,
+
+\begin{equation}\label{bm:eq:mono-base}
+  b_i \;=\; \max\!\Big(\texttt{cap\_floor\_ms},\;
+            \min_{t \le \text{now}} \ell_i^{(t)}\Big).
+\end{equation}
+
+The capacity proxy is $c_i = 1/b_i$, so a backend with a lower best-case latency
+is treated as having more capacity. The per-backend score divides that capacity
+by the \emph{degradation ratio} $\ell_i / b_i$, raised to the sharpening
+exponent $p = \texttt{degr\_pow}$,
+
+\begin{equation}\label{bm:eq:mono-score}
+  S_i \;=\; \frac{c_i}{\big(\ell_i / b_i\big)^{p}}
+        \;=\; \frac{1}{b_i}\left(\frac{b_i}{\ell_i}\right)^{p},
+  \qquad
+  S_i \leftarrow 10^{-3}\,S_i \ \text{ if } \ \ell_i > \texttt{cut}\cdot
+        \min_{j\,\text{eligible}} \ell_j .
+\end{equation}
+
+The second clause is a hard outlier cut: any eligible backend more than a factor
+$\texttt{cut}$ slower than the fastest eligible backend is multiplied down by
+$10^{-3}$, which all but removes it from the rotation without violating
+eligibility (it keeps a vanishing share so health probing stays live). The score
+of an excluded backend is forced to zero.
+
+\paragraph{Weight map.} The scores over the eligible set are normalised to a
+weight vector, and that target is blended into the carried weights with an
+exponential moving average. Writing $m_i \in \{0,1\}$ for the eligibility mask
+and $a$ for the smoothing factor,
+
+\begin{equation}\label{bm:eq:mono-weight}
+  \tilde{w}_i \;=\; \frac{m_i\,\max(S_i,0)}{\sum_{j} m_j\,\max(S_j,0)},
+  \qquad
+  w_i \;\leftarrow\;
+    \frac{m_i\big[(1-a)\,w_i + a\,\tilde{w}_i\big]}
+         {\sum_{j} m_j\big[(1-a)\,w_j + a\,\tilde{w}_j\big]},
+\end{equation}
+
+with $a = 1$ when the pool is idle (total queue depth below $\texttt{idle\_load}$,
+so the weights snap directly to the target) and $a = \texttt{alpha}$ otherwise.
+If no positive mass survives the mask, the policy falls back to a uniform
+distribution over the eligible backends, so it always emits a valid weight
+vector.
+
+\paragraph{Monotonicity property.} Holding the history fixed, the best-case
+estimate $b_i$ in \cref{bm:eq:mono-base} depends only on past and current
+latencies, so for a fixed history it is constant in the current latency $\ell_i$.
+The score in \cref{bm:eq:mono-score} is then $S_i \propto \ell_i^{-p}$ with
+$p \ge 0$, which is non-increasing in $\ell_i$. Because normalisation is
+order-preserving across the eligible set, the policy satisfies the following
+guarantee: if backend $i$'s load signal increases relative to backend $j$'s
+while every other input is held fixed, the routing weight of $i$ does not
+increase relative to that of $j$,
+
+\begin{equation}\label{bm:eq:mono-property}
+  \ell_i \uparrow \ \text{relative to}\ \ell_j
+  \;\;\Longrightarrow\;\;
+  \frac{w_i}{w_j}\ \text{does not increase.}
+\end{equation}
+
+This is the property the routing benchmark's latency-monotonicity probe verifies,
+and it is what makes the policy auditable: a worse-looking backend can never be
+ranked above a better-looking one, so the routing decision is a predictable,
+inspectable function of the observed signal rather than a learned black box. Each
+of the deployed policy's seeds passes the probe, while the trained PPO comparator
+fails it.
+
+\paragraph{Parameters and defaults.} \Cref{bm:tab:mono-params} lists the
+configuration the policy reads from its artefact (\texttt{params.json}, key
+\texttt{monotone\_config}), with the defaults applied when no value is present.
+The constructor also accepts \texttt{confidence\_threshold} and
+\texttt{exploration\_rate} for interface parity with the other serving plugins;
+the monotone router does not consume them.
+
+\begin{table}[htbp]
+  \centering
+  \caption[Monotone router configuration]{Monotone router configuration and exclusion handling.}
+  \label{bm:tab:mono-params}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Default} & \textbf{Role} \\
+    \midrule
+    \texttt{degr\_pow} ($p$) & $1.0$
+      & Exponent on the degradation ratio $\ell_i/b_i$; larger values penalise a
+        congested backend more sharply. \\
+    \addlinespace
+    \texttt{alpha} ($a$) & $0.4$
+      & Exponential-moving-average smoothing factor used under load, blending the
+        new target with the carried weights to suppress per-cycle jitter. \\
+    \addlinespace
+    \texttt{idle\_load} & $8.0$
+      & Total queue-depth threshold below which the pool is treated as idle and the
+        weights snap straight to the target ($a = 1$). \\
+    \addlinespace
+    \texttt{cut} & $3.0$
+      & Outlier factor: an eligible backend slower than \texttt{cut} times the
+        fastest eligible latency has its score multiplied by $10^{-3}$. \\
+    \addlinespace
+    \texttt{cap\_floor\_ms} & $5.0$
+      & Latency floor for the best-case capacity estimate $b_i$, preventing a
+        near-zero reading from producing an unbounded capacity. \\
+    \addlinespace
+    Eligibility & \texttt{healthy}, \texttt{degraded}
+      & Only these health states receive weight; \texttt{unhealthy} and
+        \texttt{unknown} are masked to zero. With no eligible backend the policy
+        emits an empty shadow action. \\
+    \addlinespace
+    \texttt{operating\_mode} & \texttt{shadow}
+      & Emitted mode is \texttt{active} only when the mode is \texttt{hybrid};
+        otherwise the recommendation is published observe-only. \\
+    \bottomrule
+  \end{tabularx}
+\end{table}

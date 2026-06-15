@@ -1,0 +1,179 @@
+% =====================================================================
+%  Appendix section: the deployed forecast-driven target controller.
+%  Body content only; \input from the pseudocode appendix chapter so it
+%  numbers under that chapter. The abridged decide() lives at
+%  \cref{bm:lst-autoscaler}; this section gives the full target rule.
+% =====================================================================
+
+\section{Forecast-driven target controller}\label{bm:alg:autoscaler}
+
+The autoscaler ships two decision rules behind one dispatch. The original rule,
+abridged at \cref{bm:lst-autoscaler}, is a single-step ``bang-bang'' controller:
+it moves the pool by exactly one backend per action and only when the predicted
+load crosses the current capacity. With a provisioning warm-up and a cooldown
+timer, that caps the pool's slew rate at one instance per cooldown window, which
+is why a sharp arrival burst that needs several instances at once cannot be
+served in time. The deployed rule is the \texttt{target} controller shown below.
+It sizes the pool to a capacity-based target directly and may jump several
+instances in a single action, removing the per-action slew cap.
+
+The evidence that this controller, rather than the forecast, was the binding fix
+comes from the strategy benchmark. The shipped moving-average forecaster sets the
+predicted rate to the trailing mean and carries no forward lead, so the
+MA-predictive strategy and the purely reactive strategy score identically
+($S2 \equiv S3$ to the digit in every profile). Holding that same signal fixed
+and swapping the single-step rule for the \texttt{target} controller lifts
+attainment from \textbf{77.2\%} to \textbf{98.3\%}. The lever was the control
+law, not a sharper prediction.
+
+\subsection*{Sizing law and clamp}
+
+The controller sizes the pool from a capacity model. Writing $\hat{r}$ for the
+predicted request rate, $c$ for the per-instance capacity in requests per second,
+$h$ for the fractional headroom, and $[N_{\min}, N_{\max}]$ for the policy
+bounds, the target backend count is
+
+\begin{equation}\label{bm:eq:target}
+  N^{\star} = \operatorname{clamp}\!\left(
+    \left\lceil \frac{\hat{r}\,(1+h)}{c} \right\rceil,
+    \; N_{\min}, \; N_{\max}
+  \right),
+  \qquad
+  \operatorname{clamp}(x, l, u) = \max\!\big(l, \min(u, x)\big).
+\end{equation}
+
+The ceiling and the clamp do the structural work: the ceiling rounds a
+fractional demand up to whole instances, and the clamp pins the result inside the
+host budget. The upper bound $N_{\max}$ is the real ceiling, not a soft target:
+in this deployment $N_{\max}=5$ because an eight-backend capacity probe on the
+same host ran out of memory, so the budget is a hardware fact rather than a
+tuning preference.
+
+\subsection*{Direction, dead-band, and asymmetric cooldowns}
+
+The controller is asymmetric by direction. Scale-out is sized on a robust
+offered-rate signal $\hat{r}_{\text{out}} = \max(\hat{r}, \hat{r}_{\text{band}})$,
+where $\hat{r}_{\text{band}}$ is the forecast upper band, and scale-in stays on
+the served point estimate $\hat{r}$. The upper band is an offered-rate proxy, not
+a measurement of true arrivals: in a closed loop the served rate collapses while
+the pool is shedding, so sizing growth on the served estimate alone would let the
+loop drain instead of grow. Biasing scale-out toward the wider band breaks that
+shed-feedback trap; sizing scale-in on the point estimate keeps the drain
+conservative.
+
+A decision fires only after two further gates clear. The dead-band suppresses
+flapping around an instance boundary: the pool sheds one backend only if the
+smaller pool would still cover demand with the full headroom plus an extra slack
+band, that is, when
+
+\begin{equation}\label{bm:eq:deadband}
+  (N-1)\,c \;\ge\; \hat{r}\,(1 + h + d),
+\end{equation}
+
+with $N$ the current count and $d$ the scale-in dead-band. Each direction then
+passes an independent cooldown clock. The two clocks are tracked separately so a
+recent scale-in never blocks an urgent scale-out, which is what makes the ``fast
+out, slow in'' posture possible: the scale-out cooldown defaults to zero so a
+spike is answered immediately, while the scale-in cooldown is long so the pool
+drains slowly and does not give back the capacity it just earned. Formally, with
+$\Delta_{\text{out}}$ and $\Delta_{\text{in}}$ the seconds since the last action
+of each direction and $\theta_{\text{out}} \ll \theta_{\text{in}}$ the two
+cooldown windows, an otherwise-warranted action is gated by
+
+\begin{equation}\label{bm:eq:cooldown}
+  \text{scale\_out permitted} \iff \Delta_{\text{out}} \ge \theta_{\text{out}},
+  \qquad
+  \text{scale\_in permitted} \iff \Delta_{\text{in}} \ge \theta_{\text{in}}.
+\end{equation}
+
+\Cref{bm:lst:target} gives the full controller: the capacity sizing of both
+directions, the clamp, the dead-band, the asymmetric cooldown gates, and the
+bounded multi-step jump.
+
+\begin{lstlisting}[language=Python,caption={Forecast-driven \texttt{target} controller: capacity sizing, clamp, dead-band, and asymmetric cooldowns. The actuation loop that drives the pool toward the returned count lives in the run loop.},label={bm:lst:target}]
+def target_for_load(load_rps, policy):
+    # Instances needed to serve load_rps, clamped to [min, max].
+    c = policy.per_instance_capacity_rps
+    if c <= 0:
+        return clamp(policy.min_backends, policy.min_backends, policy.max_backends)
+    eff = max(0.0, load_rps) * (1.0 + policy.headroom)
+    need = ceil(eff / c)
+    return clamp(need, policy.min_backends, policy.max_backends)
+
+
+def decide_target(predicted_rps, current_count, policy,
+                  seconds_since_scale_out, seconds_since_scale_in,
+                  offered_rps=None):
+    c = policy.per_instance_capacity_rps
+    if c <= 0:
+        return NoOp(current_count)  # refuse to scale on an invalid capacity
+
+    # Scale-out sizes on the robust upper-band signal so shedding cannot
+    # starve the loop; scale-in keeps sizing on the served point estimate.
+    out_rps    = predicted_rps if offered_rps is None else max(predicted_rps, offered_rps)
+    out_target = target_for_load(out_rps, policy)
+    target     = target_for_load(predicted_rps, policy)
+
+    # -- scale OUT: grow toward out_target, fast cooldown ----------------
+    if out_target > current_count:
+        if (seconds_since_scale_out is not None
+                and seconds_since_scale_out < policy.scale_out_cooldown_s):
+            return NoOp(current_count)  # scale-out cooldown active
+        step = out_target - current_count
+        if policy.max_step_out > 0:
+            step = min(step, policy.max_step_out)   # bounded multi-step jump
+        new = clamp(current_count + step, policy.min_backends, policy.max_backends)
+        return ScaleOut(new)
+
+    # -- scale IN: shed cautiously, slow cooldown, with dead-band -------
+    if target < current_count:
+        shed_floor = predicted_rps * (1.0 + policy.headroom + policy.scale_in_deadband)
+        if (current_count - 1) * c < shed_floor:
+            return NoOp(current_count)  # dead-band: shedding would breach slack
+        if (seconds_since_scale_in is not None
+                and seconds_since_scale_in < policy.scale_in_cooldown_s):
+            return NoOp(current_count)  # scale-in cooldown active
+        step = current_count - target
+        if policy.max_step_in > 0:
+            step = min(step, policy.max_step_in)    # drain one at a time
+        new = clamp(current_count - step, policy.min_backends, policy.max_backends)
+        return ScaleIn(new)
+
+    # -- hold: target matches the pool (dead-band) ----------------------
+    return NoOp(current_count)
+\end{lstlisting}
+
+\Cref{bm:tab:target-params} lists the controller's parameters with the deployed
+defaults. The bounds and capacity are read from the live policy, so a runtime
+policy reload moves them on the next decision; the sizing, cooldown, step, and
+dead-band knobs are deploy-time settings.
+
+\begin{table}[ht]
+  \centering
+  \caption[Target controller parameters and defaults]{\texttt{target} controller parameters and deployed defaults.}
+  \label{bm:tab:target-params}
+  \small
+  \begin{tabularx}{\linewidth}{@{}l l Y@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Default} & \textbf{Role} \\
+    \midrule
+    \texttt{per\_instance\_capacity\_rps} & $100$ & Per-backend service capacity $c$ in the sizing law. \\
+    \addlinespace
+    \texttt{min\_backends} & $1$ & Lower clamp bound $N_{\min}$. \\
+    \texttt{max\_backends} & $5$ & Upper clamp bound $N_{\max}$, the host budget. \\
+    \addlinespace
+    \texttt{headroom} & $0.15$ & Fractional safety margin $h$ on predicted load. \\
+    \texttt{scale\_in\_deadband} & $0.15$ & Extra slack $d$ required before shedding a backend. \\
+    \addlinespace
+    \texttt{scale\_out\_cooldown\_s} & $0$ & Minimum seconds between scale-out actions (fast out). \\
+    \texttt{scale\_in\_cooldown\_s} & $120$ & Minimum seconds between scale-in actions (slow in). \\
+    \addlinespace
+    \texttt{max\_step\_out} & $0$ & Cap on instances added per action ($0$ = jump straight to target). \\
+    \texttt{max\_step\_in} & $1$ & Cap on instances removed per action (drain one at a time). \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+The capacity, $N_{\min}$, and $N_{\max}$ defaults are read from
+\texttt{config/policy.yaml}; the remaining knobs mirror the controller's own
+defaults and are set at deploy time.

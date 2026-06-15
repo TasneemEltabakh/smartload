@@ -20,7 +20,7 @@ SmartLoad services with their implementation language and role;
 
 \begin{table}[htbp]
   \centering
-  \caption{SmartLoad services: language, default port, and role.}
+  \caption[SmartLoad services: language, port, and role]{SmartLoad services: language, default port, and role.}
   \label{bm:tab-services}
   \small
   \begin{tabularx}{\linewidth}{@{}l l c Y@{}}
@@ -29,11 +29,12 @@ SmartLoad services with their implementation language and role;
     \midrule
     load-balancer    & NGINX \cite{nginx}   & 8080    & Client traffic ingress; reloads \texttt{upstream.conf} on write. \\
     lb-otel-shipper  & Python               & sidecar & Tails the NGINX access log, ships OTLP/HTTP-JSON to the collector. \\
+    resource-collector & Python             & sidecar & Ships per-container CPU and memory telemetry to the metrics store. \\
     lb-sidecar       & Python               & 8087    & Subscribes to the routing / anomaly / policy / scale channels; atomically rewrites \texttt{upstream.conf} and triggers \texttt{nginx -s reload}. \\
     telemetry        & Python               & 8081    & OTLP ingest plus a read API over TimescaleDB \cite{timescaledb}. \\
-    anomaly-detector & Python               & 8082    & Threshold baseline (default) plus a trained Isolation Forest engine \cite{liu2008isolationforest}. \\
-    forecasting      & Python               & 8083    & Moving-average baseline (default) plus a trained ARIMA model \cite{box2015timeseries}. \\
-    rl-engine        & Python               & 8084    & Random-shadow baseline plus a PPO routing policy \cite{schulman2017ppo} with a shadow/active pin. \\
+    anomaly-detector & Python               & 8082    & \texttt{trend\_rule} detector (default) over a threshold fallback, with a selectable Isolation Forest engine \cite{liu2008isolationforest}. \\
+    forecasting      & Python               & 8083    & \texttt{harmonic\_residual} forecaster (default) over a moving-average fallback, with an optional ARIMA$(2,0,2)$ model \cite{box2015timeseries}. \\
+    rl-engine        & Python               & 8084    & Deployed \texttt{monotone} routing heuristic (live) with a dormant shadow-only PPO comparator \cite{schulman2017ppo}. \\
     autoscaler       & Python               & 8085    & Forecast-driven scaling with cooldown and a reactive fallback; Docker SDK pool control. \\
     policy-manager   & Python               & 8086    & Operating-policy REST API, per-field audit, and Redis publish on change. \\
     operator-ui      & Flask + React        & 8090    & Backend-for-frontend plus a web transparency and override surface. \\
@@ -45,7 +46,7 @@ SmartLoad services with their implementation language and role;
 
 \begin{table}[htbp]
   \centering
-  \caption{Shared infrastructure components.}
+  \caption[Shared infrastructure components]{Shared infrastructure components.}
   \label{bm:tab-infra}
   \small
   \begin{tabularx}{\linewidth}{@{}l c Y@{}}
@@ -57,14 +58,14 @@ SmartLoad services with their implementation language and role;
     redis-exporter                 & 9121 & Exports Redis health and per-channel publish rates to Prometheus. \\
     OTel Collector \cite{opentelemetry} & 4317/4318 & Receives OTLP from the shipper and forwards metrics downstream. \\
     Prometheus \cite{prometheus}   & 9090 & Scrapes per-process \texttt{/metrics} from every control-plane service. \\
-    Grafana \cite{grafana}         & 3000 & Renders the operational dashboards (overview, routing, anomaly, scaling, forecast). \\
+    Grafana \cite{grafana}         & 3000 & Renders the operational overview dashboard; routing, anomaly, scaling, and forecast dashboards are planned. \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
 \begin{table}[htbp]
   \centering
-  \caption{Principal third-party Python libraries.}
+  \caption[Principal third-party Python libraries]{Principal third-party Python libraries.}
   \label{bm:tab-libs}
   \small
   \begin{tabularx}{\linewidth}{@{}l Y@{}}
@@ -85,9 +86,8 @@ SmartLoad services with their implementation language and role;
   \end{tabularx}
 \end{table}
 
-\TBD{Pin exact library versions from each service's \texttt{requirements.txt}
-in the final camera-ready table if the rubric requires version-level
-reproducibility.}
+Exact pinned library versions are listed in each service's
+\texttt{requirements.txt}.
 
 % =====================================================================
 \chapter{Project Cost Sheet}
@@ -106,7 +106,7 @@ Forest anomaly model, the ARIMA forecaster, and the PPO routing policy); once
 trained, these artefacts ship as static files and carry no inference licensing.
 
 \Cref{bm:tab-cost} states the cost model as line items. Monetary figures are
-left as \TBD{site-specific figure} because they are entirely deployment-specific --- they depend on
+deployment-specific and are omitted here, because they depend on
 the operator's chosen hosting (on-premises hardware already owned, a single
 rented virtual machine, or short-lived cloud instances for the training step)
 and on local electricity and labour rates.
@@ -122,7 +122,7 @@ service.
 
 \begin{table}[htbp]
   \centering
-  \caption{Self-hosted, open-source cost model (figures are deployment-specific).}
+  \caption[Self-hosted, open-source cost model]{Self-hosted, open-source cost model (figures are deployment-specific).}
   \label{bm:tab-cost}
   \small
   \begin{tabularx}{\linewidth}{@{}l l Y@{}}
@@ -130,12 +130,12 @@ service.
     \textbf{Line item} & \textbf{Type} & \textbf{Estimated cost} \\
     \midrule
     Software licensing (all components) & Recurring & \$0 (open-source / MIT). \\
-    Container host (1 VM or owned server) & Recurring & \TBD{monthly hosting cost} \\
-    Storage for telemetry hypertables    & Recurring & \TBD{monthly storage cost} \\
-    Electricity (self-hosted hardware)   & Recurring & \TBD{local rate} \\
-    One-time model-training compute       & One-time  & \TBD{offline training compute} \\
+    Container host (1 VM or owned server) & Recurring & deployment-specific \\
+    Storage for telemetry hypertables    & Recurring & deployment-specific \\
+    Electricity (self-hosted hardware)   & Recurring & deployment-specific \\
+    One-time model-training compute       & One-time  & deployment-specific \\
     Training datasets                     & One-time  & \$0 (public, openly licensed traces). \\
-    Engineering / operator labour         & Recurring & \TBD{labour rate} \\
+    Engineering / operator labour         & Recurring & deployment-specific \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -161,7 +161,7 @@ dependency.
 
 \begin{table}[htbp]
   \centering
-  \caption{Principal HTTP endpoints (see the OpenAPI spec for full schemas).}
+  \caption[Principal HTTP endpoints]{Principal HTTP endpoints (see the OpenAPI spec for full schemas).}
   \label{bm:tab-api}
   \small
   \begin{tabularx}{\linewidth}{@{}l l Y@{}}
@@ -189,7 +189,7 @@ channel with its publisher and subscribers.
 
 \begin{table}[htbp]
   \centering
-  \caption{Redis control-bus channels with publishers and subscribers.}
+  \caption[Redis control-bus channels]{Redis control-bus channels with publishers and subscribers.}
   \label{bm:tab-channels}
   \small
   \begin{tabularx}{\linewidth}{@{}l l Y@{}}
@@ -252,6 +252,10 @@ def decide(forecast, policy, current_count, last_action_time):
                       current_count=current_count)
 \end{lstlisting}
 
+The abridged rule above is the single-step reference. The full deployed rule is
+the \texttt{target} controller, with its capacity sizing, clamp, dead-band, and
+asymmetric cooldowns; it is given in \cref{bm:alg:autoscaler}.
+
 \Cref{bm:lst-upstream} shows the NGINX \cite{nginx} upstream block the
 lb-sidecar maintains. Per-backend \texttt{weight} values are rewritten from
 routing recommendations; a backend flagged unhealthy is marked \texttt{down} so
@@ -265,6 +269,23 @@ upstream backend_pool {
     server smartload-test-backend-4:8080 weight=10;
 }
 \end{lstlisting}
+
+% =====================================================================
+\chapter{Promoted Engine Algorithms}
+\label{bm:app-algorithms}
+
+This appendix gives the full internal logic of the four engines the running
+system deploys by default: the trend-rule anomaly detector, the harmonic-residual
+forecaster, the monotone capacity-aware router, and the forecast-driven target
+controller. Each section pairs a faithful pseudocode listing with the parameters
+and defaults drawn from the service source and the deployed configuration. The
+narrative treatment, with the per-engine decision flowcharts, is in
+\cref{ch:impl_decision}.
+
+\input{backmatter/alg_trend_rule}
+\input{backmatter/alg_harmonic}
+\input{backmatter/alg_monotone}
+\input{backmatter/alg_autoscaler}
 
 % =====================================================================
 \chapter{Operator Quick-Start Manual}
@@ -317,5 +338,6 @@ COMPOSE_PROJECT_NAME=smartload docker compose up -d
         the forecast-driven scaling and anomaly-aware routing respond.
 \end{enumerate}
 
-\TBD{Add the exact \texttt{safe\_mode} recovery runbook and the backup/restore
-procedure for the TimescaleDB volume once those operational docs are finalized.}
+The \texttt{safe\_mode} recovery runbook and the backup and restore procedure for
+the TimescaleDB volume are maintained as operational documentation alongside the
+deployment.

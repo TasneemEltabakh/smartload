@@ -1,0 +1,33 @@
+flowchart TB
+  subgraph SCAFFOLD["Phase-0 scaffolding (built first)"]
+    direction TB
+    S1["engine_base / policy_base<br/>abstract base classes"]
+    S2["plugin folders<br/>baseline + stub"]
+    S3["select_engine() / select_policy()<br/>factory"]
+  end
+
+  subgraph CUTOVER["Engine-wrapper cutover (complete)"]
+    direction TB
+    C1["anomaly-detector<br/>round 1"]
+    C2["forecasting<br/>round 2"]
+    C3["rl-engine<br/>round 3"]
+  end
+
+  subgraph MODELS["Trained model handoffs (shipped and selectable, not the deployed defaults)"]
+    direction TB
+    M1["isolation_forest.pkl<br/>F1 0.8012 on SMD holdout<br/>selectable; default = trend_rule"]
+    M2["arima.pkl<br/>ARIMA(2,0,2), 8.9% MAPE<br/>selectable; default = harmonic_residual"]
+    M3["ppo policy.zip<br/>round-robin-equivalent, dormant<br/>live router = monotone heuristic (shadow)"]
+  end
+
+  SCAFFOLD --> CUTOVER
+  C1 -. unblocks .-> M1
+  C2 -. unblocks .-> M2
+  C3 -. unblocks .-> M3
+
+  classDef scaffold fill:#EFF3F6,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+  classDef done fill:#DCEFE4,color:#0E1116,stroke:#2E8B57,stroke-width:1.5px;
+  classDef selectable fill:#F1F3F5,color:#0E1116,stroke:#5B6472,stroke-width:1px;
+  class S1,S2,S3 scaffold
+  class C1,C2,C3 done
+  class M1,M2,M3 selectable

@@ -31,9 +31,10 @@
 \usepackage{setspace}
 \onehalfspacing
 
-% ---- Paragraph shape: open spacing between paragraphs for readability --
-\setlength{\parskip}{6pt plus 2pt minus 1pt}
-\setlength{\parindent}{0pt}
+% ---- Paragraph shape: template-strict (indented first line, NO extra
+%      vertical spacing between paragraphs). -----------------------------
+\setlength{\parskip}{0pt}
+\setlength{\parindent}{1.8em}
 
 % ---- Line breaking: let long monospace tokens (file paths, Redis channel
 %      names, identifiers) move to the next line instead of running into the
@@ -65,6 +66,12 @@
 % ---- Graphics + figure search paths -----------------------------------
 \usepackage{graphicx}
 \usepackage{float}
+% Landscape placement is reserved for the two wide project-timeline Gantt charts
+% (work-breakdown structure and roadmap), which are unreadable at portrait width.
+\usepackage{rotating}
+% Keep floats within the section that references them, so a large figure or
+% table cannot drift pages away from its discussion.
+\usepackage[section]{placeins}
 \graphicspath{{figures/}{figures/ui/}{figures/bench/}{figures/anomaly/}{figures/diagrams/}}
 
 % ---- Colour + brand accents (SmartLoad mint / muted) ------------------
@@ -142,6 +149,58 @@
       \textbf{\textcolor{tbdred}{[FIGURE TO BE DONE]}}\\[2pt]
       \small #1}}%
   \end{center}}
+
+% =====================================================================
+%  BENCHMARK PLACEHOLDERS -- host-migration re-run mechanism.
+%  Every benchmark-derived value is a SINGLE named macro defined here and
+%  used in the prose/tables. When the new host's results land, edit only
+%  the macro body below; the surrounding text, tables, and captions never
+%  change. Each placeholder renders visibly as [BENCH:label] and is
+%  greppable by the token "BENCH:" or by "\bmtodo".
+% =====================================================================
+% Base inline marker. The bold is intentional (a deliberately visible
+% placeholder) and is exempt from the "no stray bold" formatting rule.
+\newcommand{\bmtodo}[1]{\textbf{\textcolor{tbdred}{[BENCH:#1]}}}
+% Figure-sized placeholder for a plot whose data is benchmark-derived.
+% Renders an upright, fixed-size box at the correct position; never a
+% fabricated plot. #1 = short description of the pending figure.
+\newcommand{\bmfig}[1]{%
+  \begin{center}
+  \fcolorbox{slmuted}{slbox}{%
+    \parbox[c][55mm][c]{0.85\linewidth}{\centering
+      \textbf{\textcolor{tbdred}{[FIGURE PENDING -- updated benchmark run (host migration)]}}\\[4pt]
+      \small #1}}%
+  \end{center}}
+
+% ---- Named benchmark quantities (one macro = one number = one edit) ----
+% Forecasting engine (forecasting-engine-bench / downstream-bench)
+\newcommand{\BMfcMape}{\bmtodo{fc-mape-harmonic}}        % harmonic-residual MAPE
+\newcommand{\BMfcMapeNaive}{\bmtodo{fc-mape-naive}}      % naive baseline MAPE
+\newcommand{\BMfcMapeArima}{\bmtodo{fc-mape-arima}}      % ARIMA MAPE
+\newcommand{\BMfcMapeMA}{\bmtodo{fc-mape-movingavg}}     % moving-average MAPE
+\newcommand{\BMfcCiCov}{\bmtodo{fc-ci-coverage}}         % conformal CI coverage
+\newcommand{\BMfcSlaGain}{\bmtodo{fc-downstream-sla-gain}} % downstream SLA gain (pp)
+% Anomaly detector (anomaly-detection-bench / anomaly-engine-bench)
+\newcommand{\BManFone}{\bmtodo{an-trendrule-f1}}         % trend-rule gradual-degradation F1
+\newcommand{\BManRecall}{\bmtodo{an-trendrule-recall}}   % trend-rule recall
+\newcommand{\BManPrecision}{\bmtodo{an-trendrule-precision}} % trend-rule precision
+\newcommand{\BManAgree}{\bmtodo{an-if-threshold-agreement}}  % IF vs threshold agreement %
+\newcommand{\BManAgreeCells}{\bmtodo{an-agreement-cells}}    % agreeing cells (e.g. n/256)
+\newcommand{\BManGridCells}{256}                             % fixed 16x16 sweep grid (config, not pending)
+\newcommand{\BMifFone}{\bmtodo{an-if-smd-f1}}            % Isolation Forest SMD held-out F1
+% Routing (rl-routing-bench)
+\newcommand{\BMrlPpoReward}{\bmtodo{rl-ppo-reward}}      % PPO open-loop mean reward
+\newcommand{\BMrlMonoSla}{\bmtodo{rl-monotone-sla-viol}} % monotone closed-loop SLA-violation %
+\newcommand{\BMrlRrSla}{\bmtodo{rl-roundrobin-sla-viol}} % round-robin SLA-violation %
+\newcommand{\BMrlPpoSla}{\bmtodo{rl-ppo-sla-viol}}       % PPO SLA-violation %
+% Autoscaler (autoscaler-strategy-bench)
+\newcommand{\BMasSlaReactive}{\bmtodo{as-sla-reactive}}  % moving-avg+reactive SLA %
+\newcommand{\BMasSlaTarget}{\bmtodo{as-sla-target}}      % target+moving-avg SLA %
+% Adaptive end-to-end run (adaptive-bench)
+\newcommand{\BMadPoolLo}{\bmtodo{ad-pool-min}}           % adaptive pool low bound
+\newcommand{\BMadPoolHi}{\bmtodo{ad-pool-max}}           % adaptive pool high bound
+\newcommand{\BMadScaleActions}{\bmtodo{ad-scale-actions}}% adaptive scaling-action count
+\newcommand{\BMadRunId}{\bmtodo{ad-run-id}}              % adaptive run identifier
 
 % =====================================================================
 %  Presentation helpers (shared by all chapters).
