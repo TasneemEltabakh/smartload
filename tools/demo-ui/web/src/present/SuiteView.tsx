@@ -24,11 +24,15 @@ function verdictStatus(tone: Tone): Status {
   if (tone === "bad") return "crit";
   return "neutral";
 }
-function verdictWord(tone: Tone): string {
+function verdictWord(verdict: { tone: Tone; text: string }): string {
+  const tone = verdict.tone;
   if (tone === "ok") return "win";
   if (tone === "warn") return "finding";
   if (tone === "bad") return "no lift";
-  return "pending";
+  // Neutral/muted: use the verdict's own short label text when given
+  // (e.g. "Future work"); otherwise fall back to "pending".
+  const text = verdict.text?.trim();
+  return text ? text : "pending";
 }
 
 export function SuiteView({ suite }: { suite: Suite }) {
@@ -46,7 +50,7 @@ export function SuiteView({ suite }: { suite: Suite }) {
             <Heading size="2xl">{suite.label}</Heading>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {v ? <StatusPill status={verdictStatus(v.tone)}>{verdictWord(v.tone)}</StatusPill> : null}
+            {v ? <StatusPill status={verdictStatus(v.tone)}>{verdictWord(v)}</StatusPill> : null}
             <KindBadge provenance={suite.provenance} />
           </div>
         </div>

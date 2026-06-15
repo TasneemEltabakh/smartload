@@ -96,7 +96,7 @@ export default function Benchmarks() {
                         }}
                       >
                         {s.label}
-                        {s.verdict ? <StatusPill status={vStatus(s.verdict.tone)} hideDot>{s.verdict.tone === "ok" ? "win" : s.verdict.tone === "warn" ? "finding" : s.verdict.tone === "bad" ? "no lift" : "pending"}</StatusPill> : null}
+                        {s.verdict ? <StatusPill status={vStatus(s.verdict.tone)} hideDot>{s.verdict.tone === "ok" ? "win" : s.verdict.tone === "warn" ? "finding" : s.verdict.tone === "bad" ? "no lift" : (s.verdict.text?.trim() || "pending")}</StatusPill> : null}
                       </button>
                     );
                   })}

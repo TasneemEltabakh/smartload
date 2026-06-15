@@ -1,5 +1,5 @@
 {
-  "_comment": "ACTIVE. Populated from the committed benchmark REPORT.md / SUMMARY.md artifacts: System-comparison (adaptive-advantage 5v5 + spike ablation), RL routing (honest null, rl-routing-bench + adaptive-bench/fortio), autoscaler strategy (autoscaler-strategy-bench), forecasting engine + downstream (forecasting-engine-bench / forecasting-downstream-bench), anomaly detection quality (anomaly-detection-bench). Two suites remain PENDING for lack of any committed source run: adaptive-bench (results/ empty) and anomaly-engine agreement (anomaly-engine-bench has no committed SUMMARY). Every number traces to a report; no values are estimated.",
+  "_comment": "ACTIVE. Populated from the committed benchmark REPORT.md / SUMMARY.md artifacts: System-comparison (adaptive-advantage 5v5 + spike ablation), RL routing (honest null, rl-routing-bench + adaptive-bench/fortio), autoscaler strategy (autoscaler-strategy-bench), forecasting engine + downstream (forecasting-engine-bench / forecasting-downstream-bench), anomaly detection quality (anomaly-detection-bench). One suite is carried as FUTURE WORK: adaptive-bench (Adaptive scaling, RQ4) is out of scope under the equal-capacity evaluation and makes no scaling claim. Every number traces to a report; no values are estimated.",
   "schemaVersion": 2,
   "provenance": {
     "runId": "benchmark-reports-injection",
@@ -7,7 +7,7 @@
     "host": "local (benchmark reports)",
     "gitCommit": "3b75d92",
     "kind": "final",
-    "note": "All available committed benchmark REPORT.md / SUMMARY.md artifacts injected. adaptive-bench and anomaly-engine remain pending (no committed result run)."
+    "note": "All available committed benchmark REPORT.md / SUMMARY.md artifacts injected. adaptive-bench (Adaptive scaling, RQ4) is carried as future work — out of scope under the equal-capacity evaluation; no scaling claim."
   },
   "groups": [
     "System comparison",
@@ -482,20 +482,20 @@
     {
       "id": "adaptive-bench",
       "group": "System comparison",
-      "label": "Adaptive scaling (RQ4)",
-      "question": "Does forecast-driven scale-out keep latency and errors flat as load ramps, spikes, and an anomaly hits?",
-      "summary": "Single-stack demonstration across a five-phase load curve (bootstrap \u2192 forecast burst \u2192 sustain \u2192 anomaly scale-down \u2192 steady), measuring how the pool grows ahead of saturation and recovers. One system, broken down by phase.",
+      "label": "Adaptive scaling (RQ4) \u2014 future work",
+      "question": "Future work: does forecast-driven scale-out keep latency and errors flat as load ramps, spikes, and an anomaly hits?",
+      "summary": "Future work, deliberately deferred and out of scope for this thesis. The evaluation here holds capacity equal across systems (equal-capacity scope), so it makes no scaling claim. A single-stack scale-out study across a five-phase load curve (bootstrap \u2192 forecast burst \u2192 sustain \u2192 anomaly scale-down \u2192 steady) is left for future work; no scaling results are claimed.",
       "provenance": {
-        "runId": "pending",
+        "runId": "future-work",
         "generatedUtc": null,
         "host": "\u2014",
         "gitCommit": null,
         "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "note": "Future work \u2014 scaling (RQ4) is out of scope under the equal-capacity evaluation; no scaling run is claimed."
       },
       "verdict": {
         "tone": "muted",
-        "text": "Awaiting the benchmark run."
+        "text": "Future work"
       },
       "subjectId": "smartload",
       "primaryMetricKey": "p95",
@@ -3279,90 +3279,6 @@
             }
           ],
           "note": "trend_rule matches or beats the retrained model on every original profile and generalises best to the held-out partial-failure (0.921). Source: REPORT \u00a74."
-        }
-      ]
-    },
-    {
-      "id": "anomaly-engine",
-      "group": "Anomaly detection",
-      "label": "Engine agreement (decision surface)",
-      "question": "Where does the trained IsolationForest's decision boundary agree with \u2014 and diverge from \u2014 the simple threshold rule across the feature space?",
-      "summary": "Both engines scored at every cell of a latency \u00d7 error-rate feature grid. This measures decision-surface agreement, not detection quality \u2014 a sanity check on the production scaler and where the model adds or loses signal. Distinct from the detection-quality bench.",
-      "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "\u2014",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
-      },
-      "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the benchmark run."
-      },
-      "subjectId": "isolation_forest",
-      "primaryMetricKey": "unhealthy_pct",
-      "defaultConfigId": "aggregate",
-      "kpis": [
-        {
-          "key": "agreement",
-          "label": "Engine agreement",
-          "value": null,
-          "unit": "%",
-          "direction": "higher-better",
-          "hint": "share of grid cells with matching verdicts"
-        },
-        {
-          "key": "cells",
-          "label": "Grid cells swept",
-          "value": null,
-          "unit": "",
-          "direction": "neutral"
-        }
-      ],
-      "systems": [
-        {
-          "id": "isolation_forest",
-          "label": "Isolation forest",
-          "role": "subject",
-          "hint": "shipped model"
-        },
-        {
-          "id": "threshold",
-          "label": "Threshold rule",
-          "role": "baseline"
-        }
-      ],
-      "configurations": [
-        {
-          "id": "aggregate",
-          "label": "Full grid",
-          "isAggregate": true
-        }
-      ],
-      "metrics": [
-        {
-          "key": "unhealthy_pct",
-          "label": "Cells flagged unhealthy",
-          "unit": "%",
-          "direction": "neutral"
-        },
-        {
-          "key": "healthy_pct",
-          "label": "Cells flagged healthy",
-          "unit": "%",
-          "direction": "neutral"
-        }
-      ],
-      "matrix": {},
-      "charts": [
-        {
-          "key": "verdict-distribution",
-          "title": "Verdict distribution by engine",
-          "kind": "bars",
-          "yLabel": "% of cells",
-          "yUnit": "%",
-          "bars": []
         }
       ]
     }

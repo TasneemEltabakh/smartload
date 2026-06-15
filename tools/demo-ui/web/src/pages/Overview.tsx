@@ -25,11 +25,15 @@ function vStatus(tone?: Tone): Status {
   if (tone === "bad") return "crit";
   return "neutral";
 }
-function vLabel(tone?: Tone): string {
+function vLabel(verdict?: { tone: Tone; text: string }): string {
+  const tone = verdict?.tone;
   if (tone === "ok") return "win";
   if (tone === "warn") return "honest finding";
   if (tone === "bad") return "no lift";
-  return "pending";
+  // Neutral/muted: a deferred or not-yet-run verdict. Use the verdict's own
+  // short label text when given (e.g. "Future work"); otherwise "pending".
+  const text = verdict?.text?.trim();
+  return text ? text : "pending";
 }
 
 /** Suites in a single list, ordered by group so the dense grid still reads grouped. */
@@ -64,7 +68,7 @@ function SuiteSummary({ suite }: { suite: Suite }) {
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <span style={{ fontFamily: "var(--sl-font-display)", fontSize: 17, fontWeight: 700, color: "var(--sl-text)", lineHeight: 1.2 }}>{suite.label}</span>
-          {suite.verdict ? <StatusPill status={vStatus(suite.verdict.tone)} hideDot>{vLabel(suite.verdict.tone)}</StatusPill> : null}
+          {suite.verdict ? <StatusPill status={vStatus(suite.verdict.tone)} hideDot>{vLabel(suite.verdict)}</StatusPill> : null}
         </div>
         <div style={{ flex: 1, display: "flex", alignItems: "flex-end" }}>
           {kpi ? (
