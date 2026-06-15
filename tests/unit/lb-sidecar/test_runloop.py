@@ -440,6 +440,56 @@ def test_handle_anomaly_error_captured():
     assert "boom" in outcome.error
 
 
+def test_handle_anomaly_ignores_backend_pool_sentinel():
+    """Membership guard: a verdict for the NGINX upstream block name
+    `backend_pool` (the all-down 502 sentinel the detector can mistakenly
+    score) is dropped before it reaches the exclusion path. Without this the
+    phantom exclusion empties the pool — a self-sustaining outage
+    (audit/_findings/anomaly-pool-collapse-rootcause)."""
+    adapter = _adapter_with_pool({"backend-1:8080": 1, "backend-2:8080": 1})
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend_pool"   # not a real backend
+    outcome = handle_anomaly(
+        {"backend_id": "backend_pool", "status": "unhealthy", "score": 1.0},
+        registry, adapter,
+        live_backends=["backend-1:8080", "backend-2:8080"],
+    )
+    assert outcome.applied is False
+    assert outcome.action == "noop"
+    assert "unknown backend" in (outcome.error or "")
+    adapter.exclude_backend.assert_not_called()
+
+
+def test_handle_anomaly_acts_on_real_backend_in_live_pool():
+    """A verdict that names a backend present in the live pool is processed
+    normally even with the membership guard active."""
+    adapter = _adapter_with_pool({"backend-1:8080": 1, "backend-2:8080": 1})
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend-1:8080"
+    outcome = handle_anomaly(
+        {"backend_id": "10.0.0.1:8080", "status": "unhealthy", "score": 0.9},
+        registry, adapter,
+        live_backends=["backend-1:8080", "backend-2:8080"],
+    )
+    assert outcome.applied is True
+    assert outcome.action == "exclude"
+    adapter.exclude_backend.assert_called_once_with("backend-1:8080")
+
+
+def test_handle_anomaly_membership_guard_skipped_when_no_live_pool():
+    """live_backends=None (older callers / tests) skips the membership check
+    and preserves the prior behaviour."""
+    adapter = _adapter_with_pool({"backend-1:8080": 1, "backend-2:8080": 1})
+    registry = MagicMock(spec=BackendRegistry)
+    registry.translate_one.return_value = "backend-1:8080"
+    outcome = handle_anomaly(
+        {"backend_id": "10.0.0.1:8080", "status": "unhealthy", "score": 0.9},
+        registry, adapter,
+    )
+    assert outcome.applied is True
+    assert outcome.action == "exclude"
+
+
 # ── handle_policy ─────────────────────────────────────────────────────────────
 
 def test_handle_policy_safe_mode_reverts_weights():

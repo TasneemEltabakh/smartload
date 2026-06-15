@@ -402,6 +402,8 @@ Three bind parameters: window (text interval like `"60 seconds"`), service name,
 
 The `service` filter is parameterised rather than hardcoded to `'load-balancer'` so the same query can interrogate backend-emitted telemetry once backends start emitting OTLP directly.
 
+**Non-backend instance filter (v1.0.7bs).** `build_features_from_rows` skips any `instance` in `NON_BACKEND_INSTANCES` (`backend_pool`, `unknown`) before building features. These are not real backends: NGINX records the upstream *block name* `backend_pool` as `$upstream_addr` when no live server is reachable (the all-down 502 sentinel), and the lb-otel-shipper emits `unknown` when NGINX never reached an upstream. During any 502 window both surface as an `instance` at 100% error_rate; scoring them as a backend produced a phantom `unhealthy` verdict that the lb-sidecar excluded, emptying the pool and 502-ing every request — a self-sustaining outage the load test surfaced (see `audit/_findings/anomaly-pool-collapse-rootcause.md`). The detector must only ever score real backends; the lb-sidecar membership guard is the matching defence-in-depth.
+
 #### `FORECAST_QUERY`
 
 ```sql
@@ -669,7 +671,7 @@ It subscribes to **four channels**, each handled by a pure function in `services
 | Channel | Handler | What it does |
 | --- | --- | --- |
 | `smartload.routing` | `handle_routing` | RL/baseline policy publishes rankings + a mode (`shadow` / `active`). If `active` and `confidence ≥ rl_confidence_threshold`, convert rankings → integer NGINX weights and rewrite. |
-| `smartload.anomaly` | `handle_anomaly` | Anomaly-detector publishes an excluded-backend set. Adapter renders those rows as `server backend-X:8080 down;` so NGINX skips them without removing them from the pool. **Quorum guard (v1.0.7ap):** an `unhealthy` event that would exclude the *last* active backend is refused (`action="noop"`) — an empty upstream 502s the whole pool and feeds back as more exclusions; the NGINX adapter also refuses to reload an all-excluded upstream as defence-in-depth. |
+| `smartload.anomaly` | `handle_anomaly` | Anomaly-detector publishes an excluded-backend set. Adapter renders those rows as `server backend-X:8080 down;` so NGINX skips them without removing them from the pool. **Quorum guard (v1.0.7ap):** an `unhealthy` event that would exclude the *last* active backend is refused (`action="noop"`) — an empty upstream 502s the whole pool and feeds back as more exclusions; the NGINX adapter also refuses to reload an all-excluded upstream as defence-in-depth. **Membership guard (v1.0.7bs):** `handle_anomaly` now also drops any verdict whose translated key is not in the live discovered pool. This closes a self-sustaining outage in which NGINX logs the upstream *block name* `backend_pool` (the all-down 502 sentinel) as an "upstream", the shipper ships it as an `instance` at 100% error, and the detector scores it as a backend — a phantom exclusion that empties the pool and never clears (see audit/_findings/anomaly-pool-collapse-rootcause). The root fix lives upstream in the anomaly-detector (it never scores the LB aggregate); this guard is defence-in-depth. |
 | `smartload.policy` | `handle_policy` | Policy-manager publishes config changes (e.g. `operating_mode`, thresholds). Hot-reloads runtime knobs without restart. |
 | `smartload.scale` | `handle_scale` | **New in v1.0.7z (#164).** Autoscaler publishes `ScalingEvent` after `provision()` / `decommission()` succeeds. Re-queries the live Docker pool, regenerates an equal-weight upstream map, and writes. |
 

@@ -482,10 +482,21 @@ def handle_anomaly(
     payload: dict,
     registry: BackendRegistry,
     adapter,
+    live_backends: Optional[list[str]] = None,
 ) -> AnomalyOutcome:
     """Process an AnomalyEvent payload.
 
     Unhealthy → exclude_backend; healthy/degraded → include_backend.
+
+    Membership guard: when ``live_backends`` is supplied, a verdict whose
+    translated key is not in the live pool is ignored (action="noop"). This
+    drops verdicts that don't name a real backend — most importantly the
+    NGINX upstream block name ``backend_pool`` (the all-down 502 sentinel the
+    anomaly-detector can mistakenly score). Excluding that phantom empties the
+    upstream, which 502s every request, which re-fires the verdict: a
+    self-sustaining outage (see audit/_findings/anomaly-pool-collapse-rootcause).
+    ``live_backends=None`` (older callers / unit tests) skips the check and
+    preserves the prior behaviour.
 
     Quorum guard: an ``unhealthy`` event that would exclude the *last*
     active backend is refused (action="noop") rather than emptying the
@@ -499,6 +510,17 @@ def handle_anomaly(
         # upstream weight keys — otherwise a bare-name verdict excludes under
         # a key the renderer / quorum guard never sees.
         backend_name = normalize_backend_key(registry.translate_one(raw_backend_id))
+
+        # Defence-in-depth: only act on verdicts that name a backend in the
+        # live pool. Drops the `backend_pool` all-down sentinel and any other
+        # non-backend instance before it can reach the exclusion path.
+        if live_backends is not None and backend_name not in set(live_backends):
+            return AnomalyOutcome(
+                applied=False,
+                backend_id=backend_name,
+                action="noop",
+                error="ignored verdict for unknown backend (not in live pool)",
+            )
 
         if status == "unhealthy":
             if _excluding_would_empty_pool(adapter, backend_name):
