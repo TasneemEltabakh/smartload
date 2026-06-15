@@ -1,7 +1,7 @@
 # SmartLoad — CIE 599 Final Report (LaTeX source)
 
 This directory holds the LaTeX source for the graduation final report:
-**“SmartLoad: An Intelligent Middleware for Telemetry-Driven Traffic Routing and
+**“An Intelligent Middleware for Telemetry-Driven Anomaly-Aware Routing and
 Predictive Resource Scaling in Distributed Backend Systems.”** It follows the CIE 599
 2025/2026 template (cover → acknowledgement → declaration → abstract → ToC/LoT/LoF →
 abbreviations → 6 chapters → references → Arabic abstract → Arabic cover → appendices).
