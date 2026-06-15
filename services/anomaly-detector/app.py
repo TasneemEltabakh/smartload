@@ -73,7 +73,10 @@ from runloop import (                                          # noqa: E402
     apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
+    peer_suppress_verdicts,
     policy_from_payload,
+    recovery_reinclude,
+    recovery_reinclude_silent,
     score_to_event_payload,
     serialize_engine_state,
     should_publish,
@@ -117,6 +120,26 @@ TELEMETRY_SERVICE       = config.env_str("ANOMALY_TELEMETRY_SERVICE", ANOMALY_DE
 FLIP_CONFIRMATION_CYCLES = config.env_int(
     "ANOMALY_FLIP_CONFIRMATION_CYCLES", EnginePolicy().flip_confirmation_cycles
 )
+# Fix B — re-inclusion window: how long a backend may stay excluded before the
+# run loop re-admits it for a probationary re-test. Seeds the startup
+# EnginePolicy; a smartload.policy publish overrides it live via
+# anomaly_recovery_window_seconds. Default tracks EnginePolicy so behaviour is
+# unchanged when unset.
+RECOVERY_WINDOW_SECONDS = config.env_float(
+    "ANOMALY_RECOVERY_WINDOW_SECONDS", EnginePolicy().recovery_window_seconds
+)
+# Fix A — peer-relative overload suppression knobs. overload_peer_fraction:
+# fraction of live backends that must be degraded together before exclusions are
+# treated as system-wide overload and suppressed. overload_min_peers: minimum
+# live backends for peer comparison to engage at all. Both seed the startup
+# EnginePolicy and can be overridden live via anomaly_overload_peer_fraction /
+# anomaly_overload_min_peers in a smartload.policy publish.
+OVERLOAD_PEER_FRACTION = config.env_float(
+    "ANOMALY_OVERLOAD_PEER_FRACTION", EnginePolicy().overload_peer_fraction
+)
+OVERLOAD_MIN_PEERS = config.env_int(
+    "ANOMALY_OVERLOAD_MIN_PEERS", EnginePolicy().overload_min_peers
+)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
@@ -136,7 +159,12 @@ _engine_name: str = ANOMALY_ENGINE
 _engine_requested: str = ANOMALY_ENGINE
 _engine_ready: bool = False
 _engine_error: str | None = None
-_policy: EnginePolicy = EnginePolicy(flip_confirmation_cycles=FLIP_CONFIRMATION_CYCLES)
+_policy: EnginePolicy = EnginePolicy(
+    flip_confirmation_cycles=FLIP_CONFIRMATION_CYCLES,
+    recovery_window_seconds=RECOVERY_WINDOW_SECONDS,
+    overload_peer_fraction=OVERLOAD_PEER_FRACTION,
+    overload_min_peers=OVERLOAD_MIN_PEERS,
+)
 _last_inference_monotonic: float | None = None
 # Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
 _ticks_total: int = 0
@@ -147,6 +175,9 @@ _last_output_payload: list[dict] | None = None
 # Per-backend stability-gate memory (B1 low-sample hold / B2 flip confirmation).
 # Only touched by the run-loop thread (_inference_cycle) — not under _state_lock.
 _backend_states: dict[str, BackendState] = {}
+# Cross-cycle memory for the peer-suppressor's #2 surge detection (last cycle's
+# cohort medians). Owned by the single-threaded run loop.
+_suppressor_cohort: dict = {}
 
 
 def _set_engine_state(bootstrap) -> None:
@@ -204,6 +235,12 @@ def _inference_cycle(db_conn, redis_client) -> int:
     published = 0
     cycle_outputs: list[dict] = []
     now_dt = datetime.now(timezone.utc)
+    now_mono = time.monotonic()
+
+    # ── Pass 1: score + stability-gate every backend, collecting the whole
+    # cycle's verdicts. Fix A (peer-relative overload suppression) needs every
+    # backend's features+verdict together, so we gather first and decide after.
+    scored: list[tuple] = []   # (features, gated_score, BackendState)
     for features in features_list:
         try:
             raw_score = engine.score(features)
@@ -217,6 +254,43 @@ def _inference_cycle(db_conn, redis_client) -> int:
         low_sample = features.sample_count < policy.min_sample_count
         state = _backend_states.setdefault(features.backend_id, BackendState())
         score = apply_stability_gate(raw_score, low_sample, state, policy.flip_confirmation_cycles)
+        scored.append((features, score, state))
+
+    # ── Pass 2 (Fix A): peer-relative overload suppression. If a configurable
+    # majority of live backends are degraded together this is system-wide
+    # overload (a scale-out signal), so an organic exclusion on a backend that
+    # is no worse than its peers is downgraded to healthy — it keeps its
+    # traffic. A genuine lone outlier still gets flagged. Manual isolates never
+    # reach this path (they bypass the run loop via POST /api/v1/isolate).
+    suppressed_scores = peer_suppress_verdicts(
+        [(f, s) for (f, s, _st) in scored], policy,
+        states=[st for (_f, _s, st) in scored],
+        cohort_memory=_suppressor_cohort,
+    )
+
+    # ── Pass 3: persist + publish each backend's final verdict, applying Fix B
+    # (time-based re-inclusion) so a backend excluded longer than the recovery
+    # window with no fresh unhealthy verdict is re-admitted to earn its health
+    # back.
+    for (features, _gated, state), final_score in zip(scored, suppressed_scores):
+        score = final_score
+
+        # Fix B: update exclusion bookkeeping and, when due, swap in a
+        # probationary "healthy" re-admit. Driven by the post-suppression
+        # status so we never re-admit a backend we just (correctly) excluded.
+        reinclude = recovery_reinclude(
+            score.backend_id, score.status, state, policy, now_mono
+        )
+        force_publish = False
+        if reinclude is not None:
+            print(f"[{SERVICE_NAME}] recovery re-admit backend_id={score.backend_id} "
+                  f"(excluded > {policy.recovery_window_seconds}s, no fresh fault)", flush=True)
+            score = reinclude
+            # A re-admit is a "healthy" verdict; in auto-isolate mode
+            # should_publish() drops healthy scores, but the whole point of the
+            # re-admit is to tell the sidecar to re-route to this backend — so
+            # this one healthy verdict MUST be published.
+            force_publish = True
 
         cycle_outputs.append(score_to_event_payload(score, model_version))
 
@@ -234,7 +308,9 @@ def _inference_cycle(db_conn, redis_client) -> int:
         except Exception as exc:                        # noqa: BLE001
             print(f"[{SERVICE_NAME}] backend_health write failed for {score.backend_id}: {exc}", flush=True)
 
-        if not should_publish(score, policy):
+        # safe_mode still pauses ALL publishes (operators paused decision flow);
+        # otherwise a recovery re-admit forces its healthy verdict onto the bus.
+        if not (force_publish and not policy.safe_mode) and not should_publish(score, policy):
             continue
         with METRICS.time_publish(ANOMALY_CHANNEL):
             publish_envelope(
@@ -244,6 +320,49 @@ def _inference_cycle(db_conn, redis_client) -> int:
                 payload=score_to_event_payload(score, model_version),
             )
         ISOLATE_TOTAL.labels(backend=score.backend_id, status=score.status).inc()
+        published += 1
+
+    # ── Pass 3b (Fix B, silent-backend recovery): a benched backend gets zero
+    # NGINX traffic, so it emits no metric rows, drops out of the query, and never
+    # appears in `scored` — which means recovery_reinclude (Pass 3) is NEVER called
+    # for it and it stays `down;` for the rest of the run (the no-recovery trap).
+    # Drive recovery off the detector's own per-backend state, not query presence:
+    # for any backend on the exclusion clock that produced no features this cycle,
+    # emit the same probationary "healthy" re-admit once it has aged past the
+    # recovery window so the sidecar can re-route a trickle and let it earn its
+    # health back. The sidecar's live-pool membership guard drops the verdict if the
+    # backend was meanwhile scaled away, so this is safe.
+    scored_ids = {f.backend_id for (f, _s, _st) in scored}
+    for backend_id, state in list(_backend_states.items()):
+        if backend_id in scored_ids:
+            continue
+        readmit = recovery_reinclude_silent(backend_id, state, policy, now_mono)
+        if readmit is None:
+            continue
+        print(f"[{SERVICE_NAME}] recovery re-admit (silent backend) backend_id={backend_id} "
+              f"(excluded > {policy.recovery_window_seconds}s, no metrics this cycle)", flush=True)
+        readmit_payload = score_to_event_payload(readmit, model_version)
+        cycle_outputs.append(readmit_payload)
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    BACKEND_HEALTH_INSERT,
+                    (now_dt, readmit.backend_id, readmit.status, readmit.score),
+                )
+        except Exception as exc:                        # noqa: BLE001
+            print(f"[{SERVICE_NAME}] backend_health write failed for {readmit.backend_id}: {exc}", flush=True)
+        # safe_mode pauses ALL publishes; otherwise the re-admit MUST reach the bus
+        # (should_publish would otherwise drop a healthy verdict).
+        if policy.safe_mode:
+            continue
+        with METRICS.time_publish(ANOMALY_CHANNEL):
+            publish_envelope(
+                redis_client,
+                channel=ANOMALY_CHANNEL,
+                source=SERVICE_NAME,
+                payload=readmit_payload,
+            )
+        ISOLATE_TOTAL.labels(backend=readmit.backend_id, status=readmit.status).inc()
         published += 1
 
     now_iso = now_dt.isoformat()

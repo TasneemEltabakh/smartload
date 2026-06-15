@@ -31,12 +31,15 @@ sys.modules["autoscaler_decisions"] = decisions
 _spec.loader.exec_module(decisions)
 
 
-def _policy(min_b=1, max_b=5, cap=100.0, cooldown=60.0):
+def _policy(min_b=1, max_b=5, cap=100.0, cooldown=60.0,
+            scale_in_cooldown=0.0, scale_in_confirmations=1):
     return decisions.Policy(
         min_backends=min_b,
         max_backends=max_b,
         per_instance_capacity_rps=cap,
         cooldown_seconds=cooldown,
+        scale_in_cooldown_seconds=scale_in_cooldown,
+        scale_in_confirmations=scale_in_confirmations,
     )
 
 
@@ -172,6 +175,157 @@ class TestNoopBand:
         )
         assert d.action == decisions.ACTION_NOOP
         assert "within band" in d.reason
+
+
+# ── anti-flap: consistent demand signal + scale-in hysteresis ─────────────────
+#
+# Regression coverage for the backend-pool oscillation bug: under sustained
+# heavy load the served/predicted rate is DEPRESSED (the overloaded pool sheds
+# requests), which used to size scale-IN on a fake "demand dropped" reading and
+# flap the pool. The fix sizes scale-IN on the SAME offered/arrival demand as
+# scale-OUT (lever 1) and adds a downscale-specific cooldown + confirmation
+# hysteresis (lever 2).
+
+class TestAntiFlapDemandSignal:
+
+    def test_demand_genuinely_dropped_allows_scale_in(self):
+        # 4 backends × 100 = 400 cap; shed leaves 300. Offered demand fell to
+        # 250 (predicted agrees) → demand really dropped → scale in is allowed.
+        d = decisions.decide(
+            predicted_rps=250.0,
+            current_count=4,
+            policy=_policy(),
+            seconds_since_last_action=None,
+            offered_rps=250.0,
+        )
+        assert d.action == decisions.ACTION_SCALE_IN
+        assert d.target_count == 3
+
+    def test_depressed_served_rate_does_not_scale_in(self):
+        # The anti-flap case. Offered/arrival demand is still high (350 > shed
+        # floor 300) but the served/predicted rate is depressed to 120 because
+        # the pool is shedding. Sizing scale-IN on offered_rps keeps the pool.
+        d = decisions.decide(
+            predicted_rps=120.0,         # depressed served rate
+            current_count=4,
+            policy=_policy(),
+            seconds_since_last_action=None,
+            offered_rps=350.0,           # true offered demand, still high
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert d.target_count == 4
+
+    def test_offered_demand_still_drives_scale_out(self):
+        # Symmetry check: a depressed served rate must not stall scale-OUT.
+        # offered 600 > 4×100 cap → grow even though served reads 120.
+        d = decisions.decide(
+            predicted_rps=120.0,
+            current_count=4,
+            policy=_policy(),
+            seconds_since_last_action=None,
+            offered_rps=600.0,
+        )
+        assert d.action == decisions.ACTION_SCALE_OUT
+        assert d.target_count == 5
+
+    def test_offered_none_preserves_point_estimate_contract(self):
+        # Default contract unchanged: with no offered band, predicted drives both
+        # directions exactly as the shipped rule did.
+        d = decisions.decide(
+            predicted_rps=250.0,
+            current_count=4,
+            policy=_policy(),
+            seconds_since_last_action=None,
+        )
+        assert d.action == decisions.ACTION_SCALE_IN
+        assert d.target_count == 3
+
+
+class TestAntiFlapHysteresis:
+
+    def test_single_low_reading_after_scale_out_does_not_scale_in(self):
+        # Confirmation hysteresis: require 3 consecutive low ticks. The first
+        # qualifying reading (seen=1) right after a scale-out must NOT shrink.
+        d = decisions.decide(
+            predicted_rps=250.0,
+            current_count=4,
+            policy=_policy(scale_in_confirmations=3),
+            seconds_since_last_action=None,
+            scale_in_confirmations_seen=1,
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert "confirmation" in d.reason
+        assert d.target_count == 4
+
+    def test_scale_in_fires_once_confirmations_reached(self):
+        d = decisions.decide(
+            predicted_rps=250.0,
+            current_count=4,
+            policy=_policy(scale_in_confirmations=3),
+            seconds_since_last_action=None,
+            scale_in_confirmations_seen=3,
+        )
+        assert d.action == decisions.ACTION_SCALE_IN
+        assert d.target_count == 3
+
+    def test_downscale_specific_cooldown_blocks_scale_in(self):
+        # Generic cooldown 60s already elapsed (70s) but the longer downscale
+        # cooldown (120s) is still active → hold. ("fast out, slow in")
+        d = decisions.decide(
+            predicted_rps=250.0,
+            current_count=4,
+            policy=_policy(cooldown=60.0, scale_in_cooldown=120.0),
+            seconds_since_last_action=70.0,
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert "scale-in cooldown" in d.reason
+
+    def test_downscale_cooldown_unset_falls_back_to_generic(self):
+        # scale_in_cooldown_seconds=0 (default) → behaves like the generic
+        # cooldown: 70s > 60s, so scale-in is allowed.
+        d = decisions.decide(
+            predicted_rps=250.0,
+            current_count=4,
+            policy=_policy(cooldown=60.0, scale_in_cooldown=0.0),
+            seconds_since_last_action=70.0,
+        )
+        assert d.action == decisions.ACTION_SCALE_IN
+
+    def test_scale_in_cooldown_helper(self):
+        assert decisions.scale_in_cooldown(_policy(cooldown=60.0)) == 60.0
+        assert decisions.scale_in_cooldown(
+            _policy(cooldown=60.0, scale_in_cooldown=120.0)) == 120.0
+
+
+class TestAntiFlapClampsHold:
+    """Anti-flap levers must not break the MIN/MAX clamps and the max_backends
+    noop reason."""
+
+    def test_max_backends_noop_reason_preserved_with_offered(self):
+        d = decisions.decide(
+            predicted_rps=300.0,
+            current_count=5,
+            policy=_policy(),
+            seconds_since_last_action=None,
+            offered_rps=999.0,
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert d.target_count == 5
+        assert "max_backends" in d.reason
+
+    def test_min_backends_holds_even_after_confirmations(self):
+        # At min, a fully-confirmed low-demand streak still must not shrink.
+        d = decisions.decide(
+            predicted_rps=10.0,
+            current_count=2,
+            policy=_policy(min_b=2, scale_in_confirmations=3),
+            seconds_since_last_action=None,
+            offered_rps=10.0,
+            scale_in_confirmations_seen=5,
+        )
+        assert d.action == decisions.ACTION_NOOP
+        assert "min_backends" in d.reason
+        assert d.target_count == 2
 
 
 # ── reactive-fallback tagging ────────────────────────────────────────────────

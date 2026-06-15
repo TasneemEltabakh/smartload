@@ -148,6 +148,36 @@ def test_step_controller_uses_single_action_clock():
     assert d.action == ACTION_NOOP
 
 
+def test_step_controller_scale_in_uses_offered_demand():
+    # Anti-flap: select_decision must forward offered_rps to the step rule so a
+    # depressed served rate (120) does NOT shrink the pool while offered demand
+    # (350) is still above the shed floor.
+    d = _decide(
+        "step", predicted_rps=120.0, current_count=4, offered_rps=350.0,
+    )
+    assert d.action == ACTION_NOOP
+    assert d.target_count == 4
+
+
+def test_step_controller_forwards_confirmation_count():
+    # With confirmations required, an unconfirmed first low tick holds; the
+    # confirmation count must reach the policy threshold to scale in.
+    step_policy = Policy(
+        min_backends=1, max_backends=50, per_instance_capacity_rps=100.0,
+        cooldown_seconds=0.0, scale_in_confirmations=3,
+    )
+    held = _decide(
+        "step", predicted_rps=250.0, current_count=4, offered_rps=250.0,
+        step_policy=step_policy, scale_in_confirmations_seen=1,
+    )
+    assert held.action == ACTION_NOOP
+    fired = _decide(
+        "step", predicted_rps=250.0, current_count=4, offered_rps=250.0,
+        step_policy=step_policy, scale_in_confirmations_seen=3,
+    )
+    assert fired.action == ACTION_SCALE_IN
+
+
 # ── actuate_to_target ───────────────────────────────────────────────────────
 
 class _Counter:

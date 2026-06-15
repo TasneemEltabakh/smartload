@@ -453,15 +453,23 @@ def handle_routing(
 
 
 def _excluding_would_empty_pool(adapter, backend_name: str) -> bool:
-    """True only when we can *positively* determine that excluding
-    ``backend_name`` would leave the upstream with zero active servers.
+    """True when excluding ``backend_name`` would drop the active pool below a
+    working quorum — keep ~half the known backends, ``(N+1)//2``, rounded up.
 
-    Excluding the last serving backend makes NGINX 502 the entire pool;
-    the resulting error spike feeds straight back into the telemetry the
-    anomaly-detector scores, producing yet more ``unhealthy`` events — a
-    self-sustaining outage (the failure mode the v1.0.7an isolation_forest
-    revert worked around). A single slow backend still returning 200s
-    beats an empty upstream returning 502 on everything.
+    Excluding the last serving backend makes NGINX 502 the entire pool, but
+    collapsing *toward* a single backend is just as fatal under load: all
+    traffic concentrates onto the survivors, which then shed 503 / spike
+    latency, the anomaly-detector scores *that* as ``unhealthy``, and the
+    cascade drains the pool one backend at a time — a self-sustaining outage
+    (the failure mode the v1.0.7an isolation_forest revert and the
+    backend_pool-sentinel fix worked around). Preserving a quorum keeps enough
+    capacity that the retained backends don't themselves trip the detector, so
+    the pool can ride out a burst until the autoscaler adds headroom.
+
+    The ``(N+1)//2`` floor reduces to the original last-backend protection for
+    pools of 1-2 (floor 1) — a genuine single-bad-backend exclusion from a
+    small pool still proceeds exactly as before; the quorum only bites once
+    there are ≥3 known backends.
 
     Defensive by construction: any uncertainty (no ``current_state``,
     malformed state, unreadable pool) returns ``False`` so the exclusion
@@ -475,7 +483,9 @@ def _excluding_would_empty_pool(adapter, backend_name: str) -> bool:
         return False
     if not known:
         return False
-    return not (known - (excluded | {backend_name}))
+    active_after = known - (excluded | {backend_name})
+    quorum_floor = (len(known) + 1) // 2
+    return len(active_after) < quorum_floor
 
 
 def handle_anomaly(

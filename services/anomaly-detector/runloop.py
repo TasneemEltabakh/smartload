@@ -44,6 +44,35 @@ DEFAULT_LATENCY_MULTIPLIER = 3.0
 DEFAULT_ERROR_RATE_THRESHOLD = 0.05
 DEFAULT_MIN_SAMPLE_COUNT = 10
 DEFAULT_FLIP_CONFIRMATION_CYCLES = 2
+DEFAULT_RECOVERY_WINDOW_SECONDS = 30
+
+# ── Fix A: peer-relative overload suppression defaults ───────────────────────
+# Fraction of *live* backends that must be unhealthy/degraded in the same cycle
+# before a backend's organic unhealthy verdict is treated as system-wide
+# overload (a scale-out signal) rather than a single broken backend. At/above
+# this fraction the verdict is downgraded so the sidecar does NOT exclude it.
+# 0.5 ⇒ "if half-or-more of the pool is bad together, nobody is the outlier".
+DEFAULT_OVERLOAD_PEER_FRACTION = 0.5
+# Below this many live backends, peer comparison is meaningless (you can't tell
+# an outlier from the pack with 1-2 samples), so suppression does not engage and
+# the raw verdict stands — preserving the pre-fix behavior for tiny pools.
+DEFAULT_OVERLOAD_MIN_PEERS = 3
+# ── Fix D (D3): outlier margin for the busy-vs-broken suppressor ──────────────
+# Under uniform overload ~half the pool sits above the cohort MEDIAN by
+# construction, so a strict "> median" outlier test leaks that half through as
+# false outliers and collapses the pool. A backend must instead be worse than the
+# cohort median by THIS fractional margin on the tripping dimension before it
+# counts as a genuine outlier. 0.5 ⇒ "must be > 50% worse than the median pack".
+DEFAULT_OVERLOAD_OUTLIER_MARGIN = 0.5
+# ── spike-transient hardening: exclusion hysteresis (#1) + surge-suppression (#2)
+# #1: a backend must be a cohort-outlier for this many CONSECUTIVE cycles before
+# it is benched, so a backend that is only transiently the worst (the first to
+# feel a load ramp, before its peers catch up) is not excluded.
+DEFAULT_OVERLOAD_EXCLUSION_CONFIRMATIONS = 2
+# #2: if the cohort's typical latency or error rate climbs by more than this
+# factor cycle-over-cycle, the whole pool is SURGING (a load spike) -> suppress
+# every exclusion that cycle (scale-out is the answer, not benching).
+DEFAULT_OVERLOAD_SURGE_FACTOR = 1.5
 
 
 @dataclass
@@ -65,6 +94,23 @@ class EnginePolicy:
     # confirms it (B2 fix). Not an engine constructor param -- excluded from
     # engine_kwargs(), consumed directly by app.py's _inference_cycle.
     flip_confirmation_cycles: int = DEFAULT_FLIP_CONFIRMATION_CYCLES
+    # Seconds a backend may stay excluded (last organic verdict non-healthy)
+    # before the run loop re-admits it for a probationary re-test (Fix B).
+    # Sourced from the smartload.policy `anomaly_recovery_window_seconds` knob.
+    # Not an engine constructor param -- excluded from engine_kwargs().
+    recovery_window_seconds: float = DEFAULT_RECOVERY_WINDOW_SECONDS
+    # ── Fix A: peer-relative overload suppression ────────────────────────────
+    # See DEFAULT_OVERLOAD_* above. Not engine constructor params.
+    overload_peer_fraction: float = DEFAULT_OVERLOAD_PEER_FRACTION
+    overload_min_peers: int = DEFAULT_OVERLOAD_MIN_PEERS
+    # Fix D (D3): a backend must be worse than the cohort median by this fraction
+    # to count as a true outlier under pool-wide overload (stops the median-split
+    # leak that collapsed the pool). Not an engine constructor param.
+    overload_outlier_margin: float = DEFAULT_OVERLOAD_OUTLIER_MARGIN
+    # Spike-transient hardening (#1 exclusion hysteresis / #2 surge-suppression).
+    # Not engine constructor params.
+    overload_exclusion_confirmations: int = DEFAULT_OVERLOAD_EXCLUSION_CONFIRMATIONS
+    overload_surge_factor: float = DEFAULT_OVERLOAD_SURGE_FACTOR
 
     def engine_kwargs(self) -> dict:
         return {
@@ -100,6 +146,12 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         anomaly_response=str(payload.get("anomaly_response", fallback.anomaly_response)),
         policy_version=_int("policy_version", fallback.policy_version),
         flip_confirmation_cycles=_int("anomaly_flip_confirmation_cycles", fallback.flip_confirmation_cycles),
+        recovery_window_seconds=_float("anomaly_recovery_window_seconds", fallback.recovery_window_seconds),
+        overload_peer_fraction=_float("anomaly_overload_peer_fraction", fallback.overload_peer_fraction),
+        overload_min_peers=_int("anomaly_overload_min_peers", fallback.overload_min_peers),
+        overload_outlier_margin=_float("anomaly_overload_outlier_margin", fallback.overload_outlier_margin),
+        overload_exclusion_confirmations=_int("anomaly_overload_exclusion_confirmations", fallback.overload_exclusion_confirmations),
+        overload_surge_factor=_float("anomaly_overload_surge_factor", fallback.overload_surge_factor),
     )
 
 
@@ -236,6 +288,22 @@ class BackendState:
     # status. Used by the optional max_hold_cycles TTL so a backend that goes
     # permanently quiet can't be pinned non-healthy forever.
     low_sample_hold_count: int = 0
+    # ── Fix B: time-based re-inclusion bookkeeping ───────────────────────────
+    # time.monotonic() of the cycle that first put this backend into the
+    # excluded (unhealthy) state. None ⇒ not currently excluded. Set when a
+    # gated verdict first becomes "unhealthy", cleared when it returns to
+    # "healthy" (organically or via a recovery re-admit). recovery_reinclude()
+    # reads it to decide when the exclusion has aged past the recovery window.
+    excluded_since_monotonic: float | None = None
+    # True once recovery_reinclude() has emitted a probationary re-admit for the
+    # CURRENT exclusion, so we re-admit exactly once per exclusion (no thrash /
+    # no repeated healthy publishes while the backend keeps getting no traffic).
+    recovery_reinclude_emitted: bool = False
+    # #1 spike-transient hardening: consecutive cycles this backend has been a
+    # cohort-outlier (past the suppressor margin). Reset when it falls back within
+    # the pack; an exclusion is only kept once the streak reaches
+    # overload_exclusion_confirmations, so a transient outlier isn't benched.
+    outlier_streak: int = 0
 
 
 def apply_stability_gate(
@@ -305,6 +373,274 @@ def apply_stability_gate(
         return raw
 
     return AnomalyScore(raw.backend_id, state.last_status, state.last_score)
+
+
+# ── Fix A: peer-relative overload suppression ────────────────────────────────
+
+# Statuses that, when produced by the *latency or error* channels, the sidecar
+# would act on by excluding the backend. Only these are candidates for the
+# peer-relative downgrade. "healthy" is never suppressed (nothing to suppress).
+_EXCLUDABLE_STATUSES = frozenset({"unhealthy", "degraded"})
+
+
+def _median(values: list[float]) -> float:
+    """Tiny dependency-free median (avoid importing statistics for one call)."""
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2:
+        return s[mid]
+    return (s[mid - 1] + s[mid]) / 2.0
+
+
+def peer_suppress_verdicts(
+    scored: list[tuple[BackendFeatures, AnomalyScore]],
+    policy: EnginePolicy,
+    states: list[BackendState] | None = None,
+    cohort_memory: dict | None = None,
+) -> list[AnomalyScore]:
+    """Fix A — busy-vs-broken: downgrade organic exclusions during pool-wide
+    overload so a healthy-but-overloaded backend is NOT excluded.
+
+    Operates on every backend's (features, gated_score) for ONE cycle, so it
+    has the cross-backend/load context the per-backend engine.score() lacks.
+
+    Decision (only engages when there are >= ``overload_min_peers`` live
+    backends — with 1-2 backends you cannot tell an outlier from the pack, so
+    the raw verdicts stand):
+
+    A backend is a genuine fault only if it is *meaningfully worse* than its
+    peers on the dimension that tripped it: we compare its error_rate and its
+    typical (rolling-mean) latency against the cohort medians, with a margin. A
+    backend within ``(1 + overload_outlier_margin)`` of the median pack is
+    downgraded to "healthy" (it keeps its traffic — pool-wide overload is a
+    scale-out signal, not a fault); a backend clearly past the margin keeps its
+    exclusion (a real single bad apple among an overloaded pool is still
+    flagged). This runs from the FIRST backend to trip — there is no
+    pool-fraction gate, because waiting for half the pool to be excludable let
+    exclusions CASCADE the pool down to ~half before the suppressor ever engaged.
+    A lone fault among healthy peers is far past the margin, so it is still
+    excluded exactly as before.
+
+    Spike-transient hardening (active only when ``states`` / ``cohort_memory`` are
+    supplied; without them the behaviour above is unchanged):
+      #1 exclusion hysteresis — a backend must be a cohort-outlier for
+         ``overload_exclusion_confirmations`` CONSECUTIVE cycles (tracked in
+         ``BackendState.outlier_streak``) before it is benched, so a backend that
+         is only transiently the worst (the first to feel a load ramp, before its
+         peers catch up) is not excluded.
+      #2 surge-suppression — when the cohort's typical latency or error climbs by
+         more than ``overload_surge_factor`` cycle-over-cycle (carried in
+         ``cohort_memory``), the whole pool is SURGING (a load spike), so EVERY
+         exclusion is suppressed that cycle — a synchronized ramp is overload, not
+         a fault. The cohort-wide mirror of the engine's per-backend "recovering"
+         (falling-latency) guard.
+
+    Returns a NEW list of AnomalyScore (input scores are not mutated). Order
+    matches the input. Inputs whose verdict is left unchanged are returned
+    as-is.
+    """
+    out = [score for _f, score in scored]
+    live = len(scored)
+    if live < max(2, policy.overload_min_peers):
+        return out  # too few peers to compare — keep raw verdicts
+
+    excludable_idx = [
+        i for i, (_f, s) in enumerate(scored)
+        if s.status in _EXCLUDABLE_STATUSES
+    ]
+
+    # Cohort baselines across ALL live backends this cycle. Typical (rolling-mean)
+    # latency, NOT the window MAX, so one transient spike on an otherwise-normal
+    # backend doesn't make it look like an outlier (D9/D3).
+    err_median = _median([f.error_rate for f, _s in scored])
+    lat_median = _median([f.latency_rolling_mean_ms for f, _s in scored])
+
+    # #2 SURGE detection: did the whole cohort's load climb sharply since last
+    # cycle? A synchronized ramp is a load spike (scale-out), not a fault, so we
+    # suppress EVERY exclusion this cycle. Carried across cycles in cohort_memory.
+    surging = False
+    if cohort_memory is not None:
+        f = max(1.0, policy.overload_surge_factor)
+        prev_lat = cohort_memory.get("lat_median")
+        prev_err = cohort_memory.get("err_median")
+        if prev_lat is not None and prev_lat > 0.0 and lat_median > prev_lat * f:
+            surging = True
+        if (prev_err is not None and err_median > policy.error_rate_threshold
+                and err_median > prev_err * f):
+            surging = True
+        cohort_memory["lat_median"] = lat_median
+        cohort_memory["err_median"] = err_median
+
+    if not excludable_idx:
+        if states is not None:           # healthy cohort — reset every streak
+            for st in states:
+                st.outlier_streak = 0
+        return out
+
+    # NO pool-fraction gate — the per-backend MARGIN is the overload-vs-fault
+    # discriminator. Waiting for >= overload_peer_fraction of the pool to be
+    # excludable let exclusions CASCADE the pool to ~half before the suppressor
+    # engaged; instead we evaluate every excludable backend from the first to trip.
+    # (`overload_peer_fraction` is retained in the policy for back-compat.)
+    margin = 1.0 + max(0.0, policy.overload_outlier_margin)
+    err_bar = err_median * margin
+    lat_bar = lat_median * margin
+    excl_set = set(excludable_idx)
+    confirmations = max(1, policy.overload_exclusion_confirmations)
+
+    for i in range(live):
+        if i not in excl_set:
+            if states is not None:           # within-pack / healthy -> reset streak
+                states[i].outlier_streak = 0
+            continue
+        feats, score = scored[i]
+        is_outlier = (feats.error_rate > err_bar) or (feats.latency_rolling_mean_ms > lat_bar)
+
+        # #2: during a cohort-wide surge nobody is the fault — keep everyone.
+        if surging:
+            out[i] = AnomalyScore(score.backend_id, "healthy", 0.0)
+            if states is not None:
+                states[i].outlier_streak = 0
+            continue
+
+        if not is_outlier:
+            # Within the pack ⇒ pool-wide overload, not a fault: keep it serving.
+            if states is not None:
+                states[i].outlier_streak = 0
+            out[i] = AnomalyScore(score.backend_id, "healthy", 0.0)
+            continue
+
+        # is_outlier == True. #1 exclusion hysteresis: only bench a SUSTAINED
+        # outlier, so a backend that is merely the first to feel a ramp isn't
+        # excluded before its peers catch up. Without state tracking this is a
+        # no-op (bench immediately, as before).
+        if states is not None:
+            states[i].outlier_streak += 1
+            if states[i].outlier_streak < confirmations:
+                out[i] = AnomalyScore(score.backend_id, "healthy", 0.0)
+                continue
+        # sustained outlier (or no state) -> keep the exclusion verdict (out[i]
+        # already holds the original unhealthy/degraded score).
+    return out
+
+
+# ── Fix B: time-based re-inclusion ───────────────────────────────────────────
+
+def recovery_reinclude(
+    backend_id: str,
+    gated_status: str,
+    state: BackendState,
+    policy: EnginePolicy,
+    now_monotonic: float,
+) -> AnomalyScore | None:
+    """Fix B — self-heal trap: re-admit a long-excluded backend so it can earn
+    its health back (an excluded backend gets no traffic → no fresh healthy
+    metrics → would stay excluded forever).
+
+    Updates ``state`` exclusion bookkeeping for THIS cycle's gated status, then
+    decides whether to emit a probationary "healthy" re-admit:
+
+      - Track when the backend first entered the excluded ("unhealthy") state.
+      - If it has been excluded for >= ``recovery_window_seconds`` AND this
+        cycle did NOT produce a fresh unhealthy verdict (no new adverse
+        evidence), emit ONE "healthy" include verdict so the sidecar re-admits
+        it. It then either proves itself (stays healthy) or is re-excluded next
+        cycle if still genuinely bad — a correct, non-thrashing probation.
+
+    Returns the re-admit AnomalyScore to publish, or None when no re-admit is
+    warranted (caller then publishes/handles the gated verdict normally).
+
+    Call this AFTER peer-suppression so ``gated_status`` is the verdict that
+    will actually be acted on. The manual-isolate path never flows through here
+    (it bypasses the run loop entirely), so operator isolates are untouched.
+    """
+    window = policy.recovery_window_seconds
+
+    if gated_status == "unhealthy":
+        # Fresh adverse evidence. (Re)start the exclusion clock if this is a new
+        # exclusion; an already-excluded backend keeps its original timestamp so
+        # the window measures total time excluded, not time since last verdict.
+        if state.excluded_since_monotonic is None:
+            state.excluded_since_monotonic = now_monotonic
+            state.recovery_reinclude_emitted = False
+        return None
+
+    if gated_status == "healthy":
+        # Organically healthy again — exclusion is over, reset bookkeeping.
+        state.excluded_since_monotonic = None
+        state.recovery_reinclude_emitted = False
+        return None
+
+    # gated_status == "degraded": not a fresh *exclusion* and not a clean clear.
+    # If the backend isn't currently excluded, there is nothing to re-admit.
+    if state.excluded_since_monotonic is None:
+        return None
+
+    # Backend is excluded and this cycle produced no fresh unhealthy verdict.
+    # Re-admit once the exclusion has aged past the recovery window.
+    excluded_for = now_monotonic - state.excluded_since_monotonic
+    if excluded_for >= window and not state.recovery_reinclude_emitted:
+        state.recovery_reinclude_emitted = True
+        # Clear the exclusion clock — we've handed it back to the pool. If it's
+        # still bad it will be re-excluded next cycle and the clock restarts.
+        state.excluded_since_monotonic = None
+        return AnomalyScore(backend_id, "healthy", 0.0)
+    return None
+
+
+def recovery_reinclude_silent(
+    backend_id: str,
+    state: BackendState,
+    policy: EnginePolicy,
+    now_monotonic: float,
+) -> AnomalyScore | None:
+    """Fix B (silent-backend variant) — re-admit a backend that is on the
+    exclusion clock but produced NO features this cycle.
+
+    ``recovery_reinclude`` only runs for backends present in the metrics query.
+    A benched backend gets zero NGINX traffic, so it emits no rows, drops out of
+    the query entirely, and is never iterated — its exclusion clock freezes and it
+    stays ``down;`` for the rest of the run (the no-recovery trap). This variant is
+    driven off the detector's own per-backend ``state`` instead of query presence:
+    the *absence* of fresh metrics IS the "no new adverse evidence" signal, so once
+    the exclusion has aged past ``recovery_window_seconds`` we emit ONE probationary
+    ``healthy`` re-admit (idempotent via ``recovery_reinclude_emitted``). The sidecar
+    then routes a trickle to it at floor weight; it either proves healthy and stays
+    or re-sheds and is re-excluded next cycle (the clock restarts via
+    ``recovery_reinclude``).
+
+    The stability-gate memory is reset to a clean ``healthy`` slate on re-admit, so
+    the gate does not immediately re-confirm the stale ``unhealthy`` status and
+    re-exclude the backend before it has had a fair re-test. The sidecar's live-pool
+    membership guard drops the verdict if the backend was meanwhile scaled away, so
+    re-admitting a departed backend is a harmless no-op.
+    """
+    if state.excluded_since_monotonic is None:
+        return None
+    excluded_for = now_monotonic - state.excluded_since_monotonic
+    if excluded_for >= policy.recovery_window_seconds:
+        # Re-ARM the exclusion clock to NOW (rather than clearing it to None) so
+        # that if the backend stays silent — the sidecar never routed to it, or it
+        # is stuck excluded across a bench/run boundary — we re-probe it again after
+        # the next window instead of giving up after a single attempt and leaving it
+        # in a "detector thinks it's fine, sidecar still has it down;" limbo. The
+        # re-arm also rate-limits the probe to once per recovery window. Once the
+        # backend returns to the metrics query and is confirmed healthy,
+        # recovery_reinclude() clears the clock for real.
+        state.excluded_since_monotonic = now_monotonic
+        state.recovery_reinclude_emitted = True
+        # Hand the backend back with a clean slate so apply_stability_gate doesn't
+        # re-confirm the stale unhealthy status and re-exclude it next cycle.
+        state.last_status = "healthy"
+        state.last_score = 0.0
+        state.pending_status = None
+        state.pending_count = 0
+        state.low_sample_hold_count = 0
+        return AnomalyScore(backend_id, "healthy", 0.0)
+    return None
 
 
 def _severity_for_status(status: str) -> str | None:

@@ -38,7 +38,9 @@ from runloop import (                                  # noqa: E402
     apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
+    peer_suppress_verdicts,
     policy_from_payload,
+    recovery_reinclude_silent,
     score_to_event_payload,
     serialize_engine_state,
     should_publish,
@@ -547,3 +549,203 @@ def test_state_reports_runloop_disabled_and_error():
     assert body["engine"]["error"] == "model file missing"
     assert body["engine"]["requested"] == "isolation_forest"
     assert body["engine"]["loaded"] == "threshold"
+
+
+# ── recovery_reinclude_silent (Fix B, silent-backend / no-recovery-trap) ──────
+
+
+def test_recovery_reinclude_silent_readmits_aged_silent_exclusion():
+    # A benched backend that dropped out of the metrics query: on the exclusion
+    # clock, no fresh verdict this cycle, aged past the recovery window -> ONE
+    # probationary healthy re-admit, with the stability-gate memory reset to a
+    # clean slate so the gate doesn't immediately re-confirm the stale unhealthy.
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    state.excluded_since_monotonic = 100.0
+    policy = EnginePolicy(recovery_window_seconds=30)
+    out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=131.0)
+    assert out is not None
+    assert out.status == "healthy"
+    assert out.backend_id == "b1:8080"
+    # Clock is RE-ARMED to now (not cleared) so a still-silent backend is re-probed.
+    assert state.excluded_since_monotonic == 131.0
+    assert state.recovery_reinclude_emitted is True
+    assert state.last_status == "healthy"
+    assert state.last_score == 0.0
+    assert state.pending_status is None
+    assert state.low_sample_hold_count == 0
+
+
+def test_recovery_reinclude_silent_holds_before_window():
+    # 20s excluded, window 30s -> not yet due; nothing changes.
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    state.excluded_since_monotonic = 100.0
+    policy = EnginePolicy(recovery_window_seconds=30)
+    out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=120.0)
+    assert out is None
+    assert state.excluded_since_monotonic == 100.0
+    assert state.recovery_reinclude_emitted is False
+    assert state.last_status == "unhealthy"
+
+
+def test_recovery_reinclude_silent_reprobes_each_window():
+    # The clock is RE-ARMED (not cleared) on re-admit, so a backend that stays
+    # silent is re-probed once per recovery window — never abandoned in a stuck
+    # "down; but the detector thinks it's fine" limbo across a run boundary.
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    state.excluded_since_monotonic = 100.0
+    policy = EnginePolicy(recovery_window_seconds=30)
+    first = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=140.0)
+    assert first is not None
+    assert state.excluded_since_monotonic == 140.0          # re-armed to now
+    # Too soon (15s < 30s window) -> no re-probe yet.
+    assert recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=155.0) is None
+    # Another full window elapsed -> re-probe again (not a one-shot).
+    third = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=175.0)
+    assert third is not None
+    assert third.status == "healthy"
+
+
+def test_recovery_reinclude_silent_noop_when_not_excluded():
+    # A backend not on the exclusion clock is never spontaneously re-admitted.
+    state = BackendState(last_status="healthy", last_score=0.0)
+    policy = EnginePolicy(recovery_window_seconds=30)
+    out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=999.0)
+    assert out is None
+    assert state.excluded_since_monotonic is None
+
+
+# ── peer_suppress_verdicts (Fix A + D3 outlier margin: busy-vs-broken) ─────────
+
+
+def _feat(bid, *, latency_mean, error_rate, latency_max=None):
+    lm = latency_max if latency_max is not None else latency_mean
+    return BackendFeatures(
+        backend_id=bid, latency_ms=lm, latency_rolling_mean_ms=latency_mean,
+        error_rate=error_rate, sample_count=100,
+    )
+
+
+def test_peer_suppress_downgrades_uniform_overload():
+    # 4 backends all `unhealthy` with near-identical (evenly overloaded) latency
+    # and error: nobody is > 50% worse than the median pack, so ALL are downgraded
+    # to healthy — scale-out is the right response, not benching the whole pool.
+    # (Pre-D3, the strict ">median" test leaked ~half of these through.)
+    policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
+                          overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.31), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.29), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=510, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert [s.status for s in out] == ["healthy", "healthy", "healthy", "healthy"]
+
+
+def test_peer_suppress_keeps_genuine_outlier_under_overload():
+    # 4 unhealthy backends; b4 is a genuine outlier (~3x the cohort latency, well
+    # past the 50% margin) -> it KEEPS its exclusion while the evenly-loaded pack
+    # is downgraded. A single bad apple among an overloaded pool is still caught.
+    policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
+                          overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1600, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    statuses = {s.backend_id: s.status for s in out}
+    assert statuses["b4"] == "unhealthy"            # outlier kept
+    assert statuses["b1"] == statuses["b2"] == statuses["b3"] == "healthy"
+
+
+def test_peer_suppress_uses_typical_not_max_latency():
+    # b1 has a transient MAX spike (latency_ms=4000) but a normal rolling MEAN
+    # (500, same as the pack). The suppressor must judge on the typical mean, so
+    # the spike does NOT mark it an outlier -> downgraded with the pack (D9 fix).
+    policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
+                          overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=500, error_rate=0.30, latency_max=4000), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=510, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b1"] == "healthy"
+
+
+def test_peer_suppress_keeps_lone_fault_among_healthy():
+    # A single badly-broken backend among healthy peers is far past the margin
+    # (2000ms vs a ~50ms cohort), so it KEEPS its exclusion. The margin is the
+    # discriminator — no pool-fraction gate is needed for this.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=2000, error_rate=0.9), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=50, error_rate=0.0), AnomalyScore("b2", "healthy", 0.0)),
+        (_feat("b3", latency_mean=50, error_rate=0.0), AnomalyScore("b3", "healthy", 0.0)),
+        (_feat("b4", latency_mean=50, error_rate=0.0), AnomalyScore("b4", "healthy", 0.0)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b1"] == "unhealthy"
+
+
+def test_peer_suppress_engages_below_half_when_within_margin():
+    # Cascade fix: with just 1 of 5 backends tripping unhealthy, if it is within
+    # the margin of the cohort (the whole pool is similarly loaded, it just crossed
+    # its own per-backend threshold first), it is suppressed -> kept serving. The
+    # suppressor no longer waits for half the pool to fail before engaging — that
+    # delay is what let the pool cascade down to ~3 active under load.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5)
+    scored = [
+        (_feat("b1", latency_mean=510, error_rate=0.06), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=500, error_rate=0.04), AnomalyScore("b2", "healthy", 0.0)),
+        (_feat("b3", latency_mean=490, error_rate=0.04), AnomalyScore("b3", "healthy", 0.0)),
+        (_feat("b4", latency_mean=505, error_rate=0.04), AnomalyScore("b4", "healthy", 0.0)),
+        (_feat("b5", latency_mean=495, error_rate=0.04), AnomalyScore("b5", "healthy", 0.0)),
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b1"] == "healthy"
+
+
+def _scored_with_outlier():
+    return [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1600, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+
+
+def test_peer_suppress_hysteresis_holds_transient_then_excludes_sustained():
+    # #1: a backend that is a cohort-outlier for only ONE cycle is NOT benched
+    # (held); a SUSTAINED outlier (2 cycles) IS — so a transient ramp-rate
+    # difference during a spike doesn't trigger the over-exclusion cascade.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          overload_exclusion_confirmations=2)
+    states = [BackendState() for _ in range(4)]
+    out1 = peer_suppress_verdicts(_scored_with_outlier(), policy, states=states)
+    assert {s.backend_id: s.status for s in out1}["b4"] == "healthy"    # transient -> held
+    out2 = peer_suppress_verdicts(_scored_with_outlier(), policy, states=states)
+    assert {s.backend_id: s.status for s in out2}["b4"] == "unhealthy"  # sustained -> benched
+
+
+def test_peer_suppress_surge_suppresses_even_outliers():
+    # #2: when the whole cohort's latency surges cycle-over-cycle (a load spike),
+    # EVERY exclusion is suppressed — even a backend past the margin — because a
+    # synchronized ramp is overload, not a fault.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          overload_surge_factor=1.5)
+    mem = {}
+    base = [(_feat(f"b{n}", latency_mean=100, error_rate=0.0),
+             AnomalyScore(f"b{n}", "healthy", 0.0)) for n in range(1, 5)]
+    peer_suppress_verdicts(base, policy, cohort_memory=mem)    # baseline lat_median=100
+    spike = [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=600, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=550, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1800, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),  # outlier
+    ]
+    out = peer_suppress_verdicts(spike, policy, cohort_memory=mem)
+    assert all(s.status == "healthy" for s in out)            # surge -> all kept, even b4

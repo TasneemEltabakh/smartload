@@ -149,15 +149,19 @@ def decide_target(
     Multi-step: a scale-out jumps straight to the sized target (capped by
     ``max_step_out`` if set); a scale-in moves at most ``max_step_in`` per action.
 
-    ``offered_rps`` is an upper-band / arrivals estimate used to size the
-    scale-OUT direction only. In a closed loop the point ``predicted_rps`` is
-    learned from the *served* request rate, which collapses while the pool is
-    shedding — so sizing scale-out on it alone lets the loop drain instead of
-    grow (the shed-feedback trap). When ``offered_rps`` is supplied the out
-    target is sized on ``max(predicted_rps, offered_rps)`` so a wide forecast
-    band biases toward provisioning headroom and breaks the trap. Scale-IN and
-    its deadband stay on ``predicted_rps`` so the conservative drain behaviour is
-    unchanged. ``None`` (the default) reproduces the point-estimate contract.
+    ``offered_rps`` is an upper-band / arrivals estimate. In a closed loop the
+    point ``predicted_rps`` is learned from the *served* request rate, which
+    collapses while the pool is shedding. BOTH directions are sized on
+    ``max(predicted_rps, offered_rps)`` so neither the served-rate collapse nor a
+    wide forecast band can desynchronise them: sizing scale-OUT on the served
+    estimate alone drains the loop (the shed-feedback trap), while sizing
+    scale-IN on it alone sheds whenever the served rate dips below its own band
+    even though offered demand is unchanged — and the gap between an
+    offered-sized scale-out and a predicted-sized scale-in is a permanent flap
+    dead-zone the cooldown and deadband only slow, never close. One demand signal
+    for both directions closes it; the deadband and asymmetric cooldown still damp
+    boundary noise. ``None`` (the default) reproduces the original point-estimate
+    contract.
     """
     if policy.per_instance_capacity_rps <= 0:
         return Decision(
@@ -168,11 +172,22 @@ def decide_target(
             f"is non-positive — refusing to scale on an invalid capacity",
         )
 
-    # Scale-out sizes on the robust (offered/upper-band) signal so shedding can't
-    # starve the loop; scale-in keeps sizing on the served point estimate.
-    out_rps = predicted_rps if offered_rps is None else max(predicted_rps, offered_rps)
-    out_target = target_for_load(out_rps, policy)
-    target = target_for_load(predicted_rps, policy)
+    # Anti-flap — ONE demand signal for BOTH directions. ``offered_rps`` is the
+    # upper-band / arrivals estimate; the point ``predicted_rps`` tracks the
+    # *served* rate, which collapses while the pool is shedding. Sizing scale-OUT
+    # on the served estimate alone drains the loop (the shed-feedback trap);
+    # sizing scale-IN on it alone makes the pool shrink whenever the served rate
+    # dips below its own forecast band even though offered demand is unchanged.
+    # With two signals, scale-out wants ceil(offered) while scale-in wants
+    # ceil(predicted), and the gap between them is a permanent flap dead-zone the
+    # cooldown and deadband only slow, never close (observed live: out wants 5,
+    # in wants 3, oscillating 5<->4 and 3<->2). Sizing BOTH directions on
+    # max(predicted, offered) closes the dead-zone: the pool sheds only when the
+    # offered demand genuinely drops. ``offered_rps=None`` reproduces the original
+    # point-estimate contract.
+    demand_rps = predicted_rps if offered_rps is None else max(predicted_rps, offered_rps)
+    out_target = target_for_load(demand_rps, policy)
+    target = out_target
     cap = policy.per_instance_capacity_rps
 
     # ── scale OUT ─────────────────────────────────────────────────────────────
@@ -181,7 +196,7 @@ def decide_target(
                 and seconds_since_scale_out < policy.scale_out_cooldown_s):
             return Decision(
                 ACTION_NOOP, current_count,
-                f"{now_text} offered {out_rps:.0f} rps wants "
+                f"{now_text} demand {demand_rps:.0f} rps wants "
                 f"{out_target} backends, scale-out cooldown active "
                 f"({seconds_since_scale_out:.0f}s < {policy.scale_out_cooldown_s:.0f}s)",
             )
@@ -191,20 +206,20 @@ def decide_target(
         new = _clip(current_count + step, policy.min_backends, policy.max_backends)
         return Decision(
             ACTION_SCALE_OUT, new,
-            f"{now_text} offered {out_rps:.0f} rps needs {out_target} "
+            f"{now_text} demand {demand_rps:.0f} rps needs {out_target} "
             f"backends (have {current_count}); scaling out +{new - current_count}",
         )
 
     # ── scale IN ──────────────────────────────────────────────────────────────
     if target < current_count:
-        # Deadband: only shed if the pool would still cover load with the full
-        # headroom AND an extra slack band, so noise around the boundary does
-        # not whipsaw the pool.
-        shed_floor = predicted_rps * (1.0 + policy.headroom + policy.scale_in_deadband)
+        # Deadband: only shed if the pool would still cover the (offered) demand
+        # with the full headroom AND an extra slack band, so noise around the
+        # boundary does not whipsaw the pool.
+        shed_floor = demand_rps * (1.0 + policy.headroom + policy.scale_in_deadband)
         if (current_count - 1) * cap < shed_floor:
             return Decision(
                 ACTION_NOOP, current_count,
-                f"{now_text} predicted {predicted_rps:.0f} rps wants {target} "
+                f"{now_text} demand {demand_rps:.0f} rps wants {target} "
                 f"backends but shedding one breaches the deadband — holding "
                 f"{current_count}",
             )
@@ -212,7 +227,7 @@ def decide_target(
                 and seconds_since_scale_in < policy.scale_in_cooldown_s):
             return Decision(
                 ACTION_NOOP, current_count,
-                f"{now_text} predicted {predicted_rps:.0f} rps wants {target} "
+                f"{now_text} demand {demand_rps:.0f} rps wants {target} "
                 f"backends, scale-in cooldown active "
                 f"({seconds_since_scale_in:.0f}s < {policy.scale_in_cooldown_s:.0f}s)",
             )
@@ -222,14 +237,14 @@ def decide_target(
         new = _clip(current_count - step, policy.min_backends, policy.max_backends)
         return Decision(
             ACTION_SCALE_IN, new,
-            f"{now_text} predicted {predicted_rps:.0f} rps needs {target} "
+            f"{now_text} demand {demand_rps:.0f} rps needs {target} "
             f"backends (have {current_count}); scaling in -{current_count - new}",
         )
 
     # ── hold ──────────────────────────────────────────────────────────────────
     return Decision(
         ACTION_NOOP, current_count,
-        f"{now_text} predicted {predicted_rps:.0f} rps matches {current_count} "
+        f"{now_text} demand {demand_rps:.0f} rps matches {current_count} "
         f"backends — holding",
     )
 
@@ -287,6 +302,7 @@ def select_decision(
     seconds_since_scale_in: float | None,
     now_text: str = "forecast",
     offered_rps: float | None = None,
+    scale_in_confirmations_seen: int = 1,
 ) -> Decision:
     """Dispatch to the configured controller.
 
@@ -295,9 +311,14 @@ def select_decision(
     action clock. The caller passes both policies and all three clocks so this
     stays a pure function of its inputs.
 
-    ``offered_rps`` (the forecast upper-band / arrivals estimate) only sizes the
-    target controller's scale-OUT direction; the shipped ``step`` rule ignores
-    it and keeps its point-estimate contract.
+    ``offered_rps`` (the forecast upper-band / arrivals estimate) sizes the
+    target controller's scale-OUT direction; the shipped ``step`` rule now also
+    consumes it as its anti-flap demand signal for BOTH directions (so scale-in
+    only fires when demand genuinely dropped). ``scale_in_confirmations_seen``
+    drives the step rule's scale-in hysteresis (ignored by the target rule,
+    which has its own deadband). Both are backwards-compatible: ``None`` /
+    default ``1`` reproduce the original point-estimate, act-on-first-reading
+    contract.
     """
     if kind == "target":
         return decide_target(
@@ -315,6 +336,8 @@ def select_decision(
         policy=step_policy,
         seconds_since_last_action=seconds_since_last_action,
         now_text=now_text,
+        offered_rps=offered_rps,
+        scale_in_confirmations_seen=scale_in_confirmations_seen,
     )
 
 
