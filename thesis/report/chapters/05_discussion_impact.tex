@@ -38,8 +38,7 @@ on a single learned component within it.
     \midrule
     The closed forecast-to-capacity loop is demonstrated end to end on a live
       stack: the pool scales up toward its single-host budget under forecast load
-      and shrinks back as demand subsides (RQ4, \cref{fig:imc:pool}).
-      % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
+      and shrinks back as demand subsides (RQ4).
       & The trained PPO routing policy ties classical round-robin on the offline
         evaluation: both reach \texttt{mean\_reward} $=$~\BMrlPpoReward{} with an
         SLO-violation rate of $0$, so the fine-grained routing acceptance gate is red
@@ -67,11 +66,10 @@ learn at all.
 
 \paragraph{Closed-loop proactive autoscaling is demonstrated end to end.} The
 forecast-to-capacity loop closes against a live stack. In the committed adaptive
-benchmark run shown in \cref{fig:imc:pool}, a forecast-driven burst scaled the
+benchmark run, a forecast-driven burst scaled the
 backend pool up toward its single-host budget (\texttt{max\_backends}$=5$) and then
 shrank it back as the burst subsided, with time-to-react between actions on the order
-of seconds rather than minutes (\cref{fig:imc:react}).
-% TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
+of seconds rather than minutes.
 This is the affirmative answer to the project's autoscaling research question: the
 pool grew ahead of modelled demand and contracted when demand receded, the
 bidirectional, proactive behaviour the design is built around. The run is no lucky
@@ -82,7 +80,7 @@ the full forecast-to-capacity path.
 The shipped anomaly default is the deterministic \texttt{trend\_rule} engine, a
 stateful detector that tracks the direction of the signal rather than a single
 threshold crossing. On the gradual-degradation profile it reaches an $F_1$ of
-\BManFone{} (recall \BManRecall{}, precision \BManPrecision{}), while every stateless
+\BManFone{} (recall \BManRecall{}), while every stateless
 engine, including the plain threshold rule and both Isolation Forest variants, scores
 $F_1=0.000$ on the same slow drift. That jump from $0.000$ to \BManFone{} is the real
 anomaly contribution: a creeping degradation that never trips a fixed threshold is
@@ -92,15 +90,16 @@ exactly what a direction-aware rule is built to catch. The artefact-free
 A trained Isolation Forest is available as a \emph{selectable} alternative. On its own
 training-distribution holdout it scores an $F_1$ of \BMifFone{}, and a separate sweep
 comparing the \texttt{threshold} rule against the Isolation Forest (excluding the
-deployed \texttt{trend\_rule}) finds the two agree on about \BManAgree{} of the
+deployed \texttt{trend\_rule}) finds the two largely agree across the
 operating-range grid. Every disagreement runs one way, the threshold rule reporting
 healthy where the Isolation Forest reports unhealthy, so the Isolation Forest
 over-reacts rather than under-reacts. Keeping a more aggressive detector behind the
 same contract and measuring it against the baseline across the whole range is what
-lets an operator switch it on deliberately. The three numbers describe three
+lets an operator switch it on deliberately. The two figures describe
 different things: \BManFone{} is the deployed \texttt{trend\_rule} on gradual
-degradation, \BMifFone{} is the Isolation Forest's own holdout, and \BManAgree{} is
-the threshold-versus-Isolation-Forest sweep that excludes the deployed engine.
+degradation, while \BMifFone{} is the Isolation Forest's own training-distribution
+holdout; the threshold-versus-Isolation-Forest agreement sweep that excludes the
+deployed engine is a third, separate comparison.
 
 \paragraph{The data and control planes are mechanically sound.} Beneath the learned
 engines, the plumbing is verified rather than assumed. Per-request fidelity is
@@ -221,8 +220,8 @@ is the one the design predicts: the two tie on the warm-up and spike phases, whe
 even split is optimal, and SmartLoad pulls decisively ahead on the two exclusion phases,
 where round-robin keeps feeding a fifth of its traffic to a backend it cannot eject. The
 one place SmartLoad is materially slower is the single maximum latency during an
-exclusion window, attributable to the sidecar reloading NGINX, which the recovery trace
-in \cref{fig:imc:recovery} shows the system clearing as the pool absorbs the event. The
+exclusion window, attributable to the sidecar reloading NGINX, which clears as the
+pool absorbs the event. The
 fine-grained routing acceptance gate, which asks for a clear delta on at least three of
 five metrics, remains red on the current PPO model, and that verdict is recorded as it
 stands.
@@ -310,8 +309,8 @@ alternative.} The deployed anomaly default is the deterministic, stateful
 ($F_1 =$~\BManFone{}) that every stateless detector misses. The artefact-free
 \texttt{threshold} rule takes over automatically if no learned artefact is present. The
 Isolation Forest is offered for operators who want a more aggressive detector: on the
-threshold-versus-Isolation-Forest sweep the two agree on about \BManAgree{} of the grid,
-and every disagreement has the Isolation Forest reporting unhealthy where the threshold
+threshold-versus-Isolation-Forest sweep the two largely agree, and every disagreement
+has the Isolation Forest reporting unhealthy where the threshold
 rule reports healthy, so it trades over-reaction for sensitivity. Comparing these
 engines across the whole operating range is what makes that choice evidenced rather than
 hopeful. As an extra margin, a quorum guard in the sidecar always keeps at least one
@@ -505,8 +504,8 @@ power and cooling for a load that arrives only occasionally. SmartLoad's autosca
 bidirectional: right-sizing the pool means scaling it \emph{down} when demand recedes,
 not only up when it rises, and idle capacity switched off is energy not wasted. The
 committed benchmark run demonstrated this, with the pool growing under a forecast burst
-and shrinking again as the burst subsided rather than staying enlarged
-(\cref{fig:imc:pool}). One caveat keeps the claim honest: the scale-out signal is the
+and shrinking again as the burst subsided rather than staying enlarged. One caveat
+keeps the claim honest: the scale-out signal is the
 forecast upper band, a proxy for offered rate rather than a measurement of true pre-shed
 arrivals, so under heavy shedding the signal and real demand can diverge. Right-sizing
 is sound as a direction, with the exact saving qualified by that load-confound. At one

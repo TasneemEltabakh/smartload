@@ -399,17 +399,15 @@ Autoscaler
   & threshold controller on forecasted RPS
   & \texttt{target} controller
   & scales toward the single-host budget ($\texttt{max\_backends}=5$; an $8$-backend probe OOM'd the host); the deployed \texttt{target} controller still flaps and the anti-flap sits on the unused \texttt{step} controller (\#183) \\
-% TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
 \bottomrule
 \end{tabularx}
 
 \medskip
 \begin{minipage}{\linewidth}
 \footnotesize
-\textsuperscript{$\dagger$}\,The \BManAgree{} threshold-vs-IsolationForest sweep
-agreement and the SMD-holdout figure characterise the IsolationForest comparison
-only; they exclude the deployed \texttt{trend\_rule} engine and are not its
-selection metric.
+\textsuperscript{$\dagger$}\,The threshold-vs-IsolationForest sweep agreement and
+the SMD-holdout figure characterise the IsolationForest comparison only; they
+exclude the deployed \texttt{trend\_rule} engine and are not its selection metric.
 \end{minipage}
 \end{table}
 

@@ -26,7 +26,6 @@ We built the system as a containerized stack and evaluated it on realistic
 workloads. The forecast-driven scaling loop runs end to end: under rising load
 the backend pool grew automatically up to its capacity ceiling, then shrank
 again as demand fell, with the deterministic fallback ready on every step.
-% TODO(vps-rerun): pool range + scaling-action count from fresh VPS adaptive batch
 The deployed gradual-degradation detector closes a failure mode that point-based
 rules miss, lifting its detection score from zero to \BManFone{} on slow drift.
 SmartLoad's decisive advantage comes from anomaly-driven exclusion at equal capacity:

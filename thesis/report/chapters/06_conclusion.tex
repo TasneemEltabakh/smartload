@@ -49,7 +49,6 @@ learned engine sit in the live path safely. The detailed reading is in
         with time-to-react on the order of seconds. The
         forecast~$\rightarrow$~autoscaler~$\rightarrow$~sidecar loop closes against a live
         stack, the affirmative answer to the project's proactive-autoscaling question.
-        % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
   \item \textbf{Anomaly-driven exclusion decisively beats round-robin at equal capacity.}
         On the canonical adaptive-advantage bench, at the failure modes SmartLoad is built
         for, a hidden backend that sheds \texttt{503} but never trips NGINX's passive check
@@ -62,12 +61,12 @@ learned engine sit in the live path safely. The detailed reading is in
   \item \textbf{The deployed anomaly engine closes the gradual-degradation gap.} The
         shipped \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
         $0.000$, the score of every stateless detector on that pattern, to \BManFone{}
-        (recall \BManRecall{}, precision \BManPrecision{}). Slow, sustained drift is exactly the
+        (recall \BManRecall{}). Slow, sustained drift is exactly the
         failure mode a point-based rule misses. The threshold rule remains the
         deterministic fallback beneath the default, and an Isolation Forest engine
         \cite{liu2008isolationforest} is a selectable alternative. A separate
         threshold-versus-Isolation-Forest sweep, which does not involve the deployed
-        detector, shows about \BManAgree{} cell agreement, with the Isolation Forest the more
+        detector, shows close cell agreement, with the Isolation Forest the more
         aggressive of the two.
   \item \textbf{The deterministic router matches round-robin; routing is not where the
         advantage lies.} On the canonical equal-capacity bench the deployed monotone
@@ -127,7 +126,6 @@ hidden.
     Closed-loop proactive autoscaling
       & Forecast-driven loop grows the pool from its idle baseline up to the configured
         capacity ceiling and contracts it again on a live stack (\cref{ch:impl_testing}).
-        % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
         \\
     Anomaly-driven exclusion beats round-robin at equal capacity
       & At its target failure modes (un-ejectable \texttt{503}-shedding and slow-but-healthy

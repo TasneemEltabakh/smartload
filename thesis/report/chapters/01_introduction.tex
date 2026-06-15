@@ -376,7 +376,6 @@ Closed-loop proactive autoscaling is demonstrated. In a committed benchmark run,
 the forecast-to-autoscaler-to-load-balancer loop scaled the backend pool up
 toward its host budget under a forecast-driven burst and then shrank it back as
 demand subsided, with per-phase p95 latencies measured throughout.
-% TODO(vps-rerun): exact pool range and scaling-action count from the fresh VPS adaptive batch
 
 At equal capacity, SmartLoad's decisive advantage is anomaly-driven exclusion. At the
 failure modes it is built for, a backend that sheds errors but is un-ejectable by
@@ -397,8 +396,8 @@ detector, which lifts gradual-degradation F1 from 0 to \BManFone{} where statele
 threshold and Isolation Forest detectors score essentially 0. An Isolation Forest
 detector ships as an opt-in alternative; in a separate decision-surface sweep
 that compares a static threshold against Isolation Forest (and does not involve
-the deployed trend-rule engine), the two agree about \BManAgree{} of the time, with the
-disagreements being cases where Isolation Forest over-reacts.
+the deployed trend-rule engine), the two largely agree, with the disagreements
+being cases where Isolation Forest over-reacts.
 
 The learned PPO router performs on par with the strong, industry-standard
 round-robin baseline in shadow mode. The deterministic fallback and operator
