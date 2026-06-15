@@ -174,6 +174,8 @@ services:
       # Run loop defaults to off so the Phase-0 stub stays the default until
       # operators flip the flag explicitly. See SOT §8.5 + issue #138.
       ANOMALY_RUNLOOP_ENABLED: ${ANOMALY_RUNLOOP_ENABLED:-true}
+      # #3 absolute pool-overload suppression master switch; ablation sets false.
+      ANOMALY_ABSOLUTE_OVERLOAD_SUPPRESSION: ${ANOMALY_ABSOLUTE_OVERLOAD_SUPPRESSION:-true}
       # Default engine is `trend_rule`: an interpretable, stateful trend-aware
       # rule engine over per-backend temporal features. It closes the gradual-
       # degradation gap every stateless engine misses (bench F1 0.000 -> 0.845),
@@ -547,6 +549,8 @@ services:
       NGINX_CONTAINER: ${NGINX_CONTAINER:-smartload-load-balancer-1}
       NGINX_CONF_PATH: /nginx-conf/upstream.conf
       LB_SIDECAR_RUNLOOP_ENABLED: ${LB_SIDECAR_RUNLOOP_ENABLED:-true}
+      # Anti-concentration routing-skew floor (0.75 ⇒ skew ≤1.33:1); ablation sets 0.
+      LB_SIDECAR_CLAMP_MIN_FRACTION: ${LB_SIDECAR_CLAMP_MIN_FRACTION:-0.75}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
       # ALL_BACKENDS is now a COLD-BOOT SEED only — used until the Docker
       # daemon is reachable + discover_all_backends() returns a live list

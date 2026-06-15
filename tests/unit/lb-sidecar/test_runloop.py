@@ -7,6 +7,8 @@ No Docker, no Redis, no filesystem — runs in the unit-tests CI job.
 
 Coverage:
   1. scores_to_weights — score→weight mapping, zero-score floor, empty list.
+  1b. clamp_weight_skew — degenerate vector bounded, discriminating vector
+                          untouched, disabled when fraction<=0.
   2. BackendRegistry.translate — happy path, unmapped IP triggers refresh,
                                  hostname passthrough.
   3. BackendRegistry.translate_one — happy path, refresh on miss.
@@ -29,7 +31,6 @@ if str(_SERVICE) not in sys.path:
 from runloop import (  # noqa: E402
     BackendRegistry,
     AnomalyOutcome,
-    KNOWN_BACKEND_FLOOR_WEIGHT,
     PolicyOutcome,
     PolicyState,
     RoutingOutcome,
@@ -38,6 +39,7 @@ from runloop import (  # noqa: E402
     handle_policy,
     handle_routing,
     handle_scale,
+    clamp_weight_skew,
     normalize_backend_key,
     scores_to_weights,
 )
@@ -67,6 +69,48 @@ def test_scores_to_weights_empty():
 def test_scores_to_weights_full_score():
     rankings = [{"backend_id": "b:8080", "score": 1.0}]
     assert scores_to_weights(rankings) == {"b:8080": 100}
+
+
+# ── clamp_weight_skew ─────────────────────────────────────────────────────────
+
+def test_clamp_weight_skew_bounds_degenerate_vector():
+    # The pathological case: one backend ≈1.0, the rest ≈0 -> ~100:1 skew that
+    # pins all traffic on b1 and overflows its queue under a uniform surge.
+    # With the 0.75 floor the starved backends are raised to round(100*0.75)=75.
+    weights = {"b1:8080": 100, "b2:8080": 1, "b3:8080": 1, "b4:8080": 1}
+    assert clamp_weight_skew(weights) == {
+        "b1:8080": 100, "b2:8080": 75, "b3:8080": 75, "b4:8080": 75,
+    }
+
+
+def test_clamp_weight_skew_noop_when_already_balanced():
+    # A ranking already inside the ~1.33:1 band passes through unchanged — the
+    # rail only bites spreads wider than the suppressor's outlier margin.
+    weights = {"b1:8080": 80, "b2:8080": 70, "b3:8080": 62}
+    assert clamp_weight_skew(weights) == weights
+
+
+def test_clamp_weight_skew_never_lowers_top():
+    weights = {"b1:8080": 100, "b2:8080": 90}
+    out = clamp_weight_skew(weights)
+    assert out["b1:8080"] == 100  # top is never reduced
+    assert out["b2:8080"] == 90   # already within band
+
+
+def test_clamp_weight_skew_disabled_when_fraction_zero():
+    weights = {"b1:8080": 100, "b2:8080": 1}
+    assert clamp_weight_skew(weights, min_fraction=0.0) == weights
+
+
+def test_clamp_weight_skew_empty():
+    assert clamp_weight_skew({}) == {}
+
+
+def test_clamp_weight_skew_floor_at_least_one():
+    # Tiny top weight -> floor rounds toward 1, never 0 (NGINX rejects weight=0).
+    weights = {"b1:8080": 1, "b2:8080": 1}
+    out = clamp_weight_skew(weights)
+    assert all(w >= 1 for w in out.values())
 
 
 # ── BackendRegistry ───────────────────────────────────────────────────────────
@@ -211,14 +255,37 @@ def test_handle_routing_merges_partial_ranking_with_known_pool():
     # All 4 backends present in the applied weights.
     applied = adapter.set_upstream_weights.call_args[0][0]
     assert set(applied) == {"b1:8080", "b2:8080", "b3:8080", "b4:8080"}
-    # RL-supplied weights override the floor for ranked backends.
+    # The skew rail (~1.33:1) is applied to the MERGED pool, so the top ranked
+    # backend keeps its raw weight (70) and every other backend — the low-ranked
+    # b2 (raw 8) AND the omitted/floored b3, b4 — is lifted to floor =
+    # round(70*0.75) = 52. Omitted HEALTHY backends thus carry a fair share
+    # instead of starving at weight 1 while the ranked few overflow under load.
     assert applied["b1:8080"] == 70
-    assert applied["b2:8080"] == max(1, round(0.075 * 100))
-    # Omitted backends get the floor — kept in the upstream block so
-    # an anomaly-excluded backend stays `down;` (the adapter renders the
-    # exclusion regardless of weight).
-    assert applied["b3:8080"] == KNOWN_BACKEND_FLOOR_WEIGHT
-    assert applied["b4:8080"] == KNOWN_BACKEND_FLOOR_WEIGHT
+    assert applied["b2:8080"] == 52
+    assert applied["b3:8080"] == 52
+    assert applied["b4:8080"] == 52
+
+
+def test_handle_routing_clamp_disabled_via_fraction_zero():
+    # clamp_min_fraction=0 disables the skew rail (ablation isolation): the low
+    # ranked b2 keeps its raw weight (8) and omitted b3/b4 stay at the floor (1),
+    # reproducing the pre-clamp behaviour for the ablation's "-clamp" config.
+    adapter = MagicMock()
+    registry = _stub_registry()
+    handle_routing(
+        {"mode": "active", "server_rankings": [
+            {"backend_id": "b1:8080", "score": 0.7},
+            {"backend_id": "b2:8080", "score": 0.08},
+        ]},
+        registry, adapter,
+        ["b1:8080", "b2:8080", "b3:8080", "b4:8080"],
+        clamp_min_fraction=0.0,
+    )
+    applied = adapter.set_upstream_weights.call_args[0][0]
+    assert applied["b1:8080"] == 70
+    assert applied["b2:8080"] == 8
+    assert applied["b3:8080"] == 1
+    assert applied["b4:8080"] == 1
 
 
 def test_handle_routing_confidence_below_threshold_rejected():
