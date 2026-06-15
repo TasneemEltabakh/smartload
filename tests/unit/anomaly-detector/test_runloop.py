@@ -39,6 +39,7 @@ from runloop import (                                  # noqa: E402
     bootstrap_engine,
     build_features_from_rows,
     policy_from_payload,
+    recovery_reinclude_silent,
     score_to_event_payload,
     serialize_engine_state,
     should_publish,
@@ -547,3 +548,66 @@ def test_state_reports_runloop_disabled_and_error():
     assert body["engine"]["error"] == "model file missing"
     assert body["engine"]["requested"] == "isolation_forest"
     assert body["engine"]["loaded"] == "threshold"
+
+
+# ── recovery_reinclude_silent (Fix B, silent-backend / no-recovery-trap) ──────
+
+
+def test_recovery_reinclude_silent_readmits_aged_silent_exclusion():
+    # A benched backend that dropped out of the metrics query: on the exclusion
+    # clock, no fresh verdict this cycle, aged past the recovery window -> ONE
+    # probationary healthy re-admit, with the stability-gate memory reset to a
+    # clean slate so the gate doesn't immediately re-confirm the stale unhealthy.
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    state.excluded_since_monotonic = 100.0
+    policy = EnginePolicy(recovery_window_seconds=30)
+    out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=131.0)
+    assert out is not None
+    assert out.status == "healthy"
+    assert out.backend_id == "b1:8080"
+    # Clock is RE-ARMED to now (not cleared) so a still-silent backend is re-probed.
+    assert state.excluded_since_monotonic == 131.0
+    assert state.recovery_reinclude_emitted is True
+    assert state.last_status == "healthy"
+    assert state.last_score == 0.0
+    assert state.pending_status is None
+    assert state.low_sample_hold_count == 0
+
+
+def test_recovery_reinclude_silent_holds_before_window():
+    # 20s excluded, window 30s -> not yet due; nothing changes.
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    state.excluded_since_monotonic = 100.0
+    policy = EnginePolicy(recovery_window_seconds=30)
+    out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=120.0)
+    assert out is None
+    assert state.excluded_since_monotonic == 100.0
+    assert state.recovery_reinclude_emitted is False
+    assert state.last_status == "unhealthy"
+
+
+def test_recovery_reinclude_silent_reprobes_each_window():
+    # The clock is RE-ARMED (not cleared) on re-admit, so a backend that stays
+    # silent is re-probed once per recovery window — never abandoned in a stuck
+    # "down; but the detector thinks it's fine" limbo across a run boundary.
+    state = BackendState(last_status="unhealthy", last_score=0.9)
+    state.excluded_since_monotonic = 100.0
+    policy = EnginePolicy(recovery_window_seconds=30)
+    first = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=140.0)
+    assert first is not None
+    assert state.excluded_since_monotonic == 140.0          # re-armed to now
+    # Too soon (15s < 30s window) -> no re-probe yet.
+    assert recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=155.0) is None
+    # Another full window elapsed -> re-probe again (not a one-shot).
+    third = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=175.0)
+    assert third is not None
+    assert third.status == "healthy"
+
+
+def test_recovery_reinclude_silent_noop_when_not_excluded():
+    # A backend not on the exclusion clock is never spontaneously re-admitted.
+    state = BackendState(last_status="healthy", last_score=0.0)
+    policy = EnginePolicy(recovery_window_seconds=30)
+    out = recovery_reinclude_silent("b1:8080", state, policy, now_monotonic=999.0)
+    assert out is None
+    assert state.excluded_since_monotonic is None

@@ -497,6 +497,58 @@ def recovery_reinclude(
     return None
 
 
+def recovery_reinclude_silent(
+    backend_id: str,
+    state: BackendState,
+    policy: EnginePolicy,
+    now_monotonic: float,
+) -> AnomalyScore | None:
+    """Fix B (silent-backend variant) — re-admit a backend that is on the
+    exclusion clock but produced NO features this cycle.
+
+    ``recovery_reinclude`` only runs for backends present in the metrics query.
+    A benched backend gets zero NGINX traffic, so it emits no rows, drops out of
+    the query entirely, and is never iterated — its exclusion clock freezes and it
+    stays ``down;`` for the rest of the run (the no-recovery trap). This variant is
+    driven off the detector's own per-backend ``state`` instead of query presence:
+    the *absence* of fresh metrics IS the "no new adverse evidence" signal, so once
+    the exclusion has aged past ``recovery_window_seconds`` we emit ONE probationary
+    ``healthy`` re-admit (idempotent via ``recovery_reinclude_emitted``). The sidecar
+    then routes a trickle to it at floor weight; it either proves healthy and stays
+    or re-sheds and is re-excluded next cycle (the clock restarts via
+    ``recovery_reinclude``).
+
+    The stability-gate memory is reset to a clean ``healthy`` slate on re-admit, so
+    the gate does not immediately re-confirm the stale ``unhealthy`` status and
+    re-exclude the backend before it has had a fair re-test. The sidecar's live-pool
+    membership guard drops the verdict if the backend was meanwhile scaled away, so
+    re-admitting a departed backend is a harmless no-op.
+    """
+    if state.excluded_since_monotonic is None:
+        return None
+    excluded_for = now_monotonic - state.excluded_since_monotonic
+    if excluded_for >= policy.recovery_window_seconds:
+        # Re-ARM the exclusion clock to NOW (rather than clearing it to None) so
+        # that if the backend stays silent — the sidecar never routed to it, or it
+        # is stuck excluded across a bench/run boundary — we re-probe it again after
+        # the next window instead of giving up after a single attempt and leaving it
+        # in a "detector thinks it's fine, sidecar still has it down;" limbo. The
+        # re-arm also rate-limits the probe to once per recovery window. Once the
+        # backend returns to the metrics query and is confirmed healthy,
+        # recovery_reinclude() clears the clock for real.
+        state.excluded_since_monotonic = now_monotonic
+        state.recovery_reinclude_emitted = True
+        # Hand the backend back with a clean slate so apply_stability_gate doesn't
+        # re-confirm the stale unhealthy status and re-exclude it next cycle.
+        state.last_status = "healthy"
+        state.last_score = 0.0
+        state.pending_status = None
+        state.pending_count = 0
+        state.low_sample_hold_count = 0
+        return AnomalyScore(backend_id, "healthy", 0.0)
+    return None
+
+
 def _severity_for_status(status: str) -> str | None:
     """Map the three-tier health status onto the operator-ui alert bucket.
     healthy verdicts aren't alerts, so they get no severity."""

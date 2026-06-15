@@ -76,6 +76,7 @@ from runloop import (                                          # noqa: E402
     peer_suppress_verdicts,
     policy_from_payload,
     recovery_reinclude,
+    recovery_reinclude_silent,
     score_to_event_payload,
     serialize_engine_state,
     should_publish,
@@ -314,6 +315,49 @@ def _inference_cycle(db_conn, redis_client) -> int:
                 payload=score_to_event_payload(score, model_version),
             )
         ISOLATE_TOTAL.labels(backend=score.backend_id, status=score.status).inc()
+        published += 1
+
+    # ── Pass 3b (Fix B, silent-backend recovery): a benched backend gets zero
+    # NGINX traffic, so it emits no metric rows, drops out of the query, and never
+    # appears in `scored` — which means recovery_reinclude (Pass 3) is NEVER called
+    # for it and it stays `down;` for the rest of the run (the no-recovery trap).
+    # Drive recovery off the detector's own per-backend state, not query presence:
+    # for any backend on the exclusion clock that produced no features this cycle,
+    # emit the same probationary "healthy" re-admit once it has aged past the
+    # recovery window so the sidecar can re-route a trickle and let it earn its
+    # health back. The sidecar's live-pool membership guard drops the verdict if the
+    # backend was meanwhile scaled away, so this is safe.
+    scored_ids = {f.backend_id for (f, _s, _st) in scored}
+    for backend_id, state in list(_backend_states.items()):
+        if backend_id in scored_ids:
+            continue
+        readmit = recovery_reinclude_silent(backend_id, state, policy, now_mono)
+        if readmit is None:
+            continue
+        print(f"[{SERVICE_NAME}] recovery re-admit (silent backend) backend_id={backend_id} "
+              f"(excluded > {policy.recovery_window_seconds}s, no metrics this cycle)", flush=True)
+        readmit_payload = score_to_event_payload(readmit, model_version)
+        cycle_outputs.append(readmit_payload)
+        try:
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    BACKEND_HEALTH_INSERT,
+                    (now_dt, readmit.backend_id, readmit.status, readmit.score),
+                )
+        except Exception as exc:                        # noqa: BLE001
+            print(f"[{SERVICE_NAME}] backend_health write failed for {readmit.backend_id}: {exc}", flush=True)
+        # safe_mode pauses ALL publishes; otherwise the re-admit MUST reach the bus
+        # (should_publish would otherwise drop a healthy verdict).
+        if policy.safe_mode:
+            continue
+        with METRICS.time_publish(ANOMALY_CHANNEL):
+            publish_envelope(
+                redis_client,
+                channel=ANOMALY_CHANNEL,
+                source=SERVICE_NAME,
+                payload=readmit_payload,
+            )
+        ISOLATE_TOTAL.labels(backend=readmit.backend_id, status=readmit.status).inc()
         published += 1
 
     now_iso = now_dt.isoformat()
