@@ -13,9 +13,9 @@ dials but no single system that decides what to do. So latency spikes when
 demand surges, and resources sit idle when it falls, which hurts most for small
 and medium teams that cannot run heavy container-orchestration platforms.
 
-This thesis presents SmartLoad, a lightweight middleware that brings traffic
-routing, demand forecasting, anomaly detection, and proactive scaling into one
-decision loop, with a deterministic safety fallback on every action. SmartLoad
+This thesis presents SmartLoad, a lightweight middleware that brings demand
+forecasting, anomaly detection, anomaly-aware request routing, and proactive
+scaling into one decision loop, with a deterministic safety fallback on every action. SmartLoad
 watches live telemetry from the backend pool, runs several decision engines in
 parallel over a shared message bus, and applies a strict priority order: health
 constraints first, learned recommendations second, and a classical rule as the
