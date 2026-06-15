@@ -5,17 +5,16 @@ has a **ready-to-paste prompt** — open a fresh Claude Code session and paste t
 to start that task. Full scope/acceptance lives in the linked GitHub issue; the prompt
 just launches it correctly (right branch, right file lane, read-the-issue-first).
 
-**Context (what already landed):** the spike-robustness fix stack + the ablation
-harness are committed in **PR #184** (`fix/anomaly-overload-exclusion`). Audit =
-`audit/REPORT.md`; claim/plan = `audit/THESIS_ROADMAP.md`; benchmark results =
-`experiments/adaptive-advantage/README.md`. The RUNS=2 **ablation** completed — its
-per-fix contribution table is in the benchmark README + on **#180** (closed): the
+**Context (what already landed in `main`):** PR **#184** (spike-robustness fix stack +
+ablation harness) and PR **#192** (locust image + ablation results) are **merged**; PR
+**#193** (demo-ui results) is open — merge it. Audit = `audit/REPORT.md`; claim/plan =
+`audit/THESIS_ROADMAP.md`; benchmark results = `experiments/adaptive-advantage/README.md`;
+**thesis-update prompt = `audit/THESIS_UPDATE_PROMPT.md`**. The **ablation** is done — the
 **anti-concentration clamp is the dominant fix** (removing it costs **+15% C_spike
-errors**), the pin is secondary (+1.8), the `#3` guard/reset are insurance.
+errors**), pin secondary (+1.8), `#3` guard/reset are insurance.
 
-**Base branch for all tasks:** `fix/anomaly-overload-exclusion` (PR #184) until it
-merges into `main`, then `main`. Always branch off it; open a PR per task linking its
-issue.
+**Base branch for all tasks: `main`** (PR #184 + #192 merged). Branch off `main`; open a
+PR per task linking its issue.
 
 **⚙️ Benchmark tooling — for ANY task that runs or creates a benchmark:** use the
 pre-built **`smartload-locust:latest`** image (Dockerfile:
@@ -51,49 +50,61 @@ Scaling is scoped out, so the thesis spine is the **routing/detection wins** (B_
 D_slow) + the **honest C_spike finding**, all at equal capacity. That makes the
 finalize-the-thesis list short:
 
-- **BEFORE (do to finalize):** D1 (lock Track A) · D3 (PPO framing) · **#181** (stats) ·
-  **#186** (methodology) · **#187** (limitations) · the **ablation table** (running) · the
-  audit (✅ done) → then the **§3 reconciliation pass**.
-- **AFTER / Future Work (cite, don't block):** **#183** (flap → documented limitation) ·
-  **#185** (10v5/scaling) · **#182** (integration test) · **#188** (PPO code retire) ·
-  **#189** (forecast) · **#190** (heterogeneous bench) · all optional polish (§2).
+- **BEFORE (do to finalize) — see §1 PHASE 1:** the **THESIS UPDATE** (paste
+  `audit/THESIS_UPDATE_PROMPT.md`) ‖ **#181** (stats) ‖ **#186** (methodology) ‖ **#187**
+  (limitations). Decisions D1 (Track A) + D3 (PPO framing). Inputs ready: ablation table
+  (✅ done), audit (✅ done), demo-ui (✅ PR #193).
+- **AFTER / Future Work (cite, don't block) — §1 PHASE 3:** **#182**, **#188**, **#183 →
+  #185**, **#189 → #190**, optional polish (§2).
 
 ---
 
-## 1. Open tasks — with launch prompts
+## 1. Execution order — paste a prompt to start each task
 
-### BEFORE the thesis — critical path (finalize with these; independent, run in parallel)
+**Legend:** **‖** = runs in PARALLEL with the others in its group (each owns different
+files — see the §4 ownership map). **→** = sequential (the next needs the prior).
+**Base branch for everything is now `main`** (PR #184 + #192 merged).
 
-**#181 · T1.2 — Statistical rigor in `compare.py`**
-> Work on GitHub issue **#181** (mean ± 95% CI in `experiments/adaptive-advantage/compare.py`). Read the issue first for the full DoD and the file-ownership rules. Branch off `fix/anomaly-overload-exclusion`. Add per-phase **mean ± stdev / 95% CI** across runs + a significance flag vs baseline; **stdlib `statistics` only** (no numpy/scipy); keep the CLI and the `GET-/-<phase>` parsing contract; single-run input must degrade to `n/a` gracefully. Verify against `results/20260615T124519Z` (3 runs). Touch **only** `compare.py`. Open a PR linking #181.
+### ▶ PHASE 1 — FINALIZE THE THESIS  *(your priority — start now; [A]–[D] all parallel)*
 
-**#186 · T1.7 — Methodology write-up** *(Methodology chapter source)*
-> Work on GitHub issue **#186**. Read the issue first. Write **only** `audit/METHODOLOGY.md` covering closed/open-loop, the queue-knee math (`QUEUE_MAX`/`WORKERS`/`max_fails=0`), the 5-phase shape, 5v5-vs-10v5 + the pin/reset hygiene, organic anomaly injection, and a reproducibility checklist. Source facts from `experiments/adaptive-advantage/*` + `audit/REPORT.md`. Do **not** edit `thesis/**`. Open a PR linking #186.
+**[A] ‖ THESIS UPDATE — the main task**  *(owns `thesis/**`)*
+> Open a fresh session and paste the **full prompt in `audit/THESIS_UPDATE_PROMPT.md`**. It corrects the chapters to the new ground truth: kills the (now-FALSE) "monotone heuristic beats round-robin" claim, retires the superseded `baseline-vs-smartload` bench and re-points RQ1/RQ3 to `adaptive-advantage` (equal-capacity), replaces both per-phase tables with the new numbers, and adds the decisive **anomaly-driven exclusion** headline + the ablation. Locate edits by quoted text (line numbers drift); coordinate if another agent edits `thesis/` (one chapter-group at a time, pull first). **This is the long pole — start it first.**
 
-**#187 · T1.8 — Limitations & Future-Work write-up** *(Limitations chapter source)*
-> Work on GitHub issue **#187**. Read the issue first. Write **only** `audit/LIMITATIONS.md`: forecast decoupling (#189), routing-ties-RR-on-homogeneous (#190), monotone cut-rule, undeployed PPO (#188), autoscaler flap worked-around (#183), no-recovery-across-restart class — each mapped to its Future-Work item. Do **not** edit `thesis/**`. Open a PR linking #187.
+**[B] ‖ #181 — Statistical rigor in `compare.py`**  *(produces the CI the thesis macros need)*
+> Work on GitHub issue **#181**. Read the issue first. Branch off `main`. Add per-phase **mean ± stdev / 95% CI** across runs + a significance flag vs baseline; **stdlib `statistics` only**; keep the CLI + the `GET-/-<phase>` parsing contract; single-run input degrades to `n/a`. Verify against `results/20260615T124519Z` (3 runs). Touch **only** `compare.py`. Open a PR linking #181.
 
-### AFTER the thesis — Future Work (cite as Future Work; **none gate finalizing**)
+**[C] ‖ #186 — Methodology write-up**  *(Methodology-chapter source; [A] may also pull facts straight from the README/audit)*
+> Work on GitHub issue **#186**. Read the issue first. Branch off `main`. Write **only** `audit/METHODOLOGY.md` (closed/open-loop, the queue-knee math `QUEUE_MAX`/`WORKERS`/`max_fails=0`, the 5-phase shape, 5v5-vs-10v5 + pin/reset hygiene, organic anomaly injection, reproducibility checklist). Source from `experiments/adaptive-advantage/*` + `audit/REPORT.md`. Do **not** edit `thesis/**`. Open a PR linking #186.
 
-**#185 · S4 — Clean 10v5 (scaling) benchmark** — *scoped out by D2 (no scaling claim); future work*
-> Work on GitHub issue **#185** (clean 10v5 run). Read the issue first. Run `MAX_BACKENDS=10 MIN_BACKENDS=1 ... RUNS=3 bash experiments/adaptive-advantage/run.sh` (it uses the pre-built `smartload-locust` image automatically), capture per-phase + `scaling_audit.json`, add a clean 10v5 table to `experiments/adaptive-advantage/README.md`, and state plainly whether scale-out helps or the autoscaler flap (#183) churns capacity. **Run after #183 lands.** Touch only the README 10v5 section. Open a PR linking #185.
+**[D] ‖ #187 — Limitations & Future-Work write-up**  *(Limitations-chapter source)*
+> Work on GitHub issue **#187**. Read the issue first. Branch off `main`. Write **only** `audit/LIMITATIONS.md` (forecast decoupling #189, routing-ties-RR-on-homogeneous #190, monotone cut-rule, undeployed PPO #188, autoscaler flap worked-around #183, no-recovery-across-restart) — each mapped to its Future-Work item. Do **not** edit `thesis/**`. Open a PR linking #187.
 
-**#182 · T1.3 — Coupled-loop integration test** — *reproducibility insurance, not thesis content*
-> Work on GitHub issue **#182** (spike-invariants integration test). Read the issue first — note `tests/integration/` **already exists** (reuse the `stack_ready` fixture + `_chaos.set_backend_delay` + the `slow` marker; do NOT recreate infra). Branch off `fix/anomaly-overload-exclusion`. Add **only** `tests/integration/test_spike_invariants.py` asserting: no benching cascade (pool ≥ quorum), no stuck-`down` healthy backend, routing skew ≤1.33:1, spike error rate < threshold. Include the teeth check (disable a fix → test fails). Open a PR linking #182.
+### ▶ PHASE 2 — DEMO-UI (the results presentation)  *(✅ already done — just merge)*
 
-**#183 · T2.1 — Consolidate the autoscaler controllers** — *the flap is a documented limitation now (#187)*
-> Work on GitHub issue **#183**. Read the issue first. The deployed `target` controller flaps; the anti-flap lives on the inert `step` controller. Pick one (recommend: port the `step` anti-flap onto `target`), make scale-in/out use a consistent demand signal, delete the loser, add a flap regression test, validate with the 10v5 run. Touch **only** `services/autoscaler/**`, `tests/unit/autoscaler/**`, and the `autoscaler` block of `docker-compose.yml`. Open a PR linking #183.
+**✅ PR #193** updated the demo-ui with the new results + the honest C_spike/limitations framing. **Merge it.** The UI reads ONE data file (`tools/demo-ui/web/public/results/results.json`) per `tools/demo-ui/RESULTS_INJECTION_GUIDE.md` — no component edits. To refresh it again later (e.g. once #181 adds CI, or macros get final numbers):
+> Update the SmartLoad demo-ui with new benchmark results — **data only**. Per `tools/demo-ui/RESULTS_INJECTION_GUIDE.md`, edit `tools/demo-ui/web/public/results/results.json` (the `schema.ts`→`adapter.ts`→`load.ts` seam; a suite = systems × configurations × metrics; `value:null` renders PENDING; never edit components). Keep numbers accurate to `experiments/adaptive-advantage/README.md` + `ABLATION.md`, keep the honest framing (exclusion wins; C_spike tie; the limitations). Validate the JSON resolves against the schema; open a PR to `main`.
 
-**#188 · T4.1 — PPO: retire or train+deploy** — *decision D3 = retire*
-> Work on GitHub issue **#188** (decision D3 = retire, recommended). Read the issue first. Option A: quarantine/remove `services/rl-engine/policies/ppo/` + its selection path + compose/docs refs, add a note for `audit/LIMITATIONS.md`. Touch **only** `services/rl-engine/**`, `tests/unit/rl-engine/**`, and the `rl-engine` compose block. Open a PR linking #188.
+### ▶ PHASE 3 — AFTER the thesis (Future Work; **NONE gate finalizing**)
 
-### Track B / deeper future work (only if you later extend to A+B)
+Order: **‖ #182** and **‖ #188** anytime · **#183 → #185** · *(Track B)* **#189 → #190** · then optional polish (§2).
 
-**#189 · T3.1 — Fix the forecast (load coupling)** — highest-value correctness item.
-> Work on GitHub issue **#189** (decision D5 = blend first). Read the issue first. Make the scale signal track live offered-rps so the autoscaler stops flapping; validate with a periodic-load scenario + the 10v5 run (#185); add a rising-load→rising-forecast test. Touch **only** `services/forecasting/**` (+ its tests); coordinate with #183. Open a PR linking #189.
+**‖ #182 · T1.3 — Coupled-loop integration test**  *(reproducibility insurance)*
+> Work on GitHub issue **#182**. Read the issue first — `tests/integration/` **already exists** (reuse the `stack_ready` fixture + `_chaos.set_backend_delay` + the `slow` marker; do NOT recreate infra). Branch off `main`. Add **only** `tests/integration/test_spike_invariants.py` asserting: no benching cascade (pool ≥ quorum), no stuck-`down` healthy backend, routing skew ≤1.33:1, spike error rate < threshold. Include the teeth check (disable a fix → test fails). Open a PR linking #182.
 
-**#190 · T3.2/S5 — Heterogeneous-capacity benchmark** — the honest routing test.
-> Work on GitHub issue **#190**. Read the issue first. Add `experiments/heterogeneous-bench/**` with mixed-`WORKERS` backends (reuse the adaptive-advantage structure **and the `smartload-locust:latest` image** — build-if-missing, NO per-side `pip install`; see "Benchmark tooling" above); compare RR vs SmartLoad (vs PPO if trained) on p50/p95/p99 + SLO violations; RUNS≥3 with CI. Touch only the new dir + the `test-backend` compose block. Open a PR linking #190.
+**‖ #188 · T4.1 — PPO: retire (D3)**
+> Work on GitHub issue **#188** (D3 = retire). Read the issue first. Branch off `main`. Quarantine/remove `services/rl-engine/policies/ppo/` + its selection path + compose/docs refs; add a note for `audit/LIMITATIONS.md`. Touch **only** `services/rl-engine/**`, `tests/unit/rl-engine/**`, the `rl-engine` compose block. Open a PR linking #188.
+
+**#183 · T2.1 — Consolidate the autoscaler controllers**  *(→ unblocks #185)*
+> Work on GitHub issue **#183**. Read the issue first. Branch off `main`. The deployed `target` controller flaps; the anti-flap lives on the inert `step` controller. Port the `step` anti-flap onto `target`, make scale-in/out use a consistent demand signal, delete the loser, add a flap regression test. Touch **only** `services/autoscaler/**`, `tests/unit/autoscaler/**`, the `autoscaler` compose block. Open a PR linking #183.
+
+**#185 · S4 — Clean 10v5 (scaling) benchmark**  *(run AFTER #183)*
+> Work on GitHub issue **#185**. Read the issue first. Run `MAX_BACKENDS=10 MIN_BACKENDS=1 ... RUNS=3 bash experiments/adaptive-advantage/run.sh` (uses the `smartload-locust` image automatically), capture per-phase + `scaling_audit.json`, add a clean 10v5 table to `experiments/adaptive-advantage/README.md`, state whether scale-out helps or the flap churns capacity. Touch only the README 10v5 section. Open a PR linking #185.
+
+**#189 · T3.1 — Fix the forecast (load coupling)**  *(Track B; → #190)*
+> Work on GitHub issue **#189** (D5 = blend first). Read the issue first. Branch off `main`. Make the scale signal track live offered-rps so the autoscaler stops flapping; validate with a periodic-load scenario + #185; add a rising-load→rising-forecast test. Touch **only** `services/forecasting/**` (+ tests); coordinate with #183. Open a PR linking #189.
+
+**#190 · T3.2/S5 — Heterogeneous-capacity benchmark**  *(Track B; the honest routing test)*
+> Work on GitHub issue **#190**. Read the issue first. Branch off `main`. Add `experiments/heterogeneous-bench/**` with mixed-`WORKERS` backends (reuse the adaptive-advantage structure **and the `smartload-locust:latest` image** — build-if-missing, NO per-side `pip install`); compare RR vs SmartLoad on p50/p95/p99 + SLO violations; RUNS≥3 with CI. Touch only the new dir + the `test-backend` compose block. Open a PR linking #190.
 
 ---
 
@@ -106,9 +117,16 @@ finalize-the-thesis list short:
 
 ---
 
-## 3. The thesis (do LAST — coordinate, don't collide)
-A separate agent is writing `thesis/` **without** today's results. **No agent here touches `thesis/`** until that agent finishes. Then, the reconciliation pass:
-> After the thesis-writing agent finishes AND **#186 + #187** have landed (D2 = equal-capacity, so **#185 is NOT a gate**): read all of `thesis/report/chapters/` + the abstract/conclusion, and reconcile against today's evidence — fold in `audit/METHODOLOGY.md`, `audit/LIMITATIONS.md`, the `adaptive-advantage` **equal-capacity (5v5)** results (PR #184) + the ablation table, and the `audit/REPORT.md` failure analysis. Produce `audit/THESIS_RECONCILIATION.md` first (chapter → currently-claims → now-true → backing-artifact → keep/update/add), confirm the central claim is **Track A** and **RQ1 is scoped to equal capacity** (scaling → Future Work), then apply the edits to the chapters. Flag any place today's results *contradict* the draft.
+## 3. The thesis update — this is PHASE 1 [A], the priority (NOT last)
+The full, ready-to-paste, chapter-by-chapter prompt is **`audit/THESIS_UPDATE_PROMPT.md`**
+(produced from a complete read-through of the current thesis vs the new results). Headline
+of that analysis: the thesis currently **CONTRADICTS** the new ground truth — it claims
+"the monotone heuristic beats round-robin," is anchored to the **superseded**
+`baseline-vs-smartload` tie, and **omits** the decisive exclusion wins + the ablation. The
+prompt fixes all of that, in order, quote-anchored.
+**Coordinate:** a separate agent has been writing `thesis/`; take one chapter-group at a
+time and `git pull` before each so you don't collide. Confirm the central claim is **Track
+A** and **RQ1 is scoped to equal capacity** (scaling → Future Work).
 
 ---
 
@@ -116,6 +134,7 @@ A separate agent is writing `thesis/` **without** today's results. **No agent he
 
 | Issue | Owns (edit freely) | Must NOT touch |
 |---|---|---|
+| **[A] thesis update** | `thesis/**` | everything else (pull facts from `audit/*` + `experiments/*`, read-only) |
 | #181 | `experiments/adaptive-advantage/compare.py` | everything else |
 | #182 | **new** `tests/integration/test_spike_invariants.py` | existing `tests/integration/*`, `pytest.ini`, `tests/unit/**`, `services/**`, `experiments/**` |
 | #183 | `services/autoscaler/**`, `tests/unit/autoscaler/**`, compose **`autoscaler`** block | `experiments/**`, other services, other compose blocks |
@@ -130,10 +149,10 @@ A separate agent is writing `thesis/` **without** today's results. **No agent he
 
 ---
 
-## 5. Suggested order (D2 = equal-capacity)
-1. **You:** settle the remaining decisions D1, D3, D4, D5 (§0). *(D2 ✅ done.)*
-2. **BEFORE the thesis** — parallel: **#181, #186, #187** (independent, low-risk).
-3. **§3 thesis reconciliation** — after the thesis agent finishes + #186/#187 land. *(This finalizes the thesis.)*
-4. **AFTER / Future Work** (any time, none gate the thesis): **#182**, **#183 → #185**, **#188**, then *(Track B)* **#189 → #190**.
+## 5. Execution order at a glance (D2 = equal-capacity)
+0. **You:** settle decisions **D1** (Track A) + **D3** (PPO framing). *(D2 ✅; D4/D5 only matter for Phase 3.)*
+1. **PHASE 1 — finalize the thesis** *(parallel)*: **[A] thesis update** (`audit/THESIS_UPDATE_PROMPT.md`) ‖ **#181** ‖ **#186** ‖ **#187**. → the thesis is done when [A] lands (it folds in B/C/D).
+2. **PHASE 2 — demo-ui**: **merge PR #193** (done). Re-run the demo-ui prompt only if numbers change.
+3. **PHASE 3 — Future Work** (none gate the thesis): ‖ **#182**, ‖ **#188**; **#183 → #185**; *(Track B)* **#189 → #190**; optional polish (§2).
 
-*Living doc — update statuses as PRs land. Open issues: #181 #182 #183 #185 #186 #187 #188 #189 #190. Closed/done: #180 (ablation, completed inline).*
+*Living doc — update statuses as PRs land. Open issues: #181 #182 #183 #185 #186 #187 #188 #189 #190. Done: #180 (ablation), PR #193 (demo-ui), PR #184/#192 (merged). Detailed thesis prompt: `audit/THESIS_UPDATE_PROMPT.md`.*
