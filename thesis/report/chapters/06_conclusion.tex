@@ -3,113 +3,101 @@
 
 This report set out to design, build, and evaluate a load-management middleware that
 schedules capacity ahead of demand rather than reacting after the fact, while staying
-safe enough to sit in the request path of a production service. This closing chapter
-draws the work together. It recaps the problem and the solution, states the headline
-results, reflects on what we learned as engineers, and lays out a roadmap for where
-the system goes next. The framing is the one the project
-has held throughout: report each result as it is, explain the judgment behind each
-decision, and let that engineering reasoning stand on its own.
+safe enough to sit in the request path of a production service. This chapter recaps the
+problem and solution, states the headline results, reflects on what we learned, and lays
+out a roadmap. It keeps the project's framing throughout: report each result as it is and
+let the engineering reasoning behind each decision stand on its own.
 
 \section{Summary of the Proposed Solution and Results}
 \label{conc:summary}
 
 \paragraph{The problem.} Conventional infrastructure couples three problems that
 compound under load. Autoscaling is \emph{reactive}: capacity is added only after a
-saturation signal has already degraded service, so the system spends its worst minutes
-under-provisioned. Routing is \emph{static}: a round-robin or least-connections
-scheduler distributes traffic without regard to which backend is actually healthy or
-fast at this instant, so a single slow or failing instance quietly taxes a fixed
-fraction of every request stream. And the obvious remedy, inserting learned models
-to predict demand, detect anomalies, and route adaptively, raises a third question:
-an opaque model that misfires in production needs a floor beneath it, which is exactly
-why operators want a safety net before they put learned components on the critical path.
+saturation signal has already degraded service. Routing is \emph{static}: a round-robin
+or least-connections scheduler ignores which backend is healthy or fast right now, so a
+single slow instance taxes a fixed fraction of every request stream. The obvious remedy,
+inserting learned models to predict demand, detect anomalies, and route adaptively,
+raises a third problem: an opaque model that misfires in production needs a floor
+beneath it before operators will put it on the critical path.
 
-\paragraph{The solution.} SmartLoad addresses these together as a single proactive
-control loop, structured as the three planes described in \cref{ch:design_solution}
-and \cref{ch:impl_overview}. An NGINX \emph{data plane} carries traffic and emits
-per-request telemetry. A \emph{decision plane} of three engines, namely demand
-forecasting, anomaly detection, and learned routing, turns that telemetry into
-predict-ahead decisions, which a \emph{control plane} of an autoscaler, a policy
-manager, and a load-balancer sidecar actuates by provisioning capacity and rewriting
-the upstream configuration. The planes talk over a five-channel Redis bus, so each
-component is decoupled and independently testable. The defining design discipline is
-that \emph{every learned model has a deterministic fallback beneath it}, namely a
-moving-average forecaster, a threshold anomaly rule, and a classical round-robin
-scheduler, and an operator override sits above the whole loop. This is what makes a learned stack safe to
-ship: the system degrades to a well-understood classical baseline the moment any model
-is absent, slow to load, or explicitly switched off, and it never loses safe behaviour
-in the process.
+\paragraph{The solution.} SmartLoad addresses these as a single proactive control loop
+of the three planes described in \cref{ch:design_solution} and \cref{ch:impl_overview}.
+An NGINX \emph{data plane} carries traffic and emits per-request telemetry. A
+\emph{decision plane} of three engines (demand forecasting, anomaly detection, and
+learned routing) turns that telemetry into predict-ahead decisions, which a
+\emph{control plane} of an autoscaler, a policy manager, and a load-balancer sidecar
+actuates by provisioning capacity and rewriting the upstream configuration. The planes
+communicate over a five-channel Redis bus, so each component is decoupled and
+independently testable. The defining discipline is that \emph{every learned model has a
+deterministic fallback beneath it}: a moving-average forecaster, a threshold anomaly
+rule, and a classical round-robin scheduler, with an operator override above the whole
+loop. This is what makes a learned stack safe to ship, because the system degrades to a
+well-understood baseline the moment any model is absent, slow to load, or switched off,
+without losing safe behaviour.
 
-\paragraph{The results.} The headline is that the mechanism is demonstrated end to end.
-The loop closes because the configuration and actuation chain is wired correctly and
-because the deterministic capacity-aware heuristic and the classical scheduler do the
-live work, not because any learned model drives the path. The deterministic floor is
-what lets each learned engine sit in the live path safely. The detailed reading is in
-\cref{ch:impl_testing} and \cref{ch:discussion}; the consolidated result is as follows.
+\paragraph{The results.} The mechanism is demonstrated end to end. The loop closes
+because the configuration and actuation chain is wired correctly and because the
+deterministic capacity-aware heuristic and the classical scheduler do the live work, not
+because any learned model drives the path. That deterministic floor is what lets each
+learned engine sit in the live path safely. The detailed reading is in
+\cref{ch:impl_testing} and \cref{ch:discussion}; the consolidated result follows.
 
 \begin{itemize}
   \item \textbf{Closed-loop proactive autoscaling works.} In the committed adaptive
         benchmark run, a forecast-driven burst grew the backend pool from its idle
-        baseline up to the configured capacity ceiling and then contracted it as demand
-        receded, with time-to-react on the order of seconds. The
-        forecast~$\rightarrow$~autoscaler~$\rightarrow$~sidecar loop closes against a
-        live stack, which is the affirmative answer to the project's
-        proactive-autoscaling research question.
+        baseline to the configured capacity ceiling and contracted it as demand receded,
+        with time-to-react on the order of seconds. The
+        forecast~$\rightarrow$~autoscaler~$\rightarrow$~sidecar loop closes against a live
+        stack, the affirmative answer to the project's proactive-autoscaling question.
         % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
   \item \textbf{The deployed anomaly engine closes the gradual-degradation gap.} The
         shipped \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
         $0.000$, the score of every stateless detector on that pattern, to \BManFone{}
-        (recall \BManRecall{}, precision \BManPrecision{}). This is the contribution that matters in the
-        live path: slow, sustained drift is exactly the failure mode a point-based rule
-        misses. The \texttt{trend\_rule} engine is the shipped default; the threshold
-        rule remains the deterministic fallback beneath it, and an Isolation Forest engine
-        \cite{liu2008isolationforest} is a selectable alternative. (A separate
-        threshold-versus-Isolation-Forest sweep over the operating range shows about
-        \BManAgree{} cell agreement, with the Isolation Forest the more aggressive of the two;
-        that sweep does not involve the deployed \texttt{trend\_rule} detector.)
+        (recall \BManRecall{}, precision \BManPrecision{}). Slow, sustained drift is exactly the
+        failure mode a point-based rule misses. The threshold rule remains the
+        deterministic fallback beneath the default, and an Isolation Forest engine
+        \cite{liu2008isolationforest} is a selectable alternative. A separate
+        threshold-versus-Isolation-Forest sweep, which does not involve the deployed
+        detector, shows about \BManAgree{} cell agreement, with the Isolation Forest the more
+        aggressive of the two.
   \item \textbf{The deterministic router is the routing contribution.} The deployed
-        capacity-aware monotone routing heuristic holds SLA violations to \BMrlMonoSla{} against
-        \BMrlRrSla{} for round-robin in the closed-loop benchmark, and it passes every
-        monotonicity probe. The trained PPO policy
-        \cite{schulman2017ppo,raffin2021sb3} is reported as an honest null result: it is
+        capacity-aware monotone heuristic holds SLA violations to \BMrlMonoSla{} against
+        \BMrlRrSla{} for round-robin closed-loop and passes every monotonicity probe. The
+        trained PPO policy \cite{schulman2017ppo,raffin2021sb3} is an honest null result:
         round-robin-equivalent (open-loop mean-reward gap \BMrlPpoReward{}), the worst contender
-        closed-loop at \BMrlPpoSla{} SLA violations, and is kept dormant in shadow mode. It
-        therefore contributes nothing to live routing; the value comes from the
-        deterministic heuristic running over the classical scheduler.
+        closed-loop at \BMrlPpoSla{} SLA violations, and kept dormant in shadow mode. The
+        live value comes from the deterministic heuristic over the classical scheduler.
   \item \textbf{The forecaster ships a reliable default with fallbacks in reserve.} The
-        deployed \texttt{harmonic\_residual} forecaster records the best overall accuracy
-        at \BMfcMape{} MAPE and lifts downstream SLA attainment by \BMfcSlaGain{}\,pp over the
-        reactive baseline. The moving-average model is the deterministic fallback beneath
-        it, and an ARIMA forecaster \cite{box2015timeseries} of order $(2,0,2)$ is an
-        optional alternative that fits out of distribution on these synthetic series and
-        ranks worst of the four.
+        deployed \texttt{harmonic\_residual} forecaster records the best accuracy at
+        \BMfcMape{} MAPE and lifts downstream SLA attainment by \BMfcSlaGain{}\,pp over the
+        reactive baseline. The moving-average model is its deterministic fallback, and an
+        ARIMA forecaster \cite{box2015timeseries} of order $(2,0,2)$ is an optional
+        alternative that fits out of distribution on these synthetic series and ranks
+        worst of the four.
   \item \textbf{The system is thoroughly tested.} Several hundred automated tests span the
-        unit, contract, integration, and end-to-end layers, and the benchmark harness is
-        itself a demonstrated asset: it surfaced the very issues that had to be resolved
-        before the loop could be observed closing.
+        unit, contract, integration, and end-to-end layers, and the benchmark harness
+        surfaced the very issues that had to be resolved before the loop could be observed
+        closing.
 \end{itemize}
 
-Taken together, these results establish that SmartLoad's architecture is sound and its
-control loop is real, that the deployed anomaly engine closes the gradual-degradation
-gap a point-based rule misses, that the deterministic capacity-aware router beats the
-strong baseline while the learned policy stays dormant as an honest null result, and
-that the deployed forecaster ships the most accurate model with deterministic fallbacks
-in reserve. The closed loop is carried by the configuration and actuation chain together
-with the deterministic heuristics and classical routing, not by any learned model
-running live.
+Together these establish that SmartLoad's architecture is sound and its control loop
+real: the deployed anomaly engine closes the gradual-degradation gap a point-based rule
+misses, the deterministic router beats the strong baseline while the learned policy stays
+dormant as an honest null result, and the deployed forecaster ships the most accurate
+model with fallbacks in reserve. The closed loop is carried by the actuation chain and
+the deterministic heuristics, not by any learned model running live.
 
 \subsection{Summary of contributions}
 \label{conc:contributions}
 
-\Cref{tab:conc:contributions} names the principal contributions of the work and the
-evidence that supports each. Three deserve to be read as first-class results rather
-than as a single headline. The closed-loop autoscaling result is the demonstrated win.
-The deterministic-fallback discipline is the design property that made it safe to put
-learned components in the live path at all. And the honest, product-shaped evaluation
-of the learned router is itself a contribution: measuring the trained policy against the
+\Cref{tab:conc:contributions} names the principal contributions and the evidence for
+each. Three stand out. The closed-loop autoscaling result is the demonstrated win. The
+deterministic-fallback discipline is the design property that made it safe to put learned
+components in the live path at all. And the honest, product-shaped evaluation of the
+learned router is itself a contribution: measuring the trained policy against the
 production task and reporting that it ties the strong baseline and contributes nothing
-live, with the cause named, is a more useful result than a tuned number with the
-conditions hidden.
+live, with the cause named, is more useful than a tuned number with the conditions
+hidden.
 
 \begin{table}[H]
   \centering
@@ -163,46 +151,41 @@ conditions hidden.
 \subsection{Lessons learned}
 \label{conc:lessons-learned}
 
-Three lessons recur across the project and are worth stating as engineering judgment,
-because each shaped a decision that a less careful process would have made differently.
+Three lessons recur across the project, each shaping a decision a less careful process
+would have made differently.
 
 \paragraph{A deterministic fallback is what makes a learned component safe to deploy.}
-The single most important design choice was insisting on a classical baseline beneath
-every model. This is not a hedge; it is the enabling condition. Because the threshold
-rule, the moving-average forecaster, and the round-robin scheduler are always present,
-we could put a learned router and a learned anomaly model into the live request path
-\emph{without putting production at risk}, and we could measure each learned engine
-against its own floor on a live stack rather than in a sterile offline harness. The
-fallback turns ``learned routing is risky'' from a reason not to build the system into a
-property the system simply guarantees.
+Insisting on a classical baseline beneath every model was not a hedge but the enabling
+condition. Because the threshold rule, the moving-average forecaster, and the round-robin
+scheduler are always present, we could put learned routing and anomaly models into the
+live request path without risking production, and measure each engine against its own
+floor on a live stack rather than in an offline harness. The fallback turns ``learned
+routing is risky'' from a reason not to build the system into a property the system
+guarantees.
 
 \paragraph{Building in vertical slices with tests at every layer kept the system
-reliable.} We built SmartLoad as vertical slices, namely data plane, decision plane,
-and control plane, and backed each slice with unit, contract, integration, and
-end-to-end tests as it landed. That discipline meant every layer was exercised before the next one
-depended on it, so the several hundred automated tests grew alongside the code instead of
-being bolted on at the end. When the benchmark harness later surfaced real issues, the
-test suite made them quick to pin down and fix, and the closed loop stayed trustworthy
-throughout.
+reliable.} We built SmartLoad as vertical slices (data, decision, and control planes),
+backing each with unit, contract, integration, and end-to-end tests as it landed. Every
+layer was exercised before the next depended on it, so the test suite grew alongside the
+code instead of being bolted on at the end. When the benchmark harness later surfaced
+real issues, the tests made them quick to pin down and fix.
 
 \paragraph{Pairing each learned engine with a proven baseline gives both safety and a
 path to improvement.} Every learned engine ships next to a classical counterpart it can
-be measured against: the PPO router \cite{schulman2017ppo} beside round-robin, the
-ARIMA forecaster \cite{box2015timeseries} beside the moving average, and the Isolation
-Forest detector \cite{liu2008isolationforest} beside the threshold rule. This pairing
-does double duty. It keeps the system safe, because the baseline is always there to fall
-back to, and it makes progress visible, because every learned engine has a clear,
-quantitative target to improve against on a live stack. Safety and a roadmap come from
-the same design choice.
+be measured against: the PPO router \cite{schulman2017ppo} beside round-robin, the ARIMA
+forecaster \cite{box2015timeseries} beside the moving average, and the Isolation Forest
+detector \cite{liu2008isolationforest} beside the threshold rule. This keeps the system
+safe, because the baseline is always there to fall back to, and makes progress visible,
+because every engine has a clear quantitative target to improve against on a live stack.
 
 \subsection{Honest limitations}
 \label{conc:limitations}
 
-Reporting each result as it stands also means stating plainly where the work stops.
+Reporting each result as it stands also means stating where the work stops.
 \Cref{tab:conc:limitations} sets out the principal limitations across the model,
-evaluation, deployment, and scope dimensions, each paired with the concrete step that
-would close it. None is a flaw in the architecture; each is a bounded next increment on
-a working base.
+evaluation, deployment, and scope dimensions, each paired with the step that would close
+it. None is a flaw in the architecture; each is a bounded next increment on a working
+base.
 
 \begin{table}[H]
   \centering
@@ -257,74 +240,69 @@ a working base.
 \section{Future Directions}
 \label{conc:future}
 
-The work delivered a focused scope end to end, and that base opens a roadmap whose
-leading items are the production-readiness gaps the audit surfaced. The directions below
-are ordered by leverage on turning the demonstrated loop into a deployable product, and
-each builds on what already works.
+The delivered scope opens a roadmap whose leading items are the production-readiness gaps
+the audit surfaced. The directions below are ordered by leverage on turning the
+demonstrated loop into a deployable product, and each builds on what already works.
 
 \paragraph{Build the real cloud and Kubernetes actuation paths.} The cloud and
 Kubernetes load-balancer adapters are stubs that raise \texttt{NotImplementedError}
-today, so the only live actuation backend is the Docker Compose path. The first
-production step is to build these actuation paths for real, against a managed load
-balancer and against Kubernetes endpoints, rather than treating them as routine
-extensions of an existing interface. This is construction work, not a configuration
-flip.
+today, leaving the Docker Compose path as the only live actuation backend. The first
+production step is to build these paths for real, against a managed load balancer and
+Kubernetes endpoints. This is construction work, not a configuration flip.
 
-\paragraph{Add configuration, secret, and model-ops infrastructure.} A deployable
-service needs a configuration and secret-management story in place of inline defaults,
-and a model-ops retraining pipeline so the learned engines can be refreshed on real
-traffic rather than shipped as static one-time artefacts. Both are prerequisites for
-running the stack beyond a single demonstration host.
+\paragraph{Add configuration, secret, and model-ops infrastructure.} A deployable service
+needs configuration and secret management in place of inline defaults, and a model-ops
+retraining pipeline so the learned engines can be refreshed on real traffic rather than
+shipped as static artefacts. Both are prerequisites for running the stack beyond a single
+demonstration host.
 
 \paragraph{Replace the proxy arrivals signal and add data-plane health checks.} The
 forecaster currently reads an upper-band proxy for request arrivals rather than a true
 arrivals signal, and the data plane has no first-class health-check surface. Wiring a
-genuine arrivals feed and adding data-plane health checks would harden the loop against
-the conditions a single benchmark host does not exercise.
+genuine arrivals feed and data-plane health checks would harden the loop against
+conditions a single benchmark host does not exercise.
 
-\paragraph{Run a multi-run head-to-head and finish the K8s/Helm packaging.} A broader,
-multi-run baseline-versus-SmartLoad comparison would produce statistically defensible
-per-phase deltas with confidence intervals in place of the single committed runs. Paired
-with the Helm templates and raw Kubernetes manifests, this unlocks a multi-host
-evaluation surface and the K8s HPA-versus-SmartLoad autoscaling comparison
-\cite{k8shpa} against the cloud-native baseline. \Cref{fig:conc:k8s} sketches the target
-topology. It is not the deployment the system runs on today: the evaluated stack runs
-under Docker Compose on a single host, as recorded in \cref{tab:conc:limitations}. In
-the planned layout each service becomes its own Deployment, the stateful components move
-to StatefulSets or managed equivalents, and a Kubernetes Horizontal Pod Autoscaler
-stands in for the SmartLoad autoscaler so the two scaling strategies can be measured side
-by side.
+\paragraph{Run a multi-run head-to-head and finish the K8s/Helm packaging.} A multi-run
+baseline-versus-SmartLoad comparison would produce per-phase deltas with confidence
+intervals in place of the single committed runs. Paired with Helm templates and raw
+Kubernetes manifests, it unlocks a multi-host evaluation surface and the K8s
+HPA-versus-SmartLoad autoscaling comparison \cite{k8shpa} against the cloud-native
+baseline. \Cref{fig:conc:k8s} sketches the target topology, which is not the deployment
+the system runs on today: the evaluated stack runs under Docker Compose on a single host,
+as recorded in \cref{tab:conc:limitations}. In the planned layout each service becomes
+its own Deployment, stateful components move to StatefulSets or managed equivalents, and a
+Kubernetes Horizontal Pod Autoscaler stands in for the SmartLoad autoscaler so the two
+strategies can be measured side by side.
 
 \paragraph{Retrain the learned engines on representative traffic.} The trained router
 needs heterogeneous-latency traces in which backend identity correlates with latency
 before it can improve on the deterministic heuristic, and the optional ARIMA forecaster
 needs in-distribution training before it can compete with the deployed
 \texttt{harmonic\_residual} model. With a model-ops pipeline in place, both can be
-refreshed and re-evaluated against their deployed deterministic counterparts.
+refreshed and re-evaluated against their deterministic counterparts.
 
 \paragraph{Build the multi-tenant SaaS phase.} A planned Phase-2 turns the single-tenant
-middleware into a managed offering: multi-tenancy with per-tenant isolation, tenant API
-keys and RBAC, operator-UI authentication, rate limiting, and an outbound webhook
-dispatcher for event notifications. These build naturally on the current architecture and
-open the path from middleware to a hosted product. The system shipped in this report is
-single-tenant, so the two designs that follow describe target behaviour rather than
-implemented features. \Cref{fig:conc:mt} shows the proposed isolation model, in which
-tenant identity is resolved once at the API edge and then carried through every storage
-write and every event channel, and \cref{fig:conc:webhook} shows the proposed webhook
-delivery path for customers who cannot subscribe to the internal Redis bus directly.
+middleware into a managed offering: per-tenant isolation, tenant API keys and RBAC,
+operator-UI authentication, rate limiting, and an outbound webhook dispatcher. These
+build on the current architecture and open the path from middleware to a hosted product.
+Because the shipped system is single-tenant, the two designs that follow describe target
+behaviour rather than implemented features. \Cref{fig:conc:mt} shows the proposed
+isolation model, in which tenant identity is resolved once at the API edge and carried
+through every storage write and event channel, and \cref{fig:conc:webhook} shows the
+proposed webhook delivery path for customers who cannot subscribe to the internal Redis
+bus directly.
 
 \paragraph{Explore additional learned anomaly models.} For temporal patterns that are
 only abnormal relative to their context, an LSTM-autoencoder anomaly engine
-\cite{su2019omnianomaly} is an appealing direction, trading a heavier training pipeline
-for sequence-aware detection that complements the point-based Isolation Forest.
+\cite{su2019omnianomaly} trades a heavier training pipeline for sequence-aware detection
+that complements the point-based Isolation Forest.
 
 \subsection{Phase-2 product roadmap}
 \label{conc:roadmap}
 
 Beyond sharpening the learned models, a separate track turns the single-tenant
-middleware into a managed offering. \Cref{tab:conc:roadmap} groups the planned
-Phase-2 work into four themes, each of which extends the current architecture rather
-than reworking it.
+middleware into a managed offering. \Cref{tab:conc:roadmap} groups the planned Phase-2
+work into four themes, each extending the current architecture rather than reworking it.
 
 \begin{table}[H]
   \centering
@@ -354,10 +332,10 @@ than reworking it.
   \end{tabularx}
 \end{table}
 
-The two diagrams below detail the multi-tenant SaaS theme from
-\cref{tab:conc:roadmap}, and a third details its packaging theme. All three depict the
-target Phase-2 design and not the system evaluated in this report, which remains
-single-tenant and runs under Docker Compose on a single host.
+The two diagrams below detail the multi-tenant SaaS theme from \cref{tab:conc:roadmap},
+and a third its packaging theme. All three depict the target Phase-2 design, not the
+system evaluated in this report, which remains single-tenant on a single Docker Compose
+host.
 
 \begin{figure}[tbp]
   \centering
@@ -380,11 +358,10 @@ single-tenant and runs under Docker Compose on a single host.
   \label{fig:conc:k8s}
 \end{figure}
 
-\Cref{fig:conc:roadmap} places these directions on a forward-looking timeline. It is
-deliberately distinct from the retrospective work breakdown structure in
-\cref{fig:imc:wbs}: where that chart records how the system was built across the
-academic year, this one marks the delivered phases against the planned hardening,
-production, and SaaS increments that follow.
+\Cref{fig:conc:roadmap} places these directions on a forward-looking timeline, distinct
+from the retrospective work breakdown structure in \cref{fig:imc:wbs}: where that chart
+records how the system was built across the academic year, this one marks the delivered
+phases against the planned hardening, production, and SaaS increments that follow.
 
 \begin{sidewaysfigure}
   \centering
@@ -427,14 +404,13 @@ SmartLoad set out to make adaptive load management both \emph{proactive} and
 control loop end to end while keeping a deterministic floor beneath every learned
 component, in the spirit of the self-managing systems the field has long argued for
 \cite{kephart2003autonomic}. The autoscaling loop is demonstrated, the deployed
-\texttt{trend\_rule} detector closes the gradual-degradation gap that point-based rules
-miss ($F_1$ $0.000 \rightarrow{}$ \BManFone{}), the deterministic capacity-aware router beats
-round-robin in the live path while the trained policy stays dormant as an honest null
-result, and the deployed \texttt{harmonic\_residual} forecaster ships the most accurate
-model with deterministic fallbacks in reserve. The focused scope is delivered, and what
-lies ahead is a production-readiness roadmap rather than a redesign: real cloud and
-Kubernetes actuation paths, a configuration and model-ops story, a true arrivals signal,
-data-plane health checks, and a SaaS path that grows the middleware into a managed
-offering. The architecture is sound, the results are real, and the discipline
-that produced this system, namely measure against the production task, keep a safe
-baseline, and build in tested slices, is the same discipline that will carry it forward.
+\texttt{trend\_rule} detector closes the gradual-degradation gap point-based rules miss
+($F_1$ $0.000 \rightarrow{}$ \BManFone{}), the deterministic router beats round-robin in the
+live path while the trained policy stays dormant as an honest null result, and the
+deployed \texttt{harmonic\_residual} forecaster ships the most accurate model with
+fallbacks in reserve. What lies ahead is a production-readiness roadmap rather than a
+redesign: real cloud and Kubernetes actuation paths, a configuration and model-ops story,
+a true arrivals signal, data-plane health checks, and a SaaS path that grows the
+middleware into a managed offering. The architecture is sound, the results are real, and
+the discipline that produced the system, namely measure against the production task, keep
+a safe baseline, and build in tested slices, is what will carry it forward.
