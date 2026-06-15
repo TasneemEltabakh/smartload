@@ -28,13 +28,12 @@ does not}. This chapter explains why the problem matters, what makes it hard,
 what we did and did not set out to do, how the method works in plain terms, what
 the prototype achieved, and how the rest of the report is organised.
 
-\slpitch{\textbf{SmartLoad} is a self-hosted middleware that inserts a
-telemetry-driven decision layer between client traffic and a pool of backend
-services. It keeps a classical NGINX load balancer as its data plane and adds an
-out-of-band control plane that detects misbehaving backends, forecasts demand,
-learns a routing policy from real traffic, and scales the pool ahead of
-saturation, all behind a \texttt{safe\_mode} switch that pins every engine to its
-deterministic fallback.}
+SmartLoad is a self-hosted middleware that inserts a telemetry-driven decision
+layer between client traffic and a pool of backend services. It keeps a classical
+NGINX load balancer as its data plane and adds an out-of-band control plane that
+detects misbehaving backends, forecasts demand, learns a routing policy from real
+traffic, and scales the pool ahead of saturation, all behind a \texttt{safe\_mode}
+switch that pins every engine to its deterministic fallback.
 
 \section{Motivation}
 \label{sec:intro:motivation}
@@ -196,7 +195,7 @@ the present phase so the work can demonstrate the core adaptive control loop end
 to end rather than spreading thinly across a wide feature set.
 \Cref{tab:intro:scope} summarises the boundary.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Single-tenant scope versus Phase 2 deferrals]{What the current single-tenant phase delivers, and what is deferred to the Phase~2 managed offering.}
   \label{tab:intro:scope}
@@ -235,7 +234,7 @@ arrives early enough to pre-warm capacity before saturation. Each question maps 
 a specific benchmark harness, and the answers are reported in
 \cref{ch:discussion}.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[The four research questions and their evaluation surfaces]{The four research questions and the evaluation surface that answers each.}
   \label{tab:intro:rqs}
@@ -295,7 +294,7 @@ to it. That fallback is what lets the learned parts be trusted in the request pa
 at all. \Cref{fig:intro:loop} sketches the loop at a glance; the detailed
 architecture is the subject of \cref{ch:design_solution}.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[node distance=10mm and 16mm]
   \node[slnode] (obs) {\textbf{Observe}\\telemetry from\\the pool};
@@ -319,7 +318,7 @@ forecast-driven autoscaling, and a learned shadow router, each able to collapse
 onto the same deterministic baseline that the \texttt{safe\_mode} switch can pin
 the whole system to at any moment.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[node distance=7mm and 8mm]
   % The three learned pillars
@@ -385,11 +384,11 @@ that converts that accuracy into a measurable downstream SLA gain. A
 moving-average predictor is the never-fails fallback that drives the loop when
 the default is unavailable, and an ARIMA model is an optional alternative. For
 anomaly detection, the production default is the interpretable trend-rule
-detector, which lifts gradual-degradation F1 from 0 to 0.845 where stateless
+detector, which lifts gradual-degradation F1 from 0 to \BManFone{} where stateless
 threshold and Isolation Forest detectors score essentially 0. An Isolation Forest
 detector ships as an opt-in alternative; in a separate decision-surface sweep
 that compares a static threshold against Isolation Forest (and does not involve
-the deployed trend-rule engine), the two agree about 91.4\% of the time, with the
+the deployed trend-rule engine), the two agree about \BManAgree{} of the time, with the
 disagreements being cases where Isolation Forest over-reacts.
 
 The learned PPO router performs on par with the strong, industry-standard

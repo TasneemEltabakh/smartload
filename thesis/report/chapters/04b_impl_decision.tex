@@ -19,7 +19,7 @@ handoffs relate, and records which engine each service actually deploys. This
 section explains why those choices were made and how the architecture turns each
 into a safe, reversible decision that the operator controls.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{cutover_models}
   \caption[Engine-wrapper cutover and trained-model handoffs]{Engine-wrapper cutover and trained-model handoffs, where each trained model ships and is selectable yet every service defaults to its analytic engine.}
@@ -70,7 +70,7 @@ degrades the service to its baseline rather than to an outage, and the
 \texttt{/health} endpoint reports which engine is actually running so the
 operator can see when a fallback has occurred.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{engine_bootstrap}
   \caption[Engine bootstrap and baseline fallback]{Engine bootstrap in \texttt{runloop.bootstrap\_engine()}, installing a trained model when its artefact is valid and otherwise degrading to the deterministic baseline.}
@@ -98,7 +98,7 @@ information. The tick interval and the telemetry query differ from one service t
 the next, while the control flow itself is shared, which is what lets the safety
 behaviour live in one reviewed place rather than being re-implemented per engine.
 
-\begin{figure}[p]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{runloop_seq}
   \caption[The per-service run-loop cycle]{The per-service run-loop cycle: read policy, query telemetry, build features, run the engine, and publish a decision only when the should-publish gate passes.}
@@ -116,7 +116,7 @@ was set aside and the reason. The pattern is consistent: SmartLoad adopts the
 lightest implementation that clears the relevant acceptance gate, and keeps the
 heavier candidate as a documented upgrade rather than a blocker.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Algorithm-selection decisions across the decision plane]{Algorithm-selection decisions across the decision plane.}
   \label{tab:imb:algo_choices}
@@ -168,33 +168,51 @@ chapter.
 
 \subsection{Datasets}\label{imb:datasets}
 
-SmartLoad draws on four public datasets, each chosen for a specific engine and a
-specific reason.
+SmartLoad draws on a mix of real public traces and deterministic synthetic
+workloads, each chosen for a specific engine and a specific reason. The real
+traces ground the engines against measured production demand; the synthetic
+profiles let every benchmark sweep controlled, repeatable load shapes.
 
-\textbf{Google Borg cluster traces} \cite{verma2015borg, tirmazi2020borg}
-provide month-long records of task scheduling, resource requests, and machine
-utilisation across a production warehouse-scale cluster. We use them as the
-reference shape for realistic load-arrival patterns and to ground the
-autoscaler's capacity bands against utilisation seen in a real cluster, rather
-than against a synthetic curve of our own invention.
+\textbf{Real demand traces.} Three public per-minute request-rate traces drive
+the forecasting and autoscaler evaluations. The \textbf{Azure Functions 2019}
+trace \cite{shahrad2020serverless} is the primary one: fourteen days of
+serverless invocation counts with a smooth diurnal shape, used as the realistic
+baseline demand curve. The \textbf{1998 FIFA World Cup} access logs
+\cite{arlitt2000worldcup} contribute genuine flash-crowd behaviour, with windows
+centred on the trace's largest peaks so each evaluation replays a real surge. The
+\textbf{Alibaba 2018 cluster trace} \cite{guo2019alibaba} supplies a bursty
+demand-shape proxy, carrying instances launched per minute rather than HTTP
+requests, and is included as a numerically demanding stress case. Each trace is
+stored as a per-minute request-rate series and is normalised to the benchmark's
+target peak rate before replay.
 
-\textbf{Alibaba microservice traces} \cite{guo2019alibaba} record per-call
-latencies and call-graph topology across a large microservice deployment. These
-are the training corpus for the learned routing policy: each trace window is
-replayed as a set of per-backend latency snapshots, from which the policy learns
-which backend is likely to be fastest in the next interval. One useful property
-of these traces, which shapes the routing discussion in \cref{imb:ppo_finding},
-is that the latency across backends is fairly \emph{uniform}.
+\textbf{Routing-policy training trace.} The learned routing policy is trained on
+\textbf{Alibaba microservice traces} \cite{guo2019alibaba}, replayed window by
+window as per-backend latency snapshots from which the policy learns which backend
+is likely to be fastest in the next interval. One property of these traces, which
+shapes the routing discussion in \cref{imb:ppo_finding}, is that the latency
+across backends is fairly \emph{uniform}.
 
-\textbf{The Server Machine Dataset (SMD)} \cite{su2019omnianomaly} is a labelled
-multivariate anomaly-detection benchmark of 38 machine-level metric streams with
-ground-truth anomaly intervals. It was the first training corpus for the anomaly
-engine, chosen because it ships real anomaly labels, a rarity in this space, and
-so supports a defensible $F_1$ score on a held-out partition.
+\textbf{Anomaly-detection training corpus.} The \textbf{Server Machine Dataset
+(SMD)} \cite{su2019omnianomaly} is a labelled multivariate anomaly-detection
+benchmark of 38 machine-level metric streams with ground-truth anomaly intervals.
+It is the training corpus for the Isolation Forest anomaly engine, chosen because
+it ships real anomaly labels, a rarity in this space, and so supports a defensible
+$F_1$ score on a held-out partition.
 
-The Borg and Alibaba corpora are large and are kept out of version control by
-design; the engines consume them through training pipelines rather than at
-runtime, and the runtime image carries only the resulting model artefacts.
+\textbf{Synthetic workload profiles.} Alongside the real traces, each benchmark
+generates deterministic, seed-controlled synthetic profiles so that results are
+reproducible and cover shapes the real traces do not. The forecasting bench
+sweeps steady, diurnal, spiky, and ramp profiles; the autoscaler bench adds
+spike, sawtooth, and burst shapes; and the anomaly bench injects latency-spike,
+error-burst, and gradual-degradation patterns against clean controls. Because the
+profiles are generated from a fixed seed rather than drawn from the training
+data, they double as an out-of-distribution generalisation test.
+
+The real traces are large and are kept out of version control by design: they are
+fetched into a shared local corpus by a download script, the engines consume them
+through offline training and benchmark pipelines rather than at runtime, and the
+runtime image carries only the resulting model artefacts.
 
 \subsection{Software tools and libraries}\label{imb:libraries}
 
@@ -204,7 +222,7 @@ mature, widely audited implementation of its algorithm rather than a hand-rolled
 one: the research contribution of SmartLoad is the integration architecture and
 the closed-loop evaluation, not a new numerical kernel.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Decision-plane libraries and their justification]{Decision-plane libraries and their justification.}
   \label{tab:imb:tooling}
@@ -325,7 +343,7 @@ The slack \(k\) lets normal noise bleed away while sub-threshold upward
 deviations accumulate, so a slow ramp drives \(S_t\) past the alarm level long
 before any single window looks abnormal to a stateless rule. This is the
 mechanism behind the headline result: on gradually degrading backends
-\texttt{trend\_rule} reaches an \(F_1\) of \textbf{0.845} (recall \(0.791\)) while
+\texttt{trend\_rule} reaches an \(F_1\) of \BManFone{} (recall \BManRecall{}) while
 every stateless engine, the threshold rule and both Isolation Forest variants
 among them, scores \(F_1 = 0.000\), because a single-cycle cut-off never
 accumulates the evidence a slow drift presents.
@@ -344,14 +362,14 @@ Beneath the engine, the run loop applies a flip-confirmation debounce: a new
 verdict must persist for \texttt{flip\_confirmation\_cycles} consecutive cycles
 (two by default) before the backend's published state flips, which absorbs the
 single-cycle flapping a stateless rule would forward to the load balancer. The
-full algorithm and its parameters are given in \cref{bm:alg:trend-rule}.
+internal decision logic is summarised in \cref{fig:imb:alg_trend_rule}.
 
-\begin{sidewaysfigure}
+\begin{figure}[tbp]
   \centering
-  \includegraphics[width=\textwidth,height=\textheight,keepaspectratio]{alg_trend_rule}
+  \includegraphics[width=\textwidth,height=0.92\textheight,keepaspectratio]{alg_trend_rule}
   \caption[Internal decision logic of the trend\_rule engine]{Internal decision logic of the deployed \texttt{trend\_rule} engine, which advances per-backend temporal state and lets the worst of three channels win.}
   \label{fig:imb:alg_trend_rule}
-\end{sidewaysfigure}
+\end{figure}
 
 \subsection{Isolation Forest engine}\label{imb:isoforest}
 
@@ -362,7 +380,7 @@ makes no parametric assumption about the shape of the ``normal'' region, trains
 quickly, and scores in constant time per point.
 
 \paragraph{Training and validation.} The engine was trained to recognise the
-shape of healthy SmartLoad telemetry and reached an $F_1$ of $0.8012$ on a
+shape of healthy SmartLoad telemetry and reached an $F_1$ of \BMifFone{} on a
 held-out partition, clearing the project's $>0.80$ acceptance gate. That is a
 solid pass of the engine's own validation test, and it produced a trained
 detector that could be lined up directly against the threshold rule on
@@ -377,8 +395,8 @@ baseline's boundary, and a characteristic variance band. The threshold rule
 served as the reference signal, and the decision thresholds were searched
 empirically against a bench sweep of $(\text{latency}, \text{error rate})$ cells
 spanning the operating range. The trained engine agrees with the threshold
-baseline on \textbf{91.4\%} of cells (234 of 256), and every one of the 22
-remaining disagreements is in the value-adding direction: the threshold rule says
+baseline on \BManAgree{} of cells (\BManAgreeCells{} of \BManGridCells{}), and every
+remaining disagreement is in the value-adding direction: the threshold rule says
 \texttt{healthy} but the model catches a variance or spike pattern the rule
 misses. A good example is the live-stack 400\,ms latency injection, whose
 measured feature vector $(\text{max}=406, \text{avg}=162, \text{err}=0,
@@ -402,7 +420,7 @@ same train/serve construct gap that recurs across the learned engines, surfacing
 again for the routing policy in \cref{imb:ppo_mdp}, and here the calibration step
 is what closes it for the anomaly detector.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \includegraphics[width=\linewidth]{scoring_pipeline}
   \caption[The Isolation Forest scoring pipeline]{The Isolation Forest scoring pipeline and the coordinate-system bridge between the training feature space and the live serving feature space.}
@@ -414,7 +432,7 @@ stateful temporal rule, chosen because its flip-confirmation requirement gives i
 the strongest behaviour on the realistic failure mode this service most needs to
 catch: a gradual degradation that builds over several cycles. On a benchmark of
 gradually degrading backends \texttt{trend\_rule} reaches an $F_1$ of
-\textbf{0.845} (recall $0.791$), while every stateless engine, the threshold
+\BManFone{} (recall \BManRecall{}), while every stateless engine, the threshold
 rule and both Isolation Forest variants among them, scores $F_1 = 0.000$ on that
 same gradual-degradation case, because a single-cycle cut-off never accumulates
 the evidence a slow drift presents. The stateless threshold rule remains the
@@ -426,34 +444,14 @@ pattern working as designed: the deployed engine is chosen for its behaviour on
 the failure mode that matters, the never-fails fallback stands behind it, and
 switching between any of them is a one-line configuration change.
 
-\Cref{lst:imb:if_score} gives the scoring loop the engine runs each cycle.
-
-\begin{lstlisting}[language=Python, caption={Isolation Forest scoring loop (per backend, per cycle).}, label={lst:imb:if_score}]
-def score(features):
-    # Data-quality gate: too few samples to judge.
-    if features.sample_count < min_sample_count:
-        return AnomalyScore(features.backend_id, "healthy", 0.0)
-
-    # Assemble the raw feature vector in the bundle's feature order
-    # (real-millisecond latency, error fraction, variance).
-    x_raw = assemble(features, feature_order)
-
-    # Map into the model's coordinate system. After calibration the
-    # scaler and the model share one real-ms space, so this is identity-like.
-    x = production_scaler.transform([x_raw])
-
-    # Lower decision_function => more anomalous.
-    raw = model.decision_function(x)[0]
-
-    if raw > thresholds.healthy_above:
-        return AnomalyScore(features.backend_id, "healthy", 0.0)
-    if raw >= thresholds.unhealthy_below:
-        return AnomalyScore(features.backend_id, "degraded", 0.5)
-
-    severity = min(1.0, abs(raw - thresholds.unhealthy_below)
-                        / thresholds.unhealthy_score_scale)
-    return AnomalyScore(features.backend_id, "unhealthy", severity)
-\end{lstlisting}
+Each cycle the engine assembles the per-backend feature vector in the bundle's
+feature order (real-millisecond latency, error fraction, variance), maps it
+through the production scaler into the model's calibrated coordinate space, and
+reads the Isolation Forest decision score, where a lower score is more anomalous.
+The score is converted into a \texttt{healthy}, \texttt{degraded}, or
+\texttt{unhealthy} verdict against two thresholds, with a graded severity for the
+unhealthy case. A data-quality gate short-circuits to \texttt{healthy} whenever a
+backend has too few samples in the window to judge.
 
 \section{Demand Forecasting}\label{imb:forecast}
 
@@ -499,11 +497,11 @@ correction, then projects a genuine lead ahead of current demand over a fixed
 look-ahead horizon rather than echoing the trailing mean. That forward
 projection is what separates it from the moving-average fallback and is the
 source of its measured value. On the forecasting benchmark it records the lowest
-error of any engine, a mean absolute percentage error of \textbf{5.4\%} with
+error of any engine, a mean absolute percentage error of \BMfcMape{} with
 calibrated confidence-interval coverage. More importantly, its lead translates
 into a downstream improvement once the autoscaler consumes it: feeding the
 harmonic-residual prediction to the controller lifts downstream service-level
-objective attainment by \textbf{6.30 percentage points} over a reactive
+objective attainment by \BMfcSlaGain{} percentage points over a reactive
 controller fed the trailing rate, closing roughly a third of the gap between the
 reactive and the oracle-forecast ceilings. That downstream gain, not the headline
 accuracy figure alone, is why this engine leads in production.
@@ -558,15 +556,15 @@ structural shape over the last observed wobble. A real, statistically significan
 trend is projected at full strength, while a slope indistinguishable from noise is
 shrunk out over the lead so it does not provoke spurious scaling churn.
 
-\begin{sidewaysfigure}
+\begin{figure}[tbp]
   \centering
-  \includegraphics[width=\textwidth,height=\textheight,keepaspectratio]{alg_harmonic}
+  \includegraphics[width=\textwidth,height=0.92\textheight,keepaspectratio]{alg_harmonic}
   \caption[Internal pipeline of the harmonic-residual forecaster]{Internal pipeline of the deployed harmonic-residual forecaster, from harmonic regression and residual correction to the projected forecast with a conformal band.}
   \label{fig:imb:alg_harmonic}
-\end{sidewaysfigure}
+\end{figure}
 
 \Cref{fig:imb:alg_harmonic} traces this pipeline end to end. This decomposition is
-also why the engine earns its \textbf{6.30 percentage point} downstream advantage:
+also why the engine earns its \BMfcSlaGain{} percentage point downstream advantage:
 the forward-projected structural shape gives the autoscaler a few minutes of
 warning before demand actually rises, so capacity is provisioned ahead of the load
 rather than chasing it, which is precisely the lead a trailing-mean signal cannot
@@ -582,7 +580,7 @@ or below zero, and because a request rate cannot be negative the published
 accumulates to support a tighter lower bound. Until then the engine still publishes
 a usable point forecast and a one-sided upper bound, so the service never goes dark.
 
-Full pseudocode, the harmonic model, and parameters are in \cref{bm:alg:harmonic}.
+The forecast routine is summarised in \cref{fig:imb:alg_harmonic}.
 
 \subsection{ARIMA(2,0,2)}\label{imb:arima}
 
@@ -605,9 +603,9 @@ over $n$ points,
 
 \paragraph{Status.} ARIMA is wired and serving-ready behind
 \texttt{FORECAST\_ENGINE=arima}, and on the synthetic forecasting benchmark it
-records a mean absolute percentage error of \textbf{8.9\%}. That is a respectable
+records a mean absolute percentage error of \BMfcMapeArima{}. That is a respectable
 result, but it still trails the deployed \texttt{harmonic\_residual} engine at
-\textbf{5.4\%}, which is precisely why ARIMA is not the default: the
+\BMfcMape{}, which is precisely why ARIMA is not the default: the
 harmonic-residual forecaster is the more accurate engine on this workload. ARIMA
 also fits out of distribution on these synthetic series, so it stays an
 alternative trained option rather than the production choice. The
@@ -643,7 +641,7 @@ training time and at serving time, which guarantees train/serve parity: the
 serving plugin restores the normalisation constants from the artefact metadata so
 the policy sees inputs scaled exactly as it was trained on.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[PPO observation and action specification]{PPO observation and action specification (\texttt{rl-engine}).}
   \label{tab:imb:ppo_spec}
@@ -698,7 +696,7 @@ chosen backend on the \emph{next} state, which gives the policy correct credit
 assignment: it is rewarded for picking a backend that turns out to be fast in the
 following window, not for the state it already saw.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Terms of the PPO reward function]{Terms of the PPO reward function (\cref{imb:eq:reward}).}
   \label{tab:imb:reward}
@@ -764,7 +762,7 @@ a weight \emph{distribution} over the pool. Two natural mappings from a
 $\mathrm{Discrete}(N)$ policy to upstream weights exist, and the serving path
 rejects one and adopts the other; \cref{tab:imb:weight_map} records the choice.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Mapping the policy output to NGINX weights]{Mapping the discrete policy output to NGINX upstream weights.}
   \label{tab:imb:weight_map}
@@ -795,33 +793,15 @@ $0.7$) to the chosen (argmax) backend and splits the remaining mass evenly acros
 the other eligible backends. The small floor is deliberate: a backend with zero
 weight never receives traffic and so never reveals whether it has recovered,
 whereas a small share keeps NGINX's health probing live on every eligible
-backend. \Cref{lst:imb:ppo_rank} gives the ranking loop.
-
-\begin{lstlisting}[language=Python, caption={PPO serving: one forward pass, then argmax-dominant weighting.}, label={lst:imb:ppo_rank}]
-def act(state):
-    eligible = [b for b in state if is_eligible(b.health)]
-    if not eligible:
-        return routing_fallback(state)   # canonical no-eligible path
-
-    obs  = build_observation(state, N_MAX_BACKENDS, norm_params)
-    mask = build_action_mask(state, N_MAX_BACKENDS)
-
-    logits        = forward_pass(obs)              # single inference
-    masked_logits = where(mask, logits, -inf)      # ineligible -> -inf
-    chosen_slot   = argmax(masked_logits)
-
-    n_other = len(eligible) - 1
-    floor   = (1.0 - DOMINANT_WEIGHT) / n_other if n_other > 0 else 0.0
-    rankings = [
-        Ranking(b.backend_id,
-                DOMINANT_WEIGHT if b is chosen else floor)
-        for b in eligible
-    ]
-    rankings.sort(key=lambda r: r.score, reverse=True)
-
-    mode = "active" if operating_mode == "hybrid" else "shadow"
-    return RoutingAction(mode=mode, rankings=rankings)
-\end{lstlisting}
+backend. At serving time the policy builds the normalised observation and an
+action mask over the eligible backends, runs a single forward pass, sets the
+logits of ineligible slots to $-\infty$, and takes the \texttt{argmax} as the
+chosen backend; if no backend is eligible it defers to the canonical routing
+fallback. The chosen backend then receives a dominant weight while the remaining
+eligible backends split the residual evenly, so one backend is preferred for
+throughput while the others stay warm for health probing. The resulting weight
+vector is published in active mode only under a hybrid policy, and in shadow
+otherwise.
 
 \subsection{The deployed heuristic and the classical baselines}\label{imb:ppo_baselines}
 
@@ -875,12 +855,12 @@ more conservatively under load so a single noisy window cannot swing the routing
 weights. \Cref{fig:imb:alg_monotone} traces the whole path from telemetry to the
 published weight vector.
 
-\begin{sidewaysfigure}
+\begin{figure}[tbp]
   \centering
-  \includegraphics[width=\textwidth,height=\textheight,keepaspectratio]{alg_monotone}
+  \includegraphics[width=\textwidth,height=0.92\textheight,keepaspectratio]{alg_monotone}
   \caption[The deployed monotone router]{The deployed \texttt{monotone} router, from per-backend telemetry to the published weight vector, in shadow by default.}
   \label{fig:imb:alg_monotone}
-\end{sidewaysfigure}
+\end{figure}
 
 The load-bearing property is monotonicity. Because $b_i$ depends only on past and
 current latencies, it is fixed for a given history, so the score
@@ -894,15 +874,15 @@ auditable, since the routing weights are a transparent function of the observed
 signal rather than of opaque network weights. Every seed of the deployed heuristic
 passes the probe. The contrast with the trained policy is sharp and is the reason
 the heuristic, not the model, is deployed: on the closed-loop benchmark the
-\texttt{monotone} router violates the service-level objective on \textbf{5.4\%} of
-a homogeneous run against round-robin's \textbf{32.5\%} and the shipped PPO
-policy's \textbf{67.5\%}, and the PPO policy, which collapsed to round-robin
+\texttt{monotone} router violates the service-level objective on \BMrlMonoSla{} of
+a homogeneous run against round-robin's \BMrlRrSla{} and the shipped PPO
+policy's \BMrlPpoSla{}, and the PPO policy, which collapsed to round-robin
 equivalence on its uniform-latency training distribution (\cref{imb:ppo_finding}),
 fails the same monotonicity probe the heuristic passes. A monotone, capacity-aware
 rule therefore beats round-robin on the objective by a wide margin while remaining
 safe enough to ship, which is precisely why it leads in production while the
-learned policy is held back in shadow. Full pseudocode, the scoring map, and the
-monotonicity property are in \cref{bm:alg:monotone}.
+learned policy is held back in shadow. The scoring map and the monotonicity
+property are summarised in \cref{fig:imb:alg_monotone}.
 
 \subsection{Evaluating the learned policy: an honest negative result}\label{imb:ppo_finding}
 
@@ -913,7 +893,7 @@ in the more realistic test it is the worst of them.
 In the original \emph{open-loop} evaluation, the policy was scored in shadow mode
 against the deterministic baselines over a held-out seed bank of twenty episodes.
 There the trained policy \emph{tied} NGINX round-robin: the two shared a mean
-reward of $-0.0056$ and were joint-best, while the policy beat
+reward of \BMrlPpoReward{} and were joint-best, while the policy beat
 \texttt{least\_connections} by $4.8\times10^{-2}$ in mean reward. The
 SLO-violation rate was $0$ for \emph{every} policy, because the trace backend
 latencies (around $9.7$\,ms) sit uniformly below the $200$\,ms objective, so no
@@ -924,8 +904,8 @@ distinguish routing policies, not evidence of a learned advantage.
 The later \emph{closed-loop} evaluation, in which a routing choice is allowed to
 perturb the next state, separates the policies and is far less kind to the trained
 one. On a homogeneous pool the deployed \texttt{monotone} heuristic violates the
-service-level objective on \textbf{5.4\%} of the run, round-robin on
-\textbf{32.5\%}, and the shipped PPO policy on \textbf{67.5\%}: the trained policy
+service-level objective on \BMrlMonoSla{} of the run, round-robin on
+\BMrlRrSla{}, and the shipped PPO policy on \BMrlPpoSla{}: the trained policy
 is the \emph{worst} contender, shedding the most load and failing the
 monotonicity probe that both \texttt{monotone} and the shipped reference pass.
 This is why the monotone heuristic, not PPO, is the deployed router. Two
@@ -978,7 +958,7 @@ The asymmetry is deliberate: the policy is what learns, while the conditions tha
 permit it to move traffic are fixed, so routing can improve over time without ever
 loosening the safety default.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \includegraphics[width=0.62\linewidth]{mode_composition}
   \caption[How the published routing mode is composed]{How the published routing mode is composed, where three independent gates must all agree before routing reaches the load balancer as \texttt{active}.}
@@ -995,7 +975,7 @@ that bridge safe to operate, and \cref{tab:imb:sidecar} records them. The theme
 is the same one that runs through the rest of the decision plane: each choice
 favours an idempotent, recoverable mechanism over a clever one.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Load-balancer sidecar design decisions]{Load-balancer sidecar design decisions.}
   \label{tab:imb:sidecar}
@@ -1088,7 +1068,7 @@ moving-average forecaster sets the predicted rate to the trailing mean and
 carries no forward lead, so the predictive and the purely reactive strategies
 score identically in the strategy benchmark. Holding that same signal fixed and
 swapping the older single-step rule for the \texttt{target} controller lifts
-attainment from \textbf{77.2\%} to \textbf{98.3\%}. The controller also sizes its
+attainment from \BMasSlaReactive{} to \BMasSlaTarget{}. The controller also sizes its
 scale-out direction on the forecast \emph{upper band} rather than the point
 estimate. That band is an offered-rate proxy, not a measurement of true arrivals:
 in a closed loop the served rate collapses while the pool is shedding, so sizing
@@ -1105,9 +1085,9 @@ scale from a reactive one.
 \Cref{fig:imb:alg_autoscaler} traces the controller's internal logic, from the
 capacity-based target through the dead-band and the asymmetric cooldown gates to
 the emitted scaling action. The full controller, cooldown logic, and parameters
-are in \cref{bm:alg:autoscaler}.
+are summarised in \cref{fig:imb:alg_autoscaler}.
 
-\begin{figure}[ht]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{alg_autoscaler}
   \caption[Internal logic of the target controller]{Internal logic of the deployed \texttt{target} controller, sizing a capacity-based target that the dead-band and asymmetric cooldowns gate before a \texttt{ScaleEvent} or hold.}
@@ -1129,7 +1109,7 @@ the mechanism, and the human-readable reason.
 
 \Cref{fig:imb:autoscaler} shows the decision flow.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \begin{tikzpicture}[
     node distance=8mm and 14mm,
@@ -1179,12 +1159,12 @@ engine as a safety net. This closing section draws the three journeys together,
 because the \emph{way} the engines were built is itself a result.
 
 \paragraph{Anomaly detection: choosing the engine for the failure mode that
-matters.} The Isolation Forest engine cleared its $F_1 = 0.8012$ validation gate
+matters.} The Isolation Forest engine cleared its $F_1 =$~\BMifFone{} validation gate
 on the first attempt, and calibrating it against the threshold rule in one shared
-coordinate system brought bench agreement to $91.4\%$, with every remaining
+coordinate system brought bench agreement to \BManAgree{}, with every remaining
 disagreement in the value-adding direction. But the decisive benchmark was the
 gradual-degradation case, the failure mode this service most needs to catch, and
-there the stateful \texttt{trend\_rule} reaches $F_1 = 0.845$ while every
+there the stateful \texttt{trend\_rule} reaches $F_1 =$~\BManFone{} while every
 stateless engine, the threshold rule and both forest variants alike, scores
 $F_1 = 0.000$. That is why \texttt{trend\_rule} leads in production, with the
 stateless threshold rule as the never-fails fallback and the calibrated Isolation
@@ -1195,10 +1175,10 @@ loop at work.
 
 \paragraph{Forecasting: an analytic engine that earns the downstream win.} The
 deployed forecaster is \texttt{harmonic\_residual}, which records the lowest
-benchmark error of any engine at $5.4\%$ MAPE and, more tellingly, lifts
-downstream service-level objective attainment by $6.30$ percentage points over a
+benchmark error of any engine at \BMfcMape{} MAPE and, more tellingly, lifts
+downstream service-level objective attainment by \BMfcSlaGain{} percentage points over a
 reactive controller. ARIMA$(2,0,2)$ is wired, serialised, and serving-ready at
-$8.9\%$ MAPE, a respectable but second-place result, and the moving-average
+\BMfcMapeArima{} MAPE, a respectable but second-place result, and the moving-average
 engine stands behind both as the never-fails fallback whose trailing mean carries
 no forward lead. The forecasting path works end-to-end with a genuine predictive
 signal driving capacity ahead of demand.

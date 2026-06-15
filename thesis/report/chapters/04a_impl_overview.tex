@@ -47,7 +47,7 @@ port of each service alongside it. The solid path carries client traffic and the
 telemetry derived from it; the control bus then carries decisions back to the
 actuation sidecar, which is the only writer of the NGINX upstream configuration.
 
-\begin{figure}[p]
+\begin{figure}[tbp]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{system_design}
 \caption[The full stack grouped by plane]{The full stack grouped by plane: the SmartLoad services together with the infrastructure containers, with ports matching docker-compose.}
@@ -64,7 +64,7 @@ itself is NGINX (configuration, not code); the operator UI front end is
 TypeScript compiled by Vite; and the backend pool used for load testing is a
 small Node.js service.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[The deployed services by plane and language]{The deployed services, by plane, language, and responsibility.}
 \label{tab:ima:services}
@@ -123,7 +123,7 @@ concern and are inventoried with their justification in \cref{ch:impl_overview},
 Part~B (\cref{tab:imb:tooling}); they are runtime dependencies of individual
 services, not stack-level infrastructure.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[Third-party infrastructure dependencies]{Third-party infrastructure the deployment depends on, with the pinned image and the role each plays.}
 \label{tab:ima:thirdparty}
@@ -157,7 +157,7 @@ per-service \texttt{/api/v1} ports that the operator UI and SDK consume. Only th
 ingress carries client traffic; every other surface is a control, observability,
 or diagnostic plane that can fail without affecting a single request.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[Published external surfaces of the deployment]{Published external surfaces of the deployment, where only \texttt{:8080} carries client traffic.}
 \label{tab:ima:ports}
@@ -198,19 +198,10 @@ pre-aggregated summary.
 The load balancer is a stock NGINX~\cite{nginx} container that terminates client
 traffic and proxies to a pool of backend replicas through a single
 \texttt{upstream} block. The pool is listed explicitly rather than resolved
-dynamically:
-
-\begin{lstlisting}[caption={The seeded NGINX upstream block.}, label={lst:ima:upstream}]
-upstream backend_pool {
-    server smartload-test-backend-1:8080 max_fails=3 fail_timeout=10s;
-    server smartload-test-backend-2:8080 max_fails=3 fail_timeout=10s;
-    ... (backends 3-5)
-}
-location / {
-    proxy_pass http://backend_pool;
-    proxy_next_upstream error timeout http_502 http_503 http_504;
-}
-\end{lstlisting}
+dynamically: each \texttt{server} line names one backend
+(\texttt{smartload-test-backend-1} through \texttt{-5}) with the health directives
+\texttt{max\_fails=3 fail\_timeout=10s}, and the proxy is wired with
+\texttt{proxy\_next\_upstream error timeout http\_502 http\_503 http\_504}.
 
 Two directives carry the resilience contract. \texttt{max\_fails=3
 fail\_timeout=10s} tells NGINX to take a backend out of rotation after three
@@ -293,7 +284,7 @@ minute-resolution questions without scanning the raw rows. The remaining tables,
 which is the same single-writer discipline applied to history rather than to
 live telemetry.
 
-\begin{figure}[t]
+\begin{figure}[tbp]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{schema}
 \caption[The persistence schema and its writers]{The five TimescaleDB hypertables plus the \texttt{metrics\_1min} continuous aggregate, each base table having exactly one authoritative writer.}
@@ -305,7 +296,7 @@ request path (top) is synchronous and on the critical path; the telemetry path
 (bottom) is asynchronous and lossy by design, so that no part of the metric
 pipeline can slow a client response.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[node distance=7mm and 14mm]
   \node[slnode] (client) {Client};
@@ -347,7 +338,7 @@ NGINX only through the sidecar reload. The separation is what keeps the
 per-request overhead small and bounded regardless of how slow the rest of the
 system happens to be.
 
-\begin{figure}[p]
+\begin{figure}[tbp]
 \centering
 \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{request_seq}
 \caption[The request sequence in three regions]{The request sequence across the data plane, the fire-and-forget telemetry pipeline, and the control-plane engine cycle that reloads NGINX without blocking.}
@@ -359,8 +350,8 @@ One subtle point in the pipeline is backend identity. NGINX logs the upstream
 \texttt{ip:port} rather than a container name; the shipper carries that address
 as the per-data-point \texttt{instance} attribute, and the telemetry parser
 writes it into \texttt{metrics.instance}. The decision plane keys on that field
-to decide \emph{which} backend is misbehaving, so a later refinement (delivered
-under v1.0.7ai) added a reverse resolution from backend IP to container name, so
+to decide \emph{which} backend is misbehaving, so a later refinement added a
+reverse resolution from backend IP to container name, so
 that the identity flowing through the metrics matches the identity the sidecar
 and the operator UI use. Without it, an anomaly verdict and a routing weight
 could refer to the same backend under two different names.
@@ -375,7 +366,7 @@ implementation realises that split as two distinct paths that run side by side
 and never share a transport. \cref{tab:ima:observability} contrasts them. The
 first path is the high-volume workload telemetry just described: one record per
 request, carried over OTLP into TimescaleDB, where the decision engines read it.
-The second is the low-volume service own-metrics path, closed under v1.0.7al:
+The second is the low-volume service own-metrics path:
 each service exposes a Prometheus \texttt{/metrics} endpoint that Prometheus
 scrapes directly, surfacing not only liveness and per-cycle timing but the
 decision counters that make the engines auditable, for instance
@@ -383,7 +374,7 @@ decision counters that make the engines auditable, for instance
 Keeping the two apart means a flood of request telemetry cannot crowd out the
 signal that tells an operator whether the engines themselves are alive.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[The two observability paths side by side]{The two observability paths that run side by side: workload telemetry and service own-metrics.}
 \label{tab:ima:observability}
@@ -494,7 +485,7 @@ the loop closed: every rewrite reflects the containers that actually exist, not
 the publisher's intent, so a backend whose provisioning failed at the Docker
 layer never appears in the upstream block.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[The four control channels the lb-sidecar subscribes to]{The four control channels the lb-sidecar subscribes to.}
 \label{tab:ima:channels}
@@ -520,7 +511,7 @@ identical to the one already on disk, so no reload occurs. The figure also makes
 the closed scaling path explicit: the \texttt{smartload.scale} channel turns an
 autoscaler action into a regenerated equal-weight map and a live reload.
 
-\begin{figure}[p]
+\begin{figure}[tbp]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{lb_dispatch}
 \caption[The lb-sidecar four-channel dispatch]{The lb-sidecar dispatch, where each of the four control channels maps to one pure handler feeding a single idempotent NGINX file adapter.}
@@ -572,92 +563,112 @@ it deploys as a single multi-stage container in which the Node build stage
 produces static assets that the Python runtime stage serves alongside its API.
 
 The BFF plays three roles. It fans out \texttt{/health} across the whole stack in
-parallel for the Home page; it proxies the policy, actions, and audit APIs so the
+parallel for the Flightdeck view; it proxies the policy, actions, and audit APIs so the
 browser talks to a single origin; and it runs a Redis subscriber thread that
 feeds a live event stream. \cref{fig:ima:operator_ui_bff} shows the shape this
 imposes on operator traffic: the browser reaches only the BFF, and the BFF
 reaches the rest of the stack on its behalf, so there is no direct
-browser-to-service edge anywhere in the diagram. The React app ships five pages,
-shown in \crefrange{fig:ima:ui-home}{fig:ima:ui-engines}.
+browser-to-service edge anywhere in the diagram. The React app organises ten
+views into three task groups, surveyed in \cref{sec:ima:pages}.
 
-\begin{figure}[t]
+\begin{figure}[tbp]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{operator_ui_bff}
 \caption[Operator UI traffic through the BFF]{Operator UI traffic, where the browser reaches only the backend-for-frontend so that authentication, CORS, and rate limiting are consolidated in one place.}
 \label{fig:ima:operator_ui_bff}
 \end{figure}
 
-\subsection{The five pages}
+\subsection{The console views}
 \label{sec:ima:pages}
 
-\textbf{Home} (\cref{fig:ima:ui-home}) is the service-health overview. It renders
-one pill per service from the consolidated status the BFF aggregates, so an
-operator sees at a glance whether everything is up.
+The console is a transparency and override surface rather than an administration
+panel: programmatic integrators drive SmartLoad through the SDK and webhooks,
+while the web views give an operator a live, inspectable picture of the closed
+loop and a small set of safe manual controls. The views are organised into three
+task groups, and one principle governs all of them: the data stays honest. Every
+indicator, delta, sparkline, confidence band, and forecast is computed from real
+telemetry rather than fabricated or frozen numbers. A calm
+\emph{Demonstration / Live} indicator shows which mode is active and switches to
+live data the moment a backend is reachable, and every panel carries explicit
+loading, empty, and error states so a missing source is never disguised as a
+result.
 
-\begin{figure}[t]
+\textbf{Overview.} \emph{Flightdeck} is the flagship view: a closed-loop overview
+that pulls throughput, tail latency, service-level attainment, and active
+incidents into a single glance, alongside the current forecast and the
+routing-and-scaling state. \emph{System} draws the whole-system topology of the
+roughly a dozen services and the data flow between them, including the
+observability pipeline, so the architecture is legible from inside the console.
+
+\textbf{Operate.} Five views expose the running planes. \emph{Pulse} shows
+per-backend vitals, including the CPU and memory now collected per container.
+\emph{Foresight} surfaces the demand forecaster and its scale-ahead signal.
+\emph{Verdicts} is the anomaly-detector feed, carrying the evidence behind each
+health verdict rather than a bare flag. \emph{Traffic} renders the load balancer
+and sidecar view: request distribution, the current upstream weights, and any
+exclusions. \emph{Capacity} is the autoscaler view: pool size against target, the
+scale-ahead trajectory, and the scaling audit and heartbeat.
+
+\textbf{Decide.} Three views hold the decision and control surfaces.
+\emph{Helmsman} is the routing-engine view: the learned policy's shadow
+evaluation, its proposed-versus-applied share, and its deploy-time promotion
+readiness. Consistent with the safety model, routing is shadow by default and
+promotion is a deploy-time decision, so the console deliberately offers no live
+``promote'' control. \emph{Controls} is the operating surface: the policy editor
+with a live field-level diff preview, the \texttt{safe\_mode} kill switch, and the
+manual scale, isolate, and weight overrides, each written to the audit trail.
+\emph{Ledger} is the immutable audit trail across policy, scaling, and isolation
+events, with filters and CSV export for offline analysis.
+
+The console ships a complete light and dark theme with a persisted toggle, a
+responsive layout that collapses the sidebar into a mobile drawer, and
+accessibility throughout: visible focus, focus traps on dialogs, reduced-motion
+support, and contrast that meets the WCAG guidelines.
+
+Because the interface was redesigned since the earlier captures were taken, fresh
+screenshots are pending and are listed in the change log. The placeholders in
+\crefrange{fig:ima:ui-flightdeck}{fig:ima:ui-ledger} mark where a representative
+view from each group lands.
+
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.85\linewidth]{Home.png}
-\caption[Operator UI: Home page]{The Home page: a service-health overview, one pill per service, driven by the BFF's parallel health fan-out.}
-\label{fig:ima:ui-home}
+\figtbd{Operator console --- \emph{Flightdeck} (Overview): the closed-loop KPI strip (throughput, tail latency, SLA attainment, active incidents) with the live forecast and routing/scaling state.}
+\caption[Operator console: Flightdeck]{The Flightdeck view, the flagship closed-loop overview.}
+\label{fig:ima:ui-flightdeck}
 \end{figure}
 
-\textbf{Policy} (\cref{fig:ima:ui-policy}) is the editor. The operator edits the
-policy, sees a live diff of exactly which fields would change, and commits; a
-toast confirms, and the change appears in the audit history. The diff preview is
-what turns a blind POST into a reviewed change.
-
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.85\linewidth]{Policy.png}
-\caption[Operator UI: Policy editor]{The Policy page: read, edit, and commit the operating policy with a live field-level diff preview before the change is written.}
-\label{fig:ima:ui-policy}
+\figtbd{Operator console --- \emph{Pulse} (Operate): per-backend vitals including per-container CPU and memory.}
+\caption[Operator console: Pulse]{The Pulse view: per-backend vitals with CPU and memory.}
+\label{fig:ima:ui-pulse}
 \end{figure}
 
-\textbf{Audit} (\cref{fig:ima:ui-audit}) brings the two history streams,
-policy changes and scaling events, into one filterable view, with filters on
-kind, actor, action, and time. This is the investigation surface: it makes
-questions like ``which forecast triggered the last scale-out?'' single-query
-operations.
-
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.85\linewidth]{Audit_page.png}
-\caption[Operator UI: Audit page]{The Audit page: policy-change and scaling-event history unified at the UI layer, with filters by kind, actor, action, and time range.}
-\label{fig:ima:ui-audit}
+\figtbd{Operator console --- \emph{Verdicts} (Operate): the anomaly-detector feed with the evidence behind each health verdict.}
+\caption[Operator console: Verdicts]{The Verdicts view: the evidence-carrying anomaly feed.}
+\label{fig:ima:ui-verdicts}
 \end{figure}
 
-\textbf{Actions} (\cref{fig:ima:ui-actions}) is the manual-override surface. An
-operator can scale the pool to a specific count, bypassing the forecast
-subscription and the cooldown timer, or mark a backend healthy, degraded, or
-unhealthy, publishing a synthetic anomaly event so the rest of the system reacts
-as though the engine had spoken. Both actions land in the audit log with a
-\texttt{manual:<actor>:} prefix, so operator intent stays distinguishable from
-automated behaviour after the fact.
-
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.85\linewidth]{Actions.png}
-\caption[Operator UI: Actions page]{The Actions page: manual scale-to-target and backend isolate, plus a force-weights override, each audited with a \texttt{manual:<actor>:} prefix.}
-\label{fig:ima:ui-actions}
+\figtbd{Operator console --- \emph{Helmsman} (Decide): the routing engine's shadow evaluation, proposed-versus-applied share, and promotion readiness.}
+\caption[Operator console: Helmsman]{The Helmsman view: shadow routing evaluation and promotion readiness.}
+\label{fig:ima:ui-helmsman}
 \end{figure}
 
-\textbf{Engines} (\cref{fig:ima:ui-engines}) is the live decision feed. Each of
-the three decision engines gets a tile showing what it did last cycle and the
-policy it is reasoning under, beside a colour-coded activity stream that updates
-in real time as envelopes land on the control bus. It replaces ``ssh in and grep
-the container logs'' with one always-on page.
-
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
-\includegraphics[width=0.85\linewidth]{Engines.png}
-\caption[Operator UI: Live Engines page]{The Live Engines page: per-engine tiles beside a colour-coded, real-time activity feed of control-bus events.}
-\label{fig:ima:ui-engines}
+\figtbd{Operator console --- \emph{Ledger} (Decide): the immutable policy, scaling, and isolation audit trail with filters and CSV export.}
+\caption[Operator console: Ledger]{The Ledger view: the unified, exportable audit trail.}
+\label{fig:ima:ui-ledger}
 \end{figure}
 
 \subsection{The live stream and the status aggregator}
 \label{sec:ima:sse}
 
-The Live Engines page needs sub-second updates as events arrive, which is too
+The live engine views need sub-second updates as events arrive, which is too
 fine-grained for polling. The BFF therefore runs a daemon Redis subscriber that
 consumes the four event channels into a bounded per-channel ring buffer and
 exposes \texttt{GET /api/ui/engines/stream} as a Server-Sent Events stream:
@@ -666,7 +677,7 @@ heartbeat comments to keep the connection open. The BFF runs threaded gunicorn
 workers, so a long-lived stream occupies one thread rather than pinning a whole
 worker.
 
-The Home page and any programmatic operator are served by a single aggregator,
+The Flightdeck view and any programmatic operator are served by a single aggregator,
 \texttt{GET /api/v1/status}, that collapses the whole operational picture into one
 document: every service's health, the active policy's headline fields, and the
 most recent row from each audit stream. The fan-out is parallel with a two-second
@@ -731,5 +742,5 @@ iterations, each a small, separately tested increment rather than a rewrite. Tha
 cadence, namely shipping the thinnest end-to-end slice and then hardening it in
 place under a running stack, is the development process that produced the deployed system
 this chapter has described. The decision-plane services and the models they run,
-which the slice discipline kept observable from their first day through the Live
-Engines page, are the subject of Part~B.
+which the slice discipline kept observable from their first day through the live
+engine views, are the subject of Part~B.

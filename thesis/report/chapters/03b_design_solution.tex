@@ -116,12 +116,12 @@ no forward lead.
 \textbf{(b) A residual-harmonic forecaster (chosen default).} The deployed engine
 fits a harmonic-plus-residual model that is refit online and ships no offline
 artefact, capturing the short-horizon shape a flat mean cannot. On the all-profile
-benchmark it reaches $5.4\%$ MAPE (against $10.5\%$ for the moving average) and a
-$+6.30$\,pp downstream SLA gain over reactive provisioning, which is why it is the
+benchmark it reaches \BMfcMape{} MAPE (against \BMfcMapeMA{} for the moving average) and a
+\BMfcSlaGain{}\,pp downstream SLA gain over reactive provisioning, which is why it is the
 production default. A classical Box--Jenkins ARIMA model
 \cite{box2015timeseries,hyndman2021forecasting} of order $(2,0,2)$ is provided as a
 selectable, superseded option; it gives a principled prediction interval but trails
-the harmonic-residual engine on these synthetic series ($8.9\%$ MAPE) and was not
+the harmonic-residual engine on these synthetic series (\BMfcMapeArima{} MAPE) and was not
 adopted as the default.
 
 \textbf{(c) Heavier deep models.} Recurrent or attention-based sequence models
@@ -147,8 +147,8 @@ fallback.
 \texttt{trend\_rule} engine tracks the direction and persistence of a backend's
 latency and error signal rather than a single instantaneous level, so it catches
 slow, gradual degradation that a static threshold and a stateless detector both
-miss. On the gradual-degradation benchmark it lifts F1 from $0$ to $0.845$ (recall
-$0.791$), where every stateless engine, the static threshold and both Isolation
+miss. On the gradual-degradation benchmark it lifts F1 from $0$ to \BManFone{} (recall
+\BManRecall{}), where every stateless engine, the static threshold and both Isolation
 Forest variants \cite{liu2008isolationforest}, scores essentially $0$. It needs no
 labelled training set and is light enough to score every cycle, and it keeps the
 threshold rule beneath it as the guaranteed fallback. An Isolation Forest engine
@@ -204,7 +204,7 @@ is whether an operator can reconstruct why a routing decision was made. And
 \emph{Cost} (weight $0.10$) is the compute, training, and dependency footprint.
 The weights sum to one. \Cref{dsb:tab:decision} records the scoring.
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[Weighted decision matrix for the routing architecture]{Weighted decision matrix for the routing-architecture decision, where the hybrid learned-with-fallback design maximises the weighted total.}
 \label{dsb:tab:decision}
@@ -281,7 +281,7 @@ UI is a transparency and override surface only; it owns no channel, table, or
 decision path of its own, and it embeds Grafana for its charts rather than
 serving them itself.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{context}
 \caption[SmartLoad in context as request-path middleware]{SmartLoad in context, sitting as middleware between clients and a backend service pool while presenting an ordinary reverse proxy to clients.}
@@ -323,7 +323,7 @@ crosses the plane boundary downward, and it does so by writing configuration,
 not by taking part in request handling. Every adaptive service can fail without
 stalling a single request.
 
-\begin{figure}[ht]
+\begin{figure}[tbp]
 \centering
 \includegraphics[width=\linewidth,height=0.88\textheight,keepaspectratio]{layer}
 \caption[The data plane and control plane surfaces]{The two execution surfaces: the data plane serves traffic and the control plane decides how it is served, with the LB sidecar the only process crossing the boundary.}
@@ -361,7 +361,7 @@ Plan stages, recording for each one its learned model, its deterministic
 baseline, the engine that runs in production today, and the metric that governs
 whether the learned engine is allowed to lead.
 
-\begin{table}[t]
+\begin{table}[p]
 \centering
 \caption[The four decision engines side by side]{The four decision engines side by side, each shipping a learned model behind the same interface as a deterministic baseline.}
 \label{dsb:tab:engines}
@@ -374,19 +374,19 @@ Anomaly detector
   & trend-aware engine (\texttt{trend\_\allowbreak rule})
   & \texttt{threshold} rule (latency $>m\bar{\ell}$, error rate $>0.05$)
   & \texttt{trend\_\allowbreak rule} (deployed, interpretable)
-  & F1 $0\to0.845$ on gradual degradation (recall $0.791$); every stateless engine scores F1 $\approx 0$ there\textsuperscript{$\dagger$} \\
+  & F1 $0\to{}$\BManFone{} on gradual degradation (recall \BManRecall{}); every stateless engine scores F1 $\approx 0$ there\textsuperscript{$\dagger$} \\
 \addlinespace
 Forecaster
   & \texttt{harmonic\_\allowbreak residual} (refit, artefact-free)
   & \texttt{moving\_\allowbreak average} (windowed mean $\pm\,\sigma$, fallback)
-  & \texttt{harmonic\_\allowbreak residual} ($5.4\%$ MAPE)
-  & $5.4\%$ MAPE all-profile, $+6.30$\,pp downstream SLA vs.\ reactive; ARIMA$(2,0,2)$ is a selectable, superseded option \\
+  & \texttt{harmonic\_\allowbreak residual} (\BMfcMape{} MAPE)
+  & \BMfcMape{} MAPE all-profile, \BMfcSlaGain{}\,pp downstream SLA vs.\ reactive; ARIMA$(2,0,2)$ is a selectable, superseded option \\
 \addlinespace
 Routing engine
   & \texttt{monotone} heuristic (deployed); MaskablePPO \cite{schulman2017ppo,raffin2021sb3} retained as a foil
   & \texttt{round\_\allowbreak robin} (floor; and \texttt{least\_\allowbreak connections})
-  & \texttt{monotone}/\texttt{candidate\_\allowbreak mono} (shadow router)
-  & PPO ties round-robin on the open-loop eval (both mean reward $-0.0056$) but is the worst contender on the closed-loop SLA bench; the shipped learned router is the deterministic monotone heuristic, not trained RL \\
+  & \texttt{monotone}/\allowbreak\texttt{candidate\_\allowbreak mono} (shadow router)
+  & PPO ties round-robin on the open-loop eval (both mean reward \BMrlPpoReward{}) but is the worst contender on the closed-loop SLA bench; the shipped learned router is the deterministic monotone heuristic, not trained RL \\
 \addlinespace
 Autoscaler
   & none (deterministic controller)
@@ -400,14 +400,14 @@ Autoscaler
 \medskip
 \begin{minipage}{\linewidth}
 \footnotesize
-\textsuperscript{$\dagger$}\,The $91.4\%$ threshold-vs-IsolationForest sweep
+\textsuperscript{$\dagger$}\,The \BManAgree{} threshold-vs-IsolationForest sweep
 agreement and the SMD-holdout figure characterise the IsolationForest comparison
 only; they exclude the deployed \texttt{trend\_rule} engine and are not its
 selection metric.
 \end{minipage}
 \end{table}
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.62\linewidth]{mapek}
 \caption[The closed control loop in MAPE terms]{The closed control loop in MAPE terms, with the LB sidecar owning Plan and merging signals in a strict priority order.}
@@ -438,14 +438,14 @@ without a flag day. The dispatch side of this contract, namely what each channel
 does to the NGINX configuration once the LB sidecar receives it, is detailed
 later in \cref{tab:ima:channels}.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{channels}
 \caption[The five Redis control-bus channels]{The five Redis channels, each with exactly one publisher, where solid arrows mark subscribers that act and dashed arrows mark those that only observe.}
 \label{fig:dsb:bus}
 \end{figure}
 
-\begin{table}[t]
+\begin{table}[H]
 \centering
 \caption[The control-bus channel contract]{The control-bus channel contract, where all five channels are fire-and-forget Redis pub/sub and only the audit hypertable is durable.}
 \label{dsb:tab:channels}
@@ -531,7 +531,7 @@ average for the harmonic-residual forecaster (or a selectable ARIMA
 folder. The LB sidecar and autoscaler, which depend on the message contract rather
 than the engine, never notice.
 
-\begin{figure}[t]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[node distance=8mm and 14mm]
   \node[slnode] (db) {TimescaleDB\\rows};
@@ -611,7 +611,7 @@ policy but can never re-admit a backend that anomaly excluded, because routing
 to a known-bad backend has unbounded cost while the cost of conservatively
 excluding a borderline one is bounded.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \includegraphics[width=0.6\linewidth]{routing_hierarchy}
 \caption[The four-level routing priority stack]{The four-level routing priority stack inside the LB sidecar, with unconditional anomaly exclusion above policy, learned weights, and the round-robin floor.}
@@ -695,7 +695,7 @@ possible and the deployment is portable from Docker Compose to an orchestrator
 \cite{merkel2014docker} without redesign. This keeps SmartLoad usable across the
 varied environments a global user base actually runs.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{lb_adapter}
 \caption[The load-balancer adapter pattern]{The load-balancer adapter pattern, where the decision plane calls the \texttt{LoadBalancerAdapter} interface and never references NGINX directly.}

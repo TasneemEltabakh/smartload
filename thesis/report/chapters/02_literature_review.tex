@@ -57,7 +57,7 @@ scheduling rules behind managed control planes, but they constrain weight
 updates to coarse autoscaling-group events and offer no per-second decision
 surface for an external controller to drive.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Classical load-balancing scheduling rules]{Classical load-balancing scheduling rules as published by NGINX
 \cite{nginx}, HAProxy \cite{haproxy}, and Envoy \cite{envoy}, each deciding from in-memory state alone.}
@@ -113,11 +113,11 @@ stubs that a conformance suite proves interchangeable once implemented. The
 data plane is therefore a replaceable component behind a stable contract, not a
 hard dependency.
 
-\slpitch{\textbf{Where SmartLoad sits.} SmartLoad does not replace NGINX. It
-runs NGINX as its data plane and adds an out-of-band sidecar that consumes
-Redis-published routing decisions, rewrites \texttt{upstream.conf}, and triggers
-\texttt{nginx -s reload} on the order of seconds. The classical scheduler stays
-in place as the deterministic safety floor and is never deprecated.}
+In short, SmartLoad does not replace NGINX. It runs NGINX as its data plane and
+adds an out-of-band sidecar that consumes Redis-published routing decisions,
+rewrites \texttt{upstream.conf}, and triggers \texttt{nginx -s reload} on the
+order of seconds. The classical scheduler stays in place as the deterministic
+safety floor and is never deprecated.
 
 \subsection{Service meshes}
 \label{lit:sec:market-mesh}
@@ -162,7 +162,7 @@ pre-warms instances on the predicted shape. The forecaster is a black box, and,
 more importantly, the forecasting and routing decisions stay decoupled, so the
 prediction cannot inform the per-request scheduler.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Production autoscaler shapes and their triggers]{Production autoscaler shapes, where the trigger is reactive in every case except AWS predictive scaling.}
 \label{lit:tab:autoscalers}
@@ -246,7 +246,7 @@ operator override, and it does so at a far lower operational weight than a mesh.
 Its routing is a monotone capacity-aware heuristic, with a learned PPO variant
 evaluated in shadow rather than promoted to live traffic.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[SmartLoad against the closest alternatives]{SmartLoad compared with the closest alternatives across the axes relevant to predictive, safety-bounded load management.}
 \label{lit:tab:market}
@@ -282,7 +282,7 @@ engine-by-engine discussion. It groups the literature by the engine it informs,
 names the canonical reference in each line, and records what SmartLoad takes
 from it. The remaining subsections expand each row in turn.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Related-work lineage by SmartLoad engine]{Related-work lineage: the research foundations grouped by the SmartLoad engine each informs.}
 \label{lit:tab:lineage}

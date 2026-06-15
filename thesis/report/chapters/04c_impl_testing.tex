@@ -22,7 +22,7 @@ qualitatively, and \cref{tab:imc:layers} reports the per-module unit-suite count
 collected at the audited commit, which is the layer the bulk of the testing
 lives in.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \begin{tikzpicture}[
     font=\footnotesize,
@@ -52,7 +52,7 @@ lives in.
   \label{fig:imc:pyramid}
 \end{figure}
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Per-module unit-suite test counts]{Per-module unit-suite test counts at the audited commit, the fast pure-Python suites that form the base of the pyramid.}
   \label{tab:imc:layers}
@@ -109,7 +109,7 @@ directory, a Redis channel published but never subscribed, and an HTTP route abs
 from the OpenAPI contract. \Cref{tab:imc:lints} states what each lint enforces and
 where the drift would otherwise hide.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[The three structural lints]{The three structural lints, each turning a repository convention into a mechanical gate.}
   \label{tab:imc:lints}
@@ -118,9 +118,9 @@ where the drift would otherwise hide.
     \toprule
     \textbf{Lint} & \textbf{Invariant enforced} & \textbf{Drift it catches} \\
     \midrule
-    \texttt{lint-structure.py}      & Every \texttt{tests/e2e/<feature>/} has a sibling \texttt{docs/features/<feature>.md} and \texttt{examples/scenarios/<feature>.py}, and every service folder carries a \texttt{README.md} & A feature shipped without its specification document, scenario, or end-to-end coverage \\
+    \texttt{lint-structure.py}      & Every \texttt{tests/e2e/<feature>/} has a sibling \texttt{docs/features/<feature>.md} and \texttt{examples/\allowbreak scenarios/\allowbreak <feature>.py}, and every service folder carries a \texttt{README.md} & A feature shipped without its specification document, scenario, or end-to-end coverage \\
     \texttt{lint-redis-channels.py} & Every \texttt{smartload.*} channel string found in \texttt{services/} appears in \texttt{docs/redis-channels.md} & A control-bus channel published or read in code but never recorded in the registry \\
-    \texttt{lint-openapi.py}        & Every Flask \texttt{/api/v1/} route in \texttt{services/} appears in \texttt{docs/openapi/smartload-v1.yaml} & A live HTTP route that the published interface contract does not document \\
+    \texttt{lint-openapi.py}        & Every Flask \texttt{/api/v1/} route in \texttt{services/} appears in \texttt{docs/\allowbreak openapi/\allowbreak smartload-v1.yaml} & A live HTTP route that the published interface contract does not document \\
     \bottomrule
   \end{tabularx}
 \end{table}
@@ -151,7 +151,7 @@ discipline: every run writes a \texttt{MANIFEST.json} recording the timestamp, t
 git SHA, the working-tree state, and every knob value, so a third party with the same
 checkout and Docker host can reproduce the figures.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Benchmark-harness inventory]{Benchmark-harness inventory: what each harness drives, what it measures, and the research question it answers.}
   \label{tab:imc:harnesses}
@@ -184,7 +184,7 @@ tailing the decision envelopes, and an upstream watcher polling \texttt{upstream
 every two seconds. A phase-D injector then drives a target backend's
 \texttt{/\_admin/delay} endpoint and posts a manual isolation event.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Adaptive-bench five-phase load shape]{Adaptive-bench five-phase load shape (planned targets).}
   \label{tab:imc:phases-plan}
@@ -241,7 +241,7 @@ and those five are exactly the switch that turns SmartLoad's intelligence on or 
 \Cref{tab:imc:protocol} reproduces the diff between the two recorded environment
 profiles in \texttt{experiments/baseline-vs-smartload/env/}.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Comparison protocol: same stack, only flags differ]{Comparison protocol, where the two environment profiles differ in exactly five variables and everything else is held identical.}
   \label{tab:imc:protocol}
@@ -298,7 +298,7 @@ the load-balancer reload cost, a brief connection blip during an \texttt{upstrea
 rewrite that the project reports rather than filters out, and the train-versus-serve
 distribution mismatch for the routing policy, discussed in \cref{imc:theory}.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Internal validity threats and controls]{Internal validity: confounds within a single run and how each is controlled.}
   \label{tab:imc:threats-internal}
@@ -315,7 +315,7 @@ distribution mismatch for the routing policy, discussed in \cref{imc:theory}.
   \end{tabularx}
 \end{table}
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[External validity threats]{External validity: how far the results generalise beyond the harness.}
   \label{tab:imc:threats-external}
@@ -331,7 +331,7 @@ distribution mismatch for the routing policy, discussed in \cref{imc:theory}.
   \end{tabularx}
 \end{table}
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Construct and conclusion validity threats]{Construct and conclusion validity: whether the metrics measure what they claim and whether a single run supports it.}
   \label{tab:imc:threats-cc}
@@ -369,31 +369,32 @@ reported once that batch lands.
 \Cref{fig:imc:pool} shows the pool trajectory and \cref{tab:imc:phases-obs} the
 per-phase observations.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
-  \includegraphics[width=0.85\linewidth]{plot_pool_size.png}
+  \bmfig{Backend pool size over the run, scaling up under the forecast burst and sustain phases and contracting again as load drops. Plot pending the host-migration benchmark batch.}
   \caption[Backend pool size over the run]{Backend pool size over the run, scaling up under the forecast burst and sustain phases and contracting again as load drops.}
   % TODO(vps-rerun): pool figure range + scaling-action count from fresh VPS run
   \label{fig:imc:pool}
 \end{figure}
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Adaptive-bench observed per-phase results]{Adaptive-bench observed per-phase results, with headline magnitudes regenerated from the fresh benchmark batch.}
   \label{tab:imc:phases-obs}
-  \small
+  \footnotesize
+  \setlength{\tabcolsep}{4pt}
   % TODO(vps-rerun): adaptive per-phase observed RPS p50, p95 (ms), and pool range from fresh VPS run
-  \begin{tabularx}{\linewidth}{@{}l l r r l@{}}
+  \begin{tabular}{@{}l l c c c@{}}
     \toprule
     \textbf{Phase} & \textbf{User target} & \textbf{Obs.\ RPS p50} & \textbf{p95 (ms)} & \textbf{Pool (min..max)} \\
     \midrule
-    \texttt{A\_bootstrap}            & $\approx$19 users  & --- & --- & --- \\
-    \texttt{B\_forecast\_burst}      & 200 users          & --- & --- & --- \\
-    \texttt{C\_sustain}              & 200 users          & --- & --- & --- \\
-    \texttt{D\_anomaly\_scale\_down} & 200$\rightarrow$30 & --- & --- & --- \\
-    \texttt{E\_steady}               & 30 users           & --- & --- & --- \\
+    \texttt{A\_bootstrap}            & $\approx$19 users  & \bmtodo{p50A} & \bmtodo{p95A} & \bmtodo{poolA} \\
+    \texttt{B\_forecast\_burst}      & 200 users          & \bmtodo{p50B} & \bmtodo{p95B} & \bmtodo{poolB} \\
+    \texttt{C\_sustain}              & 200 users          & \bmtodo{p50C} & \bmtodo{p95C} & \bmtodo{poolC} \\
+    \texttt{D\_anomaly\_scale\_down} & 200$\rightarrow$30 & \bmtodo{p50D} & \bmtodo{p95D} & \bmtodo{poolD} \\
+    \texttt{E\_steady}               & 30 users           & \bmtodo{p50E} & \bmtodo{p95E} & \bmtodo{poolE} \\
     \bottomrule
-  \end{tabularx}
+  \end{tabular}
 \end{table}
 
 \Cref{fig:imc:react} plots the time-to-react: the delay between a forecast being
@@ -406,9 +407,9 @@ cross a decision band. The measured delay distribution for this run is regenerat
 from the fresh benchmark batch.
 % TODO(vps-rerun): time-to-react delay distribution (min/typical/max) from fresh VPS run
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
-  \includegraphics[width=0.85\linewidth]{plot_time_to_react.png}
+  \bmfig{Time-to-react per forecast: the delay from a forecast publication to the first autoscaler action responding to it. Plot pending the host-migration benchmark batch.}
   \caption[Time-to-react per forecast]{Time-to-react per forecast: the delay from a forecast publication to the first autoscaler action responding to it.}
   \label{fig:imc:react}
 \end{figure}
@@ -420,16 +421,16 @@ the start of phase~D and recovered after a 60-second window. Both the anomaly PO
 and the recovery POST returned \texttt{200}, confirming the injection and recovery
 path end-to-end.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
-  \includegraphics[width=0.85\linewidth]{plot_upstream_timeline.png}
+  \bmfig{Upstream timeline: the upstream-watcher's view of the live NGINX backend list across the run. Plot pending the host-migration benchmark batch.}
   \caption[Upstream timeline across the run]{Upstream timeline: the upstream-watcher's view of the live NGINX backend list across the run.}
   \label{fig:imc:upstream}
 \end{figure}
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
-  \includegraphics[width=0.85\linewidth]{plot_anomaly_recovery.png}
+  \bmfig{Phase-D anomaly window, where a target backend receives an injected delay and is recovered after a 60-second window. Plot pending the host-migration benchmark batch.}
   \caption[Phase-D anomaly window]{Phase-D anomaly window, where a target backend receives an injected delay and is recovered after a 60-second window.}
   \label{fig:imc:recovery}
 \end{figure}
@@ -443,20 +444,20 @@ deployed-engine selection, since the production default is the stateful
 \texttt{trend\_rule} (\cref{imb:threshold}), and the threshold rule here is the
 calibration reference rather than a shipped default. The Isolation Forest model
 was trained on the Server Machine Dataset~\cite{su2019omnianomaly} and scores
-\textbf{F1\,$=$\,0.8012} on the held-out split, clearing the project's $>0.80$
+F1\,$=$\,\BMifFone{} on the held-out split, clearing the project's $>0.80$
 acceptance target. On the agreement sweep it covers a $16 \times 16 = 256$-cell
-grid and measures a \textbf{91.4\% agreement rate} (234 of 256), after the model
+grid and measures a \BManAgree{} agreement rate (\BManAgreeCells{} of \BManGridCells{}), after the model
 was re-calibrated in production-shape feature space. The per-engine verdict
 distribution and the direction of the disagreements are reported in
-\cref{tab:imc:anomaly}. The 22 remaining disagreements are \emph{all} in the value-add
+\cref{tab:imc:anomaly}. The remaining disagreements are \emph{all} in the value-add
 direction: cells where the threshold rule says \texttt{healthy} but the model says
 \texttt{unhealthy}, catching latency-variance and error-rate compounding that the
-simple static cut-off misses, with \textbf{zero} under-reactions, that is, no cells
+simple static cut-off misses, with no under-reactions, that is, no cells
 where the model relaxes a verdict the rule marks unhealthy. The trained detector
 therefore reproduces the rule's caution everywhere it matters and adds extra coverage
 on top. \Cref{fig:imc:heatpost} renders the agreement matrix.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Anomaly-engine comparison over the feature grid]{Anomaly-engine comparison: threshold rule against Isolation Forest over a $16\times16=256$-cell latency-by-error-rate grid.}
   \label{tab:imc:anomaly}
@@ -465,22 +466,22 @@ on top. \Cref{fig:imc:heatpost} renders the agreement matrix.
     \toprule
     \textbf{Verdict} & \textbf{Threshold} & \textbf{Isolation Forest} \\
     \midrule
-    \texttt{healthy}   & 64  & 42  \\
-    \texttt{unhealthy} & 192 & 214 \\
+    \texttt{healthy}   & \bmtodo{an-thr-healthy}   & \bmtodo{an-if-healthy}   \\
+    \texttt{unhealthy} & \bmtodo{an-thr-unhealthy} & \bmtodo{an-if-unhealthy} \\
     \midrule
-    \multicolumn{3}{@{}l}{\emph{Agreement: 91.4\% (234/256).}} \\
-    \multicolumn{3}{@{}l}{\emph{Disagreements: 22, all
+    \multicolumn{3}{@{}l}{\emph{Agreement: \BManAgree{} (\BManAgreeCells{}/\BManGridCells{}).}} \\
+    \multicolumn{3}{@{}l}{\emph{Disagreements: all
       \texttt{healthy}$\rightarrow$\texttt{unhealthy} (value-add).}} \\
     \multicolumn{3}{@{}l}{\emph{Relaxations
-      (\texttt{unhealthy}$\rightarrow$\texttt{healthy}): 0.}} \\
+      (\texttt{unhealthy}$\rightarrow$\texttt{healthy}): none.}} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
-  \includegraphics[width=0.7\linewidth]{heatmap_post.png}
-  \caption[Anomaly agreement heatmap]{Anomaly agreement heatmap, where the Isolation Forest engine agrees with the threshold rule on 91.4\% of cells with no relaxed verdicts.}
+  \bmfig{Anomaly agreement heatmap, where the Isolation Forest engine agrees with the threshold rule on a high fraction of cells with no relaxed verdicts. Plot pending the host-migration benchmark batch.}
+  \caption[Anomaly agreement heatmap]{Anomaly agreement heatmap, where the Isolation Forest engine agrees with the threshold rule on \BManAgree{} of cells with no relaxed verdicts.}
   \label{fig:imc:heatpost}
 \end{figure}
 
@@ -516,13 +517,13 @@ tail. The closed loop behaved end-to-end the way the design said it would.
 \paragraph{Anomaly agreement versus the deterministic rule.} The Isolation Forest
 engine was expected to reproduce the threshold rule's verdicts on the cells where the
 rule is clearly right, while adding sensitivity on the cells where a single static
-cut-off is too blunt. The 91.4\% agreement with zero relaxed verdicts is exactly that
+cut-off is too blunt. The \BManAgree{} agreement with zero relaxed verdicts is exactly that
 prediction realised: the model is a strict superset of the threshold rule's caution,
 and the residual disagreements all lie in the direction of catching additional signal.
 
 \paragraph{Learned routing versus round-robin.} On the \emph{open-loop} evaluation
 the trained PPO routing policy \emph{matches} NGINX round-robin: both record an
-identical \texttt{mean\_reward} of $-0.0056$ and a zero SLO-violation rate, because
+identical \texttt{mean\_reward} of \BMrlPpoReward{} and a zero SLO-violation rate, because
 the policy was trained on traces whose per-backend latencies are homogeneous at around
 9.7\,ms, all well below the 200\,ms SLO. On a homogeneous pool the optimal routing
 policy \emph{is} uniform spread, since there is no faster backend to prefer, so the
@@ -530,8 +531,8 @@ policy correctly learned round-robin equivalence. That tie, though, is a tie on 
 simulator that cannot tell routing policies apart. The closed-loop benchmark, which
 lets a routing choice affect the next state, does separate them, and there the
 trained policy is the \emph{worst} of the contenders: the deployed \texttt{monotone}
-heuristic violates the objective on $5.4\%$ of the run, round-robin on $32.5\%$, and
-the shipped PPO policy on $67.5\%$. For that reason the deployed router is the
+heuristic violates the objective on \BMrlMonoSla{} of the run, round-robin on \BMrlRrSla{}, and
+the shipped PPO policy on \BMrlPpoSla{}. For that reason the deployed router is the
 deterministic \texttt{monotone} heuristic, and the trained policy is pinned to
 \texttt{shadow} mode as a dormant comparator that produces a parallel, auditable
 decision stream while it earns nothing on the live path. The binding constraint is
@@ -570,7 +571,7 @@ as a planned next step. The hardening and writing phase is in progress.
 
 \begin{sidewaysfigure}
   \centering
-  \resizebox{0.95\textheight}{!}{%
+  \resizebox{0.9\textheight}{!}{%
   \begin{ganttchart}[
     hgrid, vgrid,
     bar/.style={fill=slmint!40, draw=slmint!70},
@@ -597,7 +598,7 @@ as a planned next step. The hardening and writing phase is in progress.
     \ganttbar{Operator console / Dev Console}{2026-03}{2026-04} \\
     \ganttgroup{Benchmarks \& evaluation}{2026-04}{2026-06} \\
     \ganttbar{Adaptive + anomaly-engine benches}{2026-04}{2026-06} \\
-    \ganttbar[progress=70]{Full-length head-to-head (planned)}{2026-05}{2026-06} \\
+    \ganttbar[progress=70]{Full-length head-to-head comparison}{2026-05}{2026-06} \\
     \ganttgroup{Hardening \& writing}{2026-05}{2026-06} \\
     \ganttbar[progress=60]{Hardening, calibration, report}{2026-05}{2026-06}
   \end{ganttchart}%
@@ -606,7 +607,7 @@ as a planned next step. The hardening and writing phase is in progress.
   \label{fig:imc:wbs}
 \end{sidewaysfigure}
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Work breakdown structure phases and status]{Work breakdown structure: phases, principal deliverables, and status.}
   \label{tab:imc:wbs}

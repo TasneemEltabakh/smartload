@@ -54,7 +54,7 @@ late; the only way to have capacity ready when the spike lands is to commit to i
 \emph{before} the threshold is crossed, which is what a forecast-driven scaler sets
 out to do.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[x=1.05cm,y=1cm]
   % time axis
@@ -88,8 +88,8 @@ out to do.
   % the "already hurt" region
   \draw[densely dashed,tbdred] (4.6,0) -- (4.6,3.05);
   \draw[densely dashed,tbdred] (10.5,0) -- (10.5,-1.9);
-  \node[font=\scriptsize\itshape,tbdred,align=center,text width=3.2cm]
-    at (6.6,1.9) {spike served as\\ user-visible latency\\ during the lag};
+  \node[font=\scriptsize\itshape,tbdred,align=center,text width=3.0cm]
+    at (9.0,2.5) {spike served as\\ user-visible latency\\ during the lag};
 \end{tikzpicture}
 \caption[The structural lag in reactive scaling]{The structural lag in reactive scaling: the interval between a threshold breach and useful capacity is absorbed as degraded service.}
 \label{dsa:fig:lag}
@@ -139,7 +139,7 @@ recur throughout the chapter: the deterministic floor as the baseline column of
 \cref{dsa:tab:fr}, graceful degradation as NFR-1, the plugin contract as NFR-6, and
 the stateless path as the first bounding assumption of \cref{dsa:sec:problem-scope}.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[
   font=\footnotesize,
@@ -183,7 +183,7 @@ decisions on the load balancer, all under an operator-set policy with a complete
 audit trail. \Cref{dsa:tab:scope} fixes the boundary explicitly, separating what
 the prototype solves from what it deliberately defers.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Project scope and Phase 2 deferrals]{Project scope, where the right-hand column lists deliberate Phase~2 deferrals rather than unfinished work.}
 \label{dsa:tab:scope}
@@ -238,7 +238,7 @@ the standards SmartLoad adopts and gives concrete evidence of where each is
 incorporated; \cref{dsa:tab:standards} summarises the mapping, and the paragraphs
 that follow expand on the load-bearing cases.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Standards adopted and their design artefacts]{Standards and conventions adopted, and the concrete design artefact that incorporates each.}
 \label{dsa:tab:standards}
@@ -248,7 +248,7 @@ that follow expand on the load-bearing cases.
 \textbf{Standard / convention} & \textbf{Where it is used} & \textbf{Evidence of incorporation} \\
 \midrule
 OpenAPI 3.1 \cite{openapi} & The operator / integrator HTTP control surface &
-\texttt{docs/openapi/smartload-v1.yaml} specifies every shipped \texttt{/api/v1/*} route; a structural lint checks code against it \\
+\texttt{docs/\allowbreak openapi/\allowbreak smartload-v1.yaml} specifies every shipped \texttt{/api/v1/*} route; a structural lint checks code against it \\
 OpenTelemetry / OTLP \cite{opentelemetry} & Request-telemetry transport from the data plane &
 The load-balancer log shipper emits OTLP/HTTP-JSON to a collector that forwards to the telemetry service \\
 Prometheus exposition format \cite{prometheus} & Per-process service health metrics &
@@ -268,7 +268,7 @@ Five named channels, each with a typed, versioned envelope, catalogued in \textt
 
 Every operator and integrator interaction with SmartLoad that is not a fire-and-forget
 event happens over HTTP, and that surface is specified against OpenAPI~3.1
-\cite{openapi} in a single canonical document, \texttt{docs/openapi/smartload-v1.yaml}.
+\cite{openapi} in a single canonical document, \texttt{docs/\allowbreak openapi/\allowbreak smartload-v1.yaml}.
 The specification is not aspirational: it enumerates each shipped \texttt{/api/v1/*}
 route, namely policy read and write (\texttt{GET}/\texttt{POST /api/v1/policy}), the
 append-only audit reads (\texttt{/api/v1/audit/policy}, \texttt{/api/v1/audit/scaling}),
@@ -426,7 +426,7 @@ is paired in the rightmost column with the deterministic behaviour it must degra
 to, because, for this system, the fallback is part of the requirement, not a
 separate concern.
 
-\begin{table}[ht]
+\begin{table}[p]
 \centering
 \caption[Functional requirements and their fallback baselines]{Functional requirements, each naming the deterministic baseline it must degrade to.}
 \label{dsa:tab:fr}
@@ -508,7 +508,7 @@ to close exactly this gap by classifying backends on their latency and error-rat
 telemetry and excluding a degraded one that the data plane would otherwise keep
 serving.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[
   font=\footnotesize,
@@ -558,7 +558,7 @@ described in \cref{dsa:sec:contexts}, the quality of \emph{degrading well} domin
 the quality of \emph{performing well}, and the architecture of
 \cref{ch:design_solution} is organised around honouring NFR-1 above all others.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Non-functional requirements, led by safety]{Non-functional requirements, where safety (NFR-1) is the dominant quality.}
 \label{dsa:tab:nfr}
@@ -624,7 +624,7 @@ project's constraints onto that vocabulary, distinguishing the constraints impos
 commitments} (standards, maintainability, extensibility, interoperability, usability,
 safety) and those \emph{imposed by the chosen tools}.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Project constraints by accreditation category]{Project constraints, mapped onto the accreditation constraint vocabulary \cite{abet2025criteria}.}
 \label{dsa:tab:constraints}
@@ -692,7 +692,7 @@ impact, and mitigation; the prose that follows expands on the two that bear most
 directly on the request path, since the design's handling of them is a direct
 demonstration of the safety thesis in action.
 
-\begin{table}[ht]
+\begin{table}[H]
 \centering
 \caption[Principal project risks and their mitigations]{Principal project risks, each paired with a mitigation built into the design.}
 \label{dsa:tab:risks}

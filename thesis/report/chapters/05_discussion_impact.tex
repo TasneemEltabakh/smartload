@@ -33,7 +33,7 @@ tested against. These two statements are not in tension. The first is the
 engineering result the design set out to prove; the second is an honest report on a
 single learned component within it.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[The central honest claim of the evaluation]{The central honest claim of the evaluation: the mechanism is proven, while the current routing model only ties its baseline.}
   \label{box:disc:mechanism}
@@ -48,7 +48,7 @@ single learned component within it.
       and shrinks back as demand subsides (RQ4, \cref{fig:imc:pool}).
       % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
       & The trained PPO routing policy ties classical round-robin on the offline
-        evaluation: both reach \texttt{mean\_reward} $=-0.0056$ with an
+        evaluation: both reach \texttt{mean\_reward} $=$~\BMrlPpoReward{} with an
         SLO-violation rate of $0$, so the routing acceptance gate is red on the
         current model. \\[3pt]
     Observation, decision, and actuation form an unbroken chain; the autoscaler is
@@ -89,27 +89,27 @@ the behaviour the design promises.
 The shipped anomaly default is the deterministic \texttt{trend\_rule} engine, a
 stateful detector that tracks the direction of the signal rather than a single
 instantaneous threshold crossing. On the gradual-degradation profile, the headline
-anomaly result, it reaches an $F_1$ of \textbf{$0.845$} (recall $0.791$, precision
-$0.907$), while every stateless engine, including the plain threshold rule and both
-Isolation Forest variants, scores $F_1=0.000$ on the same slow drift. That ``$0 \to
-0.845$'' jump is the real anomaly contribution: a creeping degradation that never
+anomaly result, it reaches an $F_1$ of \BManFone{} (recall \BManRecall{}, precision
+\BManPrecision{}), while every stateless engine, including the plain threshold rule and both
+Isolation Forest variants, scores $F_1=0.000$ on the same slow drift. That jump from
+$0.000$ to \BManFone{} is the real anomaly contribution: a creeping degradation that never
 trips a fixed threshold is exactly the failure a direction-aware rule is built to
 catch. The artefact-free \texttt{threshold} rule remains the fallback that takes over
 if no learned artefact is present.
 
 A trained Isolation Forest is available as a \emph{selectable} alternative rather than
-the default. On its own training-distribution holdout it scores an $F_1$ of $0.8012$,
+the default. On its own training-distribution holdout it scores an $F_1$ of \BMifFone{},
 and a separate systematic sweep that compares the \texttt{threshold} rule against the
 Isolation Forest (the sweep does not involve the deployed \texttt{trend\_rule}) finds
-the two agree on about \textbf{$91.4\%$} of the operating-range grid. All $22$ of the
-disagreements are in one direction, with the threshold rule reporting healthy where
+the two agree on about \BManAgree{} of the operating-range grid. Every one of the
+disagreements is in one direction, with the threshold rule reporting healthy where
 the Isolation Forest reports unhealthy, so the Isolation Forest over-reacts relative
 to the simple rule rather than under-reacting. Keeping a more aggressive learned
 detector available behind the same uniform contract, and measuring it against the
 threshold baseline across the whole operating range, is what lets an operator switch
 it on deliberately. The three numbers describe three different things and should not
-be conflated: $0.845$ is the deployed \texttt{trend\_rule} on gradual degradation,
-$0.8012$ is the Isolation Forest's own holdout, and $91.4\%$ is the threshold-versus-Isolation-Forest
+be conflated: \BManFone{} is the deployed \texttt{trend\_rule} on gradual degradation,
+\BMifFone{} is the Isolation Forest's own holdout, and \BManAgree{} is the threshold-versus-Isolation-Forest
 sweep that excludes the deployed engine.
 
 \paragraph{The data and control planes are mechanically sound.} Beneath the learned
@@ -127,7 +127,7 @@ apparatus reports what it should.
 
 \paragraph{Clean operator surfaces, a complete audit trail, and broad test
 coverage.} The system is operable, not merely runnable. The operator interface
-ships five pages backed by real endpoints, a consolidated one-call status read
+ships a multi-view operator console backed by real endpoints, a consolidated one-call status read
 across all services, and a live decision feed that merges all four decision-plane
 channels. Every policy change and every scaling action writes an attributable
 audit row, so an operator can in the common case reconstruct \emph{why} the system
@@ -160,11 +160,11 @@ beneath it guarantees a predictable outcome.
 nothing today.} Production traffic is routed by the deterministic \texttt{monotone}
 heuristic, not by a learned model. That heuristic is the strong contender in the
 closed-loop routing bench: on a homogeneous workload it holds the SLA-violation rate
-to $5.4\%$ against $32.5\%$ for round-robin, and it passes the monotonicity probe that
+to \BMrlMonoSla{} against \BMrlRrSla{} for round-robin, and it passes the monotonicity probe that
 a sane router must. The trained PPO policy, by contrast, is the \emph{worst} contender
-in the same closed-loop bench, at a $67.5\%$ SLA-violation rate, and on the older
+in the same closed-loop bench, at a \BMrlPpoSla{} SLA-violation rate, and on the older
 open-loop evaluation it is round-robin-equivalent, tying plain NGINX round-robin to
-the digit (\texttt{mean\_reward}$=-0.0056$, SLO-violation $0$). The credit for the
+the digit (\texttt{mean\_reward}$=$~\BMrlPpoReward{}, SLO-violation $0$). The credit for the
 routing result therefore belongs to the monotone heuristic and to classical routing,
 not to a policy that learned anything: the PPO model is dormant, contributes nothing
 to live routing, and would degrade the loop if promoted. The benchmark deliberately
@@ -183,7 +183,7 @@ failure: a policy that converges to the optimal action on its training distribut
 has learned correctly, and naming the four constraints that flatten the signal is
 what turns the result into a precise specification for the next iteration.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Why the routing policy is round-robin-equivalent]{Root-cause analysis of why the trained routing policy is round-robin-equivalent, each row naming a constraint that removed the discriminating signal.}
   \label{tab:disc:rootcause}
@@ -240,7 +240,7 @@ as the pool absorbs the event. The routing acceptance gate, which asks for a cle
 delta on at least three of five metrics, is red on the current trained model, and that
 verdict is recorded as it stands.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Per-phase p95 latency, baseline against SmartLoad]{Per-phase $p_{95}$ latency, baseline against SmartLoad, with the maximum-latency row reported as the sidecar's NGINX-reload cost.}
   \label{tab:disc:perphase}
@@ -251,12 +251,12 @@ verdict is recorded as it stands.
     \textbf{Phase} & \textbf{Baseline} & \textbf{SmartLoad} & \textbf{Reading} \\
     \midrule
     % TODO(vps-rerun): per-phase p95 (baseline vs SmartLoad) + max-latency reload spike from fresh VPS baseline-vs-SmartLoad run
-    A\_ramp     & pending  & pending    & pending \\
-    A\_hold     & pending  & pending    & pending \\
-    B\_anomaly  & pending  & pending    & pending \\
-    C\_sustain  & pending  & pending    & pending \\
+    A\_ramp     & \bmtodo{bl-ramp} & \bmtodo{sl-ramp} & \bmtodo{rd-ramp} \\
+    A\_hold     & \bmtodo{bl-hold} & \bmtodo{sl-hold} & \bmtodo{rd-hold} \\
+    B\_anomaly  & \bmtodo{bl-anom} & \bmtodo{sl-anom} & \bmtodo{rd-anom} \\
+    C\_sustain  & \bmtodo{bl-sust} & \bmtodo{sl-sust} & \bmtodo{rd-sust} \\
     \midrule
-    Max latency & pending & pending & NGINX-reload cost in anomaly window \\
+    Max latency & \bmtodo{bl-max} & \bmtodo{sl-max} & NGINX-reload cost in anomaly window \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -271,11 +271,11 @@ production until a model trained on discriminating data earns its place.
 \paragraph{The harmonic-residual forecaster is the strongest engine and the deployed
 default.} The forecasting path works end to end and drives the autoscaler correctly.
 The shipped default is the \texttt{harmonic\_residual} predictor, which is also the
-strongest engine on the synthetic forecasting bench at $5.4\%$ overall MAPE (with
-$0.955$ confidence-interval coverage), ahead of the naive baseline at $7.5\%$,
-\texttt{arima\_serving} at $8.9\%$, and a plain moving average at $10.5\%$. Its
+strongest engine on the synthetic forecasting bench at \BMfcMape{} overall MAPE (with
+\BMfcCiCov{} confidence-interval coverage), ahead of the naive baseline at \BMfcMapeNaive{},
+\texttt{arima\_serving} at \BMfcMapeArima{}, and a plain moving average at \BMfcMapeMA{}. Its
 advantage carries downstream: in the autoscaling-downstream bench the harmonic-residual
-forecaster lifts SLA attainment by $+6.30$ percentage points over the reactive baseline,
+forecaster lifts SLA attainment by \BMfcSlaGain{} percentage points over the reactive baseline,
 closing about a third of the reactive-to-oracle gap, which is the real downstream win a
 forecaster is meant to deliver. A trained ARIMA$(2,0,2)$ model is wired and available
 behind a configuration flag as an advanced option, but it fits out of distribution on
@@ -286,10 +286,10 @@ ships as the default, with alternatives ready behind the same contract.
 A second finding from the strategy bench reinforces the chapter's mechanism-over-model
 thesis. The shipped moving-average signal carries no forward projection, so under the
 same controller the moving-average and reactive strategies land on identical SLA
-attainment, at $77.2\%$ to the digit across every profile: the forecaster offers no
+attainment, at \BMasSlaReactive{} to the digit across every profile: the forecaster offers no
 predictive lead there. The lever that moves that number is the actuation chain, not the
 model. Swapping the step-wise scaler for the \texttt{target} controller lifts the very
-same signal to $98.3\%$, and only with a genuine forward forecast under that controller
+same signal to \BMasSlaTarget{}, and only with a genuine forward forecast under that controller
 does the trend strategy edge past reactive control. The improvement comes from the
 control loop, not from a more sophisticated predictor.
 
@@ -297,11 +297,11 @@ control loop, not from a more sophisticated predictor.
 rule as its artefact-free fallback and the Isolation Forest as a selectable
 alternative.} The deployed anomaly default is the deterministic, stateful
 \texttt{trend\_rule} engine, chosen because it catches the gradual degradation
-($F_1 = 0.845$) that every stateless detector misses entirely. The artefact-free
+($F_1 =$~\BManFone{}) that every stateless detector misses entirely. The artefact-free
 \texttt{threshold} rule remains the fallback that takes over automatically if no
 learned artefact is present. The Isolation Forest is offered as a selectable
 alternative for operators who want a more aggressive detector: on the
-threshold-versus-Isolation-Forest sweep the two agree on about $91.4\%$ of the grid,
+threshold-versus-Isolation-Forest sweep the two agree on about \BManAgree{} of the grid,
 and every disagreement has the Isolation Forest reporting unhealthy where the
 threshold rule reports healthy, so the trade it offers is over-reaction in exchange
 for sensitivity. Presenting these engines against one another across the whole
@@ -379,7 +379,7 @@ reported only the implementation figure would overstate its readiness, and stati
 all three keeps the account honest about what is built, what is operable, and what is
 proven.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \begin{tikzpicture}[font=\footnotesize]
     % geometry
@@ -446,7 +446,7 @@ operational, since a team must run and watch one more piece of middleware, and t
 is exactly the cost the single-unit, container-manifest packaging is designed to keep
 small. \Cref{tab:disc:cost_benefit} summarises the trade-off.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Cost-to-benefit summary for the self-hosted customer]{Cost-to-benefit summary for the target self-hosted customer.}
   \label{tab:disc:cost_benefit}
@@ -656,7 +656,7 @@ deliberately a synthesis of major impacts rather than an exhaustive list: each
 quadrant and row names the one effect that most defines the project's significance in
 that context.
 
-\begin{figure}[ht]
+\begin{figure}[H]
   \centering
   \begin{tikzpicture}[font=\footnotesize]
     % 2x2 quadrant grid
@@ -687,7 +687,7 @@ that context.
   \label{fig:disc:contexts}
 \end{figure}
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Major identified impact across the four contexts]{Major identified impact of SmartLoad across the four assessment contexts.}
   \label{tab:disc:contexts}

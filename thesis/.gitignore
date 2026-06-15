@@ -16,3 +16,7 @@ report/*.run.xml
 report/*.synctex.gz
 report/*.toc
 report/main.pdf
+
+# Audit working folders (deliverables kept on disk, not in the report tree)
+_ORIGINAL_BACKUP_*/
+_audit_*/

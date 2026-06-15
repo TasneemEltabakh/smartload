@@ -5,8 +5,8 @@ This report set out to design, build, and evaluate a load-management middleware 
 schedules capacity ahead of demand rather than reacting after the fact, while staying
 safe enough to sit in the request path of a production service. This closing chapter
 draws the work together. It recaps the problem and the solution, states the headline
-results with their real numbers, reflects on what we learned as engineers, and lays out
-an exciting roadmap for where the system goes next. The framing is the one the project
+results, reflects on what we learned as engineers, and lays out a roadmap for where
+the system goes next. The framing is the one the project
 has held throughout: report each result as it is, explain the judgment behind each
 decision, and let that engineering reasoning stand on its own.
 
@@ -58,27 +58,27 @@ what lets each learned engine sit in the live path safely. The detailed reading 
         % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
   \item \textbf{The deployed anomaly engine closes the gradual-degradation gap.} The
         shipped \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
-        $0.000$, the score of every stateless detector on that pattern, to $0.845$
-        (recall $0.791$, precision $0.907$). This is the contribution that matters in the
+        $0.000$, the score of every stateless detector on that pattern, to \BManFone{}
+        (recall \BManRecall{}, precision \BManPrecision{}). This is the contribution that matters in the
         live path: slow, sustained drift is exactly the failure mode a point-based rule
         misses. The \texttt{trend\_rule} engine is the shipped default; the threshold
         rule remains the deterministic fallback beneath it, and an Isolation Forest engine
         \cite{liu2008isolationforest} is a selectable alternative. (A separate
         threshold-versus-Isolation-Forest sweep over the operating range shows about
-        $91.4\%$ cell agreement, with the Isolation Forest the more aggressive of the two;
+        \BManAgree{} cell agreement, with the Isolation Forest the more aggressive of the two;
         that sweep does not involve the deployed \texttt{trend\_rule} detector.)
   \item \textbf{The deterministic router is the routing contribution.} The deployed
-        capacity-aware monotone routing heuristic holds SLA violations to $5.4\%$ against
-        $32.5\%$ for round-robin in the closed-loop benchmark, and it passes every
+        capacity-aware monotone routing heuristic holds SLA violations to \BMrlMonoSla{} against
+        \BMrlRrSla{} for round-robin in the closed-loop benchmark, and it passes every
         monotonicity probe. The trained PPO policy
         \cite{schulman2017ppo,raffin2021sb3} is reported as an honest null result: it is
-        round-robin-equivalent (open-loop mean-reward gap $-0.0056$), the worst contender
-        closed-loop at $67.5\%$ SLA violations, and is kept dormant in shadow mode. It
+        round-robin-equivalent (open-loop mean-reward gap \BMrlPpoReward{}), the worst contender
+        closed-loop at \BMrlPpoSla{} SLA violations, and is kept dormant in shadow mode. It
         therefore contributes nothing to live routing; the value comes from the
         deterministic heuristic running over the classical scheduler.
   \item \textbf{The forecaster ships a reliable default with fallbacks in reserve.} The
         deployed \texttt{harmonic\_residual} forecaster records the best overall accuracy
-        at $5.4\%$ MAPE and lifts downstream SLA attainment by $+6.30$~pp over the
+        at \BMfcMape{} MAPE and lifts downstream SLA attainment by \BMfcSlaGain{}\,pp over the
         reactive baseline. The moving-average model is the deterministic fallback beneath
         it, and an ARIMA forecaster \cite{box2015timeseries} of order $(2,0,2)$ is an
         optional alternative that fits out of distribution on these synthetic series and
@@ -111,7 +111,7 @@ production task and reporting that it ties the strong baseline and contributes n
 live, with the cause named, is a more useful result than a tuned number with the
 conditions hidden.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Principal contributions and their supporting evidence]{Principal contributions and their supporting evidence, including the honest null result on the trained routing policy.}
   \label{tab:conc:contributions}
@@ -127,8 +127,8 @@ conditions hidden.
         % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
         \\
     Deterministic capacity-aware routing
-      & The deployed monotone routing heuristic holds SLA violations to $5.4\%$ against
-        $32.5\%$ for round-robin closed-loop and passes every monotonicity probe; the
+      & The deployed monotone routing heuristic holds SLA violations to \BMrlMonoSla{} against
+        \BMrlRrSla{} for round-robin closed-loop and passes every monotonicity probe; the
         value in the live path comes from this deterministic policy over the classical
         scheduler. \\
     Deterministic-fallback discipline
@@ -138,11 +138,11 @@ conditions hidden.
     Honest, product-shaped evaluation of a trained router
       & The PPO policy \cite{schulman2017ppo,raffin2021sb3} is measured against the
         production routing task and reported as a null result: it is
-        round-robin-equivalent, the worst contender closed-loop at $67.5\%$ SLA
+        round-robin-equivalent, the worst contender closed-loop at \BMrlPpoSla{} SLA
         violations, and is kept dormant in shadow mode, so it contributes nothing live. \\
     Gradual-degradation anomaly detection
       & The deployed \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
-        $0.000$ (every stateless detector) to $0.845$ and ships as the default; the
+        $0.000$ (every stateless detector) to \BManFone{} and ships as the default; the
         threshold rule is the deterministic fallback and Isolation Forest
         \cite{liu2008isolationforest} a selectable alternative. \\
     Decoupled three-plane architecture
@@ -204,7 +204,7 @@ evaluation, deployment, and scope dimensions, each paired with the concrete step
 would close it. None is a flaw in the architecture; each is a bounded next increment on
 a working base.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Honest limitations and their closing steps]{Honest limitations across four dimensions, each with the concrete step that would close it.}
   \label{tab:conc:limitations}
@@ -326,7 +326,7 @@ middleware into a managed offering. \Cref{tab:conc:roadmap} groups the planned
 Phase-2 work into four themes, each of which extends the current architecture rather
 than reworking it.
 
-\begin{table}[ht]
+\begin{table}[H]
   \centering
   \caption[Phase-2 product roadmap]{Phase-2 product roadmap, where each theme builds on the current architecture.}
   \label{tab:conc:roadmap}
@@ -359,21 +359,21 @@ The two diagrams below detail the multi-tenant SaaS theme from
 target Phase-2 design and not the system evaluated in this report, which remains
 single-tenant and runs under Docker Compose on a single host.
 
-\begin{figure}[ht]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{mt_isolation}
   \caption[Planned multi-tenant isolation (Phase 2)]{Planned multi-tenant isolation (Phase~2), not implemented in the single-tenant system evaluated in this report.}
   \label{fig:conc:mt}
 \end{figure}
 
-\begin{figure}[p]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{webhook}
   \caption[Planned webhook delivery (Phase 2)]{Planned webhook delivery (Phase~2), not yet built, delivering signed outbound HTTP POSTs to customers who cannot subscribe to Redis.}
   \label{fig:conc:webhook}
 \end{figure}
 
-\begin{figure}[ht]
+\begin{figure}[tbp]
   \centering
   \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{k8s}
   \caption[Planned Helm and Kubernetes topology (Phase 2)]{Planned Helm and Kubernetes topology (Phase~2), not the single-host Docker Compose deployment used for the results in this report.}
@@ -388,7 +388,7 @@ production, and SaaS increments that follow.
 
 \begin{sidewaysfigure}
   \centering
-  \resizebox{0.95\textheight}{!}{%
+  \resizebox{0.9\textheight}{!}{%
   \begin{ganttchart}[
     hgrid, vgrid,
     bar/.style={fill=slmint!40, draw=slmint!70},
@@ -428,7 +428,7 @@ control loop end to end while keeping a deterministic floor beneath every learne
 component, in the spirit of the self-managing systems the field has long argued for
 \cite{kephart2003autonomic}. The autoscaling loop is demonstrated, the deployed
 \texttt{trend\_rule} detector closes the gradual-degradation gap that point-based rules
-miss ($F_1$ $0.000 \rightarrow 0.845$), the deterministic capacity-aware router beats
+miss ($F_1$ $0.000 \rightarrow{}$ \BManFone{}), the deterministic capacity-aware router beats
 round-robin in the live path while the trained policy stays dormant as an honest null
 result, and the deployed \texttt{harmonic\_residual} forecaster ships the most accurate
 model with deterministic fallbacks in reserve. The focused scope is delivered, and what
