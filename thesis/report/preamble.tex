@@ -174,22 +174,22 @@
 
 % ---- Named benchmark quantities (one macro = one number = one edit) ----
 % Forecasting engine (forecasting-engine-bench / downstream-bench)
-\newcommand{\BMfcMape}{\bmtodo{fc-mape-harmonic}}        % harmonic-residual MAPE
-\newcommand{\BMfcMapeNaive}{\bmtodo{fc-mape-naive}}      % naive baseline MAPE
-\newcommand{\BMfcMapeArima}{\bmtodo{fc-mape-arima}}      % ARIMA MAPE
-\newcommand{\BMfcMapeMA}{\bmtodo{fc-mape-movingavg}}     % moving-average MAPE
-\newcommand{\BMfcCiCov}{\bmtodo{fc-ci-coverage}}         % conformal CI coverage
-\newcommand{\BMfcSlaGain}{\bmtodo{fc-downstream-sla-gain}} % downstream SLA gain (pp)
+\newcommand{\BMfcMape}{5.4\%}        % harmonic-residual MAPE (all-profile; forecasting-engine-bench/REPORT.md:101)
+\newcommand{\BMfcMapeNaive}{7.5\%}      % naive baseline MAPE (forecasting-engine-bench/REPORT.md:101)
+\newcommand{\BMfcMapeArima}{8.9\%}      % ARIMA MAPE (forecasting-engine-bench/REPORT.md:103)
+\newcommand{\BMfcMapeMA}{10.5\%}     % moving-average MAPE (forecasting-engine-bench/REPORT.md:103)
+\newcommand{\BMfcCiCov}{0.955}         % conformal CI coverage (all-profile; forecasting-engine-bench/REPORT.md:101)
+\newcommand{\BMfcSlaGain}{6.30} % downstream SLA gain (pp) (forecasting-engine-bench/REPORT.md:159)
 % Anomaly detector (anomaly-detection-bench / anomaly-engine-bench)
-\newcommand{\BManFone}{\bmtodo{an-trendrule-f1}}         % trend-rule gradual-degradation F1
-\newcommand{\BManRecall}{\bmtodo{an-trendrule-recall}}   % trend-rule recall
+\newcommand{\BManFone}{0.845}         % trend-rule gradual-degradation F1 (anomaly-detection-bench/REPORT.md:10,135)
+\newcommand{\BManRecall}{0.791}   % trend-rule gradual-degradation recall (anomaly-detection-bench/REPORT.md:10,135)
 \newcommand{\BManPrecision}{\bmtodo{an-trendrule-precision}} % trend-rule precision
 \newcommand{\BManAgree}{\bmtodo{an-if-threshold-agreement}}  % IF vs threshold agreement %
 \newcommand{\BManAgreeCells}{\bmtodo{an-agreement-cells}}    % agreeing cells (e.g. n/256)
 \newcommand{\BManGridCells}{256}                             % fixed 16x16 sweep grid (config, not pending)
-\newcommand{\BMifFone}{\bmtodo{an-if-smd-f1}}            % Isolation Forest SMD held-out F1
+\newcommand{\BMifFone}{0.8012}            % Isolation Forest SMD held-out (test_label) F1 (anomaly-engine-bench/README.md:42)
 % Routing (rl-routing-bench)
-\newcommand{\BMrlPpoReward}{\bmtodo{rl-ppo-reward}}      % PPO open-loop mean reward (still used)
+\newcommand{\BMrlPpoReward}{-0.0056}      % PPO open-loop mean reward, ties round-robin (joint best) over 20 held-out episodes (docs/PROJECT_WALKTHROUGH.md:1914)
 % RETIRED: the closed-loop SLA-violation comparison below underpinned a "monotone beats
 % round-robin" claim that is false under uniform overload (an even split is provably
 % optimal, so routing ties RR). All usages were removed; do NOT fill these or re-introduce
@@ -198,8 +198,8 @@
 \newcommand{\BMrlRrSla}{\bmtodo{rl-roundrobin-sla-viol-RETIRED}} % unused; see note above
 \newcommand{\BMrlPpoSla}{\bmtodo{rl-ppo-sla-viol-RETIRED}}       % unused; see note above
 % Autoscaler (autoscaler-strategy-bench)
-\newcommand{\BMasSlaReactive}{\bmtodo{as-sla-reactive}}  % moving-avg+reactive SLA %
-\newcommand{\BMasSlaTarget}{\bmtodo{as-sla-target}}      % target+moving-avg SLA %
+\newcommand{\BMasSlaReactive}{77.2\%}  % moving-avg+reactive SLA % (autoscaler-strategy-bench/REPORT.md:120,34)
+\newcommand{\BMasSlaTarget}{98.3\%}      % target+moving-avg (C2) SLA % (autoscaler-strategy-bench/REPORT.md:120,109)
 % Adaptive end-to-end run (adaptive-bench)
 \newcommand{\BMadPoolLo}{\bmtodo{ad-pool-min}}           % adaptive pool low bound
 \newcommand{\BMadPoolHi}{\bmtodo{ad-pool-max}}           % adaptive pool high bound
