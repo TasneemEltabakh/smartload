@@ -398,7 +398,13 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                               flush=True)
 
                 elif channel == ANOMALY_CHANNEL:
-                    outcome = handle_anomaly(payload, registry, adapter)
+                    # Pass the live pool so handle_anomaly drops verdicts that
+                    # don't name a real backend (e.g. the `backend_pool`
+                    # all-down sentinel) before they reach the exclusion path.
+                    live_backends = discover_all_backends(
+                        docker_client, seed_backends=ALL_BACKENDS_SEED,
+                    )
+                    outcome = handle_anomaly(payload, registry, adapter, live_backends)
                     if outcome.applied:
                         with _state_lock:
                             _excluded_backends = set(adapter.current_state().excluded_backends)

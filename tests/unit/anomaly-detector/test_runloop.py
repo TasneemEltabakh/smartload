@@ -180,6 +180,43 @@ def test_features_handles_null_values_from_db():
     assert features[0].sample_count == 0
 
 
+def test_features_skips_backend_pool_sentinel():
+    """The NGINX all-down sentinel `backend_pool` must never be scored as a
+    backend: doing so flags the LB aggregate's 502 error_rate as an
+    "unhealthy backend", which the sidecar excludes, emptying the pool — a
+    self-sustaining outage (audit/_findings/anomaly-pool-collapse-rootcause)."""
+    rows = [
+        ("backend_pool", "error_rate",         1.0, 1.0, 0.0, 9000),
+        ("backend_pool", "request_latency_ms", 0.0, 0.0, 0.0, 9000),
+        ("backend_1",    "error_rate",         0.0, 0.0, 0.0, 600),
+    ]
+    features = build_features_from_rows(rows)
+    by_id = {f.backend_id for f in features}
+    assert "backend_pool" not in by_id
+    assert by_id == {"backend_1"}
+
+
+def test_features_skips_unknown_no_upstream_sentinel():
+    """`unknown` (the shipper's fallback when NGINX never reached an upstream)
+    is not a real backend and is dropped for the same reason."""
+    rows = [
+        ("unknown",   "error_rate", 1.0, 1.0, 0.0, 100),
+        ("backend_2", "error_rate", 0.0, 0.0, 0.0, 100),
+    ]
+    features = build_features_from_rows(rows)
+    assert {f.backend_id for f in features} == {"backend_2"}
+
+
+def test_features_all_non_backend_rows_yield_empty():
+    """A window that only saw the LB sentinels produces no features at all —
+    nothing for the engine to flag, so no phantom exclusion."""
+    rows = [
+        ("backend_pool", "error_rate", 1.0, 1.0, 0.0, 9000),
+        ("unknown",      "error_rate", 1.0, 1.0, 0.0, 50),
+    ]
+    assert build_features_from_rows(rows) == []
+
+
 # ── should_publish gate ──────────────────────────────────────────────────────
 
 def test_publish_safe_mode_never_publishes():

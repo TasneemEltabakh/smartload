@@ -139,6 +139,20 @@ def bootstrap_engine(requested: str, policy: EnginePolicy) -> EngineBootstrap:
 
 # ── DB rows → features ────────────────────────────────────────────────────────
 
+# Instances that are NOT real backends and must never be scored as one.
+#
+# NGINX records the upstream *block name* `backend_pool` as `$upstream_addr`
+# when no live `server` is reachable (the all-down 502 sentinel), and the
+# lb-otel-shipper emits `unknown` when NGINX never reached an upstream at all.
+# Both leak into the metrics stream as an `instance` with a 100% error_rate
+# during any 502 window. Scoring them like a backend yields a phantom
+# `unhealthy` verdict that the lb-sidecar then "excludes" — which keeps the
+# pool empty, which 502s every request, which re-fires the verdict: a
+# self-sustaining outage (see audit/_findings/anomaly-pool-collapse-rootcause).
+# They are dropped here so the engine only ever scores real backends.
+NON_BACKEND_INSTANCES = frozenset({"backend_pool", "unknown"})
+
+
 # ANOMALY_QUERY shape: one row per (instance, metric_name) pair, with columns
 #   (instance, metric_name, avg_value, max_value, std_value, sample_count)
 # We pivot it into one BackendFeatures per instance.
@@ -148,6 +162,10 @@ def build_features_from_rows(rows: list[tuple]) -> list[BackendFeatures]:
 
     Rows are tuples: (instance, metric_name, avg, max, std, sample_count).
     Returns an empty list when no rows arrive (cold DB, idle stack).
+
+    Non-backend instances (`NON_BACKEND_INSTANCES` — the NGINX all-down
+    sentinel and the shipper's no-upstream fallback) are skipped so the
+    load-balancer aggregate is never scored as if it were a backend.
     """
     by_instance: dict[str, dict] = {}
     for row in rows:
@@ -155,6 +173,8 @@ def build_features_from_rows(rows: list[tuple]) -> list[BackendFeatures]:
             instance, metric_name, avg, mx, std, samples = row
         except ValueError:
             continue   # malformed row — skip, don't poison the whole batch
+        if instance in NON_BACKEND_INSTANCES:
+            continue   # LB aggregate / no-upstream sentinel — not a real backend
         entry = by_instance.setdefault(instance, {})
         entry[metric_name] = {
             "avg":     float(avg) if avg is not None else 0.0,
