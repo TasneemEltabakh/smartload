@@ -12,19 +12,10 @@ next to a deterministic baseline, and in this release the deployed default in
 every service is an analytic engine rather than a learned policy: a stateful
 temporal rule for anomaly detection, a harmonic-residual forecaster for demand,
 and a monotone heuristic for routing. The trained models (an Isolation Forest,
-an ARIMA forecaster, and a PPO policy) all ship alongside these defaults but
-none of them currently leads in production. \Cref{fig:imb:cutover} maps how the
-plugin scaffolding, the per-service engine cutover, and the trained-model
-handoffs relate, and records which engine each service actually deploys. This
+an ARIMA forecaster, and a PPO policy) all ship alongside these defaults and
+remain selectable, but none of them currently leads in production. This
 section explains why those choices were made and how the architecture turns each
 into a safe, reversible decision that the operator controls.
-
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=\linewidth]{cutover_models}
-  \caption[Engine-wrapper cutover and trained-model handoffs]{Engine-wrapper cutover and trained-model handoffs, where each trained model ships and is selectable yet every service defaults to its analytic engine.}
-  \label{fig:imb:cutover}
-\end{figure}
 
 \subsection{The pluggable engine pattern}\label{imb:pluggable}
 
@@ -58,7 +49,7 @@ The pattern gives each service three kinds of engine:
 
 This fallback contract is identical across the three services, because it lives
 in one shared helper, \texttt{runloop.bootstrap\_engine()}.
-\Cref{fig:imb:engine_bootstrap} traces the decision it makes at start-up. When
+At start-up the helper makes the following decision. When
 the requested engine is a trained model, the helper loads it only if its artefact
 is present and valid; if the artefact is missing, corrupt, or shape-mismatched,
 the helper catches the failure and installs the deterministic baseline instead.
@@ -70,13 +61,6 @@ degrades the service to its baseline rather than to an outage, and the
 \texttt{/health} endpoint reports which engine is actually running so the
 operator can see when a fallback has occurred.
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=\linewidth]{engine_bootstrap}
-  \caption[Engine bootstrap and baseline fallback]{Engine bootstrap in \texttt{runloop.bootstrap\_engine()}, installing a trained model when its artefact is valid and otherwise degrading to the deterministic baseline.}
-  \label{fig:imb:engine_bootstrap}
-\end{figure}
-
 The operator picks the engine through a single environment variable
 (\texttt{ANOMALY\_ENGINE}, \texttt{FORECAST\_ENGINE}, \texttt{RL\_POLICY}), and
 the run loop owns the envelope, the publication-gating logic, the policy
@@ -87,7 +71,7 @@ in production is a one-line configuration change, not a code rollback, and the
 baseline that takes over is the same code path that has run since the first
 sprint.
 
-The run loop itself follows a fixed cycle, shown in \cref{fig:imb:runloop_seq}.
+The run loop itself follows a fixed cycle.
 On each tick it first drains any pending policy update so a configuration change
 takes effect at the next cycle, then queries telemetry, builds the engine's input
 features, runs the engine, and finally publishes a decision envelope onto the
@@ -97,13 +81,6 @@ incremented, when the service is in safe mode or when the result carries no new
 information. The tick interval and the telemetry query differ from one service to
 the next, while the control flow itself is shared, which is what lets the safety
 behaviour live in one reviewed place rather than being re-implemented per engine.
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\linewidth,height=0.9\textheight,keepaspectratio]{runloop_seq}
-  \caption[The per-service run-loop cycle]{The per-service run-loop cycle: read policy, query telemetry, build features, run the engine, and publish a decision only when the should-publish gate passes.}
-  \label{fig:imb:runloop_seq}
-\end{figure}
 
 \subsection{Why these algorithms, and not others}\label{imb:algo_choices}
 
@@ -315,8 +292,8 @@ window by window, a backend creeping upward looks no different from one that is
 simply, steadily slow. The deployed \texttt{trend\_rule} engine supplies the
 missing axis by keeping a small per-backend memory across cycles and measuring
 each window against the backend's \emph{own} established normal rather than
-against a fixed constant. \Cref{fig:imb:alg_trend_rule} traces the per-cycle
-logic. Each cycle begins by advancing that memory with the incoming window's
+against a fixed constant. The per-cycle logic runs as follows.
+Each cycle begins by advancing that memory with the incoming window's
 maximum, mean, and standard-deviation latency. The engine maintains a slow,
 exponentially weighted baseline of the backend's mean and maximum latency and
 derives two backend-relative deviations: \(\mathit{mean\_dev}\), how far the
@@ -361,15 +338,7 @@ until enough history exists, so a fresh backend never manufactures an alert.
 Beneath the engine, the run loop applies a flip-confirmation debounce: a new
 verdict must persist for \texttt{flip\_confirmation\_cycles} consecutive cycles
 (two by default) before the backend's published state flips, which absorbs the
-single-cycle flapping a stateless rule would forward to the load balancer. The
-internal decision logic is summarised in \cref{fig:imb:alg_trend_rule}.
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\textwidth,height=0.92\textheight,keepaspectratio]{alg_trend_rule}
-  \caption[Internal decision logic of the trend\_rule engine]{Internal decision logic of the deployed \texttt{trend\_rule} engine, which advances per-backend temporal state and lets the worst of three channels win.}
-  \label{fig:imb:alg_trend_rule}
-\end{figure}
+single-cycle flapping a stateless rule would forward to the load balancer.
 
 \subsection{Isolation Forest engine}\label{imb:isoforest}
 
@@ -404,7 +373,7 @@ measured feature vector $(\text{max}=406, \text{avg}=162, \text{err}=0,
 variance-to-mean ratio of roughly $1.2$, a signal the threshold rule's latency
 ratio of $2.5 < 3$ does not pick up.
 
-\Cref{fig:imb:scoring_pipeline} lays out the full scoring pipeline and makes the
+The full scoring pipeline makes the
 coordinate-system bridge explicit. At training time the model is fitted on the
 SMD corpus in its own normalised space, while a second scaler, the
 \texttt{production\_scaler}, is fitted on real-millisecond features so that the
@@ -419,13 +388,6 @@ would be asked to score inputs in a coordinate system it never saw. This is the
 same train/serve construct gap that recurs across the learned engines, surfacing
 again for the routing policy in \cref{imb:ppo_mdp}, and here the calibration step
 is what closes it for the anomaly detector.
-
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=\linewidth]{scoring_pipeline}
-  \caption[The Isolation Forest scoring pipeline]{The Isolation Forest scoring pipeline and the coordinate-system bridge between the training feature space and the live serving feature space.}
-  \label{fig:imb:scoring_pipeline}
-\end{figure}
 
 \paragraph{Deployment status.} The deployed default is \texttt{trend\_rule}, the
 stateful temporal rule, chosen because its flip-confirmation requirement gives it
@@ -556,14 +518,7 @@ structural shape over the last observed wobble. A real, statistically significan
 trend is projected at full strength, while a slope indistinguishable from noise is
 shrunk out over the lead so it does not provoke spurious scaling churn.
 
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\textwidth,height=0.92\textheight,keepaspectratio]{alg_harmonic}
-  \caption[Internal pipeline of the harmonic-residual forecaster]{Internal pipeline of the deployed harmonic-residual forecaster, from harmonic regression and residual correction to the projected forecast with a conformal band.}
-  \label{fig:imb:alg_harmonic}
-\end{figure}
-
-\Cref{fig:imb:alg_harmonic} traces this pipeline end to end. This decomposition is
+This decomposition is
 also why the engine earns its \BMfcSlaGain{} percentage point downstream advantage:
 the forward-projected structural shape gives the autoscaler a few minutes of
 warning before demand actually rises, so capacity is provisioned ahead of the load
@@ -579,8 +534,6 @@ or below zero, and because a request rate cannot be negative the published
 \texttt{confidence\_lower} is floored at $0.0$ until enough error history
 accumulates to support a tighter lower bound. Until then the engine still publishes
 a usable point forecast and a one-sided upper bound, so the service never goes dark.
-
-The forecast routine is summarised in \cref{fig:imb:alg_harmonic}.
 
 \subsection{ARIMA(2,0,2)}\label{imb:arima}
 
@@ -852,15 +805,8 @@ eligible one. The scores are normalised over the eligible set into a weight
 vector, and that vector is smoothed across cycles by an exponential moving
 average, snapping straight to the new target when the pool is idle and blending
 more conservatively under load so a single noisy window cannot swing the routing
-weights. \Cref{fig:imb:alg_monotone} traces the whole path from telemetry to the
+weights. The whole path runs from per-backend telemetry to the
 published weight vector.
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\textwidth,height=0.92\textheight,keepaspectratio]{alg_monotone}
-  \caption[The deployed monotone router]{The deployed \texttt{monotone} router, from per-backend telemetry to the published weight vector, in shadow by default.}
-  \label{fig:imb:alg_monotone}
-\end{figure}
 
 The load-bearing property is monotonicity. Because $b_i$ depends only on past and
 current latencies, it is fixed for a given history, so the score
@@ -881,8 +827,7 @@ equivalence on its uniform-latency training distribution (\cref{imb:ppo_finding}
 fails the same monotonicity probe the heuristic passes. A monotone, capacity-aware
 rule therefore beats round-robin on the objective by a wide margin while remaining
 safe enough to ship, which is precisely why it leads in production while the
-learned policy is held back in shadow. The scoring map and the monotonicity
-property are summarised in \cref{fig:imb:alg_monotone}.
+learned policy is held back in shadow.
 
 \subsection{Evaluating the learned policy: an honest negative result}\label{imb:ppo_finding}
 
@@ -948,7 +893,7 @@ default: \texttt{RL\_MODE=shadow}. Even with the run loop enabled and a trained
 policy loaded, the sidecar refuses to apply any recommendation whose mode is not
 \texttt{active}, and the run loop will not emit \texttt{active} unless the
 operator has explicitly opted in \emph{and} the operating policy is not in
-safe-mode. \Cref{fig:imb:mode_composition} shows how these conditions combine:
+safe-mode. These conditions combine so that
 three independent gates must all agree before the published mode is
 \texttt{active}, so the same intent, namely ``do not move traffic the operator did
 not approve'', is enforced redundantly, with the sidecar as the single
@@ -957,13 +902,6 @@ traffic when the operator has approved it; otherwise it just produces telemetry.
 The asymmetry is deliberate: the policy is what learns, while the conditions that
 permit it to move traffic are fixed, so routing can improve over time without ever
 loosening the safety default.
-
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.62\linewidth]{mode_composition}
-  \caption[How the published routing mode is composed]{How the published routing mode is composed, where three independent gates must all agree before routing reaches the load balancer as \texttt{active}.}
-  \label{fig:imb:mode_composition}
-\end{figure}
 
 \subsection{The load-balancer sidecar}\label{imb:sidecar}
 
@@ -1082,17 +1020,9 @@ rather than against a forecast. The audit reason field records which path drove
 each decision, so a reader of the scaling history can always tell a proactive
 scale from a reactive one.
 
-\Cref{fig:imb:alg_autoscaler} traces the controller's internal logic, from the
+The controller's internal logic runs from the
 capacity-based target through the dead-band and the asymmetric cooldown gates to
-the emitted scaling action. The full controller, cooldown logic, and parameters
-are summarised in \cref{fig:imb:alg_autoscaler}.
-
-\begin{figure}[tbp]
-  \centering
-  \includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{alg_autoscaler}
-  \caption[Internal logic of the target controller]{Internal logic of the deployed \texttt{target} controller, sizing a capacity-based target that the dead-band and asymmetric cooldowns gate before a \texttt{ScaleEvent} or hold.}
-  \label{fig:imb:alg_autoscaler}
-\end{figure}
+the emitted scaling action.
 
 \subsection{Actuation and audit}\label{imb:autoscaler_actuation}
 
