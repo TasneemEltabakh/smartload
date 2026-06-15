@@ -69,6 +69,26 @@ Result batches on disk (kept for reference):
 - earlier batches (`...114845Z`, `...0953*`) — superseded (autoscaler-flap /
   stale-`down` contaminated); kept for the before/after record.
 
+## Ablation — per-fix contribution (5v5, RUNS=2; `ablation.sh`)
+
+Leave-one-out: each fix removed, one at a time. `Δfull` = the **cost of removing
+that fix** on **C_spike** error% (positive ⇒ worse without it).
+
+| Fix removed | C_spike err% | Δ vs full | reading |
+|---|---|---|---|
+| *(full stack)* | 3.3% | — | baseline RR here = 1.7% |
+| **anti-concentration clamp** | **18.3%** | **+15.0** | **dominant — recovers the spike almost single-handedly** |
+| equal-capacity pin | 5.1% | +1.8 | secondary — the autoscaler flap costs real capacity |
+| per-side reset | 4.0% | +0.7 | minor — stale-`down` carryover |
+| `#3` absolute-overload guard | 2.9% | −0.4 | ~0 here — *insurance* that didn't need to fire in this clean run |
+
+**Takeaway:** the **clamp** does the heavy lifting; the **pin** is a clear second; the
+`#3` guard is insurance (it earned its keep in the earlier *contaminated* 56% collapse,
+where benching cascaded — this clean scenario never gets hot enough to trigger it).
+*Caveat:* RUNS=2, so non-C_spike deltas (esp. D_slow) are within run-to-run noise —
+re-run with RUNS≥3 + CI (#181) for a thesis-grade table. Batch:
+`results/ablation-20260615T135625Z/ablation_report.md`.
+
 ## Findings
 
 1. **Decisive win — hidden bad backend (B_degrade).** SmartLoad cut errors
