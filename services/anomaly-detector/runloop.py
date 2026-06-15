@@ -73,6 +73,21 @@ DEFAULT_OVERLOAD_EXCLUSION_CONFIRMATIONS = 2
 # factor cycle-over-cycle, the whole pool is SURGING (a load spike) -> suppress
 # every exclusion that cycle (scale-out is the answer, not benching).
 DEFAULT_OVERLOAD_SURGE_FACTOR = 1.5
+# ── #3: absolute pool-overload suppression ───────────────────────────────────
+# The #2 surge test is RELATIVE (cycle-over-cycle ramp) so it only fires while
+# load is *climbing*; once a spike plateaus at a high level the median stops
+# growing and the relative test goes quiet, leaving the margin test to bench
+# backends on ordinary stochastic variance around a uniformly-overloaded mean —
+# which CASCADES the pool one backend at a time (the C_spike regression). This
+# guard is the ABSOLUTE complement: when the cohort MEDIAN backend is itself
+# unhealthy — median error past `error_rate_threshold`, or median latency past
+# the SLO — the whole pool is saturated, so excluding any one backend only
+# concentrates load and accelerates the cascade. In that regime every exclusion
+# is suppressed and the pool is held intact (an even split is optimal when every
+# backend is equally swamped; scale-out, not benching, is the answer). It does
+# NOT fire when only a minority is bad (a hidden bad backend leaves the median
+# healthy), so the B_degrade exclusion win is untouched.
+DEFAULT_SLO_P95_LATENCY_MS = 250.0
 
 
 @dataclass
@@ -111,6 +126,17 @@ class EnginePolicy:
     # Not engine constructor params.
     overload_exclusion_confirmations: int = DEFAULT_OVERLOAD_EXCLUSION_CONFIRMATIONS
     overload_surge_factor: float = DEFAULT_OVERLOAD_SURGE_FACTOR
+    # #3 absolute pool-overload suppression: the SLO p95 latency (ms). When the
+    # cohort MEDIAN latency exceeds this (or median error exceeds
+    # error_rate_threshold) the whole pool is saturated and every exclusion is
+    # suppressed. Sourced from the smartload.policy `slo_p95_latency_ms` knob.
+    # Not an engine constructor param. 0 disables the latency arm of the guard.
+    slo_p95_latency_ms: float = DEFAULT_SLO_P95_LATENCY_MS
+    # Master switch for the whole #3 absolute pool-overload guard (both the error
+    # and latency arms). True = on (default). Exposed primarily so the ablation
+    # benchmark can isolate #3's contribution; an operator can also disable it via
+    # the `anomaly_absolute_overload_suppression` policy knob.
+    absolute_overload_suppression: bool = True
 
     def engine_kwargs(self) -> dict:
         return {
@@ -152,6 +178,10 @@ def policy_from_payload(payload: dict, fallback: EnginePolicy) -> EnginePolicy:
         overload_outlier_margin=_float("anomaly_overload_outlier_margin", fallback.overload_outlier_margin),
         overload_exclusion_confirmations=_int("anomaly_overload_exclusion_confirmations", fallback.overload_exclusion_confirmations),
         overload_surge_factor=_float("anomaly_overload_surge_factor", fallback.overload_surge_factor),
+        slo_p95_latency_ms=_float("slo_p95_latency_ms", fallback.slo_p95_latency_ms),
+        absolute_overload_suppression=bool(
+            payload.get("anomaly_absolute_overload_suppression",
+                        fallback.absolute_overload_suppression)),
     )
 
 
@@ -437,6 +467,15 @@ def peer_suppress_verdicts(
          exclusion is suppressed that cycle — a synchronized ramp is overload, not
          a fault. The cohort-wide mirror of the engine's per-backend "recovering"
          (falling-latency) guard.
+      #3 absolute pool-overload — #2 is RELATIVE (only fires while load ramps);
+         once a spike plateaus the median stops growing and the margin test would
+         resume benching backends on ordinary variance, cascading the pool. So
+         also suppress every exclusion whenever the cohort MEDIAN is itself
+         unhealthy by ABSOLUTE thresholds — median error past
+         ``error_rate_threshold`` or median latency past ``slo_p95_latency_ms``.
+         Needs no ``cohort_memory`` (within-cycle), so it holds the pool from the
+         first saturated cycle. A lone bad backend leaves the median healthy, so
+         this never suppresses a genuine single-backend exclusion.
 
     Returns a NEW list of AnomalyScore (input scores are not mutated). Order
     matches the input. Inputs whose verdict is left unchanged are returned
@@ -473,6 +512,21 @@ def peer_suppress_verdicts(
             surging = True
         cohort_memory["lat_median"] = lat_median
         cohort_memory["err_median"] = err_median
+
+    # #3 ABSOLUTE pool-overload: the #2 ramp test goes quiet once a spike
+    # plateaus, so also suppress when the cohort MEDIAN backend is itself
+    # unhealthy by absolute thresholds — median error past error_rate_threshold,
+    # or median latency past the SLO. Either means the whole pool is saturated
+    # (not a lone fault), so benching any one backend just concentrates load and
+    # cascades the pool. Needs no cohort_memory (it is a within-cycle test), so
+    # it engages even on the very first overloaded cycle. Gated by the
+    # absolute_overload_suppression master switch (so the ablation benchmark can
+    # isolate #3's contribution).
+    if policy.absolute_overload_suppression:
+        if err_median > policy.error_rate_threshold:
+            surging = True
+        if policy.slo_p95_latency_ms > 0.0 and lat_median > policy.slo_p95_latency_ms:
+            surging = True
 
     if not excludable_idx:
         if states is not None:           # healthy cohort — reset every streak

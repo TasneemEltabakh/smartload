@@ -98,6 +98,27 @@ def test_policy_from_full_payload():
     assert new.flip_confirmation_cycles == 4
 
 
+def test_policy_slo_p95_latency_plumbed():
+    # #3 absolute-overload knob: slo_p95_latency_ms flows from the policy envelope
+    # and falls back to the prior value when absent/malformed.
+    new = policy_from_payload({"slo_p95_latency_ms": 320}, fallback=EnginePolicy())
+    assert new.slo_p95_latency_ms == 320.0
+    keep = policy_from_payload({}, fallback=EnginePolicy(slo_p95_latency_ms=275))
+    assert keep.slo_p95_latency_ms == 275.0
+    bad = policy_from_payload({"slo_p95_latency_ms": "oops"},
+                              fallback=EnginePolicy(slo_p95_latency_ms=275))
+    assert bad.slo_p95_latency_ms == 275.0
+
+
+def test_policy_absolute_overload_suppression_plumbed():
+    # #3 master switch flows from the policy envelope and falls back when absent.
+    off = policy_from_payload({"anomaly_absolute_overload_suppression": False},
+                              fallback=EnginePolicy())
+    assert off.absolute_overload_suppression is False
+    keep = policy_from_payload({}, fallback=EnginePolicy(absolute_overload_suppression=False))
+    assert keep.absolute_overload_suppression is False
+
+
 def test_policy_missing_fields_use_fallback():
     fallback = EnginePolicy(latency_multiplier=4.2, policy_version=3,
                             anomaly_response="advisory")
@@ -643,16 +664,18 @@ def test_peer_suppress_downgrades_uniform_overload():
 
 
 def test_peer_suppress_keeps_genuine_outlier_under_overload():
-    # 4 unhealthy backends; b4 is a genuine outlier (~3x the cohort latency, well
-    # past the 50% margin) -> it KEEPS its exclusion while the evenly-loaded pack
-    # is downgraded. A single bad apple among an overloaded pool is still caught.
+    # 4 unhealthy backends, BUSY but BELOW saturation (median latency 150ms < the
+    # 250ms SLO, median error 0.02 < threshold, so #3 absolute-overload does NOT
+    # engage); b4 is a genuine outlier (~4x the cohort latency, well past the 50%
+    # margin) -> it KEEPS its exclusion while the evenly-loaded pack is downgraded.
+    # A single bad apple among a busy-but-not-saturated pool is still caught.
     policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
                           overload_outlier_margin=0.5)
     scored = [
-        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
-        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
-        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
-        (_feat("b4", latency_mean=1600, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+        (_feat("b1", latency_mean=150, error_rate=0.02), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=155, error_rate=0.02), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=145, error_rate=0.02), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=600, error_rate=0.02), AnomalyScore("b4", "unhealthy", 0.9)),
     ]
     out = peer_suppress_verdicts(scored, policy)
     statuses = {s.backend_id: s.status for s in out}
@@ -662,15 +685,17 @@ def test_peer_suppress_keeps_genuine_outlier_under_overload():
 
 def test_peer_suppress_uses_typical_not_max_latency():
     # b1 has a transient MAX spike (latency_ms=4000) but a normal rolling MEAN
-    # (500, same as the pack). The suppressor must judge on the typical mean, so
+    # (150, same as the pack). The suppressor must judge on the typical mean, so
     # the spike does NOT mark it an outlier -> downgraded with the pack (D9 fix).
+    # Below-saturation values (median 150 < 250 SLO, error < threshold) keep #3
+    # absolute-overload out of the way, so the mean-vs-max logic is exercised.
     policy = EnginePolicy(overload_peer_fraction=0.5, overload_min_peers=3,
                           overload_outlier_margin=0.5)
     scored = [
-        (_feat("b1", latency_mean=500, error_rate=0.30, latency_max=4000), AnomalyScore("b1", "unhealthy", 0.9)),
-        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
-        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
-        (_feat("b4", latency_mean=510, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+        (_feat("b1", latency_mean=150, error_rate=0.02, latency_max=4000), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=155, error_rate=0.02), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=145, error_rate=0.02), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=150, error_rate=0.02), AnomalyScore("b4", "unhealthy", 0.9)),
     ]
     out = peer_suppress_verdicts(scored, policy)
     assert {s.backend_id: s.status for s in out}["b1"] == "healthy"
@@ -698,23 +723,28 @@ def test_peer_suppress_engages_below_half_when_within_margin():
     # suppressor no longer waits for half the pool to fail before engaging — that
     # delay is what let the pool cascade down to ~3 active under load.
     policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5)
+    # Below-saturation latencies (median 150 < 250 SLO, errors < threshold) so the
+    # MARGIN path is what suppresses b1 (within margin of the pack), not #3.
     scored = [
-        (_feat("b1", latency_mean=510, error_rate=0.06), AnomalyScore("b1", "unhealthy", 0.9)),
-        (_feat("b2", latency_mean=500, error_rate=0.04), AnomalyScore("b2", "healthy", 0.0)),
-        (_feat("b3", latency_mean=490, error_rate=0.04), AnomalyScore("b3", "healthy", 0.0)),
-        (_feat("b4", latency_mean=505, error_rate=0.04), AnomalyScore("b4", "healthy", 0.0)),
-        (_feat("b5", latency_mean=495, error_rate=0.04), AnomalyScore("b5", "healthy", 0.0)),
+        (_feat("b1", latency_mean=155, error_rate=0.025), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=150, error_rate=0.02), AnomalyScore("b2", "healthy", 0.0)),
+        (_feat("b3", latency_mean=148, error_rate=0.02), AnomalyScore("b3", "healthy", 0.0)),
+        (_feat("b4", latency_mean=152, error_rate=0.02), AnomalyScore("b4", "healthy", 0.0)),
+        (_feat("b5", latency_mean=149, error_rate=0.02), AnomalyScore("b5", "healthy", 0.0)),
     ]
     out = peer_suppress_verdicts(scored, policy)
     assert {s.backend_id: s.status for s in out}["b1"] == "healthy"
 
 
 def _scored_with_outlier():
+    # Busy but BELOW saturation (median 150 < 250 SLO, error < threshold) so #3
+    # absolute-overload does not pre-empt the per-backend hysteresis path; b4 is a
+    # genuine latency outlier (~4x the pack, past the 50% margin).
     return [
-        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
-        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
-        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
-        (_feat("b4", latency_mean=1600, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+        (_feat("b1", latency_mean=150, error_rate=0.02), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=155, error_rate=0.02), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=145, error_rate=0.02), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=600, error_rate=0.02), AnomalyScore("b4", "unhealthy", 0.9)),
     ]
 
 
@@ -749,3 +779,72 @@ def test_peer_suppress_surge_suppresses_even_outliers():
     ]
     out = peer_suppress_verdicts(spike, policy, cohort_memory=mem)
     assert all(s.status == "healthy" for s in out)            # surge -> all kept, even b4
+
+
+def test_peer_suppress_absolute_overload_error_holds_even_outlier():
+    # #3 error arm: the cohort MEDIAN error is past error_rate_threshold (the whole
+    # pool is shedding), so EVERY exclusion is suppressed — even a latency outlier
+    # past the margin. No cohort_memory, so the #2 ramp path cannot fire; this is
+    # purely the absolute within-cycle guard. Latencies stay below the SLO so the
+    # latency arm is isolated out and only the error arm is exercised.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          error_rate_threshold=0.05, slo_p95_latency_ms=250)
+    scored = [
+        (_feat("b1", latency_mean=150, error_rate=0.20), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=150, error_rate=0.20), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=150, error_rate=0.20), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=600, error_rate=0.20), AnomalyScore("b4", "unhealthy", 0.9)),  # margin outlier
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert all(s.status == "healthy" for s in out)
+
+
+def test_peer_suppress_absolute_overload_latency_holds_pool_first_cycle():
+    # #3 latency arm: the cohort MEDIAN latency is past the SLO on the VERY FIRST
+    # cycle (no cohort_memory / no ramp history), so the pool is held intact — the
+    # plateau case the #2 cycle-over-cycle ramp test cannot see. Errors are zero so
+    # only the latency arm fires.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          error_rate_threshold=0.05, slo_p95_latency_ms=250)
+    scored = [
+        (_feat("b1", latency_mean=400, error_rate=0.0), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=420, error_rate=0.0), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=380, error_rate=0.0), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1600, error_rate=0.0), AnomalyScore("b4", "unhealthy", 0.9)),  # margin outlier
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert all(s.status == "healthy" for s in out)
+
+
+def test_peer_suppress_absolute_latency_arm_disabled_when_slo_zero():
+    # slo_p95_latency_ms=0 disables the #3 latency arm: with the pool slow but
+    # errors low, a genuine latency outlier past the margin is STILL excluded — the
+    # guard is opt-out, and below the error threshold the margin path governs.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          error_rate_threshold=0.05, slo_p95_latency_ms=0)
+    scored = [
+        (_feat("b1", latency_mean=400, error_rate=0.0), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=420, error_rate=0.0), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=380, error_rate=0.0), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1600, error_rate=0.0), AnomalyScore("b4", "unhealthy", 0.9)),  # outlier
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b4"] == "unhealthy"
+
+
+def test_peer_suppress_absolute_guard_master_switch_off():
+    # absolute_overload_suppression=False disables #3 entirely (ablation isolation):
+    # a saturated pool (median error + latency both past threshold) with a margin
+    # outlier now EXCLUDES the outlier instead of holding it, because the absolute
+    # guard never fires.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          error_rate_threshold=0.05, slo_p95_latency_ms=250,
+                          absolute_overload_suppression=False)
+    scored = [
+        (_feat("b1", latency_mean=400, error_rate=0.20), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=420, error_rate=0.20), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=380, error_rate=0.20), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=2000, error_rate=0.20), AnomalyScore("b4", "unhealthy", 0.9)),  # outlier
+    ]
+    out = peer_suppress_verdicts(scored, policy)
+    assert {s.backend_id: s.status for s in out}["b4"] == "unhealthy"  # guard off -> excluded

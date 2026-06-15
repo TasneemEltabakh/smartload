@@ -65,11 +65,13 @@ from shared.queries import (                                   # noqa: E402
     ANOMALY_METRIC_NAMES,
     ANOMALY_QUERY,
     BACKEND_HEALTH_INSERT,
+    BACKEND_HEALTH_QUERY,
 )
 
 from runloop import (                                          # noqa: E402
     BackendState,
     EnginePolicy,
+    NON_BACKEND_INSTANCES,
     apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
@@ -128,6 +130,12 @@ FLIP_CONFIRMATION_CYCLES = config.env_int(
 RECOVERY_WINDOW_SECONDS = config.env_float(
     "ANOMALY_RECOVERY_WINDOW_SECONDS", EnginePolicy().recovery_window_seconds
 )
+# Window for the startup exclusion-clock hydration (see _hydrate_exclusion_clocks).
+# Matches the sidecar's LB_SIDECAR_HEALTH_HYDRATION_WINDOW_SECONDS default so both
+# services inherit the same durable view of which backends were last excluded.
+EXCLUSION_HYDRATION_WINDOW_SECONDS = config.env_int(
+    "ANOMALY_EXCLUSION_HYDRATION_WINDOW_SECONDS", 300
+)
 # Fix A — peer-relative overload suppression knobs. overload_peer_fraction:
 # fraction of live backends that must be degraded together before exclusions are
 # treated as system-wide overload and suppressed. overload_min_peers: minimum
@@ -139,6 +147,12 @@ OVERLOAD_PEER_FRACTION = config.env_float(
 )
 OVERLOAD_MIN_PEERS = config.env_int(
     "ANOMALY_OVERLOAD_MIN_PEERS", EnginePolicy().overload_min_peers
+)
+# #3 absolute pool-overload guard master switch. On by default; the ablation
+# benchmark flips it off (ANOMALY_ABSOLUTE_OVERLOAD_SUPPRESSION=false) to isolate
+# the guard's contribution. Also overridable live via the policy envelope.
+ABSOLUTE_OVERLOAD_SUPPRESSION = config.env_bool(
+    "ANOMALY_ABSOLUTE_OVERLOAD_SUPPRESSION", EnginePolicy().absolute_overload_suppression
 )
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
@@ -164,6 +178,7 @@ _policy: EnginePolicy = EnginePolicy(
     recovery_window_seconds=RECOVERY_WINDOW_SECONDS,
     overload_peer_fraction=OVERLOAD_PEER_FRACTION,
     overload_min_peers=OVERLOAD_MIN_PEERS,
+    absolute_overload_suppression=ABSOLUTE_OVERLOAD_SUPPRESSION,
 )
 _last_inference_monotonic: float | None = None
 # Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
@@ -417,6 +432,56 @@ def _refresh_engine_under_lock(new_policy: EnginePolicy) -> None:
 
 # ── run loop ──────────────────────────────────────────────────────────────────
 
+def _hydrate_exclusion_clocks(db_conn) -> int:
+    """Seed exclusion clocks for backends left ``down`` across a detector restart.
+
+    The silent-backend recovery path (Pass 3b / recovery_reinclude_silent) only
+    re-admits a benched backend the detector is already tracking in _backend_states
+    with an armed exclusion clock. But a fresh detector process starts with an
+    EMPTY _backend_states: a backend that is already excluded (``down;`` in
+    upstream.conf — the sidecar hydrates that from backend_health on its own
+    restart) receives zero NGINX traffic, emits no metric rows, never enters
+    _backend_states, and is therefore never recovered — it stays ``down`` for the
+    whole life of the process. That is the no-recovery-ACROSS-RESTART deadlock: it
+    bites every time the decision plane is recreated (e.g. each benchmark side)
+    while a prior exclusion is still live, silently shrinking the pool.
+
+    Mirror the sidecar's startup hydration: read the latest backend_health row per
+    backend and, for any left ``unhealthy``, seed a _backend_states entry with the
+    exclusion clock armed to NOW. Pass 3b then re-probes it once it ages past the
+    recovery window — exactly as if this process had benched it itself. Non-fatal:
+    any DB error degrades to "no hydration" (the prior behaviour).
+    """
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute(BACKEND_HEALTH_QUERY, (f"{EXCLUSION_HYDRATION_WINDOW_SECONDS} seconds",))
+            rows = cur.fetchall()
+    except Exception as exc:                                # noqa: BLE001
+        print(f"[{SERVICE_NAME}] exclusion-clock hydration query failed ({exc}); "
+              "proceeding with empty state", flush=True)
+        return 0
+
+    now_mono = time.monotonic()
+    seeded = 0
+    for row in rows:
+        try:
+            backend_id, status, _score, _ts = row
+        except ValueError:
+            continue
+        if status != "unhealthy" or backend_id in NON_BACKEND_INSTANCES:
+            continue
+        st = _backend_states.setdefault(backend_id, BackendState())
+        if st.excluded_since_monotonic is None:
+            st.excluded_since_monotonic = now_mono
+            st.last_status = "unhealthy"
+            st.recovery_reinclude_emitted = False
+            seeded += 1
+    if seeded:
+        print(f"[{SERVICE_NAME}] hydrated {seeded} exclusion clock(s) from backend_health; "
+              f"stuck-down backends will be re-probed after {RECOVERY_WINDOW_SECONDS}s", flush=True)
+    return seeded
+
+
 def _run_loop(stop_event: threading.Event | None = None) -> None:
     """Anomaly-detector daemon thread.
 
@@ -435,6 +500,10 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
 
     db_conn = psycopg2.connect(TIMESCALEDB_URL)
     db_conn.autocommit = True
+
+    # Re-arm exclusion clocks for backends left `down` by a prior process so the
+    # silent-backend recovery can free them (no-recovery-across-restart deadlock).
+    _hydrate_exclusion_clocks(db_conn)
 
     next_tick = time.monotonic()
 

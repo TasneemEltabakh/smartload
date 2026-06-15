@@ -64,6 +64,7 @@ from shared.queries import BACKEND_HEALTH_QUERY    # noqa: E402
 
 from runloop import (  # noqa: E402
     BackendRegistry,
+    MIN_ACTIVE_WEIGHT_FRACTION,
     PolicyState,
     discover_all_backends,
     handle_anomaly,
@@ -129,6 +130,12 @@ ALL_BACKENDS_SEED = [b.strip() for b in ALL_BACKENDS_RAW.split(",") if b.strip()
 ALL_BACKENDS = ALL_BACKENDS_SEED
 
 RUNLOOP_ENABLED = config.env_bool("LB_SIDECAR_RUNLOOP_ENABLED", False)
+# Anti-concentration routing-skew floor (see runloop.clamp_weight_skew). Defaults
+# to the module value (0.75 ⇒ skew ≤1.33:1). The ablation benchmark sets it to 0
+# to disable the rail and measure its contribution.
+CLAMP_MIN_FRACTION = config.env_float(
+    "LB_SIDECAR_CLAMP_MIN_FRACTION", MIN_ACTIVE_WEIGHT_FRACTION
+)
 
 ROUTING_CHANNEL = "smartload.routing"
 ANOMALY_CHANNEL = "smartload.anomaly"
@@ -226,13 +233,21 @@ def _hydrate_excluded_from_db(adapter, registry: BackendRegistry) -> int:
                 backend_id, status, _score, _ts = row
             except ValueError:
                 continue
-            if status != "unhealthy":
-                continue
-            # Normalise to host:port (L4) so the hydrated exclusion key matches
-            # the upstream weight keys the renderer + quorum guard use.
+            # Normalise to host:port (L4) so the hydrated key matches the upstream
+            # weight keys the renderer + quorum guard use.
             translated = normalize_backend_key(registry.translate_one(backend_id))
-            adapter.exclude_backend(translated)
-            excluded += 1
+            if status == "unhealthy":
+                adapter.exclude_backend(translated)
+                excluded += 1
+            else:
+                # backend_health (the detector's verdict, the health SOT) says this
+                # backend is fine — so CLEAR any exclusion the adapter inherited from
+                # a stale `down;` in upstream.conf (a still-resolving backend left
+                # benched by a prior process that the conf re-import would otherwise
+                # keep down forever, since no `include` verdict is replayed on the
+                # bus). Idempotent when not excluded. This makes backend_health, not
+                # the stale conf, the source of truth on restart.
+                adapter.include_backend(translated)
     except Exception as exc:  # noqa: BLE001
         print(f"[{SERVICE_NAME}] backend_health hydration query failed "
               f"({exc}); proceeding with whatever was applied so far", flush=True)
@@ -373,6 +388,7 @@ def _run_loop(stop_event: threading.Event | None = None) -> None:
                     outcome = handle_routing(
                         payload, registry, adapter, live_backends,
                         confidence_threshold=threshold,
+                        clamp_min_fraction=CLAMP_MIN_FRACTION,
                     )
                     if outcome.applied:
                         with _state_lock:

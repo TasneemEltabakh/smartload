@@ -12,6 +12,8 @@ app.py owns:
 This module owns:
   - BackendRegistry: Docker SDK IP→container_name mapping
   - scores_to_weights: RoutingRecommendation scores → NGINX integer weights
+  - clamp_weight_skew: anti-concentration safety rail bounding the max:min
+                       routing-weight ratio among active backends
   - PolicyState: minimal policy snapshot the sidecar needs (safe_mode +
                  rl_confidence_threshold). Updated by every smartload.policy
                  envelope; consumed by handle_routing.
@@ -209,6 +211,56 @@ def scores_to_weights(server_rankings: list[dict]) -> dict[str, int]:
     return result
 
 
+# Anti-concentration safety rail. `scores_to_weights` multiplies each RL score
+# by 100, so a near-degenerate ranking vector (one score ≈ 1.0, the rest ≈ 0)
+# becomes a ~100:1 traffic skew. Under a *uniform* load surge — every backend
+# equally hot, the homogeneous container pool's normal case — that pins almost
+# all traffic on a single backend whose bounded FIFO queue (QUEUE_MAX) then
+# overflows and sheds 503 while its peers sit idle. That is strictly worse than
+# an even split, which is optimal when the backends are interchangeable. The
+# RL's *ordering* is still useful (route more to the better backend); only its
+# unbounded *magnitude* hurts. We therefore raise every active backend to at
+# least MIN_ACTIVE_WEIGHT_FRACTION of the top weight, capping the worst-case
+# skew at 1/frac : 1. It is a no-op whenever the RL already discriminates within
+# that band, so it bites only the pathological / oscillating distributions that
+# back-fire under overload. handle_routing applies it to the *merged* pool, so a
+# healthy backend the router crushed out of its ranking (arriving at the floor
+# weight) is lifted back to a fair share instead of starving while its peers
+# overflow. Anomaly-excluded backends render `server … down;` regardless of
+# weight, so raising their weight never resurrects an exclusion.
+#
+# Why 0.75 (skew ≤ 1.33:1) and not a looser 0.5 (2:1): the routing skew must stay
+# BELOW the anomaly detector's outlier margin (1 + overload_outlier_margin = 1.5
+# at the 0.5 default). A backend weighted k× its peers takes ~k× their load and
+# runs ~k× their latency, so any k past 1.5 makes the top-weighted backend cross
+# the suppressor margin and get benched — the routing layer manufacturing an
+# outlier its own detector then excludes, which redistributes load and cascades.
+# Capping the skew at 1/0.75 = 1.33 < 1.5 keeps the heaviest backend inside the
+# margin, so routing can never self-trip an exclusion, while still letting the RL
+# express a mild preference. (Tie to overload_outlier_margin: pick a fraction >
+# 1/(1 + margin).)
+MIN_ACTIVE_WEIGHT_FRACTION: float = 0.75  # skew bounded to ~1.33:1 among active backends
+
+
+def clamp_weight_skew(
+    weights: dict[str, int],
+    min_fraction: float = MIN_ACTIVE_WEIGHT_FRACTION,
+) -> dict[str, int]:
+    """Bound the max:min ratio of routing weights to ``1/min_fraction : 1``.
+
+    Raises any under-weighted backend up to ``floor = round(max * min_fraction)``
+    (never below 1, since NGINX rejects weight=0); never lowers the top backend.
+    Returns a new dict. A no-op when the spread is already within the band, so a
+    genuinely discriminating RL ranking passes through unchanged; ``min_fraction
+    <= 0`` disables the rail (returns the weights as-is).
+    """
+    if not weights or min_fraction <= 0.0:
+        return dict(weights)
+    top = max(weights.values())
+    floor = max(1, round(top * min_fraction))
+    return {backend_id: max(weight, floor) for backend_id, weight in weights.items()}
+
+
 # ── BackendRegistry ───────────────────────────────────────────────────────────
 
 class BackendRegistry:
@@ -380,6 +432,7 @@ def handle_routing(
     all_backends: list[str],
     *,
     confidence_threshold: float = 0.0,
+    clamp_min_fraction: float = MIN_ACTIVE_WEIGHT_FRACTION,
 ) -> RoutingOutcome:
     """Process a RoutingRecommendation payload.
 
@@ -436,6 +489,18 @@ def handle_routing(
             pass
         else:
             merged.update(translated)
+        # Bound the skew across the WHOLE active pool — ranked AND floored — not
+        # just the RL ranking. The monotone router's cut rule can crush a healthy
+        # backend out of its ranking entirely, so it arrives here at the floor
+        # weight (1) and would sit idle while the few ranked backends absorb all
+        # the load and overflow their bounded queues under a surge (the run-to-run
+        # C_spike collapse). Raising every backend to >= MIN_ACTIVE_WEIGHT_FRACTION
+        # of the top weight keeps the whole pool carrying traffic, so per-backend
+        # load stays under the queue knee. Anomaly-excluded backends render `down;`
+        # regardless of weight, so this never resurrects an exclusion; a no-op when
+        # the RL already spreads load within the band. clamp_min_fraction<=0
+        # disables the rail (used by the ablation benchmark to isolate its effect).
+        merged = clamp_weight_skew(merged, clamp_min_fraction)
         adapter.set_upstream_weights(merged)
         return RoutingOutcome(
             applied=True,
