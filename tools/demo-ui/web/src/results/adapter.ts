@@ -18,6 +18,7 @@ import {
   SCHEMA_VERSION,
   type AuditSection,
   type ChartDef,
+  type ChartForecast,
   type ConfigDef,
   type Direction,
   type GrafanaConfig,
@@ -126,8 +127,33 @@ function asConfigDef(raw: any): ConfigDef {
   };
 }
 
+function asNumArray(v: any): number[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v.map((n) => num(n)).filter((n): n is number => n != null);
+}
+
+function asForecast(raw: any): ChartForecast | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const actual = asNumArray(raw.actual) ?? [];
+  const forecast = asNumArray(raw.forecast) ?? [];
+  if (actual.length === 0 || forecast.length === 0) return undefined;
+  return {
+    actual,
+    forecast,
+    confLow: asNumArray(raw.confLow),
+    confHigh: asNumArray(raw.confHigh),
+    xLabels: Array.isArray(raw.xLabels) ? raw.xLabels.map((x: any) => String(x)) : undefined,
+    scaleIndex: num(raw.scaleIndex) ?? undefined,
+    scaleLabel: raw.scaleLabel == null ? undefined : String(raw.scaleLabel),
+    actualLabel: raw.actualLabel == null ? undefined : String(raw.actualLabel),
+    forecastLabel: raw.forecastLabel == null ? undefined : String(raw.forecastLabel),
+  };
+}
+
+const CHART_KINDS = ["bars", "lines", "donut", "share", "forecast"] as const;
+
 function asChart(raw: any): ChartDef {
-  const kind = raw?.kind === "lines" ? "lines" : "bars";
+  const kind = (CHART_KINDS as readonly string[]).includes(raw?.kind) ? raw.kind : "bars";
   return {
     key: str(raw?.key),
     title: str(raw?.title),
@@ -153,6 +179,18 @@ function asChart(raw: any): ChartDef {
           points: Array.isArray(s?.points) ? s.points.map((p: any) => ({ x: p?.x, y: num(p?.y) })) : [],
         }))
       : undefined,
+    shares: Array.isArray(raw?.shares)
+      ? raw.shares.map((s: any) => ({
+          id: str(s?.id),
+          label: str(s?.label),
+          value: num(s?.value),
+          dim: !!s?.dim,
+        }))
+      : undefined,
+    shareMax: num(raw?.shareMax) ?? undefined,
+    centerValue: raw?.centerValue == null ? undefined : String(raw.centerValue),
+    centerLabel: raw?.centerLabel == null ? undefined : String(raw.centerLabel),
+    forecast: asForecast(raw?.forecast),
     note: raw?.note,
   };
 }

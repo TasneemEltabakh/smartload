@@ -24,6 +24,8 @@ import {
 
 import { fmtNumber } from "../results/adapter";
 import type { ChartDef, Direction } from "../results/schema";
+import { Donut, ForecastChart, ShareBars } from "../ui";
+import type { DonutSegment, ShareRow } from "../ui";
 import { C, SERIES_COLORS, TOOLTIP_STYLE } from "./palette";
 import { PendingBlock } from "./Pending";
 
@@ -150,10 +152,86 @@ function Lines({ chart }: { chart: ChartDef }) {
   );
 }
 
-export function ComparisonChart({ chart }: { chart: ChartDef }) {
+/** kind "donut" — a proportion ring with a labelled share-bar legend. */
+function DonutShare({ chart }: { chart: ChartDef }) {
+  const rows = (chart.shares ?? []).filter((s) => s.value != null);
+  if (rows.length === 0) return <PendingBlock label="No distribution for this comparison yet" />;
+  const max = chart.shareMax ?? (rows.some((r) => (r.value ?? 0) > 1) ? 100 : 1);
+  const segments: DonutSegment[] = rows.map((r, i) => ({
+    id: r.id,
+    value: r.value ?? 0,
+    label: r.label,
+    color: r.dim ? C.graphiteSoft : i === 0 ? C.accent : SERIES_COLORS[i % SERIES_COLORS.length],
+  }));
+  const shareRows: ShareRow[] = rows.map((r) => ({ id: r.id, label: r.label, value: r.value ?? 0, dim: r.dim }));
+  return (
+    <div style={{ display: "flex", gap: 22, alignItems: "center", flexWrap: "wrap" }}>
+      <Donut
+        segments={segments}
+        size={140}
+        thickness={16}
+        centerValue={chart.centerValue}
+        centerLabel={chart.centerLabel}
+      />
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <ShareBars rows={shareRows} max={max} asPercent />
+      </div>
+    </div>
+  );
+}
+
+/** kind "share" — labelled share bars only (no ring). */
+function Share({ chart }: { chart: ChartDef }) {
+  const rows = (chart.shares ?? []).filter((s) => s.value != null);
+  if (rows.length === 0) return <PendingBlock label="No distribution for this comparison yet" />;
+  const max = chart.shareMax ?? (rows.some((r) => (r.value ?? 0) > 1) ? 100 : 1);
+  const shareRows: ShareRow[] = rows.map((r) => ({ id: r.id, label: r.label, value: r.value ?? 0, dim: r.dim }));
+  return <ShareBars rows={shareRows} max={max} asPercent />;
+}
+
+/** kind "forecast" — the predicted-vs-actual hero line. */
+function Forecast({ chart }: { chart: ChartDef }) {
+  const f = chart.forecast;
+  if (!f || f.actual.length === 0 || f.forecast.length === 0) {
+    return <PendingBlock label="No forecast series yet" />;
+  }
   return (
     <div>
-      {chart.kind === "lines" ? <Lines chart={chart} /> : <Bars chart={chart} />}
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 6 }}>
+        <span style={{ fontSize: 10.5, color: "var(--sl-text-low)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span aria-hidden style={{ width: 12, height: 3, borderRadius: 2, background: C.graphite }} />
+          <span>{f.actualLabel ?? "actual"}</span>
+        </span>
+        <span style={{ fontSize: 10.5, color: "var(--sl-text)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span aria-hidden style={{ width: 12, height: 3, borderRadius: 2, background: C.accent, boxShadow: `0 0 6px ${C.accent}` }} />
+          <span>{f.forecastLabel ?? "forecast (lead)"}</span>
+        </span>
+      </div>
+      <ForecastChart
+        actual={f.actual}
+        forecast={f.forecast}
+        confLow={f.confLow}
+        confHigh={f.confHigh}
+        xLabels={f.xLabels}
+        scaleIndex={f.scaleIndex}
+        scaleLabel={f.scaleLabel}
+        unit={chart.yUnit ?? ""}
+        height={260}
+      />
+    </div>
+  );
+}
+
+export function ComparisonChart({ chart }: { chart: ChartDef }) {
+  let body;
+  if (chart.kind === "lines") body = <Lines chart={chart} />;
+  else if (chart.kind === "donut") body = <DonutShare chart={chart} />;
+  else if (chart.kind === "share") body = <Share chart={chart} />;
+  else if (chart.kind === "forecast") body = <Forecast chart={chart} />;
+  else body = <Bars chart={chart} />;
+  return (
+    <div>
+      {body}
       <Caption chart={chart} />
     </div>
   );

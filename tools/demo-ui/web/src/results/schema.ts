@@ -120,16 +120,53 @@ export interface ChartSeries {
   points: { x: string | number; y: number | null }[];
 }
 
+/** One slice of a proportion ring / share-bar set (e.g. a backend's routing share). */
+export interface ChartShare {
+  id: string;
+  label: string;
+  /** Share value (fraction 0..1 or percent 0..100, see `shareMax`). */
+  value: number | null;
+  /** Dim / shadow this row (excluded node, shadow weight). */
+  dim?: boolean;
+}
+
+/**
+ * A predicted-vs-actual forecast series for the ForecastChart (the hero line).
+ * `actual` is the observed/measured curve; `forecast` leads by one step with its
+ * index 0 aligned to the last actual point. `scaleIndex` marks a scale-ahead.
+ */
+export interface ChartForecast {
+  actual: number[];
+  forecast: number[];
+  confLow?: number[];
+  confHigh?: number[];
+  xLabels?: string[];
+  scaleIndex?: number;
+  scaleLabel?: string;
+  actualLabel?: string;
+  forecastLabel?: string;
+}
+
 export interface ChartDef {
   key: string;
   title: string;
-  kind: "bars" | "lines";
+  kind: "bars" | "lines" | "donut" | "share" | "forecast";
   xLabel?: string;
   yLabel?: string;
   yUnit?: string;
   direction?: Direction;
   bars?: ChartBar[];
   series?: ChartSeries[];
+  /** kind "donut" / "share": the share distribution. */
+  shares?: ChartShare[];
+  /** kind "donut" / "share": scale max (1 for fractions, 100 for percentages). */
+  shareMax?: number;
+  /** kind "donut": big value rendered in the ring center. */
+  centerValue?: string;
+  /** kind "donut": small caption under the center value. */
+  centerLabel?: string;
+  /** kind "forecast": the predicted-vs-actual series. */
+  forecast?: ChartForecast;
   note?: string;
 }
 
