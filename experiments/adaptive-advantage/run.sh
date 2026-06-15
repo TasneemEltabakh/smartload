@@ -35,6 +35,16 @@ REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 RUN_ROOT="$HERE/results/$TS"; mkdir -p "$RUN_ROOT"
 
+# Pre-built locust image (locust pinned in locust/Dockerfile) — avoids the
+# per-side `pip install locust` (~30s/side + a network-flakiness failure mode).
+# Built once on first use, reused thereafter.
+LOCUST_IMAGE="${LOCUST_IMAGE:-smartload-locust:latest}"
+if ! docker image inspect "$LOCUST_IMAGE" >/dev/null 2>&1; then
+    echo "[run] building $LOCUST_IMAGE (one-time)..."
+    docker build -q -t "$LOCUST_IMAGE" "$HERE/locust" >/dev/null \
+        || { echo "[run] WARN locust image build failed; falling back to python:3.11-slim+pip"; LOCUST_IMAGE=""; }
+fi
+
 echo "[run] adaptive-advantage  ts=$TS  sides=[$SIDES]  runs=$RUNS"
 echo "[run] load: steady=${STEADY_USERS}u spike=${SPIKE_USERS}u  shape A<$RAMP_SECS B<$B_END_SECS C<$C_END_SECS D<$D_END_SECS E<$END_SECS"
 echo "[run] anomalies: backend-1 +${SEVERE_MS}ms (B_degrade, organic 503) ; backend-2 +${MODERATE_MS}ms (D_slow, organic latency)"
@@ -119,13 +129,17 @@ _run_side() {
 
     _schedule_anomalies "$side" &
     local apid=$!
-    echo "[run] launching locust ($side) ${END_SECS}s ... (anomalies scheduled, pid=$apid)"
+    # Use the pre-built locust image (no per-side pip); fall back to bare python
+    # + pip only if the image build failed (LOCUST_IMAGE emptied above).
+    local locust_img="${LOCUST_IMAGE:-python:3.11-slim}" locust_pre=""
+    [[ -z "$LOCUST_IMAGE" ]] && locust_pre="pip install --quiet locust && "
+    echo "[run] launching locust ($side) ${END_SECS}s via ${locust_img} ... (anomalies scheduled, pid=$apid)"
     ( cd "$REPO_ROOT" && docker run --rm --network smartload_smartload-net \
         -e BENCH_SEED="$seed" -e STEADY_USERS="$STEADY_USERS" -e SPIKE_USERS="$SPIKE_USERS" \
         -e RAMP_SECS="$RAMP_SECS" -e B_END_SECS="$B_END_SECS" -e C_END_SECS="$C_END_SECS" \
         -e D_END_SECS="$D_END_SECS" -e END_SECS="$END_SECS" \
-        -v "$HERE/locust:/locust:ro" -v "$out:/out" python:3.11-slim \
-        sh -c "pip install --quiet locust && locust -f /locust/locustfile.py \
+        -v "$HERE/locust:/locust:ro" -v "$out:/out" "$locust_img" \
+        sh -c "${locust_pre}locust -f /locust/locustfile.py \
             --host=http://load-balancer --headless --users $SPIKE_USERS \
             --spawn-rate $SPIKE_USERS --run-time ${END_SECS}s \
             --csv /out/locust --csv-full-history --html /out/locust_report.html \
