@@ -35,34 +35,31 @@ The merged work touches only NON-thesis files (`audit/*.md`,
   cut-rule, L4 PPO implemented-but-undeployed (→#188), L5 autoscaler flap worked-around
   (→#183) — each with its Future-Work mapping.
 
-### 3. Fill the `[BENCH:…]` placeholder macros from committed artifacts (NO invention)
+### 3. Fill the `[BENCH:…]` placeholder macros — **SPAWN A DEDICATED AGENT for this**
 The thesis prints loud red `[BENCH:<metric>]` markers (the `\bmtodo{}` macros in
-`preamble.tex`) wherever a real measured number is missing. **Fill them from the committed
-benchmark reports — do not invent any number.** Map each macro family to its source:
+`preamble.tex`) wherever a real measured number is missing. This fill is **surgical and
+isolated to `preamble.tex`**, so **do NOT do it inline — spawn a dedicated sub-agent** for
+it (keep it separate from the prose work). Use your Agent/Task tool to launch ONE agent with
+the self-contained prompt below, then continue to step 4 while/after it runs:
 
-| Macro family | Source (committed) |
-|---|---|
-| **adaptive-advantage** per-phase + overall | `compare.py` on the 3-run batch (below) — report **mean ± 95% CI** (#181) |
-| `an-trendrule-*` (`\BManFone`, `\BManRecall`, `\BManPrecision`, `\BMifFone`) | `experiments/anomaly-detection-bench/REPORT.md` (gradual F1 **0.000→0.845**, recall **0.791**, spike/held-out F1, IF baseline) |
-| `fc-*` (`\BMfcMape`, `\BMfcMapeNaive/MA/Arima`, `\BMfcCiCov`, `\BMfcSlaGain`) | `experiments/forecasting-engine-bench/` + `forecasting-downstream-bench/` (REPORT + `results/*/SUMMARY.md`) |
-| `rl-*` (`\BMrlPpoReward`, `\BMrl{Monotone,Ppo,Roundrobin}SlaViol`) | `experiments/rl-routing-bench/REPORT.md` — **reconcile framing per edit #1**: offline/open-loop figures, NOT a "monotone beats RR closed-loop" claim |
-| `as-*` (`\BMasSlaReactive`, `\BMasSlaTarget`) | `experiments/autoscaler-strategy-bench/REPORT.md` (**77.2% → 98.3%**) |
-
-For the adaptive-advantage numbers, run and use **mean ± 95% CI** (this is #181's payoff):
-```
-python3 experiments/adaptive-advantage/compare.py \
-        experiments/adaptive-advantage/results/20260615T124519Z
-```
-(`results/` is git-ignored / on the benchmark host; if absent, the means are in
-`experiments/adaptive-advantage/README.md` — add CIs once the batch is available.)
-
-**TWO families have NO committed data — do NOT fill them; mark Future Work / cut the numeric
-claim** (the same two suites the demo-ui left pending):
-- `ad-*` (`\BMadPoolHi/Lo`, `\BMadRunId`, `\BMadScaleActions`) — the **RQ4 adaptive-scaling**
-  run has no committed metrics; RQ4 is Future Work under the equal-capacity scope.
-- `an-agreement-*` (`\BManAgree`, `\BManAgreeCells`, `an-if-threshold-agreement`) — the
-  **engine-agreement %** isn't committed (`anomaly-engine-bench` ships only a README; its
-  `F1=0.8012` is a *training* metric, not the agreement number). Reframe or drop; don't fabricate.
+> **[SPAWN THIS AGENT — macro fill]**
+> Fill the SmartLoad thesis's `[BENCH:*]` placeholder macros in `thesis/report/preamble.tex`
+> with REAL values from committed benchmark reports — **NO invention**. For each `\bmtodo{…}`
+> / `\BM…` macro, find its value in the mapped source file and replace the placeholder.
+> **Touch ONLY `thesis/report/preamble.tex`.** Branch off `main`, open a PR when done.
+>
+> Sources to fill FROM (only commit a value you can point to a line in a committed file for):
+> - **adaptive-advantage** per-phase/overall → run `python3 experiments/adaptive-advantage/compare.py experiments/adaptive-advantage/results/20260615T124519Z` and use **mean ± 95% CI** (#181); if `results/` is absent, means are in `experiments/adaptive-advantage/README.md`.
+> - `an-trendrule-*` (`\BManFone`,`\BManRecall`,`\BManPrecision`,`\BMifFone`) → `experiments/anomaly-detection-bench/REPORT.md` (gradual F1 **0.000→0.845**, recall **0.791**, spike/held-out F1, IF baseline).
+> - `fc-*` (`\BMfcMape`,`\BMfcMapeNaive/MA/Arima`,`\BMfcCiCov`,`\BMfcSlaGain`) → `experiments/forecasting-engine-bench/` + `forecasting-downstream-bench/` (REPORT + `results/*/SUMMARY.md`).
+> - `rl-*` (`\BMrlPpoReward`,`\BMrl{Monotone,Ppo,Roundrobin}SlaViol`) → `experiments/rl-routing-bench/REPORT.md` — these are **offline/open-loop** figures that support the **PPO ≈ RR null**, NOT a "monotone beats RR" claim.
+> - `as-*` (`\BMasSlaReactive`,`\BMasSlaTarget`) → `experiments/autoscaler-strategy-bench/REPORT.md` (**77.2% → 98.3%**).
+>
+> **DO NOT fill these two families — leave as-is / mark Future Work (no committed data, no fabrication):**
+> - `ad-*` (`\BMadPoolHi/Lo`,`\BMadRunId`,`\BMadScaleActions`) — RQ4 adaptive-scaling; Future Work under the equal-capacity scope.
+> - `an-agreement-*` (`\BManAgree`,`\BManAgreeCells`,`an-if-threshold-agreement`) — engine-agreement % not committed (`anomaly-engine-bench` has only a README; its `F1=0.8012` is a *training* metric, not the agreement number).
+>
+> When done: verify no `\BM…` macro is left undefined and the `[BENCH:*]` count dropped; report which macros you filled (with the source file:line for each) and which you left as Future Work, plus the new placeholder count.
 
 ### 4. A+B contingency
 Read the **A+B CONTINGENCY** callout in `audit/THESIS_UPDATE_PROMPT.md` (edit #1). Stay
