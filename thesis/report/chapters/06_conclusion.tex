@@ -50,6 +50,15 @@ learned engine sit in the live path safely. The detailed reading is in
         forecast~$\rightarrow$~autoscaler~$\rightarrow$~sidecar loop closes against a live
         stack, the affirmative answer to the project's proactive-autoscaling question.
         % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
+  \item \textbf{Anomaly-driven exclusion decisively beats round-robin at equal capacity.}
+        On the canonical adaptive-advantage bench, at the failure modes SmartLoad is built
+        for, a hidden backend that sheds \texttt{503} but never trips NGINX's passive check
+        (\texttt{B\_degrade}) and a slow-but-healthy backend (\texttt{D\_slow}), SmartLoad
+        cuts errors roughly fivefold ($1.60\%$ to $1.32\%$ overall, with per-phase drops
+        from $6.53\%$ to $1.21\%$ and $3.78\%$ to $0.97\%$) and the tail latency by
+        $8$--$250\times$ against static round-robin, at equal capacity and robust across
+        three runs. Round-robin cannot eject these backends; SmartLoad detects them
+        organically and excludes them. This is the project's strongest measured result.
   \item \textbf{The deployed anomaly engine closes the gradual-degradation gap.} The
         shipped \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
         $0.000$, the score of every stateless detector on that pattern, to \BManFone{}
@@ -60,13 +69,18 @@ learned engine sit in the live path safely. The detailed reading is in
         threshold-versus-Isolation-Forest sweep, which does not involve the deployed
         detector, shows about \BManAgree{} cell agreement, with the Isolation Forest the more
         aggressive of the two.
-  \item \textbf{The deterministic router is the routing contribution.} The deployed
-        capacity-aware monotone heuristic holds SLA violations to \BMrlMonoSla{} against
-        \BMrlRrSla{} for round-robin closed-loop and passes every monotonicity probe. The
-        trained PPO policy \cite{schulman2017ppo,raffin2021sb3} is an honest null result:
-        round-robin-equivalent (open-loop mean-reward gap \BMrlPpoReward{}), the worst contender
-        closed-loop at \BMrlPpoSla{} SLA violations, and kept dormant in shadow mode. The
-        live value comes from the deterministic heuristic over the classical scheduler.
+  \item \textbf{The deterministic router matches round-robin; routing is not where the
+        advantage lies.} On the canonical equal-capacity bench the deployed monotone
+        heuristic \emph{ties} round-robin under uniform overload and passes every
+        monotonicity probe: on a homogeneous, saturated pool an even split is provably
+        optimal, so no router can beat round-robin (round-robin is in fact marginally
+        ahead on the \texttt{C\_spike} phase). The trained PPO policy
+        \cite{schulman2017ppo,raffin2021sb3} is an honest null result:
+        round-robin-equivalent on the open-loop evaluation (mean-reward gap
+        \BMrlPpoReward{}), with nothing to beat on the closed-loop bench either,
+        implemented but not deployed (\texttt{RL\_POLICY=monotone}) and kept dormant in
+        shadow. The routing layer's live value is parity with the classical scheduler at
+        no extra risk, while the measurable gains come from exclusion and capacity holding.
   \item \textbf{The forecaster ships a reliable default with fallbacks in reserve.} The
         deployed \texttt{harmonic\_residual} forecaster records the best accuracy at
         \BMfcMape{} MAPE and lifts downstream SLA attainment by \BMfcSlaGain{}\,pp over the
@@ -82,10 +96,11 @@ learned engine sit in the live path safely. The detailed reading is in
 
 Together these establish that SmartLoad's architecture is sound and its control loop
 real: the deployed anomaly engine closes the gradual-degradation gap a point-based rule
-misses, the deterministic router beats the strong baseline while the learned policy stays
-dormant as an honest null result, and the deployed forecaster ships the most accurate
-model with fallbacks in reserve. The closed loop is carried by the actuation chain and
-the deterministic heuristics, not by any learned model running live.
+misses, anomaly-driven exclusion decisively beats static round-robin at equal capacity
+while fine-grained routing only ties it, the learned policy stays dormant as an honest
+null result, and the deployed forecaster ships the most accurate model with fallbacks in
+reserve. The closed loop is carried by the actuation chain and the deterministic
+heuristics, not by any learned model running live.
 
 \subsection{Summary of contributions}
 \label{conc:contributions}
@@ -114,11 +129,16 @@ hidden.
         capacity ceiling and contracts it again on a live stack (\cref{ch:impl_testing}).
         % TODO(vps-rerun): verified pool range + scaling-action count from fresh VPS adaptive batch
         \\
+    Anomaly-driven exclusion beats round-robin at equal capacity
+      & At its target failure modes (un-ejectable \texttt{503}-shedding and slow-but-healthy
+        backends) SmartLoad cuts errors roughly fivefold and the tail by $8$--$250\times$
+        against static round-robin, at equal capacity and robust across three runs
+        (\cref{tab:disc:perphase}). This is the strongest measured result. \\
     Deterministic capacity-aware routing
-      & The deployed monotone routing heuristic holds SLA violations to \BMrlMonoSla{} against
-        \BMrlRrSla{} for round-robin closed-loop and passes every monotonicity probe; the
-        value in the live path comes from this deterministic policy over the classical
-        scheduler. \\
+      & The deployed monotone routing heuristic ties round-robin under uniform overload
+        (where an even split is provably optimal) and passes every monotonicity probe; the
+        live routing value is parity with the classical scheduler at no extra risk, not a
+        routing advantage. \\
     Deterministic-fallback discipline
       & A moving-average forecaster, a threshold anomaly rule, and round-robin routing
         sit beneath each learned engine; the baseline plugin holds no artifact and
@@ -126,8 +146,9 @@ hidden.
     Honest, product-shaped evaluation of a trained router
       & The PPO policy \cite{schulman2017ppo,raffin2021sb3} is measured against the
         production routing task and reported as a null result: it is
-        round-robin-equivalent, the worst contender closed-loop at \BMrlPpoSla{} SLA
-        violations, and is kept dormant in shadow mode, so it contributes nothing live. \\
+        round-robin-equivalent on an equal-capacity pool where an even split is optimal,
+        so it is implemented but not deployed (\texttt{RL\_POLICY=monotone}) and kept
+        dormant in shadow mode, contributing nothing live. \\
     Gradual-degradation anomaly detection
       & The deployed \texttt{trend\_rule} detector raises gradual-degradation $F_1$ from
         $0.000$ (every stateless detector) to \BManFone{} and ships as the default; the
@@ -198,11 +219,14 @@ base.
     \textbf{Dimension} & \textbf{Limitation} & \textbf{What would close it} \\
     \midrule
     Model
-      & The trained PPO router is round-robin-equivalent because its homogeneous training
-        distribution carries no latency signal to learn from, and is the worst contender
-        closed-loop, so it stays dormant in shadow mode and contributes nothing live.
-      & Retrain on heterogeneous-latency traces in which backend identity correlates
-        with latency, so the policy can learn to favour faster backends. \\
+      & The trained PPO router is round-robin-equivalent because on an equal-capacity pool
+        an even split is provably optimal, so its homogeneous training distribution carries
+        no latency signal to learn from; it is implemented but not deployed
+        (\texttt{RL\_POLICY=monotone}) and stays dormant in shadow mode, contributing
+        nothing live.
+      & Build a heterogeneous-capacity testbed and retrain on heterogeneous-latency traces
+        in which backend identity correlates with latency, so the policy can learn to
+        favour faster backends. \\
     \addlinespace
     Model
       & The optional ARIMA forecaster of order $(2,0,2)$ fits out of distribution on the
@@ -213,11 +237,12 @@ base.
         \texttt{harmonic\_residual} forecaster. \\
     \addlinespace
     Evaluation
-      & The live closed-loop and baseline-versus-SmartLoad magnitudes come from single
-        committed benchmark runs, without multi-run confidence intervals or a full-length
-        head-to-head across workloads.
-      & A multi-run baseline-versus-SmartLoad campaign producing per-phase deltas with
-        confidence intervals. \\
+      & The canonical equal-capacity routing comparison (adaptive-advantage) reports three
+        runs, but the closed-loop RQ4 magnitudes still come from single committed runs
+        without full per-phase confidence intervals or a full-length head-to-head across
+        workloads.
+      & Extend the multi-run, confidence-interval reporting of the adaptive-advantage bench
+        to every phase and to the closed-loop RQ4 trajectory. \\
     \addlinespace
     Deployment
       & The system runs under Docker Compose on a single host; the cloud and Kubernetes
@@ -262,11 +287,14 @@ arrivals signal, and the data plane has no first-class health-check surface. Wir
 genuine arrivals feed and data-plane health checks would harden the loop against
 conditions a single benchmark host does not exercise.
 
-\paragraph{Run a multi-run head-to-head and finish the K8s/Helm packaging.} A multi-run
-baseline-versus-SmartLoad comparison would produce per-phase deltas with confidence
-intervals in place of the single committed runs. Paired with Helm templates and raw
-Kubernetes manifests, it unlocks a multi-host evaluation surface and the K8s
-HPA-versus-SmartLoad autoscaling comparison \cite{k8shpa} against the cloud-native
+\paragraph{Extend the equal-capacity comparison, build a heterogeneous testbed, and
+finish the K8s/Helm packaging.} The canonical adaptive-advantage bench already reports
+three runs at equal capacity; the next step is full per-phase confidence intervals and a
+heterogeneous-capacity testbed (backends with genuinely different service times), the
+only setting in which a learned router could earn its keep over round-robin, where a
+closed-loop, retrained PPO policy could be evaluated against the monotone heuristic.
+Paired with Helm templates and raw Kubernetes manifests, it unlocks a multi-host
+evaluation surface and the K8s HPA-versus-SmartLoad autoscaling comparison \cite{k8shpa} against the cloud-native
 baseline. The target topology is not the deployment the system runs on today: the
 evaluated stack runs under Docker Compose on a single host, as recorded in
 \cref{tab:conc:limitations}. In the planned layout each service becomes
@@ -341,8 +369,9 @@ control loop end to end while keeping a deterministic floor beneath every learne
 component, in the spirit of the self-managing systems the field has long argued for
 \cite{kephart2003autonomic}. The autoscaling loop is demonstrated, the deployed
 \texttt{trend\_rule} detector closes the gradual-degradation gap point-based rules miss
-($F_1$ $0.000 \rightarrow{}$ \BManFone{}), the deterministic router beats round-robin in the
-live path while the trained policy stays dormant as an honest null result, and the
+($F_1$ $0.000 \rightarrow{}$ \BManFone{}), anomaly-driven exclusion decisively beats static
+round-robin at equal capacity while fine-grained routing only ties it and the trained
+policy stays dormant as an honest null result, and the
 deployed \texttt{harmonic\_residual} forecaster ships the most accurate model with
 fallbacks in reserve. What lies ahead is a production-readiness roadmap rather than a
 redesign: real cloud and Kubernetes actuation paths, a configuration and model-ops story,
