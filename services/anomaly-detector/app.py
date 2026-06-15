@@ -175,6 +175,9 @@ _last_output_payload: list[dict] | None = None
 # Per-backend stability-gate memory (B1 low-sample hold / B2 flip confirmation).
 # Only touched by the run-loop thread (_inference_cycle) — not under _state_lock.
 _backend_states: dict[str, BackendState] = {}
+# Cross-cycle memory for the peer-suppressor's #2 surge detection (last cycle's
+# cohort medians). Owned by the single-threaded run loop.
+_suppressor_cohort: dict = {}
 
 
 def _set_engine_state(bootstrap) -> None:
@@ -260,7 +263,9 @@ def _inference_cycle(db_conn, redis_client) -> int:
     # traffic. A genuine lone outlier still gets flagged. Manual isolates never
     # reach this path (they bypass the run loop via POST /api/v1/isolate).
     suppressed_scores = peer_suppress_verdicts(
-        [(f, s) for (f, s, _st) in scored], policy
+        [(f, s) for (f, s, _st) in scored], policy,
+        states=[st for (_f, _s, st) in scored],
+        cohort_memory=_suppressor_cohort,
     )
 
     # ── Pass 3: persist + publish each backend's final verdict, applying Fix B

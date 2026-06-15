@@ -707,3 +707,45 @@ def test_peer_suppress_engages_below_half_when_within_margin():
     ]
     out = peer_suppress_verdicts(scored, policy)
     assert {s.backend_id: s.status for s in out}["b1"] == "healthy"
+
+
+def _scored_with_outlier():
+    return [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=520, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=480, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1600, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),
+    ]
+
+
+def test_peer_suppress_hysteresis_holds_transient_then_excludes_sustained():
+    # #1: a backend that is a cohort-outlier for only ONE cycle is NOT benched
+    # (held); a SUSTAINED outlier (2 cycles) IS — so a transient ramp-rate
+    # difference during a spike doesn't trigger the over-exclusion cascade.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          overload_exclusion_confirmations=2)
+    states = [BackendState() for _ in range(4)]
+    out1 = peer_suppress_verdicts(_scored_with_outlier(), policy, states=states)
+    assert {s.backend_id: s.status for s in out1}["b4"] == "healthy"    # transient -> held
+    out2 = peer_suppress_verdicts(_scored_with_outlier(), policy, states=states)
+    assert {s.backend_id: s.status for s in out2}["b4"] == "unhealthy"  # sustained -> benched
+
+
+def test_peer_suppress_surge_suppresses_even_outliers():
+    # #2: when the whole cohort's latency surges cycle-over-cycle (a load spike),
+    # EVERY exclusion is suppressed — even a backend past the margin — because a
+    # synchronized ramp is overload, not a fault.
+    policy = EnginePolicy(overload_min_peers=3, overload_outlier_margin=0.5,
+                          overload_surge_factor=1.5)
+    mem = {}
+    base = [(_feat(f"b{n}", latency_mean=100, error_rate=0.0),
+             AnomalyScore(f"b{n}", "healthy", 0.0)) for n in range(1, 5)]
+    peer_suppress_verdicts(base, policy, cohort_memory=mem)    # baseline lat_median=100
+    spike = [
+        (_feat("b1", latency_mean=500, error_rate=0.30), AnomalyScore("b1", "unhealthy", 0.9)),
+        (_feat("b2", latency_mean=600, error_rate=0.30), AnomalyScore("b2", "unhealthy", 0.9)),
+        (_feat("b3", latency_mean=550, error_rate=0.30), AnomalyScore("b3", "unhealthy", 0.9)),
+        (_feat("b4", latency_mean=1800, error_rate=0.30), AnomalyScore("b4", "unhealthy", 0.9)),  # outlier
+    ]
+    out = peer_suppress_verdicts(spike, policy, cohort_memory=mem)
+    assert all(s.status == "healthy" for s in out)            # surge -> all kept, even b4
