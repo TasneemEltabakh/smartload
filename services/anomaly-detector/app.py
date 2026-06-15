@@ -73,7 +73,9 @@ from runloop import (                                          # noqa: E402
     apply_stability_gate,
     bootstrap_engine,
     build_features_from_rows,
+    peer_suppress_verdicts,
     policy_from_payload,
+    recovery_reinclude,
     score_to_event_payload,
     serialize_engine_state,
     should_publish,
@@ -117,6 +119,26 @@ TELEMETRY_SERVICE       = config.env_str("ANOMALY_TELEMETRY_SERVICE", ANOMALY_DE
 FLIP_CONFIRMATION_CYCLES = config.env_int(
     "ANOMALY_FLIP_CONFIRMATION_CYCLES", EnginePolicy().flip_confirmation_cycles
 )
+# Fix B — re-inclusion window: how long a backend may stay excluded before the
+# run loop re-admits it for a probationary re-test. Seeds the startup
+# EnginePolicy; a smartload.policy publish overrides it live via
+# anomaly_recovery_window_seconds. Default tracks EnginePolicy so behaviour is
+# unchanged when unset.
+RECOVERY_WINDOW_SECONDS = config.env_float(
+    "ANOMALY_RECOVERY_WINDOW_SECONDS", EnginePolicy().recovery_window_seconds
+)
+# Fix A — peer-relative overload suppression knobs. overload_peer_fraction:
+# fraction of live backends that must be degraded together before exclusions are
+# treated as system-wide overload and suppressed. overload_min_peers: minimum
+# live backends for peer comparison to engage at all. Both seed the startup
+# EnginePolicy and can be overridden live via anomaly_overload_peer_fraction /
+# anomaly_overload_min_peers in a smartload.policy publish.
+OVERLOAD_PEER_FRACTION = config.env_float(
+    "ANOMALY_OVERLOAD_PEER_FRACTION", EnginePolicy().overload_peer_fraction
+)
+OVERLOAD_MIN_PEERS = config.env_int(
+    "ANOMALY_OVERLOAD_MIN_PEERS", EnginePolicy().overload_min_peers
+)
 
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
@@ -136,7 +158,12 @@ _engine_name: str = ANOMALY_ENGINE
 _engine_requested: str = ANOMALY_ENGINE
 _engine_ready: bool = False
 _engine_error: str | None = None
-_policy: EnginePolicy = EnginePolicy(flip_confirmation_cycles=FLIP_CONFIRMATION_CYCLES)
+_policy: EnginePolicy = EnginePolicy(
+    flip_confirmation_cycles=FLIP_CONFIRMATION_CYCLES,
+    recovery_window_seconds=RECOVERY_WINDOW_SECONDS,
+    overload_peer_fraction=OVERLOAD_PEER_FRACTION,
+    overload_min_peers=OVERLOAD_MIN_PEERS,
+)
 _last_inference_monotonic: float | None = None
 # Live Engines (#121) tracking — appended each cycle, read by /api/v1/engine/state.
 _ticks_total: int = 0
@@ -204,6 +231,12 @@ def _inference_cycle(db_conn, redis_client) -> int:
     published = 0
     cycle_outputs: list[dict] = []
     now_dt = datetime.now(timezone.utc)
+    now_mono = time.monotonic()
+
+    # ── Pass 1: score + stability-gate every backend, collecting the whole
+    # cycle's verdicts. Fix A (peer-relative overload suppression) needs every
+    # backend's features+verdict together, so we gather first and decide after.
+    scored: list[tuple] = []   # (features, gated_score, BackendState)
     for features in features_list:
         try:
             raw_score = engine.score(features)
@@ -217,6 +250,41 @@ def _inference_cycle(db_conn, redis_client) -> int:
         low_sample = features.sample_count < policy.min_sample_count
         state = _backend_states.setdefault(features.backend_id, BackendState())
         score = apply_stability_gate(raw_score, low_sample, state, policy.flip_confirmation_cycles)
+        scored.append((features, score, state))
+
+    # ── Pass 2 (Fix A): peer-relative overload suppression. If a configurable
+    # majority of live backends are degraded together this is system-wide
+    # overload (a scale-out signal), so an organic exclusion on a backend that
+    # is no worse than its peers is downgraded to healthy — it keeps its
+    # traffic. A genuine lone outlier still gets flagged. Manual isolates never
+    # reach this path (they bypass the run loop via POST /api/v1/isolate).
+    suppressed_scores = peer_suppress_verdicts(
+        [(f, s) for (f, s, _st) in scored], policy
+    )
+
+    # ── Pass 3: persist + publish each backend's final verdict, applying Fix B
+    # (time-based re-inclusion) so a backend excluded longer than the recovery
+    # window with no fresh unhealthy verdict is re-admitted to earn its health
+    # back.
+    for (features, _gated, state), final_score in zip(scored, suppressed_scores):
+        score = final_score
+
+        # Fix B: update exclusion bookkeeping and, when due, swap in a
+        # probationary "healthy" re-admit. Driven by the post-suppression
+        # status so we never re-admit a backend we just (correctly) excluded.
+        reinclude = recovery_reinclude(
+            score.backend_id, score.status, state, policy, now_mono
+        )
+        force_publish = False
+        if reinclude is not None:
+            print(f"[{SERVICE_NAME}] recovery re-admit backend_id={score.backend_id} "
+                  f"(excluded > {policy.recovery_window_seconds}s, no fresh fault)", flush=True)
+            score = reinclude
+            # A re-admit is a "healthy" verdict; in auto-isolate mode
+            # should_publish() drops healthy scores, but the whole point of the
+            # re-admit is to tell the sidecar to re-route to this backend — so
+            # this one healthy verdict MUST be published.
+            force_publish = True
 
         cycle_outputs.append(score_to_event_payload(score, model_version))
 
@@ -234,7 +302,9 @@ def _inference_cycle(db_conn, redis_client) -> int:
         except Exception as exc:                        # noqa: BLE001
             print(f"[{SERVICE_NAME}] backend_health write failed for {score.backend_id}: {exc}", flush=True)
 
-        if not should_publish(score, policy):
+        # safe_mode still pauses ALL publishes (operators paused decision flow);
+        # otherwise a recovery re-admit forces its healthy verdict onto the bus.
+        if not (force_publish and not policy.safe_mode) and not should_publish(score, policy):
             continue
         with METRICS.time_publish(ANOMALY_CHANNEL):
             publish_envelope(

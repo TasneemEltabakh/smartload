@@ -287,6 +287,7 @@ def select_decision(
     seconds_since_scale_in: float | None,
     now_text: str = "forecast",
     offered_rps: float | None = None,
+    scale_in_confirmations_seen: int = 1,
 ) -> Decision:
     """Dispatch to the configured controller.
 
@@ -295,9 +296,14 @@ def select_decision(
     action clock. The caller passes both policies and all three clocks so this
     stays a pure function of its inputs.
 
-    ``offered_rps`` (the forecast upper-band / arrivals estimate) only sizes the
-    target controller's scale-OUT direction; the shipped ``step`` rule ignores
-    it and keeps its point-estimate contract.
+    ``offered_rps`` (the forecast upper-band / arrivals estimate) sizes the
+    target controller's scale-OUT direction; the shipped ``step`` rule now also
+    consumes it as its anti-flap demand signal for BOTH directions (so scale-in
+    only fires when demand genuinely dropped). ``scale_in_confirmations_seen``
+    drives the step rule's scale-in hysteresis (ignored by the target rule,
+    which has its own deadband). Both are backwards-compatible: ``None`` /
+    default ``1`` reproduce the original point-estimate, act-on-first-reading
+    contract.
     """
     if kind == "target":
         return decide_target(
@@ -315,6 +321,8 @@ def select_decision(
         policy=step_policy,
         seconds_since_last_action=seconds_since_last_action,
         now_text=now_text,
+        offered_rps=offered_rps,
+        scale_in_confirmations_seen=scale_in_confirmations_seen,
     )
 
 

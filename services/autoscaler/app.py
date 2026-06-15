@@ -134,6 +134,19 @@ CONTROL_MAX_STEP_OUT         = config.env_int("AUTOSCALER_MAX_STEP_OUT", 0)
 CONTROL_MAX_STEP_IN          = config.env_int("AUTOSCALER_MAX_STEP_IN", 1)
 CONTROL_SCALE_IN_DEADBAND    = config.env_float("AUTOSCALER_SCALE_IN_DEADBAND", 0.15)
 
+# Anti-flap knobs for the shipped "step" controller (decisions.decide). They
+# stop the backend pool oscillating under sustained heavy load, where the
+# served/predicted rate is DEPRESSED by the overloaded pool shedding requests —
+# which used to trigger an immediate scale-in right after a scale-out. Both
+# default to the original (no-op) behaviour so an un-tuned deployment is
+# unchanged; flip them on at deploy time or via a live policy publish.
+#   STEP_SCALE_IN_COOLDOWN_SECONDS: downscale-specific cooldown ("slow in").
+#     <= 0 falls back to the generic autoscaler_cooldown_seconds.
+#   STEP_SCALE_IN_CONFIRMATIONS: consecutive low-demand ticks required before a
+#     scale-in actually fires. 1 = act on the first reading (original).
+STEP_SCALE_IN_COOLDOWN_S   = config.env_float("AUTOSCALER_STEP_SCALE_IN_COOLDOWN_SECONDS", 0.0)
+STEP_SCALE_IN_CONFIRMATIONS = config.env_int("AUTOSCALER_STEP_SCALE_IN_CONFIRMATIONS", 1)
+
 # Liveness threshold for /health (#163). If the loop hasn't ticked in this
 # many seconds, /health flips to degraded so the silent-thread-death pattern
 # becomes visible.
@@ -163,6 +176,14 @@ def load_policy(path: str) -> Policy:
         max_backends=int(data.get("max_backends", 5)),
         per_instance_capacity_rps=float(data.get("per_instance_capacity_rps", 100)),
         cooldown_seconds=float(data.get("autoscaler_cooldown_seconds", 60)),
+        # Anti-flap knobs: policy.yaml may override, else fall back to the env
+        # defaults (which themselves default to original behaviour).
+        scale_in_cooldown_seconds=float(
+            data.get("autoscaler_scale_in_cooldown_seconds", STEP_SCALE_IN_COOLDOWN_S)
+        ),
+        scale_in_confirmations=int(
+            data.get("autoscaler_scale_in_confirmations", STEP_SCALE_IN_CONFIRMATIONS)
+        ),
     )
 
 
@@ -180,6 +201,11 @@ _last_scale_out_monotonic: float | None = None
 _last_scale_in_monotonic: float | None = None
 _last_forecast_monotonic: float | None = None
 _last_forecast_horizon_min: int        = 5
+# Anti-flap hysteresis (step controller): count of CONSECUTIVE ticks on which
+# demand has qualified for a scale-in. Bumped while demand stays below the shed
+# threshold, reset to 0 on any tick that does not qualify, so a single low
+# reading right after a scale-out cannot satisfy the confirmation count.
+_scale_in_confirm_streak: int          = 0
 # #163 liveness signal — updated at the top of every control-loop iteration
 # (whether a message arrived or not) so /health can detect a silent daemon-
 # thread death regardless of forecast cadence.
@@ -399,6 +425,26 @@ def _decide(
         since_out    = _seconds_since(_last_scale_out_monotonic)
         since_in     = _seconds_since(_last_scale_in_monotonic)
 
+        # Anti-flap hysteresis (step controller): track consecutive ticks where
+        # demand qualifies for scale-in. We test against the SAME offered/arrival
+        # demand the decision uses, against the shed-capacity floor, so a tick
+        # whose served rate is merely depressed (offered still high) does NOT
+        # advance the streak. Reset on any non-qualifying tick.
+        global _scale_in_confirm_streak
+        demand_rps = predicted_rps if offered_rps is None else max(predicted_rps, offered_rps)
+        cap = policy.per_instance_capacity_rps
+        shed_capacity = (current_count - 1) * cap
+        qualifies_scale_in = (
+            cap > 0
+            and current_count > policy.min_backends
+            and demand_rps < shed_capacity
+        )
+        if qualifies_scale_in:
+            _scale_in_confirm_streak += 1
+        else:
+            _scale_in_confirm_streak = 0
+        confirmations_seen = _scale_in_confirm_streak
+
     return select_decision(
         CONTROLLER_KIND,
         predicted_rps=predicted_rps,
@@ -410,6 +456,7 @@ def _decide(
         seconds_since_scale_in=since_in,
         now_text=now_text,
         offered_rps=offered_rps,
+        scale_in_confirmations_seen=confirmations_seen,
     )
 
 
