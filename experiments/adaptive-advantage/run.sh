@@ -23,6 +23,7 @@ D_END_SECS="${D_END_SECS:-360}"
 END_SECS="${END_SECS:-420}"
 SEVERE_MS="${SEVERE_MS:-1500}"     # backend-1: drives it past QUEUE_MAX -> 503 shed
 MODERATE_MS="${MODERATE_MS:-300}"  # backend-2: slow-but-not-failing -> latency channel
+RESET_UPSTREAM="${RESET_UPSTREAM:-1}"  # reset routing state to clean 5-up each side (set 0 for the ablation's no-reset config)
 
 if [[ "${SHORT:-0}" == "1" ]]; then
     STEADY_USERS=80; SPIKE_USERS=140
@@ -41,10 +42,18 @@ echo "[run] anomalies: backend-1 +${SEVERE_MS}ms (B_degrade, organic 503) ; back
 # instance ceiling for the smartload side: MAX_BACKENDS=10 lets it scale out under
 # the spike (full-system comparison); MAX_BACKENDS=5 caps it to the baseline budget
 # (equal-capacity, isolates pure routing intelligence).
+#
+# MIN_BACKENDS pins the floor. For the EQUAL-CAPACITY (5v5) scenario set
+# MIN_BACKENDS=5 so the pool is a FIXED 5 backends — matching baseline's static 5
+# and the README's "SmartLoad can only reroute, not add servers". Without it the
+# autoscaler scales the pool 1..MAX and its decoupled-forecast flap removes
+# capacity mid-load (a separate, documented defect), confounding the pure-routing
+# measurement. Leave MIN_BACKENDS unset (default 1) for the 10v5 scaling scenario.
 MAX_BACKENDS="${MAX_BACKENDS:-10}"
+MIN_BACKENDS="${MIN_BACKENDS:-1}"
 curl -fsS -X POST http://localhost:8086/api/v1/policy -H 'Content-Type: application/json' \
-     -H 'X-Actor: adaptive-adv' -d "{\"max_backends\":${MAX_BACKENDS}}" >/dev/null 2>&1 \
-     && echo "[run] policy max_backends=${MAX_BACKENDS}" || echo "[run] WARN could not set max_backends"
+     -H 'X-Actor: adaptive-adv' -d "{\"max_backends\":${MAX_BACKENDS},\"min_backends\":${MIN_BACKENDS}}" >/dev/null 2>&1 \
+     && echo "[run] policy min_backends=${MIN_BACKENDS} max_backends=${MAX_BACKENDS}" || echo "[run] WARN could not set policy backends"
 
 _wait_for_status() {
     local deadline=$(( $(date +%s) + 90 ))
@@ -64,6 +73,25 @@ _delay() {  # _delay <N> <ms>
 }
 _reset_delays() { for n in 1 2 3 4 5; do _delay "$n" 0; done; }
 
+# Reset the NGINX routing state to a clean, all-up pool. The harness already
+# resets backend *delays* between sides; it must also reset the *routing* state,
+# else a backend left `down;` by a prior side (an anomaly exclusion the decision
+# plane never re-included before the side ended — and which a sidecar restart
+# re-imports from the stale conf) carries into the next side as lost capacity,
+# confounding the A/B comparison. Writing a clean upstream.conf BEFORE the plane
+# is recreated guarantees every side starts from an identical 5-backend pool.
+_reset_upstream() {
+    # Always the 5 STATIC test-backends — backends 6-10 (if MAX_BACKENDS>5) are
+    # autoscaler-provisioned during the run and don't exist at reset time.
+    local servers=""
+    for n in 1 2 3 4 5; do
+        servers="${servers}    server smartload-test-backend-${n}:8080 weight=1 max_fails=0;\n"
+    done
+    docker exec smartload-load-balancer-1 sh -c \
+        "printf 'upstream backend_pool {\n${servers}}\n' > /etc/nginx/conf.d/upstream.conf && nginx -s reload" \
+        >/dev/null 2>&1 || true
+}
+
 _schedule_anomalies() {  # organic anomaly timeline; CALL IN BACKGROUND: `_schedule_anomalies x &`
     local label="$1"
     local s1=$(( RAMP_SECS + 10 ))
@@ -79,6 +107,7 @@ _run_side() {
     local out="$RUN_ROOT/run-$(printf '%02d' "$run_idx")/$side"; mkdir -p "$out"
     echo; echo "──────── run-$run_idx  side=$side  seed=$seed ────────"
     docker compose stop traffic-simulator >/dev/null 2>&1 || true
+    [[ "$RESET_UPSTREAM" == "1" ]] && _reset_upstream   # identical clean 5-up routing state each side
     echo "[run] applying $side env-file + recreating decision plane..."
     ( cd "$REPO_ROOT" && docker compose --env-file "$env_file" up -d --force-recreate \
         anomaly-detector forecasting rl-engine lb-sidecar >> "$out/run.log" 2>&1 ) \
