@@ -1,0 +1,12 @@
+# Build-context trim for Dockerfile.allinone. The COPY directives only pull
+# specific paths, so this just keeps the context transfer small.
+.git
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+thesis/
+audit/
+audit_compose_up.log
+*.log
+.claude/
