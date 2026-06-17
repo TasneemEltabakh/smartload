@@ -248,3 +248,7 @@ data/
 .npmdocs/notes/
 
 datasets/
+
+# Live deployment secrets (reverse-proxy / all-in-one)
+docker/allinone/.live.env
+infrastructure/reverse-proxy/secrets/

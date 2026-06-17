@@ -197,7 +197,7 @@
           "refId": "A",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH decisions AS (\n  SELECT time,\n         action,\n         (regexp_match(reason, 'predicted (\\d+(?:\\.\\d+)?) rps'))[1]::float AS predicted_rps\n  FROM scaling_events\n  WHERE reason LIKE 'forecast predicted%'\n)\nSELECT d.time,\n       d.action,\n       d.predicted_rps,\n       (SELECT SUM(value) / 300.0\n        FROM metrics\n        WHERE metric_name = 'request_count'\n          AND service = 'load-balancer'\n          AND time >= d.time\n          AND time <  d.time + INTERVAL '5 minutes') AS actual_rps_next_5min,\n       (SELECT SUM(value) / 300.0\n        FROM metrics\n        WHERE metric_name = 'request_count'\n          AND service = 'load-balancer'\n          AND time >= d.time\n          AND time <  d.time + INTERVAL '5 minutes') - d.predicted_rps AS error\nFROM decisions d\nORDER BY d.time DESC\nLIMIT 20",
+          "rawSql": "WITH decisions AS (\n  SELECT time,\n         action,\n         (regexp_match(reason, '(?:demand|predicted) (\\d+(?:\\.\\d+)?) rps'))[1]::float AS predicted_rps\n  FROM scaling_events\n  WHERE reason LIKE 'forecast %'\n)\nSELECT d.time,\n       d.action,\n       d.predicted_rps,\n       (SELECT SUM(value) / 300.0\n        FROM metrics\n        WHERE metric_name = 'request_count'\n          AND service = 'load-balancer'\n          AND time >= d.time\n          AND time <  d.time + INTERVAL '5 minutes') AS actual_rps_next_5min,\n       (SELECT SUM(value) / 300.0\n        FROM metrics\n        WHERE metric_name = 'request_count'\n          AND service = 'load-balancer'\n          AND time >= d.time\n          AND time <  d.time + INTERVAL '5 minutes') - d.predicted_rps AS error\nFROM decisions d\nORDER BY d.time DESC\nLIMIT 20",
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]
@@ -241,7 +241,7 @@
           "refId": "A",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT time, action, instance_count, reason\nFROM scaling_events\nWHERE reason LIKE 'forecast predicted%'\nORDER BY time DESC\nLIMIT 20",
+          "rawSql": "SELECT time, action, instance_count, reason\nFROM scaling_events\nWHERE reason LIKE 'forecast %'\nORDER BY time DESC\nLIMIT 20",
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]

@@ -9,6 +9,12 @@ It is a packaging convenience for demos / single-host deployment, **not** a
 replacement for `docker-compose.yml` (which remains the canonical multi-container
 topology and what CI tests against).
 
+> **Running it publicly?** For the live, internet-facing deployment behind the
+> shared Caddy reverse proxy on `cie21grad.systems` (HTTPS, basic auth on the
+> operator UI, firewall lockdown), do **not** use the `docker run` below — use
+> `./run-live.sh` (binds to `127.0.0.1` only) and follow
+> [`infrastructure/reverse-proxy/RUNBOOK.md`](../../infrastructure/reverse-proxy/RUNBOOK.md).
+
 ## Run
 
 ```bash

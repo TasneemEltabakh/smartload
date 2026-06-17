@@ -33,7 +33,7 @@ export const SAMPLE_AUDIT_POLICY: AuditRow[] = [
     field: "slo_p95_latency_ms",
     old_value: 220,
     new_value: 200,
-    actor: "S. Rahman",
+    actor: "Operator",
   },
   {
     time: ago(27),
@@ -41,7 +41,7 @@ export const SAMPLE_AUDIT_POLICY: AuditRow[] = [
     field: "max_backends",
     old_value: 8,
     new_value: 9,
-    actor: "S. Rahman",
+    actor: "Operator",
   },
   {
     time: ago(96),
@@ -49,7 +49,7 @@ export const SAMPLE_AUDIT_POLICY: AuditRow[] = [
     field: "anomaly_latency_multiplier",
     old_value: 2.5,
     new_value: 3,
-    actor: "S. Rahman",
+    actor: "Operator",
   },
   {
     time: ago(214),

@@ -274,7 +274,7 @@
           "refId": "A",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH window AS (\n  SELECT instance,\n         SUM(value) FILTER (WHERE metric_name = 'request_count')        AS requests,\n         AVG(value) FILTER (WHERE metric_name = 'request_latency_ms')   AS avg_latency_ms,\n         AVG(value) FILTER (WHERE metric_name = 'error_rate')           AS error_rate\n  FROM metrics\n  WHERE service = 'load-balancer'\n    AND time > NOW() - INTERVAL '1 minute'\n  GROUP BY instance\n),\ntotals AS (SELECT SUM(requests) AS total FROM window)\nSELECT instance,\n       requests,\n       CASE WHEN totals.total > 0 THEN requests / totals.total ELSE 0 END AS share,\n       avg_latency_ms,\n       error_rate\nFROM window, totals\nORDER BY requests DESC NULLS LAST",
+          "rawSql": "WITH win AS (\n  SELECT instance,\n         SUM(value) FILTER (WHERE metric_name = 'request_count')        AS requests,\n         AVG(value) FILTER (WHERE metric_name = 'request_latency_ms')   AS avg_latency_ms,\n         AVG(value) FILTER (WHERE metric_name = 'error_rate')           AS error_rate\n  FROM metrics\n  WHERE service = 'load-balancer'\n    AND time > NOW() - INTERVAL '1 minute'\n  GROUP BY instance\n),\ntotals AS (SELECT SUM(requests) AS total FROM win)\nSELECT instance,\n       requests,\n       CASE WHEN totals.total > 0 THEN requests / totals.total ELSE 0 END AS share,\n       avg_latency_ms,\n       error_rate\nFROM win, totals\nORDER BY requests DESC NULLS LAST",
           "datasource": {"type": "grafana-postgresql-datasource", "uid": "timescaledb"}
         }
       ]

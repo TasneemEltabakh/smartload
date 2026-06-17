@@ -1,0 +1,26 @@
+# ── TEMPLATE: per-project dashboard site file ───────────────────────────────
+# Copy to /etc/caddy/sites/<project>.caddy (e.g. cybersiren.caddy), edit, then
+# `sudo caddy reload --config /etc/caddy/Caddyfile`. The main Caddyfile already
+# imports /etc/caddy/sites/*.caddy, so a new file is auto-picked-up.
+#
+# RULES OF THE ROAD on this VPS:
+#   * Only ports 22/80/443 are open to the internet. EVERY app must listen on
+#     127.0.0.1 (bind container ports to 127.0.0.1:<port>, never 0.0.0.0).
+#   * Caddy is the only public entry point. It auto-issues Let's Encrypt certs
+#     because *.cie21grad.systems already wildcard-resolves to this VPS.
+#   * Put a control surface / anything mutating behind basic_auth. Generate a
+#     hash with:  caddy hash-password --plaintext '<password>'
+#
+# Replace <project>, <sub>, and <port> below.
+
+<project>-<sub>.cie21grad.systems {
+	reverse_proxy 127.0.0.1:<port>
+}
+
+# Example with basic auth (for an admin/control dashboard):
+# <project>-admin.cie21grad.systems {
+# 	basic_auth {
+# 		admin <bcrypt-hash-from-caddy-hash-password>
+# 	}
+# 	reverse_proxy 127.0.0.1:<port>
+# }

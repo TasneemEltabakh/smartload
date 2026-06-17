@@ -1,0 +1,15 @@
+[Unit]
+Description=Block direct internet -> Docker container traffic (DOCKER-USER)
+# Docker recreates DOCKER-USER (empty) every time it starts, so re-apply after it.
+After=docker.service
+Requires=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/docker-internet-lockdown.sh
+RemainAfterExit=yes
+
+[Install]
+# Start at boot AND whenever docker starts/restarts.
+WantedBy=multi-user.target docker.service
