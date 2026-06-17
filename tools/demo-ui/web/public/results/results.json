@@ -7,7 +7,7 @@
     "host": "local (benchmark reports)",
     "gitCommit": "3b75d92",
     "kind": "final",
-    "note": "All available committed benchmark REPORT.md / SUMMARY.md artifacts injected. adaptive-bench (Adaptive scaling, RQ4) is carried as future work — out of scope under the equal-capacity evaluation; no scaling claim."
+    "note": "All available committed benchmark REPORT.md / SUMMARY.md artifacts injected. adaptive-bench (Adaptive scaling, RQ4) is carried as future work \u2014 out of scope under the equal-capacity evaluation; no scaling claim."
   },
   "groups": [
     "System comparison",
@@ -3289,31 +3289,33 @@
       "title": "Control-loop audit & hardening",
       "summary": "Read-only code audit cross-checked against the live stack and on-disk bench artifacts, plus a fresh before/after benchmark. Each candidate root-cause was handed to an independent reviewer whose job was to refute it.",
       "provenance": {
-        "runId": "pending",
-        "generatedUtc": null,
-        "host": "\u2014",
-        "gitCommit": null,
-        "kind": "pending",
-        "note": "Awaiting the VPS benchmark re-run."
+        "runId": "20260615T043317Z",
+        "generatedUtc": "2026-06-15T04:33:17Z",
+        "host": "12-core / 31 GiB VPS",
+        "gitCommit": "f92632c",
+        "kind": "final",
+        "note": "Audit of fix/anomaly-overload-exclusion; before-fix batch 20260615T040536Z, after-fix batch 20260615T043317Z. 45 findings survived adversarial review (10 rejected); the #1 fix and four more were implemented and measured."
       },
       "verdict": {
-        "tone": "muted",
-        "text": "Awaiting the audit re-run."
+        "tone": "ok",
+        "text": "Control loop is functional, correct, and robust: 5 fixes shipped; error rate cut 54.5% \u2192 0.39% (~140\u00d7) with normal headroom \u2014 all 3 runs 0.03\u20130.89%, active pool never below 4. The ~44% residual at the max=5 thesis benchmark is the deliberate saturation design, not a control-loop bug."
       },
       "kpis": [
         {
           "key": "errorrate",
           "label": "Error rate after fixes",
-          "value": null,
+          "value": 0.39,
           "unit": "%",
           "direction": "lower-better",
+          "baselineValue": 54.5,
           "baselineLabel": "before any fix",
+          "tone": "ok",
           "hint": "~140\u00d7 reduction"
         },
         {
           "key": "findings",
           "label": "Findings confirmed",
-          "value": null,
+          "value": 45,
           "unit": "",
           "direction": "neutral",
           "hint": "survived adversarial review (10 rejected)"
@@ -3321,7 +3323,7 @@
         {
           "key": "fixes",
           "label": "Critical fixes shipped",
-          "value": null,
+          "value": 5,
           "unit": "",
           "direction": "neutral",
           "hint": "D1, D2, D3 + spike hardening"
@@ -3330,39 +3332,80 @@
       "stages": [
         {
           "label": "Before any fix",
-          "value": null,
+          "value": 54.5,
           "unit": "%",
           "tone": "bad"
         },
         {
           "label": "D1 alone",
-          "value": null,
+          "value": 60.6,
           "unit": "%",
           "tone": "bad",
           "note": "exposed the coupling \u2014 D1 alone made it worse"
         },
         {
           "label": "D1+D2+D3 (max=5 saturation bench)",
-          "value": null,
+          "value": 44.1,
           "unit": "%",
           "tone": "warn",
           "note": "deliberate saturation design, not a bug"
         },
         {
           "label": "+ headroom (max=10)",
-          "value": null,
+          "value": 12.3,
           "unit": "%",
           "tone": "warn"
         },
         {
           "label": "+ spike hardening",
-          "value": null,
+          "value": 0.39,
           "unit": "%",
           "tone": "ok",
           "note": "all 3 runs 0.03\u20130.89%, active pool never below 4"
         }
       ],
-      "items": []
+      "items": [
+        {
+          "id": "d1",
+          "label": "D1 \u2014 Autoscaler asymmetric demand signal \u2192 structural pool flap",
+          "status": "fixed",
+          "severity": "high",
+          "detail": "decide_target sized scale-out on max(predicted, offered) but scale-in on predicted alone, so with confidence_upper \u2248 2\u00d7 predicted the pool flapped 4\u21945 forever, shedding capacity at peak load. Fix: size both directions on demand_rps = max(predicted, offered).",
+          "ref": "controllers.py:173-175 \u00b7 fix e290b46"
+        },
+        {
+          "id": "d2",
+          "label": "D2 \u2014 Sidecar has no active re-inclusion path (no-recovery trap)",
+          "status": "fixed",
+          "severity": "critical",
+          "detail": "A down; backend gets no traffic \u2192 emits no metrics \u2192 the detector never re-publishes healthy \u2192 it is never re-included, so the pool shrinks permanently. Fix: drive recovery off cluster/registry membership, not metrics-query presence.",
+          "ref": "runloop.py:535-547 \u00b7 fix 07f861d"
+        },
+        {
+          "id": "d3",
+          "label": "D3 \u2014 Detector latency channel scores a load ramp as illness",
+          "status": "fixed",
+          "severity": "high",
+          "detail": "Latency gates fired on deviation from a backend's own baseline with no load/peer context \u2014 the largest single exclusion driver (449 latency-channel vs 261 error-channel). Fix: peer/load guard so only clear latency outliers are excluded.",
+          "ref": "trend_rule/engine.py:155-181 \u00b7 fix 018061c"
+        },
+        {
+          "id": "spike",
+          "label": "#1+#2 \u2014 Exclusion hysteresis + surge-suppression (spike hardening)",
+          "status": "fixed",
+          "severity": "high",
+          "detail": "Final hardening leg: with max=10 headroom plus exclusion hysteresis and surge-suppression, error rate dropped to 0.39% with the active pool never below 4 across all 3 runs.",
+          "ref": "fix 671b9f2"
+        },
+        {
+          "id": "d4",
+          "label": "D4 \u2014 Bench phase-D injection hits a backend NGINX isn't routing to",
+          "status": "warn",
+          "severity": "high",
+          "detail": "Measurement confound: the anomaly injector picked targets[0] on Docker status=running with no LB-health check, so the injected fault could land on an already-excluded backend. Flagged for the harness; does not affect the control-loop fixes.",
+          "ref": "anomaly_injector.py:234,244"
+        }
+      ]
     },
     {
       "key": "honest-position",

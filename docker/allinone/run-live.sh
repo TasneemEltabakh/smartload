@@ -67,6 +67,10 @@ docker run -d \
 patch_live_assets() {
   local demo_results="/opt/smartload/tools/demo-ui/web/dist/results/results.json"
   local op_assets="/opt/smartload/services/operator-ui/web/dist/assets"
+  local src_results="$(cd "${HERE}/../.." && pwd)/tools/demo-ui/web/public/results/results.json"
+  # Ship the repo's results bundle (real audit findings etc.) into the served dist,
+  # then repoint the Grafana embed URL below (source intentionally keeps localhost).
+  [[ -f "$src_results" ]] && docker cp "$src_results" "${NAME}:${demo_results}" 2>/dev/null || true
   docker exec "${NAME}" sh -c "
     sed -i 's#http://localhost:3000#https://${GRAFANA_DOMAIN}#g' '${demo_results}' 2>/dev/null || true
     for f in ${op_assets}/*.js; do
