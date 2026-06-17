@@ -1,0 +1,39 @@
+# ── SmartLoad dashboards ─────────────────────────────────────────────────────
+# Deployed to: /etc/caddy/sites/smartload.caddy
+#
+# Every upstream is the `smartload-aio` container, published on 127.0.0.1 ONLY
+# (see docker/allinone/run-live.sh). Caddy terminates TLS and forwards.
+#
+# The operator UI is a control surface (it can change routing/policy), so it is
+# behind HTTP basic auth. The bcrypt hash below is generated with:
+#     caddy hash-password --plaintext '<password>'
+# and the plaintext is recorded in docker/allinone/.live.env (gitignored).
+# NOTE: this deployed file carries the real hash; the repo keeps a placeholder
+# copy at sites/smartload.caddy.example.
+
+smartload-demo.cie21grad.systems {
+	reverse_proxy 127.0.0.1:8091
+}
+
+smartload-operator.cie21grad.systems {
+	basic_auth {
+		admin __OPERATOR_BCRYPT__
+	}
+	reverse_proxy 127.0.0.1:8090
+}
+
+smartload-grafana.cie21grad.systems {
+	reverse_proxy 127.0.0.1:3000
+}
+
+smartload-prometheus.cie21grad.systems {
+	reverse_proxy 127.0.0.1:9090
+}
+
+smartload-locust.cie21grad.systems {
+	reverse_proxy 127.0.0.1:8089
+}
+
+smartload-lb.cie21grad.systems {
+	reverse_proxy 127.0.0.1:8080
+}

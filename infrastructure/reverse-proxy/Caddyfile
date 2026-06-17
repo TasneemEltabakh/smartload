@@ -1,0 +1,20 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# SHARED reverse proxy for this VPS — canonical copy.
+# Deployed to:  /etc/caddy/Caddyfile   (host Caddy, systemd unit "caddy")
+#
+# This is the ONE public entry point on the box. Only ports 80/443 are open to
+# the internet (+22 for SSH); every app listens on 127.0.0.1 and is reached only
+# through here. Caddy obtains/renews Let's Encrypt certs automatically once the
+# hostnames' DNS A records point at this VPS (159.195.80.109).
+#
+# Each PROJECT contributes ONE file under /etc/caddy/sites/. To onboard a new
+# project (e.g. cybersiren) you add sites/<project>.caddy and `caddy reload` —
+# you do NOT touch this file. See infrastructure/reverse-proxy/RUNBOOK.md.
+# ═════════════════════════════════════════════════════════════════════════════
+{
+	# ACME registration / cert-expiry notices.
+	email aserosama10e@gmail.com
+}
+
+# One file per project. Order doesn't matter; each file holds full site blocks.
+import /etc/caddy/sites/*.caddy

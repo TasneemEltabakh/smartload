@@ -326,7 +326,7 @@ export const SAMPLE_ACTIVITY: ActivityItem[] = [
   {
     kind: "policy",
     time: "14:05:02",
-    actor: "S. Rahman",
+    actor: "Operator",
     summary: "Policy committed: max_backends set to 9 (was 8). Diff reviewed and audit-logged.",
     source: "policy-manager",
     severity: "info",
@@ -365,4 +365,4 @@ export const SAMPLE_HEALTH: HealthSummary = {
 export const SAMPLE_PLANE_NODES = 7;
 
 // Operator identity surfaced in the sidebar footer.
-export const SAMPLE_OPERATOR = { initials: "SR", name: "S. Rahman", role: "Reliability operator" };
+export const SAMPLE_OPERATOR = { initials: "SL", name: "SmartLoad", role: "Operator console" };
