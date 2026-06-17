@@ -1,0 +1,130 @@
+# SmartLoad — ALL-IN-ONE single-container image.
+#
+# Collapses the entire docker-compose stack (TimescaleDB, Redis, OTel Collector,
+# Prometheus, Grafana, redis_exporter, NGINX, the five Node test backends, every
+# SmartLoad Python service, and the operator/demo UIs) into one image run by
+# supervisord. Build context is the repo root.
+#
+# Two compose features fundamentally need the Docker daemon and are therefore
+# neutralised here (documented in docker/allinone/README.md):
+#   * autoscaler dynamic container provisioning  -> AUTOSCALER_PROVISIONING_ENABLED=false
+#   * lb-sidecar `docker exec nginx -s reload`    -> static round-robin upstream
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    PIP_NO_CACHE_DIR=1 \
+    GRAFANA_PASSWORD=admin \
+    TIMESCALEDB_PASSWORD=changeme
+
+# ── base packages ────────────────────────────────────────────────────────────
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl wget gnupg lsb-release apt-transport-https \
+      supervisor nginx redis-server prometheus \
+      python3 python3-venv python3-pip python3-dev build-essential \
+      procps; \
+    rm -rf /var/lib/apt/lists/*
+
+# ── PostgreSQL 16 + TimescaleDB (PGDG + Timescale apt repos) ──────────────────
+RUN set -eux; \
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg; \
+    echo "deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list; \
+    curl -fsSL https://packagecloud.io/timescale/timescaledb/gpgkey \
+      | gpg --dearmor -o /etc/apt/trusted.gpg.d/timescaledb.gpg; \
+    echo "deb https://packagecloud.io/timescale/timescaledb/debian/ bookworm main" \
+      > /etc/apt/sources.list.d/timescaledb.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      postgresql-16 postgresql-client-16 \
+      timescaledb-2-postgresql-16 timescaledb-2-loader-postgresql-16; \
+    rm -rf /var/lib/apt/lists/*
+
+# ── Grafana (apt.grafana.com) ─────────────────────────────────────────────────
+RUN set -eux; \
+    mkdir -p /etc/apt/keyrings; \
+    curl -fsSL https://apt.grafana.com/gpg.key \
+      | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg; \
+    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
+      > /etc/apt/sources.list.d/grafana.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends grafana; \
+    rm -rf /var/lib/apt/lists/*
+
+# ── Node.js 20 (NodeSource) ──────────────────────────────────────────────────
+RUN set -eux; \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; \
+    apt-get install -y --no-install-recommends nodejs; \
+    rm -rf /var/lib/apt/lists/*
+
+# ── OTel Collector contrib + redis_exporter (GitHub release binaries) ────────
+ARG OTELCOL_VERSION=0.103.1
+ARG REDIS_EXPORTER_VERSION=1.62.0
+RUN set -eux; \
+    ARCH="$(dpkg --print-architecture)"; \
+    curl -fsSLo /tmp/otelcol.deb \
+      "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v${OTELCOL_VERSION}/otelcol-contrib_${OTELCOL_VERSION}_linux_${ARCH}.deb"; \
+    dpkg -i /tmp/otelcol.deb; \
+    rm -f /tmp/otelcol.deb; \
+    curl -fsSLo /tmp/re.tar.gz \
+      "https://github.com/oliver006/redis_exporter/releases/download/v${REDIS_EXPORTER_VERSION}/redis_exporter-v${REDIS_EXPORTER_VERSION}.linux-${ARCH}.tar.gz"; \
+    tar -xzf /tmp/re.tar.gz -C /tmp; \
+    install "/tmp/redis_exporter-v${REDIS_EXPORTER_VERSION}.linux-${ARCH}/redis_exporter" /usr/bin/redis_exporter; \
+    rm -rf /tmp/re.tar.gz /tmp/redis_exporter-*
+
+# ── Python deps: main venv (+ CPU torch) and isolated locust venv ────────────
+RUN set -eux; \
+    python3 -m venv /opt/venv; \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip wheel; \
+    /opt/venv/bin/pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+COPY docker/allinone/requirements-merged.txt /tmp/requirements-merged.txt
+RUN /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements-merged.txt
+RUN set -eux; \
+    python3 -m venv /opt/venv-locust; \
+    /opt/venv-locust/bin/pip install --no-cache-dir --upgrade pip; \
+    /opt/venv-locust/bin/pip install --no-cache-dir locust
+
+# ── application source ───────────────────────────────────────────────────────
+COPY services                                   /opt/smartload/services
+COPY test-backends                              /opt/smartload/test-backends
+COPY tools/traffic-simulator                    /opt/smartload/tools/traffic-simulator
+COPY tools/demo-ui                              /opt/smartload/tools/demo-ui
+COPY infrastructure                             /opt/smartload/infrastructure
+COPY config                                     /config
+COPY docs/openapi                               /opt/smartload/openapi
+COPY docs/asyncapi                              /opt/smartload/asyncapi
+COPY experiments/baseline-vs-smartload/results  /opt/smartload/experiments/baseline-vs-smartload/results
+COPY experiments/adaptive-bench/results         /opt/smartload/experiments/adaptive-bench/results
+
+# ── Node: backend deps + build the two React frontends ───────────────────────
+RUN set -eux; \
+    cd /opt/smartload/test-backends && npm install --omit=dev; \
+    cd /opt/smartload/services/operator-ui/web && npm install && npm run build && rm -rf node_modules; \
+    cd /opt/smartload/tools/demo-ui/web && npm install && npm run build && rm -rf node_modules
+
+# ── place runtime configs ────────────────────────────────────────────────────
+COPY docker/allinone/nginx.conf        /etc/nginx/nginx.conf
+COPY docker/allinone/supervisord.conf  /etc/supervisor/supervisord.conf
+COPY docker/allinone/entrypoint.sh     /usr/local/bin/entrypoint.sh
+RUN set -eux; \
+    chmod +x /usr/local/bin/entrypoint.sh; \
+    mkdir -p /docker /etc/redis /etc/grafana/provisioning /var/lib/grafana/dashboards \
+             /var/lib/prometheus/data /var/log/grafana /nginx-logs; \
+    cp /opt/smartload/infrastructure/redis/redis.conf            /etc/redis/redis-smartload.conf; \
+    cp /opt/smartload/infrastructure/otel-collector/otelcol-config.yaml /etc/otelcol-contrib/config.yaml; \
+    cp /opt/smartload/infrastructure/prometheus/prometheus.yml   /etc/prometheus/prometheus-smartload.yml; \
+    cp -r /opt/smartload/infrastructure/grafana/provisioning/.   /etc/grafana/provisioning/; \
+    cp /opt/smartload/infrastructure/grafana/dashboards/*.json   /var/lib/grafana/dashboards/; \
+    cp /opt/smartload/infrastructure/timescaledb/init.sql        /docker/init.sql
+
+EXPOSE 8080 8081 8082 8083 8084 8085 8086 8087 8089 8090 8091 \
+       3000 9090 9121 5432 6379 4317 4318 8889
+
+# NGINX (load-balancer) listens on container port 80 — publish it with -p 8080:80.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+  CMD curl -fsS http://localhost:80/health || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
