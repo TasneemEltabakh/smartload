@@ -77,6 +77,23 @@ patch_live_assets() {
   " && echo "[run-live] live asset patches applied (grafana baseUrl + operator identity)"
 }
 
+# 3. Sync the fixed Grafana dashboards from the repo (the image may carry older
+#    copies with the `window` reserved-keyword bug / stale forecast filters), and
+#    seed the real captured scale events so the Scaling/Forecast panels populate.
+REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
+patch_dashboards_and_seed() {
+  local dash="${REPO_ROOT}/infrastructure/grafana/dashboards"
+  local seed="${HERE}/seed-scaling-events.sql"
+  if [[ -d "$dash" ]]; then
+    docker cp "$dash/." "${NAME}:/var/lib/grafana/dashboards/" 2>/dev/null \
+      && echo "[run-live] synced Grafana dashboards from repo"
+  fi
+  if [[ -f "$seed" ]]; then
+    docker exec -i "${NAME}" psql -U postgres -d smartloaddb < "$seed" >/dev/null 2>&1 \
+      && echo "[run-live] seeded real scale events into scaling_events"
+  fi
+}
+
 echo "[run-live] waiting for health, then patching live assets…"
 for i in $(seq 1 24); do
   st="$(docker inspect "${NAME}" --format '{{.State.Health.Status}}' 2>/dev/null || echo '?')"
@@ -84,6 +101,7 @@ for i in $(seq 1 24); do
   sleep 5
 done
 patch_live_assets
+patch_dashboards_and_seed
 
 echo "[run-live] started. Reachability:"
 echo "  curl -sI http://127.0.0.1:8091/   # demo"
