@@ -5,6 +5,27 @@ Stack: compose project `smartload`, RUNNING + healthy containers. Reproduced liv
 swarm (50 users, ~90 rps). Read-only investigation; no code, config, or container state changed.
 Date: 2026-06-15.
 
+## Status: resolved + regression-guarded (2026-06-25)
+
+Both leverage-1 and leverage-2 fixes from the "Fix options" section below are in
+the tree and wired:
+
+- **(1) Allowlist the detector's scoring set** — `build_features_from_rows`
+  drops `NON_BACKEND_INSTANCES = {backend_pool, unknown}` before any backend is
+  scored (`services/anomaly-detector/runloop.py`).
+- **(2) Sidecar rejects non-backend verdicts** — `handle_anomaly` ignores any
+  verdict whose translated key is not in the live discovered pool
+  (`services/lb-sidecar/runloop.py`), and `app.py` passes that live pool on every
+  anomaly message.
+
+Each guard had a per-component unit test, but nothing asserted the two compose so
+the *loop* cannot re-close. That gap is now closed by a composed-unit regression
+that drives the real shipper, detector, and sidecar functions through a sustained
+all-down 502 window and proves no phantom verdict and no phantom exclusion are
+ever produced, while a genuine single-backend fault is still excluded:
+`tests/unit/pool-collapse/test_pool_collapse_loop.py`. The operational recovery
+note at the bottom is retained for any stack still running a pre-fix build.
+
 ## TL;DR
 
 A freshly-built stack put under sustained load collapses to a **total, self-sustaining 502 outage**:
